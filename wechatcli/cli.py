@@ -189,6 +189,7 @@ def _sync_account_pages(
     page_count = 0
     total_count: Optional[int] = None
     completed = False
+    request_count = 0
     while True:
         attempt = 0
         freq_attempt = 0
@@ -212,7 +213,10 @@ def _sync_account_pages(
                     continue
                 if _is_freq_control(str(exc)):
                     freq_attempt += 1
-                    wait_seconds = min(5 * freq_attempt, 60)
+                    if freq_attempt == 1:
+                        wait_seconds = 15
+                    else:
+                        wait_seconds = min(15 + 5 * (freq_attempt - 1), 60)
                     message = f"触发频率控制，等待 {wait_seconds} 秒后重试"
                     if progress is not None:
                         progress.console.log(f"[yellow]{message}[/yellow]")
@@ -226,6 +230,14 @@ def _sync_account_pages(
                 if attempt >= 3:
                     raise RuntimeError(f"网络请求超时或失败：{exc}") from exc
                 time.sleep(min(2 ** attempt, 5))
+        request_count += 1
+        if request_count % 60 == 0:
+            message = "达到 60 次请求，等待 15 秒"
+            if progress is not None:
+                progress.console.log(f"[yellow]{message}[/yellow]")
+            else:
+                console.print(f"[yellow]{message}[/yellow]")
+            time.sleep(15)
         publish_page = _extract_publish_page(payload)
         publish_list = publish_page.get("publish_list") or []
         publish_list_len = len(publish_list)
