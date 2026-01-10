@@ -412,9 +412,15 @@ def sync_articles(
             CountColumn(),
             BarColumn(),
             TimeElapsedColumn(),
+            TextColumn("{task.fields[status]}"),
         ]
         with MPClient() as client, Progress(*columns, transient=True) as progress:
-            task_id = progress.add_task(f"同步 {account.nickname}", total=None, completed=0)
+            task_id = progress.add_task(
+                f"同步 {account.nickname}",
+                total=None,
+                completed=0,
+                status="",
+            )
             try:
                 total_saved, _ = _sync_account_pages(
                     storage=storage,
@@ -426,7 +432,9 @@ def sync_articles(
                     progress=progress,
                     task_id=task_id,
                 )
+                progress.update(task_id, status="成功")
             except RuntimeError as exc:
+                progress.update(task_id, status="失败")
                 console.print(f"[red]同步失败：{exc}[/red]")
                 raise typer.Exit(code=1)
         console.print(f"[green]同步完成，共写入 {total_saved} 条记录[/green]")
@@ -464,18 +472,18 @@ def sync_all_articles(
                 CountColumn(),
                 BarColumn(),
                 TimeElapsedColumn(),
+                TextColumn("{task.fields[status]}"),
             ]
-            with Progress(*columns, transient=True) as progress:
-                task_id = progress.add_task("准备同步", total=None, completed=0)
+            with Progress(*columns, transient=False) as progress:
                 for account in accounts:
                     resume_key = f"sync_progress:{account.biz}"
                     if reset:
                         storage.delete_meta(resume_key)
-                    progress.update(
-                        task_id,
-                        description=f"同步 {account.nickname} ({account.biz})",
+                    task_id = progress.add_task(
+                        f"同步 {account.nickname} ({account.biz})",
                         total=None,
                         completed=0,
+                        status="",
                     )
                     try:
                         saved, _ = _sync_account_pages(
@@ -489,7 +497,9 @@ def sync_all_articles(
                             progress=progress,
                             task_id=task_id,
                         )
+                        progress.update(task_id, status="成功")
                     except RuntimeError as exc:
+                        progress.update(task_id, status="失败")
                         console.print(f"[red]同步失败：{exc}[/red]")
                         raise typer.Exit(code=1)
                     total_saved += saved
