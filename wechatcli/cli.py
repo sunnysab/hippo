@@ -138,8 +138,11 @@ def _sync_account_pages(
             console.print(
                 f"[yellow]检测到断点进度，继续 {account.nickname} offset={offset}[/yellow]"
             )
+    if progress is not None and task_id is not None and offset > 0:
+        progress.update(task_id, completed=offset)
     total_saved = 0
     page_count = 0
+    total_count: Optional[int] = None
     while True:
         try:
             payload = client.fetch_appmsg_publish(
@@ -158,14 +161,14 @@ def _sync_account_pages(
                 session = _get_login_session(storage)
                 continue
             raise
-        total_count = payload.get("total_count")
-        if (
-            progress is not None
-            and task_id is not None
-            and isinstance(total_count, int)
-            and total_count > 0
-        ):
-            progress.update(task_id, total=total_count)
+        raw_total = payload.get("total_count")
+        if isinstance(raw_total, int):
+            total_count = raw_total
+        elif isinstance(raw_total, str) and raw_total.isdigit():
+            total_count = int(raw_total)
+        if progress is not None and task_id is not None and total_count and total_count > 0:
+            completed = offset if offset <= total_count else total_count
+            progress.update(task_id, total=total_count, completed=completed)
         records = parse_appmsg_publish(account.biz, payload)
         if not records:
             break
@@ -173,12 +176,14 @@ def _sync_account_pages(
         storage.update_last_synced(account.biz)
         total_saved += saved
         page_count += 1
+        current_completed = offset + len(records)
+        if total_count is not None and current_completed > total_count:
+            current_completed = total_count
         offset += page_size
         if resume_key:
             storage.set_meta(resume_key, str(offset))
-        console.print(f"  · 同步 offset={offset - page_size}，新增/更新 {saved} 篇")
         if progress is not None and task_id is not None:
-            progress.advance(task_id, len(records))
+            progress.update(task_id, completed=current_completed)
         if len(records) < page_size:
             break
         if pages is not None and page_count >= pages:
@@ -186,6 +191,8 @@ def _sync_account_pages(
         time.sleep(sleep_seconds)
     if resume_key:
         storage.delete_meta(resume_key)
+    if progress is not None and task_id is not None and total_count:
+        progress.update(task_id, completed=total_count)
     return total_saved, page_count
 
 
@@ -366,7 +373,7 @@ def sync_articles(
             TimeElapsedColumn(),
         ]
         with MPClient() as client, Progress(*columns, transient=True) as progress:
-            task_id = progress.add_task(f"同步 {account.nickname}", total=None)
+            task_id = progress.add_task(f"同步 {account.nickname}", total=None, completed=0)
             try:
                 total_saved, _ = _sync_account_pages(
                     storage=storage,
@@ -414,12 +421,17 @@ def sync_all_articles(
                 TimeElapsedColumn(),
             ]
             with Progress(*columns, transient=True) as progress:
+                task_id = progress.add_task("准备同步", total=None, completed=0)
                 for account in accounts:
-                    console.print(f"[cyan]同步 {account.nickname} ({account.biz})[/cyan]")
                     resume_key = f"sync_progress:{account.biz}"
                     if reset:
                         storage.delete_meta(resume_key)
-                    task_id = progress.add_task(f"同步 {account.nickname}", total=None)
+                    progress.update(
+                        task_id,
+                        description=f"同步 {account.nickname} ({account.biz})",
+                        total=None,
+                        completed=0,
+                    )
                     try:
                         saved, _ = _sync_account_pages(
                             storage=storage,
