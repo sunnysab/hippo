@@ -12,6 +12,7 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
 from .config import DB_PATH, DEFAULT_PAGE_SIZE, DOWNLOAD_ROOT, HOME_DIR
@@ -112,7 +113,9 @@ def _sync_account_pages(
     pages: Optional[int],
     sleep_seconds: int,
     resume_key: Optional[str] = None,
-) -> int:
+    progress: Optional[Progress] = None,
+    task_id: Optional[int] = None,
+) -> tuple[int, int]:
     session = _get_login_session(storage)
     offset = 0
     if resume_key:
@@ -153,6 +156,8 @@ def _sync_account_pages(
         if resume_key:
             storage.set_meta(resume_key, str(offset))
         console.print(f"  · 同步 offset={offset - page_size}，新增/更新 {saved} 篇")
+        if progress is not None and task_id is not None:
+            progress.advance(task_id, 1)
         if len(records) < page_size:
             break
         if pages is not None and page_count >= pages:
@@ -160,7 +165,7 @@ def _sync_account_pages(
         time.sleep(sleep_seconds)
     if resume_key:
         storage.delete_meta(resume_key)
-    return total_saved
+    return total_saved, page_count
 
 
 def _get_login_session(storage: Storage) -> LoginSession:
@@ -327,45 +332,90 @@ def sync_articles(
         account = storage.get_account(biz)
         console.print(f"[cyan]开始同步 {account.nickname} 的文章[/cyan]")
         total_saved = 0
-        with MPClient() as client:
-            total_saved = _sync_account_pages(
-                storage=storage,
-                client=client,
-                account=account,
-                page_size=page_size,
-                pages=pages,
-                sleep_seconds=0,
-            )
+        columns = [
+            SpinnerColumn(),
+            TextColumn("{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+        ]
+        with MPClient() as client, Progress(*columns, transient=True) as progress:
+            task_id = progress.add_task(f"同步 {account.nickname}", total=None)
+            try:
+                total_saved, _ = _sync_account_pages(
+                    storage=storage,
+                    client=client,
+                    account=account,
+                    page_size=page_size,
+                    pages=pages,
+                    sleep_seconds=0,
+                    progress=progress,
+                    task_id=task_id,
+                )
+            except RuntimeError as exc:
+                console.print(f"[red]同步失败：{exc}[/red]")
+                raise typer.Exit(code=1)
         console.print(f"[green]同步完成，共写入 {total_saved} 条记录[/green]")
 
 
 @articles_app.command("sync-all")
 def sync_all_articles(
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help="每页抓取数量"),
+    sleep_seconds: int = typer.Option(10, min=1, help="翻页间隔秒数"),
+    reset: bool = typer.Option(False, help="清除断点后从头同步", flag_value=True),
 ) -> None:
     with Storage(DB_PATH) as storage:
         accounts = storage.list_accounts()
         if not accounts:
             console.print("[yellow]尚未保存任何账号，使用 `accounts add` 添加[/yellow]")
             return
-        console.print(
-            "[cyan]开始同步全部账号（从最新文章往更早翻页，每页间隔 10 秒）[/cyan]"
+        header = (
+            f"[cyan]开始同步全部账号（从最新文章往更早翻页，每页间隔 {sleep_seconds} 秒）[/cyan]"
         )
+        if reset:
+            header = (
+                f"[cyan]开始同步全部账号（重置断点，从最新文章往更早翻页，每页间隔 {sleep_seconds} 秒）[/cyan]"
+            )
+        console.print(header)
         with MPClient() as client:
             total_saved = 0
-            for account in accounts:
-                console.print(f"[cyan]同步 {account.nickname} ({account.biz})[/cyan]")
-                resume_key = f"sync_progress:{account.biz}"
-                saved = _sync_account_pages(
-                    storage=storage,
-                    client=client,
-                    account=account,
-                    page_size=page_size,
-                    pages=None,
-                    sleep_seconds=10,
-                    resume_key=resume_key,
-                )
-                total_saved += saved
+            summary: list[tuple[str, int]] = []
+            columns = [
+                SpinnerColumn(),
+                TextColumn("{task.description}"),
+                BarColumn(),
+                TimeElapsedColumn(),
+            ]
+            with Progress(*columns, transient=True) as progress:
+                for account in accounts:
+                    console.print(f"[cyan]同步 {account.nickname} ({account.biz})[/cyan]")
+                    resume_key = f"sync_progress:{account.biz}"
+                    if reset:
+                        storage.delete_meta(resume_key)
+                    task_id = progress.add_task(f"同步 {account.nickname}", total=None)
+                    try:
+                        saved, _ = _sync_account_pages(
+                            storage=storage,
+                            client=client,
+                            account=account,
+                            page_size=page_size,
+                            pages=None,
+                            sleep_seconds=sleep_seconds,
+                            resume_key=resume_key,
+                            progress=progress,
+                            task_id=task_id,
+                        )
+                    except RuntimeError as exc:
+                        console.print(f"[red]同步失败：{exc}[/red]")
+                        raise typer.Exit(code=1)
+                    total_saved += saved
+                    summary.append((account.nickname or account.biz, saved))
+            if summary:
+                table = Table(show_header=True, header_style="bold green")
+                table.add_column("账号")
+                table.add_column("新增/更新", justify="right")
+                for name, saved in summary:
+                    table.add_row(name, str(saved))
+                console.print(table)
         console.print(f"[green]全部账号同步完成，共写入 {total_saved} 条记录[/green]")
 
 
