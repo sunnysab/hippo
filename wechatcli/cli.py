@@ -106,6 +106,26 @@ def _parse_selection_indices(selection: str, total: int) -> list[int]:
     return sorted(selected)
 
 
+def _extract_publish_total(payload: dict) -> Optional[int]:
+    raw_page = payload.get("publish_page")
+    if isinstance(raw_page, str) and raw_page:
+        try:
+            parsed = json.loads(raw_page)
+        except json.JSONDecodeError:
+            parsed = {}
+        total = parsed.get("total_count")
+        if isinstance(total, int):
+            return total
+        if isinstance(total, str) and total.isdigit():
+            return int(total)
+    total = payload.get("total_count")
+    if isinstance(total, int):
+        return total
+    if isinstance(total, str) and total.isdigit():
+        return int(total)
+    return None
+
+
 def _is_login_error(message: str) -> bool:
     lowered = message.lower()
     hints = ("login", "token", "session", "invalid", "expire", "expired", "timeout")
@@ -124,7 +144,7 @@ def _sync_account_pages(
     account: AccountCredential,
     page_size: int,
     pages: Optional[int],
-    sleep_seconds: int,
+    sleep_seconds: float,
     resume_key: Optional[str] = None,
     progress: Optional[Progress] = None,
     task_id: Optional[int] = None,
@@ -161,11 +181,7 @@ def _sync_account_pages(
                 session = _get_login_session(storage)
                 continue
             raise
-        raw_total = payload.get("total_count")
-        if isinstance(raw_total, int):
-            total_count = raw_total
-        elif isinstance(raw_total, str) and raw_total.isdigit():
-            total_count = int(raw_total)
+        total_count = _extract_publish_total(payload) or total_count
         if progress is not None and task_id is not None and total_count and total_count > 0:
             completed = offset if offset <= total_count else total_count
             progress.update(task_id, total=total_count, completed=completed)
@@ -188,7 +204,8 @@ def _sync_account_pages(
             break
         if pages is not None and page_count >= pages:
             break
-        time.sleep(sleep_seconds)
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
     if resume_key:
         storage.delete_meta(resume_key)
     if progress is not None and task_id is not None and total_count:
@@ -394,7 +411,9 @@ def sync_articles(
 @articles_app.command("sync-all")
 def sync_all_articles(
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help="每页抓取数量"),
-    sleep_seconds: int = typer.Option(10, min=1, help="翻页间隔秒数"),
+    sleep_seconds: float = typer.Option(
+        0.05, min=0, help="翻页间隔秒数（可为小数）"
+    ),
     reset: bool = typer.Option(False, help="清除断点后从头同步", flag_value=True),
 ) -> None:
     with Storage(DB_PATH) as storage:
@@ -403,12 +422,14 @@ def sync_all_articles(
             console.print("[yellow]尚未保存任何账号，使用 `accounts add` 添加[/yellow]")
             return
         header = (
-            f"[cyan]开始同步全部账号（从最新文章往更早翻页，每页间隔 {sleep_seconds} 秒）[/cyan]"
+            "[cyan]开始同步全部账号（从最新文章往更早翻页）[/cyan]"
         )
         if reset:
             header = (
-                f"[cyan]开始同步全部账号（重置断点，从最新文章往更早翻页，每页间隔 {sleep_seconds} 秒）[/cyan]"
+                "[cyan]开始同步全部账号（重置断点，从最新文章往更早翻页）[/cyan]"
             )
+        if sleep_seconds > 0:
+            header += f" [cyan]每页间隔 {sleep_seconds} 秒[/cyan]"
         console.print(header)
         with MPClient() as client:
             total_saved = 0
