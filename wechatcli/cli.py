@@ -178,9 +178,11 @@ def _sync_account_pages(
         saved_offset = storage.get_meta(resume_key)
         if saved_offset and saved_offset.isdigit():
             offset = int(saved_offset)
-            console.print(
-                f"[yellow]检测到断点进度，继续 {account.nickname} offset={offset}[/yellow]"
-            )
+            message = f"检测到断点进度，继续 {account.nickname} offset={offset}"
+            if progress is not None:
+                progress.console.log(f"[yellow]{message}[/yellow]")
+            else:
+                console.print(f"[yellow]{message}[/yellow]")
     if progress is not None and task_id is not None and offset > 0:
         progress.update(task_id, completed=offset)
     total_saved = 0
@@ -211,9 +213,11 @@ def _sync_account_pages(
                 if _is_freq_control(str(exc)):
                     freq_attempt += 1
                     wait_seconds = min(5 * freq_attempt, 60)
-                    console.print(
-                        f"[yellow]触发频率控制，等待 {wait_seconds} 秒后重试[/yellow]"
-                    )
+                    message = f"触发频率控制，等待 {wait_seconds} 秒后重试"
+                    if progress is not None:
+                        progress.console.log(f"[yellow]{message}[/yellow]")
+                    else:
+                        console.print(f"[yellow]{message}[/yellow]")
                     time.sleep(wait_seconds)
                     continue
                 raise
