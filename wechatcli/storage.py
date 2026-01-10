@@ -115,6 +115,21 @@ class Storage(AbstractContextManager):
         )
         self.conn.commit()
 
+    # Meta helpers --------------------------------------------------------
+    def get_meta(self, key: str) -> Optional[str]:
+        row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", (key, value)
+        )
+        self.conn.commit()
+
+    def delete_meta(self, key: str) -> None:
+        self.conn.execute("DELETE FROM meta WHERE key = ?", (key,))
+        self.conn.commit()
+
     # Account helpers -----------------------------------------------------
     def upsert_account(self, account: AccountCredential) -> AccountCredential:
         now = _utc_now()
@@ -168,8 +183,14 @@ class Storage(AbstractContextManager):
             row = self.conn.execute("SELECT * FROM accounts WHERE biz = ?", (biz,)).fetchone()
         if not row and fallback_to_default:
             row = self.conn.execute("SELECT * FROM accounts WHERE is_default = 1 LIMIT 1").fetchone()
+        if not row and fallback_to_default and not biz:
+            row = self.conn.execute(
+                "SELECT * FROM accounts ORDER BY updated_at DESC LIMIT 1"
+            ).fetchone()
         if not row:
-            raise LookupError("No account found. Create one with `accounts add`." )
+            raise LookupError(
+                "No account found. Create one with `accounts add` or `accounts search --interactive`."
+            )
         return self._row_to_account(row)
 
     def remove_account(self, biz: str) -> int:

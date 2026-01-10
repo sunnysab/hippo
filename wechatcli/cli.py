@@ -92,6 +92,77 @@ def _parse_selection_indices(selection: str, total: int) -> list[int]:
     return sorted(selected)
 
 
+def _is_login_error(message: str) -> bool:
+    lowered = message.lower()
+    hints = ("login", "token", "session", "invalid", "expire", "expired", "timeout")
+    return any(hint in lowered for hint in hints)
+
+
+def _handle_login_expired() -> bool:
+    console.print("[red]登录状态可能已失效，需要重新扫码登录。[/red]")
+    return typer.confirm("现在重新登录并继续同步？", default=True)
+
+
+def _sync_account_pages(
+    *,
+    storage: Storage,
+    client: MPClient,
+    account: AccountCredential,
+    page_size: int,
+    pages: Optional[int],
+    sleep_seconds: int,
+    resume_key: Optional[str] = None,
+) -> int:
+    session = _get_login_session(storage)
+    offset = 0
+    if resume_key:
+        saved_offset = storage.get_meta(resume_key)
+        if saved_offset and saved_offset.isdigit():
+            offset = int(saved_offset)
+            console.print(
+                f"[yellow]检测到断点进度，继续 {account.nickname} offset={offset}[/yellow]"
+            )
+    total_saved = 0
+    page_count = 0
+    while True:
+        try:
+            payload = client.fetch_appmsg_publish(
+                session, fakeid=account.biz, begin=offset, count=page_size
+            )
+        except RuntimeError as exc:
+            if _is_login_error(str(exc)):
+                if not _handle_login_expired():
+                    console.print("[yellow]已暂停同步，断点进度已保留[/yellow]")
+                    raise typer.Exit(code=1)
+                try:
+                    login()
+                except typer.Exit:
+                    console.print("[yellow]登录未完成，断点进度已保留[/yellow]")
+                    raise
+                session = _get_login_session(storage)
+                continue
+            raise
+        records = parse_appmsg_publish(account.biz, payload)
+        if not records:
+            break
+        saved = storage.save_articles(records)
+        storage.update_last_synced(account.biz)
+        total_saved += saved
+        page_count += 1
+        offset += page_size
+        if resume_key:
+            storage.set_meta(resume_key, str(offset))
+        console.print(f"  · 同步 offset={offset - page_size}，新增/更新 {saved} 篇")
+        if len(records) < page_size:
+            break
+        if pages is not None and page_count >= pages:
+            break
+        time.sleep(sleep_seconds)
+    if resume_key:
+        storage.delete_meta(resume_key)
+    return total_saved
+
+
 def _get_login_session(storage: Storage) -> LoginSession:
     try:
         return storage.get_login_session()
@@ -254,26 +325,48 @@ def sync_articles(
 ) -> None:
     with Storage(DB_PATH) as storage:
         account = storage.get_account(biz)
-        session = _get_login_session(storage)
         console.print(f"[cyan]开始同步 {account.nickname} 的文章[/cyan]")
         total_saved = 0
         with MPClient() as client:
-            offset = 0
-            for _ in range(pages):
-                payload = client.fetch_appmsg_publish(
-                    session, fakeid=account.biz, begin=offset, count=page_size
-                )
-                records = parse_appmsg_publish(account.biz, payload)
-                if not records:
-                    break
-                saved = storage.save_articles(records)
-                storage.update_last_synced(account.biz)
-                total_saved += saved
-                console.print(f"  · 同步 offset={offset}，新增/更新 {saved} 篇")
-                offset += page_size
-                if len(records) < page_size:
-                    break
+            total_saved = _sync_account_pages(
+                storage=storage,
+                client=client,
+                account=account,
+                page_size=page_size,
+                pages=pages,
+                sleep_seconds=0,
+            )
         console.print(f"[green]同步完成，共写入 {total_saved} 条记录[/green]")
+
+
+@articles_app.command("sync-all")
+def sync_all_articles(
+    page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help="每页抓取数量"),
+) -> None:
+    with Storage(DB_PATH) as storage:
+        accounts = storage.list_accounts()
+        if not accounts:
+            console.print("[yellow]尚未保存任何账号，使用 `accounts add` 添加[/yellow]")
+            return
+        console.print(
+            "[cyan]开始同步全部账号（从最新文章往更早翻页，每页间隔 10 秒）[/cyan]"
+        )
+        with MPClient() as client:
+            total_saved = 0
+            for account in accounts:
+                console.print(f"[cyan]同步 {account.nickname} ({account.biz})[/cyan]")
+                resume_key = f"sync_progress:{account.biz}"
+                saved = _sync_account_pages(
+                    storage=storage,
+                    client=client,
+                    account=account,
+                    page_size=page_size,
+                    pages=None,
+                    sleep_seconds=10,
+                    resume_key=resume_key,
+                )
+                total_saved += saved
+        console.print(f"[green]全部账号同步完成，共写入 {total_saved} 条记录[/green]")
 
 
 @articles_app.command("list")
