@@ -12,7 +12,14 @@ from typing import Optional
 
 import typer
 from rich.console import Console
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.progress import (
+    BarColumn,
+    Progress,
+    ProgressColumn,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich.table import Table
 
 from .config import DB_PATH, DEFAULT_PAGE_SIZE, DOWNLOAD_ROOT, HOME_DIR
@@ -46,6 +53,12 @@ class OutputFormat(str, Enum):
 
     def __str__(self) -> str:  # pragma: no cover - click displays value
         return self.value
+
+
+class CountColumn(ProgressColumn):
+    def render(self, task) -> str:  # type: ignore[override]
+        total = "?" if task.total is None else str(int(task.total))
+        return f"{int(task.completed)}/{total}"
 
 
 def _parse_since(value: Optional[str]) -> Optional[int]:
@@ -145,6 +158,14 @@ def _sync_account_pages(
                 session = _get_login_session(storage)
                 continue
             raise
+        total_count = payload.get("total_count")
+        if (
+            progress is not None
+            and task_id is not None
+            and isinstance(total_count, int)
+            and total_count > 0
+        ):
+            progress.update(task_id, total=total_count)
         records = parse_appmsg_publish(account.biz, payload)
         if not records:
             break
@@ -157,7 +178,7 @@ def _sync_account_pages(
             storage.set_meta(resume_key, str(offset))
         console.print(f"  · 同步 offset={offset - page_size}，新增/更新 {saved} 篇")
         if progress is not None and task_id is not None:
-            progress.advance(task_id, 1)
+            progress.advance(task_id, len(records))
         if len(records) < page_size:
             break
         if pages is not None and page_count >= pages:
@@ -219,7 +240,8 @@ def search_accounts(
 ) -> None:
     with Storage(DB_PATH) as storage:
         session = _get_login_session(storage)
-    page_size = 20
+        existing_biz = {account.biz for account in storage.list_accounts()}
+    page_size = 10
     current_page = page
     while True:
         offset = begin if begin is not None else (current_page - 1) * page_size
@@ -235,10 +257,14 @@ def search_accounts(
         table.add_column("fakeid")
         table.add_column("别名")
         for idx, item in enumerate(records, start=1):
+            fakeid = item.get("fakeid", "-")
+            nickname = item.get("nickname", "-")
+            if fakeid in existing_biz:
+                nickname = f"{nickname}（已添加）"
             table.add_row(
                 str(idx),
-                item.get("nickname", "-"),
-                item.get("fakeid", "-"),
+                nickname,
+                fakeid,
                 item.get("alias", "-"),
             )
         console.print(table)
@@ -335,6 +361,7 @@ def sync_articles(
         columns = [
             SpinnerColumn(),
             TextColumn("{task.description}"),
+            CountColumn(),
             BarColumn(),
             TimeElapsedColumn(),
         ]
@@ -382,6 +409,7 @@ def sync_all_articles(
             columns = [
                 SpinnerColumn(),
                 TextColumn("{task.description}"),
+                CountColumn(),
                 BarColumn(),
                 TimeElapsedColumn(),
             ]
