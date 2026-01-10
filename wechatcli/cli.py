@@ -22,8 +22,16 @@ from .storage import Storage
 from .utils import ensure_directory
 
 app = typer.Typer(help="WeChat article exporter CLI", no_args_is_help=True, rich_markup_mode=None)
-accounts_app = typer.Typer(help="Manage stored WeChat accounts", rich_markup_mode=None)
-articles_app = typer.Typer(help="Sync, inspect, and download articles", rich_markup_mode=None)
+accounts_app = typer.Typer(
+    help="Manage stored WeChat accounts",
+    rich_markup_mode=None,
+    no_args_is_help=True,
+)
+articles_app = typer.Typer(
+    help="Sync, inspect, and download articles",
+    rich_markup_mode=None,
+    no_args_is_help=True,
+)
 app.add_typer(accounts_app, name="accounts")
 app.add_typer(articles_app, name="articles")
 
@@ -46,6 +54,42 @@ def _parse_since(value: Optional[str]) -> Optional[int]:
         return int(datetime.fromisoformat(value).timestamp())
     except ValueError as exc:
         raise typer.BadParameter("时间格式应为 YYYY-MM-DD") from exc
+
+
+def _parse_selection_indices(selection: str, total: int) -> list[int]:
+    if total <= 0:
+        raise typer.BadParameter("没有可用的结果用于选择")
+    raw = selection.replace(" ", "")
+    if not raw:
+        raise typer.BadParameter("请选择要保存的序号，例如 1,3-5")
+    selected: set[int] = set()
+    for part in raw.split(","):
+        if not part:
+            continue
+        if "-" in part:
+            start_str, end_str = part.split("-", 1)
+            if not start_str.isdigit() or not end_str.isdigit():
+                raise typer.BadParameter(f"无效范围: {part}")
+            start = int(start_str)
+            end = int(end_str)
+            if start <= 0 or end <= 0 or start > end:
+                raise typer.BadParameter(f"无效范围: {part}")
+            for value in range(start, end + 1):
+                if value > total:
+                    raise typer.BadParameter(f"序号超出范围: {value}")
+                selected.add(value - 1)
+        else:
+            if not part.isdigit():
+                raise typer.BadParameter(f"无效序号: {part}")
+            value = int(part)
+            if value <= 0:
+                raise typer.BadParameter(f"无效序号: {part}")
+            if value > total:
+                raise typer.BadParameter(f"序号超出范围: {value}")
+            selected.add(value - 1)
+    if not selected:
+        raise typer.BadParameter("未解析出有效序号")
+    return sorted(selected)
 
 
 def _get_login_session(storage: Storage) -> LoginSession:
@@ -93,24 +137,72 @@ def add_account(
 @accounts_app.command("search")
 def search_accounts(
     keyword: str = typer.Argument(..., help="搜索关键词"),
-    begin: int = typer.Option(0, min=0, help="起始偏移"),
-    size: int = typer.Option(5, min=1, max=20, help="返回数量"),
+    page: int = typer.Option(1, min=1, help="分页页码，从 1 开始"),
+    begin: Optional[int] = typer.Option(None, min=0, help="起始偏移，优先于分页"),
+    interactive: bool = typer.Option(False, help="交互式选择并添加账号", flag_value=True),
 ) -> None:
     with Storage(DB_PATH) as storage:
         session = _get_login_session(storage)
-    with MPClient() as client:
-        payload = client.search_biz(session, keyword=keyword, begin=begin, count=size)
-    records = payload.get("list") or []
-    if not records:
-        console.print("[yellow]未找到匹配的公众号[/yellow]")
-        return
-    table = Table(show_header=True, header_style="bold cyan")
-    table.add_column("昵称")
-    table.add_column("fakeid")
-    table.add_column("别名")
-    for item in records:
-        table.add_row(item.get("nickname", "-"), item.get("fakeid", "-"), item.get("alias", "-"))
-    console.print(table)
+    page_size = 20
+    current_page = page
+    while True:
+        offset = begin if begin is not None else (current_page - 1) * page_size
+        with MPClient() as client:
+            payload = client.search_biz(session, keyword=keyword, begin=offset, count=page_size)
+        records = payload.get("list") or []
+        if not records:
+            console.print("[yellow]未找到匹配的公众号[/yellow]")
+            return
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("序号", justify="right")
+        table.add_column("昵称")
+        table.add_column("fakeid")
+        table.add_column("别名")
+        for idx, item in enumerate(records, start=1):
+            table.add_row(
+                str(idx),
+                item.get("nickname", "-"),
+                item.get("fakeid", "-"),
+                item.get("alias", "-"),
+            )
+        console.print(table)
+
+        if not interactive:
+            return
+
+        raw = typer.prompt(
+            "选择要添加的序号(如 1,3-5，回车跳过，q 退出)",
+            default="",
+            show_default=False,
+        ).strip()
+        if raw.lower() == "q":
+            return
+        if raw:
+            try:
+                indices = _parse_selection_indices(raw, len(records))
+            except typer.BadParameter as exc:
+                console.print(f"[red]{exc}[/red]")
+                continue
+            with Storage(DB_PATH) as storage:
+                saved = []
+                for idx in indices:
+                    item = records[idx]
+                    credential = AccountCredential(
+                        biz=item.get("fakeid", "").strip(),
+                        nickname=(item.get("nickname") or "").strip() or "未知公众号",
+                        alias=(item.get("alias") or "").strip() or None,
+                        round_head_img=(item.get("round_head_img") or "").strip() or None,
+                        uin="",
+                        key="",
+                        pass_ticket="",
+                        is_default=False,
+                    )
+                    stored = storage.upsert_account(credential)
+                    saved.append(f"{stored.nickname} ({stored.biz})")
+            console.print(f"[green]已保存 {len(saved)} 个账号[/green]")
+        if begin is not None:
+            begin += page_size
+        current_page += 1
 
 
 @accounts_app.command("list")
