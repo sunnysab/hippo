@@ -127,6 +127,18 @@ def _extract_publish_total(payload: dict) -> Optional[int]:
     return None
 
 
+def _extract_publish_page(payload: dict) -> dict:
+    raw_page = payload.get("publish_page")
+    if isinstance(raw_page, str) and raw_page:
+        try:
+            parsed = json.loads(raw_page)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
 def _today_str() -> str:
     return date.today().isoformat()
 
@@ -159,7 +171,7 @@ def _sync_account_pages(
     resume_key: Optional[str] = None,
     progress: Optional[Progress] = None,
     task_id: Optional[int] = None,
-) -> tuple[int, int]:
+) -> tuple[int, int, bool]:
     session = _get_login_session(storage)
     offset = 0
     if resume_key:
@@ -174,6 +186,7 @@ def _sync_account_pages(
     total_saved = 0
     page_count = 0
     total_count: Optional[int] = None
+    completed = False
     while True:
         attempt = 0
         freq_attempt = 0
@@ -209,18 +222,22 @@ def _sync_account_pages(
                 if attempt >= 3:
                     raise RuntimeError(f"网络请求超时或失败：{exc}") from exc
                 time.sleep(min(2 ** attempt, 5))
+        publish_page = _extract_publish_page(payload)
+        publish_list = publish_page.get("publish_list") or []
+        publish_list_len = len(publish_list)
         total_count = _extract_publish_total(payload) or total_count
         if progress is not None and task_id is not None and total_count and total_count > 0:
-            completed = offset if offset <= total_count else total_count
-            progress.update(task_id, total=total_count, completed=completed)
-        records = parse_appmsg_publish(account.biz, payload)
-        if not records:
+            completed_offset = offset if offset <= total_count else total_count
+            progress.update(task_id, total=total_count, completed=completed_offset)
+        if publish_list_len == 0:
+            completed = True
             break
+        records = parse_appmsg_publish(account.biz, payload)
         saved = storage.save_articles(records)
         storage.update_last_synced(account.biz)
         total_saved += saved
         page_count += 1
-        current_completed = offset + len(records)
+        current_completed = offset + publish_list_len
         if total_count is not None and current_completed > total_count:
             current_completed = total_count
         offset += page_size
@@ -228,17 +245,16 @@ def _sync_account_pages(
             storage.set_meta(resume_key, str(offset))
         if progress is not None and task_id is not None:
             progress.update(task_id, completed=current_completed)
-        if len(records) < page_size:
-            break
         if pages is not None and page_count >= pages:
+            completed = False
             break
         if sleep_seconds > 0:
             time.sleep(sleep_seconds)
-    if resume_key:
+    if resume_key and completed:
         storage.delete_meta(resume_key)
-    if progress is not None and task_id is not None and total_count:
+    if progress is not None and task_id is not None and total_count and completed:
         progress.update(task_id, completed=total_count)
-    return total_saved, page_count
+    return total_saved, page_count, completed
 
 
 def _get_login_session(storage: Storage) -> LoginSession:
@@ -426,7 +442,7 @@ def sync_articles(
                 status="",
             )
             try:
-                total_saved, _ = _sync_account_pages(
+                total_saved, _, completed = _sync_account_pages(
                     storage=storage,
                     client=client,
                     account=account,
@@ -436,7 +452,7 @@ def sync_articles(
                     progress=progress,
                     task_id=task_id,
                 )
-                progress.update(task_id, status="成功")
+                progress.update(task_id, status="成功" if completed else "未完成")
             except RuntimeError as exc:
                 progress.update(task_id, status="失败")
                 console.print(f"[red]同步失败：{exc}[/red]")
@@ -501,7 +517,7 @@ def sync_all_articles(
                         status="",
                     )
                     try:
-                        saved, _ = _sync_account_pages(
+                        saved, _, completed = _sync_account_pages(
                             storage=storage,
                             client=client,
                             account=account,
@@ -512,8 +528,9 @@ def sync_all_articles(
                             progress=progress,
                             task_id=task_id,
                         )
-                        progress.update(task_id, status="成功")
-                        storage.set_meta(complete_key, _today_str())
+                        progress.update(task_id, status="成功" if completed else "未完成")
+                        if completed:
+                            storage.set_meta(complete_key, _today_str())
                     except RuntimeError as exc:
                         progress.update(task_id, status="失败")
                         console.print(f"[red]同步失败：{exc}[/red]")
