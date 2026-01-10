@@ -13,7 +13,7 @@ from .config import DB_PATH
 from .models import AccountCredential, ArticleRecord, LoginSession
 
 ISO_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 
 
 def _utc_now() -> str:
@@ -77,12 +77,13 @@ class Storage(AbstractContextManager):
                 author TEXT,
                 digest TEXT,
                 cover TEXT,
-                link TEXT NOT NULL UNIQUE,
+                link TEXT NOT NULL,
                 source_url TEXT,
                 publish_at INTEGER,
                 raw_json TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                UNIQUE (biz, article_id)
             )
             """
         )
@@ -106,6 +107,11 @@ class Storage(AbstractContextManager):
             )
             """
         )
+        row = cur.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+        current_version = row["value"] if row else None
+        self._migrate_schema(cur, current_version)
         cur.execute(
             """
             INSERT OR REPLACE INTO meta(key, value)
@@ -114,6 +120,50 @@ class Storage(AbstractContextManager):
             (SCHEMA_VERSION,)
         )
         self.conn.commit()
+
+    def _migrate_schema(self, cur: sqlite3.Cursor, current_version: Optional[str]) -> None:
+        if current_version == SCHEMA_VERSION:
+            return
+        if current_version in (None, "2"):
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS articles_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    biz TEXT NOT NULL REFERENCES accounts(biz) ON DELETE CASCADE,
+                    article_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    author TEXT,
+                    digest TEXT,
+                    cover TEXT,
+                    link TEXT NOT NULL,
+                    source_url TEXT,
+                    publish_at INTEGER,
+                    raw_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE (biz, article_id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                INSERT OR REPLACE INTO articles_new
+                    (id, biz, article_id, title, author, digest, cover, link,
+                     source_url, publish_at, raw_json, created_at, updated_at)
+                SELECT id, biz, article_id, title, author, digest, cover, link,
+                       source_url, publish_at, raw_json, created_at, updated_at
+                FROM articles
+                ORDER BY updated_at
+                """
+            )
+            cur.execute("DROP TABLE articles")
+            cur.execute("ALTER TABLE articles_new RENAME TO articles")
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_articles_biz_publish
+                ON articles (biz, publish_at DESC)
+                """
+            )
 
     # Meta helpers --------------------------------------------------------
     def get_meta(self, key: str) -> Optional[str]:
@@ -278,11 +328,12 @@ class Storage(AbstractContextManager):
                          publish_at, raw_json, created_at, updated_at)
                     VALUES (:biz, :article_id, :title, :author, :digest, :cover, :link,
                             :source_url, :publish_at, :raw_json, :created_at, :updated_at)
-                    ON CONFLICT(link) DO UPDATE SET
+                    ON CONFLICT(biz, article_id) DO UPDATE SET
                         title=excluded.title,
                         author=excluded.author,
                         digest=excluded.digest,
                         cover=excluded.cover,
+                        link=excluded.link,
                         source_url=excluded.source_url,
                         publish_at=excluded.publish_at,
                         raw_json=excluded.raw_json,
