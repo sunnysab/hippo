@@ -133,6 +133,12 @@ def _is_login_error(message: str) -> bool:
     return any(hint in lowered for hint in hints)
 
 
+def _is_freq_control(message: str) -> bool:
+    lowered = message.lower()
+    hints = ("freq", "frequency", "control", "too fast", "too frequent")
+    return any(hint in lowered for hint in hints)
+
+
 def _handle_login_expired() -> bool:
     console.print("[red]登录状态可能已失效，需要重新扫码登录。[/red]")
     return typer.confirm("现在重新登录并继续同步？", default=True)
@@ -166,6 +172,7 @@ def _sync_account_pages(
     total_count: Optional[int] = None
     while True:
         attempt = 0
+        freq_attempt = 0
         while True:
             try:
                 payload = client.fetch_appmsg_publish(
@@ -183,6 +190,14 @@ def _sync_account_pages(
                         console.print("[yellow]登录未完成，断点进度已保留[/yellow]")
                         raise
                     session = _get_login_session(storage)
+                    continue
+                if _is_freq_control(str(exc)):
+                    freq_attempt += 1
+                    wait_seconds = min(5 * freq_attempt, 60)
+                    console.print(
+                        f"[yellow]触发频率控制，等待 {wait_seconds} 秒后重试[/yellow]"
+                    )
+                    time.sleep(wait_seconds)
                     continue
                 raise
             except (httpx.ReadTimeout, httpx.TimeoutException, httpx.TransportError) as exc:
