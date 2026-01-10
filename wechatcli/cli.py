@@ -1,0 +1,349 @@
+"""Typer-powered command line interface for the project."""
+
+from __future__ import annotations
+
+import json
+import random
+import time
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from typing import Optional
+
+import typer
+from rich.console import Console
+from rich.table import Table
+
+from .config import DB_PATH, DEFAULT_PAGE_SIZE, DOWNLOAD_ROOT, HOME_DIR
+from .downloader import ArticleDownloader
+from .http import MPClient, parse_appmsg_publish
+from .models import AccountCredential, LoginSession
+from .storage import Storage
+from .utils import ensure_directory
+
+app = typer.Typer(help="WeChat article exporter CLI", no_args_is_help=True, rich_markup_mode=None)
+accounts_app = typer.Typer(help="Manage stored WeChat accounts", rich_markup_mode=None)
+articles_app = typer.Typer(help="Sync, inspect, and download articles", rich_markup_mode=None)
+app.add_typer(accounts_app, name="accounts")
+app.add_typer(articles_app, name="articles")
+
+console = Console()
+
+
+class OutputFormat(str, Enum):
+    html = "html"
+    markdown = "markdown"
+    text = "text"
+
+    def __str__(self) -> str:  # pragma: no cover - click displays value
+        return self.value
+
+
+def _parse_since(value: Optional[str]) -> Optional[int]:
+    if not value:
+        return None
+    try:
+        return int(datetime.fromisoformat(value).timestamp())
+    except ValueError as exc:
+        raise typer.BadParameter("时间格式应为 YYYY-MM-DD") from exc
+
+
+def _get_login_session(storage: Storage) -> LoginSession:
+    try:
+        return storage.get_login_session()
+    except LookupError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1)
+
+
+@app.callback()
+def main_callback() -> None:
+    """Ensure required directories exist before running sub-commands."""
+    HOME_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_directory(DOWNLOAD_ROOT)
+
+
+# ---------------------------------------------------------------------------
+# Account commands
+@accounts_app.command("add")
+def add_account(
+    biz: str = typer.Option(..., prompt="fakeid", help="公众号 fakeid（searchbiz 返回）"),
+    nickname: str = typer.Option(..., prompt="昵称", help="公众号昵称"),
+    alias: Optional[str] = typer.Option(None, prompt=False, help="可选别名"),
+    round_head_img: Optional[str] = typer.Option(None, help="头像 URL，可选"),
+    set_default: bool = typer.Option(False, help="是否设置为默认账号", flag_value=True),
+) -> None:
+    credential = AccountCredential(
+        biz=biz.strip(),
+        nickname=nickname.strip(),
+        alias=(alias.strip() if alias else None),
+        round_head_img=(round_head_img.strip() if round_head_img else None),
+        uin="",
+        key="",
+        pass_ticket="",
+        is_default=set_default,
+    )
+    with Storage(DB_PATH) as storage:
+        stored = storage.upsert_account(credential)
+        if set_default:
+            storage.set_default_account(stored.biz)
+    console.print(f"[green]账号 {stored.nickname} ({stored.biz}) 已保存[/green]")
+
+
+@accounts_app.command("search")
+def search_accounts(
+    keyword: str = typer.Argument(..., help="搜索关键词"),
+    begin: int = typer.Option(0, min=0, help="起始偏移"),
+    size: int = typer.Option(5, min=1, max=20, help="返回数量"),
+) -> None:
+    with Storage(DB_PATH) as storage:
+        session = _get_login_session(storage)
+    with MPClient() as client:
+        payload = client.search_biz(session, keyword=keyword, begin=begin, count=size)
+    records = payload.get("list") or []
+    if not records:
+        console.print("[yellow]未找到匹配的公众号[/yellow]")
+        return
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("昵称")
+    table.add_column("fakeid")
+    table.add_column("别名")
+    for item in records:
+        table.add_row(item.get("nickname", "-"), item.get("fakeid", "-"), item.get("alias", "-"))
+    console.print(table)
+
+
+@accounts_app.command("list")
+def list_accounts() -> None:
+    with Storage(DB_PATH) as storage:
+        accounts = storage.list_accounts()
+    if not accounts:
+        console.print("[yellow]尚未保存任何账号，使用 `accounts add` 添加[/yellow]")
+        return
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("默认", justify="center")
+    table.add_column("昵称")
+    table.add_column("fakeid")
+    table.add_column("最近同步")
+    for account in accounts:
+        last_synced = account.last_synced_at.isoformat() if account.last_synced_at else "-"
+        table.add_row("✅" if account.is_default else "", account.nickname, account.biz, last_synced)
+    console.print(table)
+
+
+@accounts_app.command("remove")
+def remove_account(
+    biz: str = typer.Argument(..., help="要移除的账号 fakeid")
+) -> None:
+    with Storage(DB_PATH) as storage:
+        removed = storage.remove_account(biz)
+    if removed:
+        console.print(f"[green]账号 {biz} 已删除[/green]")
+    else:
+        console.print(f"[yellow]未找到账号 {biz}[/yellow]")
+
+
+@accounts_app.command("set-default")
+def set_default_account(
+    biz: str = typer.Argument(..., help="设置为默认账号的 fakeid")
+) -> None:
+    with Storage(DB_PATH) as storage:
+        storage.set_default_account(biz)
+    console.print(f"[green]{biz} 已设为默认账号[/green]")
+
+
+# ---------------------------------------------------------------------------
+# Article helpers
+@articles_app.command("sync")
+def sync_articles(
+    biz: Optional[str] = typer.Option(None, help="指定账号 fakeid，留空使用默认账号"),
+    pages: int = typer.Option(1, min=1, help="抓取的分页数量，每页默认 10 篇"),
+    page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help="每页抓取数量"),
+) -> None:
+    with Storage(DB_PATH) as storage:
+        account = storage.get_account(biz)
+        session = _get_login_session(storage)
+        console.print(f"[cyan]开始同步 {account.nickname} 的文章[/cyan]")
+        total_saved = 0
+        with MPClient() as client:
+            offset = 0
+            for _ in range(pages):
+                payload = client.fetch_appmsg_publish(
+                    session, fakeid=account.biz, begin=offset, count=page_size
+                )
+                records = parse_appmsg_publish(account.biz, payload)
+                if not records:
+                    break
+                saved = storage.save_articles(records)
+                storage.update_last_synced(account.biz)
+                total_saved += saved
+                console.print(f"  · 同步 offset={offset}，新增/更新 {saved} 篇")
+                offset += page_size
+                if len(records) < page_size:
+                    break
+        console.print(f"[green]同步完成，共写入 {total_saved} 条记录[/green]")
+
+
+@articles_app.command("list")
+def list_articles(
+    biz: Optional[str] = typer.Option(None, help="指定账号 fakeid，留空使用默认账号"),
+    limit: int = typer.Option(5, min=1, max=50, help="显示的文章数量"),
+    since: Optional[str] = typer.Option(None, help="仅显示某时间后的文章，格式 YYYY-MM-DD"),
+) -> None:
+    since_timestamp = _parse_since(since)
+    with Storage(DB_PATH) as storage:
+        account = storage.get_account(biz)
+        articles = storage.list_articles(account.biz, limit=limit, since_timestamp=since_timestamp)
+    if not articles:
+        console.print("[yellow]未找到文章，请先执行 `articles sync`[/yellow]")
+        return
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("日期")
+    table.add_column("标题")
+    table.add_column("作者")
+    table.add_column("链接")
+    for article in articles:
+        publish_date = (
+            datetime.utcfromtimestamp(article.publish_at).strftime("%Y-%m-%d")
+            if article.publish_at
+            else "-"
+        )
+        table.add_row(publish_date, article.title, article.author or "-", article.link)
+    console.print(table)
+
+
+@articles_app.command("download")
+def download_articles(
+    biz: Optional[str] = typer.Option(None, help="指定账号 fakeid，留空使用默认账号"),
+    limit: int = typer.Option(5, min=1, max=50, help="下载文章数量"),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.html, "--format", "-f", help="导出格式", show_default=True
+    ),
+    with_images: bool = typer.Option(True, help="是否下载图片", flag_value=True),
+    since: Optional[str] = typer.Option(None, help="仅下载某日期后的文章"),
+    output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
+) -> None:
+    since_timestamp = _parse_since(since)
+    with Storage(DB_PATH) as storage:
+        account = storage.get_account(biz)
+        articles = storage.list_articles(account.biz, limit=limit, since_timestamp=since_timestamp)
+    if not articles:
+        console.print("[yellow]没有可下载的文章，先执行 `articles sync`[/yellow]")
+        return
+    target_dir = ensure_directory(output or DOWNLOAD_ROOT)
+    console.print(f"[cyan]开始下载 {len(articles)} 篇文章 -> {target_dir}[/cyan]")
+    fmt_value = (
+        output_format.value
+        if isinstance(output_format, OutputFormat)
+        else str(output_format)
+    )
+    with ArticleDownloader(output_dir=target_dir) as downloader:
+        results = downloader.download_many(
+            articles,
+            fmt=fmt_value,
+            with_images=with_images,
+            account_name=account.nickname or account.biz,
+        )
+    console.print(f"[green]下载完成，生成 {len(results)} 个目录[/green]")
+
+
+@articles_app.command("download-single")
+def download_single(
+    url: str = typer.Argument(..., help="文章 URL"),
+    output_format: OutputFormat = typer.Option(OutputFormat.html, "--format", "-f", help="导出格式"),
+    with_images: bool = typer.Option(True, help="是否下载图片", flag_value=True),
+    output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
+    title: Optional[str] = typer.Option(None, help="覆盖文章标题"),
+) -> None:
+    target_dir = ensure_directory(output or DOWNLOAD_ROOT)
+    fmt_value = (
+        output_format.value
+        if isinstance(output_format, OutputFormat)
+        else str(output_format)
+    )
+    with ArticleDownloader(output_dir=target_dir) as downloader:
+        result = downloader.download_from_url(
+            url,
+            fmt=fmt_value,
+            with_images=with_images,
+            title=title,
+        )
+    console.print(f"[green]单篇文章已保存至 {result.output_path}[/green]")
+
+
+# ---------------------------------------------------------------------------
+@app.command("export-accounts")
+def export_accounts() -> None:
+    """Dump stored accounts as JSON (sensitive)."""
+    with Storage(DB_PATH) as storage:
+        accounts = storage.list_accounts()
+    payload = [
+        {
+            "biz": account.biz,
+            "nickname": account.nickname,
+            "alias": account.alias,
+            "round_head_img": account.round_head_img,
+            "uin": account.uin,
+            "key": account.key,
+            "pass_ticket": account.pass_ticket,
+            "is_default": account.is_default,
+            "last_synced_at": account.last_synced_at.isoformat()
+            if account.last_synced_at
+            else None,
+        }
+        for account in accounts
+    ]
+    console.print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+@app.command("login")
+def login(
+    timeout: int = typer.Option(300, min=30, help="扫码等待超时时间（秒）"),
+    poll_interval: int = typer.Option(2, min=1, help="轮询间隔（秒）"),
+    output: Optional[Path] = typer.Option(None, help="二维码输出目录"),
+) -> None:
+    target_dir = ensure_directory(output or (HOME_DIR / "login"))
+    sid = f"{int(time.time() * 1000)}{random.randint(100, 999)}"
+    with MPClient() as client, Storage(DB_PATH) as storage:
+        uuid_cookie = client.start_login_session(sid)
+        qrcode_path = target_dir / "qrcode.png"
+        qrcode_path.write_bytes(client.fetch_login_qrcode(uuid_cookie))
+        console.print(f"[cyan]请使用微信扫码登录，二维码已保存：{qrcode_path}[/cyan]")
+        started = time.time()
+        while True:
+            if time.time() - started > timeout:
+                raise typer.Exit(code=1)
+            resp = client.check_login_status(uuid_cookie)
+            if resp.get("base_resp", {}).get("ret") != 0:
+                console.print("[red]扫码状态获取失败，请重试[/red]")
+                raise typer.Exit(code=1)
+            status = resp.get("status")
+            if status == 0:
+                time.sleep(poll_interval)
+                continue
+            if status == 1:
+                session = client.finalize_login(uuid_cookie)
+                info = client.fetch_login_info(session)
+                session.nickname = info.get("nickname") or None
+                session.avatar = info.get("avatar") or None
+                storage.save_login_session(session)
+                console.print(
+                    f"[green]登录成功：{session.nickname or '未知账号'}[/green]"
+                )
+                return
+            if status in (2, 3):
+                qrcode_path.write_bytes(client.fetch_login_qrcode(uuid_cookie))
+                console.print("[yellow]二维码已刷新，请重新扫码[/yellow]")
+                time.sleep(poll_interval)
+                continue
+            if status in (4, 6):
+                console.print("[cyan]扫码成功，等待确认...[/cyan]")
+                time.sleep(poll_interval)
+                continue
+            if status == 5:
+                console.print("[red]该账号尚未绑定邮箱，无法登录[/red]")
+                raise typer.Exit(code=1)
+            time.sleep(poll_interval)
+
+
+__all__ = ["app"]
