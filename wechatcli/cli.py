@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import random
 import time
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -125,6 +125,10 @@ def _extract_publish_total(payload: dict) -> Optional[int]:
     if isinstance(total, str) and total.isdigit():
         return int(total)
     return None
+
+
+def _today_str() -> str:
+    return date.today().isoformat()
 
 
 def _is_login_error(message: str) -> bool:
@@ -477,8 +481,19 @@ def sync_all_articles(
             with Progress(*columns, transient=False) as progress:
                 for account in accounts:
                     resume_key = f"sync_progress:{account.biz}"
+                    complete_key = f"sync_complete:{account.biz}"
                     if reset:
                         storage.delete_meta(resume_key)
+                        storage.delete_meta(complete_key)
+                    elif storage.get_meta(complete_key) == _today_str():
+                        task_id = progress.add_task(
+                            f"同步 {account.nickname} ({account.biz})",
+                            total=0,
+                            completed=0,
+                            status="跳过(今日已完成)",
+                        )
+                        progress.update(task_id, completed=0)
+                        continue
                     task_id = progress.add_task(
                         f"同步 {account.nickname} ({account.biz})",
                         total=None,
@@ -498,6 +513,7 @@ def sync_all_articles(
                             task_id=task_id,
                         )
                         progress.update(task_id, status="成功")
+                        storage.set_meta(complete_key, _today_str())
                     except RuntimeError as exc:
                         progress.update(task_id, status="失败")
                         console.print(f"[red]同步失败：{exc}[/red]")
