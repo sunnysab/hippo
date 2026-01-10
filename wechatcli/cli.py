@@ -10,6 +10,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
+import httpx
 import typer
 from rich.console import Console
 from rich.progress import (
@@ -164,23 +165,31 @@ def _sync_account_pages(
     page_count = 0
     total_count: Optional[int] = None
     while True:
-        try:
-            payload = client.fetch_appmsg_publish(
-                session, fakeid=account.biz, begin=offset, count=page_size
-            )
-        except RuntimeError as exc:
-            if _is_login_error(str(exc)):
-                if not _handle_login_expired():
-                    console.print("[yellow]已暂停同步，断点进度已保留[/yellow]")
-                    raise typer.Exit(code=1)
-                try:
-                    login()
-                except typer.Exit:
-                    console.print("[yellow]登录未完成，断点进度已保留[/yellow]")
-                    raise
-                session = _get_login_session(storage)
-                continue
-            raise
+        attempt = 0
+        while True:
+            try:
+                payload = client.fetch_appmsg_publish(
+                    session, fakeid=account.biz, begin=offset, count=page_size
+                )
+                break
+            except RuntimeError as exc:
+                if _is_login_error(str(exc)):
+                    if not _handle_login_expired():
+                        console.print("[yellow]已暂停同步，断点进度已保留[/yellow]")
+                        raise typer.Exit(code=1)
+                    try:
+                        login()
+                    except typer.Exit:
+                        console.print("[yellow]登录未完成，断点进度已保留[/yellow]")
+                        raise
+                    session = _get_login_session(storage)
+                    continue
+                raise
+            except (httpx.ReadTimeout, httpx.TimeoutException, httpx.TransportError) as exc:
+                attempt += 1
+                if attempt >= 3:
+                    raise RuntimeError(f"网络请求超时或失败：{exc}") from exc
+                time.sleep(min(2 ** attempt, 5))
         total_count = _extract_publish_total(payload) or total_count
         if progress is not None and task_id is not None and total_count and total_count > 0:
             completed = offset if offset <= total_count else total_count
