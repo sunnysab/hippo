@@ -305,6 +305,9 @@ class ArticleDownloader(AbstractContextManager):
             return
         title, cover_local, blocks, body_markdown = _parse_markdown_blocks(markdown_content)
         local_to_orig = {local: orig for orig, local in url_map.items()}
+        content_markdown = body_markdown
+        for local_path, orig_url in local_to_orig.items():
+            content_markdown = content_markdown.replace(f"]({local_path})", f"]({orig_url})")
         cover_url = None
         if cover_local:
             cover_url = local_to_orig.get(cover_local, cover_local)
@@ -356,7 +359,7 @@ class ArticleDownloader(AbstractContextManager):
             url_token=url_token,
             title=title or article.title,
             clean_html=clean_html,
-            content_markdown=body_markdown,
+            content_markdown=content_markdown,
             content_blocks=blocks_with_urls,
             cover_url=cover_url,
             images=images,

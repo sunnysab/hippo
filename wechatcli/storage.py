@@ -867,6 +867,43 @@ class PostgresStorage(AbstractContextManager):
             )
             article_pk = cur.fetchone()[0]
 
+            cur.execute("DELETE FROM article_images WHERE article_pk = %s", (article_pk,))
+            image_id_map: dict[str, int] = {}
+            for image in images:
+                cur.execute(
+                    """
+                    INSERT INTO article_images
+                        (article_pk, position, kind, orig_url, content_type, data, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        article_pk,
+                        image.get("position", 0),
+                        image.get("kind", "inline"),
+                        image.get("orig_url"),
+                        image.get("content_type"),
+                        psycopg2.Binary(image.get("data")) if image.get("data") else None,
+                        now,
+                    ),
+                )
+                orig_url = image.get("orig_url")
+                image_id = cur.fetchone()[0]
+                if orig_url:
+                    image_id_map[str(orig_url)] = image_id
+
+            updated_blocks: list[dict] = []
+            for block in content_blocks:
+                if block.get("type") == "image":
+                    orig_url = block.get("orig_url")
+                    image_id = image_id_map.get(str(orig_url)) if orig_url else None
+                    updated = dict(block)
+                    if image_id is not None:
+                        updated["image_id"] = image_id
+                    updated_blocks.append(updated)
+                else:
+                    updated_blocks.append(block)
+
             cur.execute(
                 """
                 INSERT INTO article_content
@@ -884,35 +921,11 @@ class PostgresStorage(AbstractContextManager):
                     url_token,
                     clean_html,
                     content_markdown,
-                    psycopg2.extras.Json(content_blocks),
+                    psycopg2.extras.Json(updated_blocks),
                     now,
                     now,
                 ),
             )
-
-            cur.execute("DELETE FROM article_images WHERE article_pk = %s", (article_pk,))
-            for image in images:
-                cur.execute(
-                    """
-                    INSERT INTO article_images
-                        (article_pk, position, kind, orig_url, content_type, data, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (article_pk, orig_url) DO UPDATE SET
-                        position=EXCLUDED.position,
-                        kind=EXCLUDED.kind,
-                        content_type=EXCLUDED.content_type,
-                        data=EXCLUDED.data
-                    """,
-                    (
-                        article_pk,
-                        image.get("position", 0),
-                        image.get("kind", "inline"),
-                        image.get("orig_url"),
-                        image.get("content_type"),
-                        psycopg2.Binary(image.get("data")) if image.get("data") else None,
-                        now,
-                    ),
-                )
         self.conn.commit()
 
     def has_article_content(self, biz: str, article_id: str) -> bool:
