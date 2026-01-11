@@ -99,6 +99,9 @@ def _postprocess_markdown(markdown: str) -> str:
     lines = [line.rstrip() for line in markdown.splitlines()]
     processed: list[str] = []
     image_pattern = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
+    empty_image_pattern = re.compile(r'^!\[[^\]]*]\(\s*\)$')
+    js_void_pattern = re.compile(r'\]\(\s*javascript:void\(0\);?\s*\)', re.IGNORECASE)
+    immersive_tip = '在小说阅读器中沉浸阅读'
     prev_blank = False
     for line in lines:
         stripped = line.strip()
@@ -129,7 +132,31 @@ def _postprocess_markdown(markdown: str) -> str:
                 processed.append(part)
             continue
         processed.append(line.strip())
-    return '\n'.join(processed).strip()
+
+    cleaned: list[str] = []
+    for line in processed:
+        stripped = line.strip()
+        if stripped == immersive_tip:
+            continue
+        if empty_image_pattern.match(stripped):
+            continue
+        cleaned.append(line)
+
+    to_remove: set[int] = set()
+    for idx, line in enumerate(cleaned):
+        if js_void_pattern.search(line):
+            to_remove.add(idx)
+            if idx <= 5:
+                prev_idx = idx - 1
+                while prev_idx >= 0 and not cleaned[prev_idx].strip():
+                    prev_idx -= 1
+                if prev_idx >= 0:
+                    prev_line = cleaned[prev_idx].strip()
+                    if prev_line and not re.search(r'[#!\[\]\(\)]', prev_line):
+                        to_remove.add(prev_idx)
+
+    final_lines = [line for i, line in enumerate(cleaned) if i not in to_remove]
+    return '\n'.join(final_lines).strip()
 
 
 def _swap_markdown_image_urls(markdown: str, url_map: Dict[str, str]) -> str:
