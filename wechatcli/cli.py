@@ -155,6 +155,10 @@ def _should_skip_by_time(last_synced_at: Optional[datetime], skip_minutes: Optio
     return last_synced_at >= threshold
 
 
+def _format_last_synced(last_synced_at: Optional[datetime]) -> str:
+    return last_synced_at.isoformat(timespec="seconds") if last_synced_at else "-"
+
+
 def _is_login_error(message: str) -> bool:
     lowered = message.lower()
     hints = ("login", "token", "session", "invalid", "expire", "expired", "timeout")
@@ -466,7 +470,9 @@ def sync_articles(
     with Storage(DB_PATH) as storage:
         account = storage.get_account(biz)
         if not force and _should_skip_by_time(account.last_synced_at, skip_time):
-            console.print("[yellow]该账号近期已同步，跳过[/yellow]")
+            console.print(
+                f"[yellow]该账号近期已同步，跳过（上次同步 {_format_last_synced(account.last_synced_at)}）[/yellow]"
+            )
             return
         console.print(f"[cyan]开始同步 {account.nickname} 的文章[/cyan]")
         total_saved = 0
@@ -564,11 +570,12 @@ def sync_all_articles(
                         progress.update(task_id, completed=0)
                         continue
                     if not force and _should_skip_by_time(account.last_synced_at, skip_time):
+                        last_synced = _format_last_synced(account.last_synced_at)
                         task_id = progress.add_task(
                             f"同步 {account.nickname} ({account.biz})",
                             total=0,
                             completed=0,
-                            status="跳过(近期已同步)",
+                            status=f"跳过(近期已同步 {last_synced})",
                         )
                         progress.update(task_id, completed=0)
                         continue
