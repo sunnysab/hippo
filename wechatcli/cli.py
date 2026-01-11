@@ -477,7 +477,10 @@ def sync_articles(
                     progress=progress,
                     task_id=task_id,
                 )
-                progress.update(task_id, status="成功" if completed else "未完成")
+                status = "成功" if completed else "未完成"
+                if completed and total_saved == 0:
+                    status = "已是最新"
+                progress.update(task_id, status=status)
             except RuntimeError as exc:
                 progress.update(task_id, status="失败")
                 console.print(f"[red]同步失败：{exc}[/red]")
@@ -554,7 +557,10 @@ def sync_all_articles(
                             progress=progress,
                             task_id=task_id,
                         )
-                        progress.update(task_id, status="成功" if completed else "未完成")
+                        status = "成功" if completed else "未完成"
+                        if completed and saved == 0:
+                            status = "已是最新"
+                        progress.update(task_id, status=status)
                         if completed:
                             storage.set_meta(complete_key, _today_str())
                     except RuntimeError as exc:
