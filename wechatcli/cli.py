@@ -175,6 +175,29 @@ def _format_last_synced(last_synced_at: Optional[datetime]) -> str:
     return last_synced_at.isoformat(timespec="seconds") if last_synced_at else "-"
 
 
+def _resolve_account(storage: StorageLike, name: str) -> AccountCredential:
+    target = name.strip()
+    if not target:
+        raise LookupError("请输入公众号名称或 fakeid")
+    accounts = storage.list_accounts()
+    exact = [acc for acc in accounts if acc.biz == target]
+    if exact:
+        return exact[0]
+    lower_target = target.lower()
+    matches = [
+        acc
+        for acc in accounts
+        if (acc.nickname or "").lower() == lower_target
+        or (acc.alias or "").lower() == lower_target
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        names = ", ".join(acc.nickname or acc.biz for acc in matches)
+        raise LookupError(f"匹配到多个账号：{names}")
+    raise LookupError(f"未找到账号：{target}")
+
+
 def _is_login_error(message: str) -> bool:
     lowered = message.lower()
     hints = ("login", "token", "session", "invalid", "expire", "expired", "timeout")
@@ -666,8 +689,8 @@ def list_articles(
 
 @articles_app.command("sync")
 def sync_article_download(
-    biz: Optional[str] = typer.Option(None, help="指定账号 fakeid，留空使用默认账号"),
-    limit: int = typer.Option(5, min=1, max=50, help="下载文章数量"),
+    account: str = typer.Argument(..., help="公众号名称或 fakeid"),
+    limit: Optional[int] = typer.Option(None, min=1, max=5000, help="下载文章数量，默认全部"),
     output_format: OutputFormat = typer.Option(
         OutputFormat.html, "--format", "-f", help="导出格式", show_default=True
     ),
@@ -677,8 +700,14 @@ def sync_article_download(
 ) -> None:
     since_timestamp = _parse_since(since)
     with open_storage(DB_PATH) as storage:
-        account = storage.get_account(biz)
-        articles = storage.list_articles(account.biz, limit=limit, since_timestamp=since_timestamp)
+        try:
+            account_record = _resolve_account(storage, account)
+        except LookupError as exc:
+            typer.echo(str(exc))
+            raise typer.Exit(code=1)
+        articles = storage.list_articles(
+            account_record.biz, limit=limit, since_timestamp=since_timestamp
+        )
         if not articles:
             typer.echo("没有可下载的文章，先执行 `account sync`")
             return
@@ -694,14 +723,14 @@ def sync_article_download(
                 articles,
                 fmt=fmt_value,
                 with_images=with_images,
-                account_name=account.nickname or account.biz,
+                account_name=account_record.nickname or account_record.biz,
             )
     typer.echo(f"下载完成，生成 {len(results)} 个目录")
 
 
 @articles_app.command("sync-all")
 def sync_all_article_download(
-    limit: int = typer.Option(5, min=1, max=50, help="每个账号下载文章数量"),
+    limit: Optional[int] = typer.Option(None, min=1, max=5000, help="每个账号下载文章数量，默认全部"),
     output_format: OutputFormat = typer.Option(
         OutputFormat.html, "--format", "-f", help="导出格式", show_default=True
     ),

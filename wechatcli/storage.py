@@ -380,7 +380,7 @@ class Storage(AbstractContextManager):
         self,
         biz: str,
         *,
-        limit: int = 10,
+        limit: Optional[int] = 10,
         since_timestamp: Optional[int] = None,
     ) -> List[ArticleRecord]:
         query = "SELECT * FROM articles WHERE biz = ?"
@@ -388,8 +388,10 @@ class Storage(AbstractContextManager):
         if since_timestamp is not None:
             query += " AND (publish_at IS NULL OR publish_at >= ?)"
             params.append(since_timestamp)
-        query += " ORDER BY publish_at IS NULL, publish_at DESC, id DESC LIMIT ?"
-        params.append(limit)
+        query += " ORDER BY publish_at IS NULL, publish_at DESC, id DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
         rows = self.conn.execute(query, params).fetchall()
         return [self._row_to_article(row) for row in rows]
 
@@ -866,7 +868,7 @@ class PostgresStorage(AbstractContextManager):
         self,
         biz: str,
         *,
-        limit: int = 10,
+        limit: Optional[int] = 10,
         since_timestamp: Optional[int] = None,
     ) -> List[ArticleRecord]:
         query = "SELECT * FROM articles WHERE biz = %s"
@@ -874,8 +876,10 @@ class PostgresStorage(AbstractContextManager):
         if since_timestamp is not None:
             query += " AND (publish_at IS NULL OR publish_at >= %s)"
             params.append(since_timestamp)
-        query += " ORDER BY publish_at IS NULL, publish_at DESC, id DESC LIMIT %s"
-        params.append(limit)
+        query += " ORDER BY publish_at IS NULL, publish_at DESC, id DESC"
+        if limit is not None:
+            query += " LIMIT %s"
+            params.append(limit)
         with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             cur.execute(query, params)
             rows = cur.fetchall()
