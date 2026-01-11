@@ -361,6 +361,22 @@ class Storage(AbstractContextManager):
         rows = self.conn.execute(query, params).fetchall()
         return [self._row_to_article(row) for row in rows]
 
+    def get_existing_article_ids(self, biz: str, article_ids: Iterable[str]) -> set[str]:
+        ids = [item for item in article_ids if item]
+        if not ids:
+            return set()
+        existing: set[str] = set()
+        chunk_size = 900
+        for i in range(0, len(ids), chunk_size):
+            chunk = ids[i : i + chunk_size]
+            placeholders = ",".join(["?"] * len(chunk))
+            query = (
+                f"SELECT article_id FROM articles WHERE biz = ? AND article_id IN ({placeholders})"
+            )
+            rows = self.conn.execute(query, [biz, *chunk]).fetchall()
+            existing.update(row["article_id"] for row in rows)
+        return existing
+
     # Internal helpers ----------------------------------------------------
     @staticmethod
     def _row_to_account(row: sqlite3.Row) -> AccountCredential:

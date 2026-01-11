@@ -169,6 +169,7 @@ def _sync_account_pages(
     pages: Optional[int],
     sleep_seconds: float,
     resume_key: Optional[str] = None,
+    full_synced_hint: bool = False,
     progress: Optional[Progress] = None,
     task_id: Optional[int] = None,
 ) -> tuple[int, int, bool]:
@@ -249,6 +250,13 @@ def _sync_account_pages(
             completed = True
             break
         records = parse_appmsg_publish(account.biz, payload)
+        if full_synced_hint:
+            existing_ids = storage.get_existing_article_ids(
+                account.biz, [record.article_id for record in records]
+            )
+            if records and len(existing_ids) == len(records):
+                completed = True
+                break
         saved = storage.save_articles(records)
         storage.update_last_synced(account.biz)
         total_saved += saved
@@ -465,6 +473,7 @@ def sync_articles(
                     page_size=page_size,
                     pages=pages,
                     sleep_seconds=0,
+                    full_synced_hint=storage.get_meta(f"sync_complete:{account.biz}") is not None,
                     progress=progress,
                     task_id=task_id,
                 )
@@ -541,6 +550,7 @@ def sync_all_articles(
                             pages=None,
                             sleep_seconds=sleep_seconds,
                             resume_key=resume_key,
+                            full_synced_hint=storage.get_meta(complete_key) is not None,
                             progress=progress,
                             task_id=task_id,
                         )
