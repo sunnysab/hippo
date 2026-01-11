@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import random
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -201,7 +201,11 @@ def _enforce_exclusive_flags(force: bool, skip_minutes: Optional[int]) -> None:
 def _should_skip_by_time(last_synced_at: Optional[datetime], skip_minutes: Optional[int]) -> bool:
     if skip_minutes is None or not last_synced_at:
         return False
-    threshold = datetime.utcnow() - timedelta(minutes=skip_minutes)
+    threshold = datetime.now(timezone.utc) - timedelta(minutes=skip_minutes)
+    if last_synced_at.tzinfo is None:
+        last_synced_at = last_synced_at.replace(tzinfo=timezone.utc)
+    else:
+        last_synced_at = last_synced_at.astimezone(timezone.utc)
     return last_synced_at >= threshold
 
 
@@ -626,7 +630,7 @@ def sync_all_accounts(
                 if reset:
                     storage.delete_meta(resume_key)
                     storage.delete_meta(complete_key)
-                elif not force and storage.get_meta(complete_key) == _today_str():
+                elif skip_time is None and not force and storage.get_meta(complete_key) == _today_str():
                     progress = tqdm(
                         total=0,
                         desc=f"同步 {account.nickname} ({account.biz})",
