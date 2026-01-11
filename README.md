@@ -57,19 +57,14 @@ python -m wechatcli account set-default <biz>
 
 ## 同步文章列表
 
-### 单账号同步
+### 账号同步（文章列表）
 
 ```bash
 python -m wechatcli account sync --biz <fakeid>
-```
-
-默认按最新 -> 更早 翻页。
-
-### 全部账号同步
-
-```bash
 python -m wechatcli account sync-all
 ```
+
+默认按最新 -> 更早 翻页，写入文章列表缓存。
 
 特点：
 - 每 60 次请求强制等待 15 秒
@@ -101,8 +96,13 @@ python -m wechatcli account sync-all --skip-time 30
 ## 下载文章内容
 
 ```bash
+python -m wechatcli articles sync --biz <fakeid>
+python -m wechatcli articles sync-all
 python -m wechatcli articles download "https://mp.weixin.qq.com/..."
 ```
+
+- `articles sync` / `sync-all`：根据已同步的列表下载文章内容
+- `articles download`：直接下载单篇 URL
 
 默认输出目录：
 `~/.local/share/wechatcli/downloads/`（可通过 `WECHATCLI_HOME` 改）

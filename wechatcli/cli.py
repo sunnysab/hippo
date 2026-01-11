@@ -664,6 +664,82 @@ def list_articles(
         typer.echo(table_text)
 
 
+@articles_app.command("sync")
+def sync_article_download(
+    biz: Optional[str] = typer.Option(None, help="指定账号 fakeid，留空使用默认账号"),
+    limit: int = typer.Option(5, min=1, max=50, help="下载文章数量"),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.html, "--format", "-f", help="导出格式", show_default=True
+    ),
+    with_images: bool = typer.Option(True, help="是否下载图片", flag_value=True),
+    since: Optional[str] = typer.Option(None, help="仅下载某日期后的文章"),
+    output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
+) -> None:
+    since_timestamp = _parse_since(since)
+    with open_storage(DB_PATH) as storage:
+        account = storage.get_account(biz)
+        articles = storage.list_articles(account.biz, limit=limit, since_timestamp=since_timestamp)
+        if not articles:
+            typer.echo("没有可下载的文章，先执行 `account sync`")
+            return
+        target_dir = ensure_directory(output or DOWNLOAD_ROOT)
+        typer.echo(f"开始下载 {len(articles)} 篇文章 -> {target_dir}")
+        fmt_value = (
+            output_format.value
+            if isinstance(output_format, OutputFormat)
+            else str(output_format)
+        )
+        with ArticleDownloader(output_dir=target_dir, storage=storage) as downloader:
+            results = downloader.download_many(
+                articles,
+                fmt=fmt_value,
+                with_images=with_images,
+                account_name=account.nickname or account.biz,
+            )
+    typer.echo(f"下载完成，生成 {len(results)} 个目录")
+
+
+@articles_app.command("sync-all")
+def sync_all_article_download(
+    limit: int = typer.Option(5, min=1, max=50, help="每个账号下载文章数量"),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.html, "--format", "-f", help="导出格式", show_default=True
+    ),
+    with_images: bool = typer.Option(True, help="是否下载图片", flag_value=True),
+    since: Optional[str] = typer.Option(None, help="仅下载某日期后的文章"),
+    output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
+) -> None:
+    since_timestamp = _parse_since(since)
+    total_downloads = 0
+    with open_storage(DB_PATH) as storage:
+        accounts = storage.list_accounts()
+        if not accounts:
+            typer.echo("尚未保存任何账号，使用 `account add` 添加")
+            return
+        target_dir = ensure_directory(output or DOWNLOAD_ROOT)
+        fmt_value = (
+            output_format.value
+            if isinstance(output_format, OutputFormat)
+            else str(output_format)
+        )
+        with ArticleDownloader(output_dir=target_dir, storage=storage) as downloader:
+            for account in accounts:
+                articles = storage.list_articles(
+                    account.biz, limit=limit, since_timestamp=since_timestamp
+                )
+                if not articles:
+                    continue
+                typer.echo(f"开始下载 {len(articles)} 篇文章: {account.nickname}")
+                results = downloader.download_many(
+                    articles,
+                    fmt=fmt_value,
+                    with_images=with_images,
+                    account_name=account.nickname or account.biz,
+                )
+                total_downloads += len(results)
+    typer.echo(f"全部下载完成，生成 {total_downloads} 个目录")
+
+
 @articles_app.command("download")
 def download_article(
     url: str = typer.Argument(..., help="文章 URL"),
