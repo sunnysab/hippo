@@ -1,53 +1,209 @@
 # WeChat 文章导出 CLI (Python 版)
 
-该目录包含一个基于 [Typer](https://typer.tiangolo.com) 的命令行工具，可在终端完成公众号管理、文章同步与下载。
+基于 [Typer](https://typer.tiangolo.com) 的命令行工具，用于管理公众号、同步文章列表、下载文章内容，并支持 SQLite / PostgreSQL 存储。
 
-## 快速开始
+---
+
+## 安装与运行
+
+### 方式 A：虚拟环境 + 本地运行
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate          # Windows 使用 .venv\Scripts\activate
-pip install -r python/requirements-cli.txt
-python -m python.wechatcli --help
+pip install -r requirements-cli.txt
+python -m wechatcli --help
 ```
 
-如需安装为全局 CLI（开发模式）：
+### 方式 B：开发模式安装
 
 ```bash
 pip install -e .
 wechatcli --help
 ```
 
-> 工具支持扫码登录：执行 `login` 完成登录后，再用 `accounts search` 搜索并保存公众号（fakeid）。
+---
 
-## 常用命令
+## 登录与账号管理
+
+### 登录
 
 ```bash
-python -m python.wechatcli login                    # 扫码登录
-python -m python.wechatcli accounts search 关键词    # 搜索公众号
-python -m python.wechatcli accounts add             # 保存公众号 fakeid
-python -m python.wechatcli accounts list            # 查看已保存的公众号
-python -m python.wechatcli articles sync            # 拉取公众号文章列表
-python -m python.wechatcli articles download --limit 5 --format html
-python -m python.wechatcli articles download-single "https://mp.weixin.qq.com/..."
+python -m wechatcli login
 ```
+
+扫码后会保存登录会话（token + cookies）。
+
+### 搜索公众号（推荐交互式）
+
+```bash
+python -m wechatcli accounts search 关键词 --interactive
+```
+
+- 默认每页 10 条
+- 已添加的账号会在昵称后标注“（已添加）”
+- 交互式模式：输入 `1,3-5` 选择添加；输入 `q` 退出
+
+### 管理已保存账号
+
+```bash
+python -m wechatcli accounts list
+python -m wechatcli accounts add        # 手动保存 fakeid
+python -m wechatcli accounts remove <biz>
+python -m wechatcli accounts set-default <biz>
+```
+
+---
+
+## 同步文章列表
+
+### 单账号同步
+
+```bash
+python -m wechatcli articles sync --biz <fakeid>
+```
+
+默认按最新 -> 更早 翻页。
+
+### 全部账号同步
+
+```bash
+python -m wechatcli articles sync-all
+```
+
+特点：
+- 每 60 次请求强制等待 15 秒
+- 触发频率控制（freq control）后自动等待重试
+- 支持断点续传（按账号保存 offset）
+- 已全量完成过的账号可快速增量（遇到已存在整页直接停止）
+- 进度条展示“已抓取/总数 + 成功/未完成/失败”
+
+### 跳过逻辑
+
+默认会跳过“今日已完成”的账号。可用以下参数控制：
+
+```bash
+python -m wechatcli articles sync-all --force
+python -m wechatcli articles sync-all --skip-time 30
+```
+
+- `--force`：忽略跳过逻辑
+- `--skip-time 30`：30 分钟内同步过的账号跳过
+- 两者不可同时使用
+
+### 断点与完成标记
+
+- 断点进度：保存在 meta 表，key 为 `sync_progress:<biz>`
+- 当页为空时判定“已完成”，写入 `sync_complete:<biz>`（当天有效）
+
+---
+
+## 下载文章内容
+
+```bash
+python -m wechatcli articles download --limit 5 --format html
+python -m wechatcli articles download-single "https://mp.weixin.qq.com/..."
+```
+
+默认输出目录：
+`~/.local/share/wechatcli/downloads/`（可通过 `WECHATCLI_HOME` 改）
+
+目录结构示例：
+
+```
+downloads/<账号名或biz>/<YYYY-MM-DD-标题>/
+  ├── index.html / article.md / article.txt
+  ├── metadata.json
+  └── images/
+```
+
+---
+
+## 数据库存储
+
+### SQLite（默认）
+
+默认数据库路径：
+`~/.local/share/wechatcli/cli.db`
+
+可通过环境变量覆盖：
+
+```bash
+export WECHATCLI_HOME=/path/to/custom
+```
+
+### PostgreSQL（可选）
+
+设置环境变量即可切换：
+
+```bash
+export WECHATCLI_PG_DSN="postgresql://user:pass@host:5432/dbname"
+```
+
+程序将使用 PostgreSQL 进行读写。
+
+**PostgreSQL 时间字段使用 `timestamptz`**（带时区）。
+
+---
+
+## SQLite -> PostgreSQL 导出
+
+脚本路径：`scripts/export_to_pg.py`
+
+```bash
+python scripts/export_to_pg.py \
+  --pg-dsn "postgresql://user:pass@host:5432/dbname" \
+  --sqlite-path "/home/user/.local/share/wechatcli/cli.db"
+```
+
+可选参数：
+- `--truncate`：导出前清空 PG 表
+
+导出过程会显示进度条与速率。
+
+---
+
+## 配置与路径
+
+核心配置：`wechatcli/config.py`
+
+| 配置项 | 说明 |
+| --- | --- |
+| `WECHATCLI_HOME` | 覆盖数据目录 |
+| `WECHATCLI_PG_DSN` | 使用 PostgreSQL |
+| `DB_PATH` | SQLite DB 路径 |
+| `DOWNLOAD_ROOT` | 下载目录 |
+
+---
 
 ## 目录结构
 
 ```
-python/
-├── README.md                    # 本说明文件
-├── requirements-cli.txt         # CLI 依赖列表
-├── normalize_html.py            # HTML 清洗工具
-└── wechatcli/                   # CLI 源码（Typer + SQLite + 下载器）
+.
+├── README.md
+├── requirements-cli.txt
+├── pyproject.toml
+├── normalize_html.py
+├── scripts/
+│   └── export_to_pg.py
+└── wechatcli/
+    ├── cli.py
+    ├── config.py
+    ├── downloader.py
+    ├── http.py
+    ├── models.py
+    └── storage.py
 ```
 
-- `wechatcli/config.py`：基础配置与目录位置
-- `wechatcli/storage.py`：SQLite 封装，负责账号与文章缓存
-- `wechatcli/http.py`：对接公众号 profile 接口、拉取 HTML
-- `wechatcli/downloader.py`：写入本地文件并下载图片资源
-- `wechatcli/cli.py`：命令定义入口，可通过 `python -m python.wechatcli` 调用
+---
 
-## 数据存储
+## 常见问题
 
-CLI 默认将账号与文章缓存存放在 `~/.local/share/wechatcli/cli.db`（或对应平台路径）。下载的文章会输出到 `~/.../wechatcli/downloads/`，可通过命令行参数 `--output` 自定义。
+**Q: 频率控制怎么办？**
+A: 程序检测到 “freq control” 会自动等待重试；每 60 次请求自动等待 15 秒。
+
+**Q: 为什么显示“未完成”？**
+A: 说明这次没有遍历到空页（比如中断、限制页数等）。下次会继续断点。
+
+**Q: 只想增量同步？**
+A: 全量完成过的账号会在同步时遇到整页已存在即停止。
