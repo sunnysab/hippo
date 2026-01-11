@@ -12,8 +12,6 @@ from typing import Optional
 
 import httpx
 import typer
-from rich.console import Console
-from rich.table import Table
 from tqdm import tqdm
 
 from .config import DB_PATH, DEFAULT_PAGE_SIZE, DOWNLOAD_ROOT, HOME_DIR
@@ -23,21 +21,19 @@ from .models import AccountCredential, LoginSession
 from .storage import StorageLike, open_storage
 from .utils import ensure_directory
 
-app = typer.Typer(help="WeChat article exporter CLI", no_args_is_help=True, rich_markup_mode=None)
+app = typer.Typer(help="WeChat article exporter CLI", no_args_is_help=True)
 accounts_app = typer.Typer(
     help="Manage stored WeChat accounts",
-    rich_markup_mode=None,
     no_args_is_help=True,
 )
 articles_app = typer.Typer(
     help="Sync, inspect, and download articles",
-    rich_markup_mode=None,
     no_args_is_help=True,
 )
 app.add_typer(accounts_app, name="accounts")
 app.add_typer(articles_app, name="articles")
 
-console = Console()
+console = typer.echo
 
 
 class OutputFormat(str, Enum):
@@ -138,7 +134,22 @@ def _pbar_write(progress: Optional[tqdm], message: str) -> None:
     if progress is not None:
         progress.write(message)
     else:
-        console.print(message)
+        typer.echo(message)
+
+
+def _format_table(headers: list[str], rows: list[list[str]]) -> str:
+    if not rows:
+        return ""
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for idx, cell in enumerate(row):
+            widths[idx] = max(widths[idx], len(cell))
+    sep = "  "
+    lines = [sep.join(h.ljust(widths[idx]) for idx, h in enumerate(headers))]
+    lines.append(sep.join("-" * widths[idx] for idx in range(len(headers))))
+    for row in rows:
+        lines.append(sep.join(row[idx].ljust(widths[idx]) for idx in range(len(headers))))
+    return "\n".join(lines)
 
 
 def _enforce_exclusive_flags(force: bool, skip_minutes: Optional[int]) -> None:
@@ -170,7 +181,7 @@ def _is_freq_control(message: str) -> bool:
 
 
 def _handle_login_expired() -> bool:
-    console.print("[red]登录状态可能已失效，需要重新扫码登录。[/red]")
+    typer.echo("登录状态可能已失效，需要重新扫码登录。")
     return typer.confirm("现在重新登录并继续同步？", default=True)
 
 
@@ -215,12 +226,12 @@ def _sync_account_pages(
                 except RuntimeError as exc:
                     if _is_login_error(str(exc)):
                         if not _handle_login_expired():
-                            console.print("[yellow]已暂停同步，断点进度已保留[/yellow]")
+                            typer.echo("已暂停同步，断点进度已保留")
                             raise typer.Exit(code=1)
                         try:
                             login()
                         except typer.Exit:
-                            console.print("[yellow]登录未完成，断点进度已保留[/yellow]")
+                            typer.echo("登录未完成，断点进度已保留")
                             raise
                         session = _get_login_session(storage)
                         continue
@@ -302,7 +313,7 @@ def _get_login_session(storage: StorageLike) -> LoginSession:
     try:
         return storage.get_login_session()
     except LookupError as exc:
-        console.print(f"[red]{exc}[/red]")
+        typer.echo(str(exc))
         raise typer.Exit(code=1)
 
 
@@ -337,7 +348,7 @@ def add_account(
         stored = storage.upsert_account(credential)
         if set_default:
             storage.set_default_account(stored.biz)
-    console.print(f"[green]账号 {stored.nickname} ({stored.biz}) 已保存[/green]")
+    typer.echo(f"账号 {stored.nickname} ({stored.biz}) 已保存")
 
 
 @accounts_app.command("search")
@@ -358,25 +369,26 @@ def search_accounts(
             payload = client.search_biz(session, keyword=keyword, begin=offset, count=page_size)
         records = payload.get("list") or []
         if not records:
-            console.print("[yellow]未找到匹配的公众号[/yellow]")
+            typer.echo("未找到匹配的公众号")
             return
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("序号", justify="right")
-        table.add_column("昵称")
-        table.add_column("fakeid")
-        table.add_column("别名")
+    headers = ["序号", "昵称", "fakeid", "别名"]
+    rows: list[list[str]] = []
         for idx, item in enumerate(records, start=1):
             fakeid = item.get("fakeid", "-")
             nickname = item.get("nickname", "-")
             if fakeid in existing_biz:
                 nickname = f"{nickname}（已添加）"
-            table.add_row(
+        rows.append(
+            [
                 str(idx),
                 nickname,
                 fakeid,
                 item.get("alias", "-"),
-            )
-        console.print(table)
+            ]
+        )
+    table_text = _format_table(headers, rows)
+    if table_text:
+        typer.echo(table_text)
 
         if not interactive:
             return
@@ -392,7 +404,7 @@ def search_accounts(
             try:
                 indices = _parse_selection_indices(raw, len(records))
             except typer.BadParameter as exc:
-                console.print(f"[red]{exc}[/red]")
+                typer.echo(str(exc))
                 continue
             with open_storage(DB_PATH) as storage:
                 saved = []
@@ -410,7 +422,7 @@ def search_accounts(
                     )
                     stored = storage.upsert_account(credential)
                     saved.append(f"{stored.nickname} ({stored.biz})")
-            console.print(f"[green]已保存 {len(saved)} 个账号[/green]")
+            typer.echo(f"已保存 {len(saved)} 个账号")
         if begin is not None:
             begin += page_size
         current_page += 1
@@ -421,17 +433,16 @@ def list_accounts() -> None:
     with open_storage(DB_PATH) as storage:
         accounts = storage.list_accounts()
     if not accounts:
-        console.print("[yellow]尚未保存任何账号，使用 `accounts add` 添加[/yellow]")
+        typer.echo("尚未保存任何账号，使用 `accounts add` 添加")
         return
-    table = Table(show_header=True, header_style="bold cyan")
-    table.add_column("默认", justify="center")
-    table.add_column("昵称")
-    table.add_column("fakeid")
-    table.add_column("最近同步")
+    headers = ["默认", "昵称", "fakeid", "最近同步"]
+    rows: list[list[str]] = []
     for account in accounts:
         last_synced = account.last_synced_at.isoformat() if account.last_synced_at else "-"
-        table.add_row("✅" if account.is_default else "", account.nickname, account.biz, last_synced)
-    console.print(table)
+        rows.append(["✅" if account.is_default else "", account.nickname, account.biz, last_synced])
+    table_text = _format_table(headers, rows)
+    if table_text:
+        typer.echo(table_text)
 
 
 @accounts_app.command("remove")
@@ -441,9 +452,9 @@ def remove_account(
     with open_storage(DB_PATH) as storage:
         removed = storage.remove_account(biz)
     if removed:
-        console.print(f"[green]账号 {biz} 已删除[/green]")
+        typer.echo(f"账号 {biz} 已删除")
     else:
-        console.print(f"[yellow]未找到账号 {biz}[/yellow]")
+        typer.echo(f"未找到账号 {biz}")
 
 
 @accounts_app.command("set-default")
@@ -452,7 +463,7 @@ def set_default_account(
 ) -> None:
     with open_storage(DB_PATH) as storage:
         storage.set_default_account(biz)
-    console.print(f"[green]{biz} 已设为默认账号[/green]")
+    typer.echo(f"{biz} 已设为默认账号")
 
 
 # ---------------------------------------------------------------------------
@@ -471,11 +482,11 @@ def sync_articles(
     with open_storage(DB_PATH) as storage:
         account = storage.get_account(biz)
         if not force and _should_skip_by_time(account.last_synced_at, skip_time):
-            console.print(
-                f"[yellow]该账号近期已同步，跳过（上次同步 {_format_last_synced(account.last_synced_at)}）[/yellow]"
+            typer.echo(
+                f"该账号近期已同步，跳过（上次同步 {_format_last_synced(account.last_synced_at)}）"
             )
             return
-        console.print(f"[cyan]开始同步 {account.nickname} 的文章[/cyan]")
+        typer.echo(f"开始同步 {account.nickname} 的文章")
         total_saved = 0
         with MPClient() as client:
             progress = tqdm(
@@ -502,15 +513,15 @@ def sync_articles(
                 progress.set_postfix_str(status, refresh=True)
             except SyncInterrupted:
                 progress.set_postfix_str("未完成", refresh=True)
-                console.print("[yellow]同步中断，断点已保存[/yellow]")
+                typer.echo("同步中断，断点已保存")
                 raise typer.Exit(code=130)
             except RuntimeError as exc:
                 progress.set_postfix_str("失败", refresh=True)
-                console.print(f"[red]同步失败：{exc}[/red]")
+                typer.echo(f"同步失败：{exc}")
                 raise typer.Exit(code=1)
             finally:
                 progress.close()
-        console.print(f"[green]同步完成，共写入 {total_saved} 条记录[/green]")
+        typer.echo(f"同步完成，共写入 {total_saved} 条记录")
 
 
 @articles_app.command("sync-all")
@@ -529,7 +540,7 @@ def sync_all_articles(
     with open_storage(DB_PATH) as storage:
         accounts = storage.list_accounts()
         if not accounts:
-            console.print("[yellow]尚未保存任何账号，使用 `accounts add` 添加[/yellow]")
+            typer.echo("尚未保存任何账号，使用 `accounts add` 添加")
             return
         header = (
             "[cyan]开始同步全部账号（从最新文章往更早翻页）[/cyan]"
@@ -540,7 +551,7 @@ def sync_all_articles(
             )
         if sleep_seconds > 0:
             header += f" [cyan]每页间隔 {sleep_seconds} 秒[/cyan]"
-        console.print(header)
+        typer.echo(header)
         with MPClient() as client:
             total_saved = 0
             summary: list[tuple[str, int]] = []
@@ -601,24 +612,23 @@ def sync_all_articles(
                         storage.set_meta(complete_key, _today_str())
                 except SyncInterrupted:
                     progress.set_postfix_str("未完成", refresh=True)
-                    console.print("[yellow]同步中断，断点已保存[/yellow]")
+                    typer.echo("同步中断，断点已保存")
                     raise typer.Exit(code=130)
                 except RuntimeError as exc:
                     progress.set_postfix_str("失败", refresh=True)
-                    console.print(f"[red]同步失败：{exc}[/red]")
+                    typer.echo(f"同步失败：{exc}")
                     raise typer.Exit(code=1)
                 finally:
                     progress.close()
                 total_saved += saved
                 summary.append((account.nickname or account.biz, saved))
             if summary:
-                table = Table(show_header=True, header_style="bold green")
-                table.add_column("账号")
-                table.add_column("新增/更新", justify="right")
-                for name, saved in summary:
-                    table.add_row(name, str(saved))
-                console.print(table)
-        console.print(f"[green]全部账号同步完成，共写入 {total_saved} 条记录[/green]")
+                headers = ["账号", "新增/更新"]
+                rows = [[name, str(saved)] for name, saved in summary]
+                table_text = _format_table(headers, rows)
+                if table_text:
+                    typer.echo(table_text)
+        typer.echo(f"全部账号同步完成，共写入 {total_saved} 条记录")
 
 
 @articles_app.command("list")
@@ -632,21 +642,20 @@ def list_articles(
         account = storage.get_account(biz)
         articles = storage.list_articles(account.biz, limit=limit, since_timestamp=since_timestamp)
     if not articles:
-        console.print("[yellow]未找到文章，请先执行 `articles sync`[/yellow]")
+        typer.echo("未找到文章，请先执行 `articles sync`")
         return
-    table = Table(show_header=True, header_style="bold magenta")
-    table.add_column("日期")
-    table.add_column("标题")
-    table.add_column("作者")
-    table.add_column("链接")
+    headers = ["日期", "标题", "作者", "链接"]
+    rows: list[list[str]] = []
     for article in articles:
         publish_date = (
             datetime.utcfromtimestamp(article.publish_at).strftime("%Y-%m-%d")
             if article.publish_at
             else "-"
         )
-        table.add_row(publish_date, article.title, article.author or "-", article.link)
-    console.print(table)
+        rows.append([publish_date, article.title, article.author or "-", article.link])
+    table_text = _format_table(headers, rows)
+    if table_text:
+        typer.echo(table_text)
 
 
 @articles_app.command("download")
@@ -665,10 +674,10 @@ def download_articles(
         account = storage.get_account(biz)
         articles = storage.list_articles(account.biz, limit=limit, since_timestamp=since_timestamp)
     if not articles:
-        console.print("[yellow]没有可下载的文章，先执行 `articles sync`[/yellow]")
+        typer.echo("没有可下载的文章，先执行 `articles sync`")
         return
     target_dir = ensure_directory(output or DOWNLOAD_ROOT)
-    console.print(f"[cyan]开始下载 {len(articles)} 篇文章 -> {target_dir}[/cyan]")
+    typer.echo(f"开始下载 {len(articles)} 篇文章 -> {target_dir}")
     fmt_value = (
         output_format.value
         if isinstance(output_format, OutputFormat)
@@ -681,7 +690,7 @@ def download_articles(
             with_images=with_images,
             account_name=account.nickname or account.biz,
         )
-    console.print(f"[green]下载完成，生成 {len(results)} 个目录[/green]")
+    typer.echo(f"下载完成，生成 {len(results)} 个目录")
 
 
 @articles_app.command("download-single")
@@ -705,7 +714,7 @@ def download_single(
             with_images=with_images,
             title=title,
         )
-    console.print(f"[green]单篇文章已保存至 {result.output_path}[/green]")
+    typer.echo(f"单篇文章已保存至 {result.output_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -730,7 +739,7 @@ def export_accounts() -> None:
         }
         for account in accounts
     ]
-    console.print(json.dumps(payload, ensure_ascii=False, indent=2))
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
 @app.command("login")
@@ -745,14 +754,14 @@ def login(
         uuid_cookie = client.start_login_session(sid)
         qrcode_path = target_dir / "qrcode.png"
         qrcode_path.write_bytes(client.fetch_login_qrcode(uuid_cookie))
-        console.print(f"[cyan]请使用微信扫码登录，二维码已保存：{qrcode_path}[/cyan]")
+        typer.echo(f"请使用微信扫码登录，二维码已保存：{qrcode_path}")
         started = time.time()
         while True:
             if time.time() - started > timeout:
                 raise typer.Exit(code=1)
             resp = client.check_login_status(uuid_cookie)
             if resp.get("base_resp", {}).get("ret") != 0:
-                console.print("[red]扫码状态获取失败，请重试[/red]")
+                typer.echo("扫码状态获取失败，请重试")
                 raise typer.Exit(code=1)
             status = resp.get("status")
             if status == 0:
@@ -764,21 +773,19 @@ def login(
                 session.nickname = info.get("nickname") or None
                 session.avatar = info.get("avatar") or None
                 storage.save_login_session(session)
-                console.print(
-                    f"[green]登录成功：{session.nickname or '未知账号'}[/green]"
-                )
+                typer.echo(f"登录成功：{session.nickname or '未知账号'}")
                 return
             if status in (2, 3):
                 qrcode_path.write_bytes(client.fetch_login_qrcode(uuid_cookie))
-                console.print("[yellow]二维码已刷新，请重新扫码[/yellow]")
+                typer.echo("二维码已刷新，请重新扫码")
                 time.sleep(poll_interval)
                 continue
             if status in (4, 6):
-                console.print("[cyan]扫码成功，等待确认...[/cyan]")
+                typer.echo("扫码成功，等待确认...")
                 time.sleep(poll_interval)
                 continue
             if status == 5:
-                console.print("[red]该账号尚未绑定邮箱，无法登录[/red]")
+                typer.echo("该账号尚未绑定邮箱，无法登录")
                 raise typer.Exit(code=1)
             time.sleep(poll_interval)
 
