@@ -163,9 +163,10 @@ class ArticleDownloader(AbstractContextManager):
     ) -> DownloadResult:
         raw_html = self.client.fetch_article_html(url)
         inferred_title = title or _extract_title(raw_html) or "WeChat Article"
+        token = _extract_url_token(url)
         stub = ArticleRecord(
             biz="adhoc",
-            article_id=slugify(inferred_title),
+            article_id=token or slugify(inferred_title),
             title=inferred_title,
             author=None,
             digest=None,
