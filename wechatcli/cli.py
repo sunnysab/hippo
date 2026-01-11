@@ -35,7 +35,6 @@ articles_app = typer.Typer(
 app.add_typer(accounts_app, name="account")
 app.add_typer(articles_app, name="articles")
 
-console = typer.echo
 
 
 class OutputFormat(str, Enum):
@@ -682,7 +681,9 @@ def download_article(
         if isinstance(output_format, OutputFormat)
         else str(output_format)
     )
-    with ArticleDownloader(output_dir=target_dir) as downloader:
+    with open_storage(DB_PATH) as storage, ArticleDownloader(
+        output_dir=target_dir, storage=storage
+    ) as downloader:
         result = downloader.download_from_url(
             url,
             fmt=fmt_value,
@@ -696,7 +697,7 @@ def download_article(
 @app.command("export-accounts")
 def export_accounts() -> None:
     """Dump stored accounts as JSON (sensitive)."""
-    with Storage(DB_PATH) as storage:
+    with open_storage(DB_PATH) as storage:
         accounts = storage.list_accounts()
     payload = [
         {

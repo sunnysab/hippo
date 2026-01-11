@@ -507,10 +507,30 @@ class PostgresStorage(AbstractContextManager):
                 )
                 """
             )
+            cur.execute("ALTER TABLE articles ADD COLUMN IF NOT EXISTS url_token TEXT")
+            cur.execute("ALTER TABLE articles ADD COLUMN IF NOT EXISTS clean_html TEXT")
+            cur.execute("ALTER TABLE articles ADD COLUMN IF NOT EXISTS content_markdown TEXT")
+            cur.execute("ALTER TABLE articles ADD COLUMN IF NOT EXISTS content_json JSONB")
+            cur.execute("ALTER TABLE articles ADD COLUMN IF NOT EXISTS cover_image_id INTEGER")
             cur.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_articles_biz_publish
                 ON articles (biz, publish_at DESC)
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS article_images (
+                    id SERIAL PRIMARY KEY,
+                    article_pk INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+                    position INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    orig_url TEXT,
+                    content_type TEXT,
+                    data BYTEA,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    UNIQUE (article_pk, orig_url)
+                )
                 """
             )
             cur.execute(
@@ -725,6 +745,122 @@ class PostgresStorage(AbstractContextManager):
                 inserted += cur.rowcount
         self.conn.commit()
         return inserted
+
+    def save_article_content(
+        self,
+        article: ArticleRecord,
+        *,
+        url_token: Optional[str],
+        title: str,
+        clean_html: str,
+        content_markdown: str,
+        content_blocks: list[dict],
+        cover_url: Optional[str],
+        images: list[dict],
+    ) -> None:
+        now = _utc_now_dt()
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO articles (
+                    biz, article_id, title, author, digest, cover, link, source_url,
+                    publish_at, raw_json, created_at, updated_at, url_token,
+                    clean_html, content_markdown, content_json, cover_image_id
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s
+                )
+                ON CONFLICT (biz, article_id) DO UPDATE SET
+                    title=EXCLUDED.title,
+                    author=EXCLUDED.author,
+                    digest=EXCLUDED.digest,
+                    cover=EXCLUDED.cover,
+                    link=EXCLUDED.link,
+                    source_url=EXCLUDED.source_url,
+                    publish_at=EXCLUDED.publish_at,
+                    raw_json=EXCLUDED.raw_json,
+                    updated_at=EXCLUDED.updated_at,
+                    url_token=EXCLUDED.url_token,
+                    clean_html=EXCLUDED.clean_html,
+                    content_markdown=EXCLUDED.content_markdown,
+                    content_json=EXCLUDED.content_json,
+                    cover_image_id=EXCLUDED.cover_image_id
+                RETURNING id
+                """,
+                (
+                    article.biz,
+                    article.article_id,
+                    title,
+                    article.author,
+                    article.digest,
+                    cover_url,
+                    article.link,
+                    article.source_url,
+                    article.publish_at,
+                    json.dumps(article.raw, ensure_ascii=False),
+                    now,
+                    now,
+                    url_token,
+                    clean_html,
+                    content_markdown,
+                    None,
+                    None,
+                ),
+            )
+            article_pk = cur.fetchone()[0]
+
+            cur.execute("DELETE FROM article_images WHERE article_pk = %s", (article_pk,))
+            image_id_map: dict[str, int] = {}
+            for image in images:
+                cur.execute(
+                    """
+                    INSERT INTO article_images
+                        (article_pk, position, kind, orig_url, content_type, data, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (article_pk, orig_url) DO UPDATE SET
+                        position=EXCLUDED.position,
+                        kind=EXCLUDED.kind,
+                        content_type=EXCLUDED.content_type,
+                        data=EXCLUDED.data
+                    RETURNING id
+                    """,
+                    (
+                        article_pk,
+                        image.get("position", 0),
+                        image.get("kind", "inline"),
+                        image.get("orig_url"),
+                        image.get("content_type"),
+                        psycopg2.Binary(image.get("data")) if image.get("data") else None,
+                        now,
+                    ),
+                )
+                image_id_map[image.get("orig_url")] = cur.fetchone()[0]
+
+            blocks_with_ids: list[dict] = []
+            for block in content_blocks:
+                if block.get("type") == "image":
+                    orig_url = block.get("orig_url")
+                    image_id = image_id_map.get(orig_url)
+                    updated = dict(block)
+                    updated["image_id"] = image_id
+                    blocks_with_ids.append(updated)
+                else:
+                    blocks_with_ids.append(block)
+
+            cover_image_id = image_id_map.get(cover_url) if cover_url else None
+            cur.execute(
+                """
+                UPDATE articles
+                SET content_json = %s,
+                    cover_image_id = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (psycopg2.extras.Json(blocks_with_ids), cover_image_id, now, article_pk),
+            )
+        self.conn.commit()
 
     def list_articles(
         self,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import re
+from typing import Dict, Tuple
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Iterable, List, Optional
@@ -22,6 +23,7 @@ except ImportError:  # pragma: no cover - fallback for running inside python/
 from .config import DOWNLOAD_ROOT
 from .http import MPClient
 from .models import ArticleRecord, DownloadResult
+from .storage import StorageLike
 from .utils import ensure_directory, slugify, timestamp_to_datestr
 
 _FORMAT_EXTENSIONS = {
@@ -32,16 +34,92 @@ _FORMAT_EXTENSIONS = {
 _URL_PATTERN = re.compile(r"url\((?P<quote>[\"']?)(?P<url>[^\"')]+)(?P=quote)\)", re.IGNORECASE)
 
 
+def _extract_url_token(url: str) -> Optional[str]:
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return None
+    path = parsed.path or ""
+    if "/s/" in path:
+        token = path.split("/s/", 1)[1]
+        if token:
+            return token.split("?", 1)[0]
+    return None
+
+
+def _parse_markdown_blocks(markdown: str) -> Tuple[Optional[str], Optional[str], list[dict], str]:
+    lines = markdown.splitlines()
+    title: Optional[str] = None
+    cover_local: Optional[str] = None
+    blocks: list[dict] = []
+    body_lines: list[str] = []
+    paragraph: list[str] = []
+    image_pattern = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+    heading_pattern = re.compile(r"^(#{1,6})\s+(.*)$")
+    link_pattern = re.compile(r"^[*-]\s+(https?://\S+)$")
+
+    def flush_paragraph() -> None:
+        nonlocal paragraph
+        if paragraph:
+            text = " ".join(paragraph).strip()
+            if text:
+                blocks.append({"type": "paragraph", "text": text})
+            paragraph = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            flush_paragraph()
+            if body_lines and body_lines[-1] != "":
+                body_lines.append("")
+            continue
+        image_match = image_pattern.fullmatch(stripped)
+        if image_match:
+            flush_paragraph()
+            alt, url = image_match.groups()
+            if cover_local is None and not blocks and not body_lines and title is None:
+                cover_local = url
+            else:
+                blocks.append({"type": "image", "alt": alt, "local_path": url})
+                body_lines.append(f"![{alt}]({url})")
+            continue
+        heading_match = heading_pattern.match(stripped)
+        if heading_match:
+            flush_paragraph()
+            level = len(heading_match.group(1))
+            text = heading_match.group(2).strip()
+            if title is None and level == 1:
+                title = text
+            else:
+                blocks.append({"type": "heading", "level": level, "text": text})
+                body_lines.append(stripped)
+            continue
+        link_match = link_pattern.match(stripped)
+        if link_match:
+            flush_paragraph()
+            url = link_match.group(1)
+            blocks.append({"type": "link", "text": url, "href": url})
+            body_lines.append(stripped)
+            continue
+        paragraph.append(stripped)
+        body_lines.append(stripped)
+    flush_paragraph()
+    body_markdown = "\n".join(body_lines).strip()
+    return title, cover_local, blocks, body_markdown
+
+
 class ArticleDownloader(AbstractContextManager):
     def __init__(
         self,
         *,
         client: Optional[MPClient] = None,
         output_dir: Optional[Path] = None,
+        storage: Optional[StorageLike] = None,
     ) -> None:
         self._managed_client = client is None
         self.client = client or MPClient()
         self.output_dir = ensure_directory(output_dir or DOWNLOAD_ROOT)
+        self.storage = storage
 
     def __enter__(self) -> "ArticleDownloader":
         return self
@@ -123,7 +201,8 @@ class ArticleDownloader(AbstractContextManager):
         )
         target_dir = ensure_directory(self.output_dir / account_segment / article_segment)
 
-        normalized_html = normalize_html(raw_html, fmt="html")
+        clean_html = normalize_html(raw_html, fmt="html")
+        normalized_html = clean_html
         asset_count = 0
         url_map: dict[str, str] = {}
         if with_images:
@@ -135,7 +214,9 @@ class ArticleDownloader(AbstractContextManager):
         output_path.write_text(normalized_html, encoding="utf-8")
 
         markdown_path = target_dir / _FORMAT_EXTENSIONS["markdown"]
-        markdown_content = normalize_html(raw_html, fmt="markdown", markdown_image_map=url_map)
+        markdown_content = normalize_html(
+            raw_html, fmt="markdown", markdown_image_map=url_map
+        )
         markdown_path.write_text(markdown_content, encoding="utf-8")
 
         text_path = None
@@ -161,7 +242,86 @@ class ArticleDownloader(AbstractContextManager):
         (target_dir / "metadata.json").write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        self._store_article_pg(
+            article=article,
+            clean_html=clean_html,
+            markdown_content=markdown_content,
+            target_dir=target_dir,
+            url_map=url_map,
+        )
         return DownloadResult(article=article, output_path=str(output_path), asset_count=asset_count)
+
+    def _store_article_pg(
+        self,
+        *,
+        article: ArticleRecord,
+        clean_html: str,
+        markdown_content: str,
+        target_dir: Path,
+        url_map: dict[str, str],
+    ) -> None:
+        if not self.storage:
+            return
+        if not hasattr(self.storage, "save_article_content"):
+            return
+        title, cover_local, blocks, body_markdown = _parse_markdown_blocks(markdown_content)
+        local_to_orig = {local: orig for orig, local in url_map.items()}
+        cover_url = None
+        if cover_local:
+            cover_url = local_to_orig.get(cover_local, cover_local)
+        elif article.cover:
+            cover_url = article.cover
+        images: list[dict] = []
+        image_positions: list[tuple[str, str]] = []
+        if cover_local:
+            image_positions.append(("cover", cover_local))
+        for block in blocks:
+            if block.get("type") == "image":
+                image_positions.append(("inline", block.get("local_path")))
+        position = 0
+        for kind, local_path in image_positions:
+            if not local_path:
+                continue
+            orig_url = local_to_orig.get(local_path, local_path)
+            file_path = target_dir / local_path
+            if not file_path.exists():
+                continue
+            data = file_path.read_bytes()
+            content_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+            images.append(
+                {
+                    "orig_url": orig_url,
+                    "kind": kind,
+                    "position": position,
+                    "content_type": content_type,
+                    "data": data,
+                }
+            )
+            position += 1
+
+        url_token = _extract_url_token(article.link)
+        blocks_with_urls: list[dict] = []
+        for block in blocks:
+            if block.get("type") == "image":
+                local_path = block.get("local_path")
+                orig_url = local_to_orig.get(local_path, local_path)
+                updated = dict(block)
+                updated.pop("local_path", None)
+                updated["orig_url"] = orig_url
+                blocks_with_urls.append(updated)
+            else:
+                blocks_with_urls.append(block)
+
+        self.storage.save_article_content(
+            article,
+            url_token=url_token,
+            title=title or article.title,
+            clean_html=clean_html,
+            content_markdown=body_markdown,
+            content_blocks=blocks_with_urls,
+            cover_url=cover_url,
+            images=images,
+        )
 
     def _download_images(
         self, html: str, target_dir: Path, *, referer: str
