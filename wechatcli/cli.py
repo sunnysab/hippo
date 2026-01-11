@@ -203,7 +203,7 @@ def _sync_account_pages(
         saved_offset = storage.get_meta(resume_key)
         if saved_offset and saved_offset.isdigit():
             offset = int(saved_offset)
-            message = f"[yellow]检测到断点进度，继续 {account.nickname} offset={offset}[/yellow]"
+            message = f"检测到断点进度，继续 {account.nickname} offset={offset}"
             _pbar_write(progress, message)
     if progress is not None and offset > 0:
         progress.n = offset
@@ -241,7 +241,7 @@ def _sync_account_pages(
                             wait_seconds = 15
                         else:
                             wait_seconds = min(15 + 5 * (freq_attempt - 1), 60)
-                        message = f"[yellow]触发频率控制，等待 {wait_seconds} 秒后重试[/yellow]"
+                        message = f"触发频率控制，等待 {wait_seconds} 秒后重试"
                         _pbar_write(progress, message)
                         time.sleep(wait_seconds)
                         continue
@@ -253,7 +253,7 @@ def _sync_account_pages(
                     time.sleep(min(2 ** attempt, 5))
             request_count += 1
             if request_count % 60 == 0:
-                message = "[yellow]达到 60 次请求，等待 15 秒[/yellow]"
+                message = "达到 60 次请求，等待 15 秒"
                 _pbar_write(progress, message)
                 time.sleep(15)
             publish_page = _extract_publish_page(payload)
@@ -298,7 +298,7 @@ def _sync_account_pages(
             if sleep_seconds > 0:
                 time.sleep(sleep_seconds)
         except KeyboardInterrupt as exc:
-            message = f"[yellow]检测到中断，已保存断点：{account.nickname}[/yellow]"
+            message = f"检测到中断，已保存断点：{account.nickname}"
             _pbar_write(progress, message)
             raise SyncInterrupted() from exc
     if resume_key and completed:
@@ -542,15 +542,11 @@ def sync_all_articles(
         if not accounts:
             typer.echo("尚未保存任何账号，使用 `accounts add` 添加")
             return
-        header = (
-            "[cyan]开始同步全部账号（从最新文章往更早翻页）[/cyan]"
-        )
+        header = "开始同步全部账号（从最新文章往更早翻页）"
         if reset:
-            header = (
-                "[cyan]开始同步全部账号（重置断点，从最新文章往更早翻页）[/cyan]"
-            )
+            header = "开始同步全部账号（重置断点，从最新文章往更早翻页）"
         if sleep_seconds > 0:
-            header += f" [cyan]每页间隔 {sleep_seconds} 秒[/cyan]"
+            header += f" 每页间隔 {sleep_seconds} 秒"
         typer.echo(header)
         with MPClient() as client:
             total_saved = 0
