@@ -13,7 +13,13 @@ from typing import Iterable
 
 import psycopg2
 import psycopg2.extras
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -172,18 +178,19 @@ def main() -> int:
             TextColumn("{task.description}"),
             BarColumn(),
             TextColumn("{task.completed}/{task.total}"),
+            TextColumn("{task.fields[rate]}"),
             TimeElapsedColumn(),
         ]
         with Progress(*progress_columns) as progress, sqlite_conn:
-            meta_task = progress.add_task("导出 meta", total=total_meta)
-            account_task = progress.add_task("导出 accounts", total=total_accounts)
-            login_task = progress.add_task("导出 login_sessions", total=total_logins)
-            article_task = progress.add_task("导出 articles", total=total_articles)
+            meta_task = progress.add_task("导出 meta", total=total_meta, rate="")
+            account_task = progress.add_task("导出 accounts", total=total_accounts, rate="")
+            login_task = progress.add_task("导出 login_sessions", total=total_logins, rate="")
+            article_task = progress.add_task("导出 articles", total=total_articles, rate="")
 
             if total_meta:
                 meta_rows = sqlite_conn.execute("SELECT key, value FROM meta").fetchall()
                 export_meta(pg_conn, [(row["key"], row["value"]) for row in meta_rows])
-                progress.update(meta_task, completed=total_meta)
+                progress.update(meta_task, completed=total_meta, rate=f"{total_meta}/s")
 
             if total_accounts:
                 account_rows = sqlite_conn.execute("SELECT * FROM accounts").fetchall()
@@ -206,7 +213,7 @@ def main() -> int:
                         for row in account_rows
                     ],
                 )
-                progress.update(account_task, completed=total_accounts)
+                progress.update(account_task, completed=total_accounts, rate=f"{total_accounts}/s")
 
             if total_logins:
                 login_rows = sqlite_conn.execute("SELECT * FROM login_sessions").fetchall()
@@ -226,7 +233,7 @@ def main() -> int:
                         for row in login_rows
                     ],
                 )
-                progress.update(login_task, completed=total_logins)
+                progress.update(login_task, completed=total_logins, rate=f"{total_logins}/s")
 
             if total_articles:
                 article_cursor = sqlite_conn.execute("SELECT * FROM articles")
@@ -254,7 +261,10 @@ def main() -> int:
                             for row in batch
                         ],
                     )
-                    progress.advance(article_task, len(batch))
+                    completed = progress.tasks[article_task].completed + len(batch)
+                    elapsed = progress.tasks[article_task].elapsed or 0.0
+                    rate = f"{int(completed / elapsed)}/s" if elapsed > 0 else "-"
+                    progress.update(article_task, completed=completed, rate=rate)
 
         pg_conn.commit()
     finally:
