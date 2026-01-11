@@ -143,6 +143,29 @@ export WECHATCLI_PG_DSN="postgresql://user:pass@host:5432/dbname"
 
 **PostgreSQL 时间字段使用 `timestamptz`**（带时区）。
 
+### PostgreSQL 文章内容与图片存储
+
+当设置 `WECHATCLI_PG_DSN` 时，`articles download` 会将文章内容与图片写入 PG：
+
+- `articles` 表会保存：
+  - `url_token`（文章 URL 中 `/s/<token>`）
+  - `clean_html`（清理后的正文 HTML，图片仍为原始 URL）
+  - `content_markdown`（正文 Markdown，不含封面图与标题）
+  - `content_json`（图文混排的 blocks）
+  - `cover_image_id`（封面图对应的图片表记录）
+- `article_images` 表保存图片二进制（`BYTEA`），PG 会自动 TOAST 压缩
+
+`content_json` 的 block 结构示例：
+
+```json
+[
+  {"type": "heading", "level": 1, "text": "标题"},
+  {"type": "paragraph", "text": "正文段落"},
+  {"type": "image", "kind": "inline", "orig_url": "https://...", "image_id": 123},
+  {"type": "link", "text": "https://...", "href": "https://..."}
+]
+```
+
 ---
 
 ## SQLite -> PostgreSQL 导出
