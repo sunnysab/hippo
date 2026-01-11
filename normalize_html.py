@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
-from typing import Tuple
+from typing import Dict, Tuple
 
 from bs4 import BeautifulSoup
 from markdownify import markdownify
@@ -94,7 +95,42 @@ def _render_html(soup: BeautifulSoup, js_article: BeautifulSoup) -> str:
     )
 
 
-def normalize_html(raw_html: str, fmt: str = 'html') -> str:
+def _postprocess_markdown(markdown: str) -> str:
+    lines = [line.rstrip() for line in markdown.splitlines()]
+    processed: list[str] = []
+    image_pattern = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
+    prev_blank = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if prev_blank:
+                continue
+            prev_blank = True
+            processed.append('')
+            continue
+        prev_blank = False
+        match = image_pattern.fullmatch(stripped)
+        if match:
+            alt, url = match.groups()
+            processed.append(f'![{alt}]({url})')
+        else:
+            processed.append(line.strip())
+    return '\n'.join(processed).strip()
+
+
+def _swap_markdown_image_urls(markdown: str, url_map: Dict[str, str]) -> str:
+    if not url_map:
+        return markdown
+    def replacer(match: re.Match[str]) -> str:
+        alt, url = match.group(1), match.group(2)
+        local = url_map.get(url)
+        if local:
+            return f'![{alt}]({local})'
+        return match.group(0)
+    return re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', replacer, markdown)
+
+
+def normalize_html(raw_html: str, fmt: str = 'html', *, markdown_image_map: Dict[str, str] | None = None) -> str:
     soup, js_article = _prepare_dom(raw_html)
 
     if fmt == 'text':
@@ -106,7 +142,10 @@ def normalize_html(raw_html: str, fmt: str = 'html') -> str:
         return _render_html(soup, js_article)
     if fmt == 'markdown':
         cleaned_html = _render_html(soup, js_article)
-        return markdownify(cleaned_html, heading_style='ATX')
+        markdown = markdownify(cleaned_html, heading_style='ATX')
+        if markdown_image_map:
+            markdown = _swap_markdown_image_urls(markdown, markdown_image_map)
+        return _postprocess_markdown(markdown)
     raise ValueError(f'Unsupported format: {fmt}')
 
 

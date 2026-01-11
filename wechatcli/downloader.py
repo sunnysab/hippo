@@ -125,8 +125,9 @@ class ArticleDownloader(AbstractContextManager):
 
         normalized_html = normalize_html(raw_html, fmt="html")
         asset_count = 0
+        url_map: dict[str, str] = {}
         if with_images:
-            normalized_html, asset_count = self._download_images(
+            normalized_html, asset_count, url_map = self._download_images(
                 normalized_html, target_dir, referer=article.link
             )
 
@@ -134,7 +135,7 @@ class ArticleDownloader(AbstractContextManager):
         output_path.write_text(normalized_html, encoding="utf-8")
 
         markdown_path = target_dir / _FORMAT_EXTENSIONS["markdown"]
-        markdown_content = normalize_html(raw_html, fmt="markdown")
+        markdown_content = normalize_html(raw_html, fmt="markdown", markdown_image_map=url_map)
         markdown_path.write_text(markdown_content, encoding="utf-8")
 
         text_path = None
@@ -162,7 +163,9 @@ class ArticleDownloader(AbstractContextManager):
         )
         return DownloadResult(article=article, output_path=str(output_path), asset_count=asset_count)
 
-    def _download_images(self, html: str, target_dir: Path, *, referer: str) -> tuple[str, int]:
+    def _download_images(
+        self, html: str, target_dir: Path, *, referer: str
+    ) -> tuple[str, int, dict[str, str]]:
         soup = BeautifulSoup(html, "html.parser")
         images_dir = ensure_directory(target_dir / "images")
         count = 0
@@ -217,7 +220,7 @@ class ArticleDownloader(AbstractContextManager):
                 continue
             style_tag.string.replace_with(rewrite_css_urls(style_tag.string))
 
-        return soup.decode(), count
+        return soup.decode(), count, url_map
 
 
 # Helper functions ---------------------------------------------------------
