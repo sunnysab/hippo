@@ -27,7 +27,7 @@ from .config import DB_PATH, DEFAULT_PAGE_SIZE, DOWNLOAD_ROOT, HOME_DIR
 from .downloader import ArticleDownloader
 from .http import MPClient, parse_appmsg_publish
 from .models import AccountCredential, LoginSession
-from .storage import Storage
+from .storage import StorageLike, open_storage
 from .utils import ensure_directory
 
 app = typer.Typer(help="WeChat article exporter CLI", no_args_is_help=True, rich_markup_mode=None)
@@ -178,7 +178,7 @@ def _handle_login_expired() -> bool:
 
 def _sync_account_pages(
     *,
-    storage: Storage,
+    storage: StorageLike,
     client: MPClient,
     account: AccountCredential,
     page_size: int,
@@ -297,7 +297,7 @@ def _sync_account_pages(
     return total_saved, page_count, completed
 
 
-def _get_login_session(storage: Storage) -> LoginSession:
+def _get_login_session(storage: StorageLike) -> LoginSession:
     try:
         return storage.get_login_session()
     except LookupError as exc:
@@ -332,7 +332,7 @@ def add_account(
         pass_ticket="",
         is_default=set_default,
     )
-    with Storage(DB_PATH) as storage:
+    with open_storage(DB_PATH) as storage:
         stored = storage.upsert_account(credential)
         if set_default:
             storage.set_default_account(stored.biz)
@@ -346,7 +346,7 @@ def search_accounts(
     begin: Optional[int] = typer.Option(None, min=0, help="起始偏移，优先于分页"),
     interactive: bool = typer.Option(False, help="交互式选择并添加账号", flag_value=True),
 ) -> None:
-    with Storage(DB_PATH) as storage:
+    with open_storage(DB_PATH) as storage:
         session = _get_login_session(storage)
         existing_biz = {account.biz for account in storage.list_accounts()}
     page_size = 10
@@ -393,7 +393,7 @@ def search_accounts(
             except typer.BadParameter as exc:
                 console.print(f"[red]{exc}[/red]")
                 continue
-            with Storage(DB_PATH) as storage:
+            with open_storage(DB_PATH) as storage:
                 saved = []
                 for idx in indices:
                     item = records[idx]
@@ -417,7 +417,7 @@ def search_accounts(
 
 @accounts_app.command("list")
 def list_accounts() -> None:
-    with Storage(DB_PATH) as storage:
+    with open_storage(DB_PATH) as storage:
         accounts = storage.list_accounts()
     if not accounts:
         console.print("[yellow]尚未保存任何账号，使用 `accounts add` 添加[/yellow]")
@@ -437,7 +437,7 @@ def list_accounts() -> None:
 def remove_account(
     biz: str = typer.Argument(..., help="要移除的账号 fakeid")
 ) -> None:
-    with Storage(DB_PATH) as storage:
+    with open_storage(DB_PATH) as storage:
         removed = storage.remove_account(biz)
     if removed:
         console.print(f"[green]账号 {biz} 已删除[/green]")
@@ -449,7 +449,7 @@ def remove_account(
 def set_default_account(
     biz: str = typer.Argument(..., help="设置为默认账号的 fakeid")
 ) -> None:
-    with Storage(DB_PATH) as storage:
+    with open_storage(DB_PATH) as storage:
         storage.set_default_account(biz)
     console.print(f"[green]{biz} 已设为默认账号[/green]")
 
@@ -467,7 +467,7 @@ def sync_articles(
     ),
 ) -> None:
     _enforce_exclusive_flags(force, skip_time)
-    with Storage(DB_PATH) as storage:
+    with open_storage(DB_PATH) as storage:
         account = storage.get_account(biz)
         if not force and _should_skip_by_time(account.last_synced_at, skip_time):
             console.print(
@@ -527,7 +527,7 @@ def sync_all_articles(
     ),
 ) -> None:
     _enforce_exclusive_flags(force, skip_time)
-    with Storage(DB_PATH) as storage:
+    with open_storage(DB_PATH) as storage:
         accounts = storage.list_accounts()
         if not accounts:
             console.print("[yellow]尚未保存任何账号，使用 `accounts add` 添加[/yellow]")
@@ -627,7 +627,7 @@ def list_articles(
     since: Optional[str] = typer.Option(None, help="仅显示某时间后的文章，格式 YYYY-MM-DD"),
 ) -> None:
     since_timestamp = _parse_since(since)
-    with Storage(DB_PATH) as storage:
+    with open_storage(DB_PATH) as storage:
         account = storage.get_account(biz)
         articles = storage.list_articles(account.biz, limit=limit, since_timestamp=since_timestamp)
     if not articles:
@@ -660,7 +660,7 @@ def download_articles(
     output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
 ) -> None:
     since_timestamp = _parse_since(since)
-    with Storage(DB_PATH) as storage:
+    with open_storage(DB_PATH) as storage:
         account = storage.get_account(biz)
         articles = storage.list_articles(account.biz, limit=limit, since_timestamp=since_timestamp)
     if not articles:
@@ -740,7 +740,7 @@ def login(
 ) -> None:
     target_dir = ensure_directory(output or (HOME_DIR / "login"))
     sid = f"{int(time.time() * 1000)}{random.randint(100, 999)}"
-    with MPClient() as client, Storage(DB_PATH) as storage:
+    with MPClient() as client, open_storage(DB_PATH) as storage:
         uuid_cookie = client.start_login_session(sid)
         qrcode_path = target_dir / "qrcode.png"
         qrcode_path.write_bytes(client.fetch_login_qrcode(uuid_cookie))
