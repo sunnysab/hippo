@@ -12,6 +12,7 @@ from typing import Optional
 
 import httpx
 import typer
+import click
 from tqdm import tqdm
 
 from .config import DB_PATH, DEFAULT_PAGE_SIZE, DOWNLOAD_ROOT, HOME_DIR
@@ -32,6 +33,39 @@ articles_app = typer.Typer(
     no_args_is_help=True,
     rich_markup_mode=None,
 )
+
+
+def _fix_click_option_flags(command: click.Command) -> None:
+    for param in getattr(command, "params", []):
+        if isinstance(param, click.Option):
+            if param.is_flag and not isinstance(param.type, click.types.BoolParamType):
+                param.is_flag = False
+                param.flag_value = None
+    for subcommand in getattr(command, "commands", {}).values():
+        _fix_click_option_flags(subcommand)
+
+
+def _patch_click_for_typer() -> None:
+    try:
+        from click.core import Parameter
+    except Exception:
+        return
+    if getattr(Parameter.make_metavar, "__defaults__", None):
+        return
+
+    original = Parameter.make_metavar
+
+    def _make_metavar(self, ctx=None):  # type: ignore[override]
+        return original(self, ctx)
+
+    Parameter.make_metavar = _make_metavar  # type: ignore[assignment]
+
+
+def run() -> None:
+    _patch_click_for_typer()
+    command = typer.main.get_command(app)
+    _fix_click_option_flags(command)
+    command()
 app.add_typer(accounts_app, name="account")
 app.add_typer(articles_app, name="articles")
 

@@ -1,6 +1,6 @@
 """Entry point for ``python -m wechatcli``."""
 
-from .cli import app
+from .cli import run
 
 if __name__ == "__main__":
-    app()
+    run()
