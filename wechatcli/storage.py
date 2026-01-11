@@ -827,106 +827,116 @@ class PostgresStorage(AbstractContextManager):
         images: list[dict],
     ) -> None:
         now = _utc_now_dt()
-        with self.conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO articles (
-                    biz, article_id, title, author, digest, cover, link, source_url,
-                    publish_at, raw_json, created_at, updated_at
-                )
-                VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s
-                )
-                ON CONFLICT (biz, article_id) DO UPDATE SET
-                    title=EXCLUDED.title,
-                    author=EXCLUDED.author,
-                    digest=EXCLUDED.digest,
-                    cover=EXCLUDED.cover,
-                    link=EXCLUDED.link,
-                    source_url=EXCLUDED.source_url,
-                    publish_at=EXCLUDED.publish_at,
-                    raw_json=EXCLUDED.raw_json,
-                    updated_at=EXCLUDED.updated_at
-                RETURNING id
-                """,
-                (
-                    article.biz,
-                    article.article_id,
-                    title,
-                    article.author,
-                    article.digest,
-                    cover_url,
-                    article.link,
-                    article.source_url,
-                    article.publish_at,
-                    json.dumps(article.raw, ensure_ascii=False),
-                    now,
-                    now,
-                ),
-            )
-            article_pk = cur.fetchone()[0]
-
-            cur.execute("DELETE FROM article_images WHERE article_pk = %s", (article_pk,))
-            image_id_map: dict[str, int] = {}
-            for image in images:
+        try:
+            with self.conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO article_images
-                        (article_pk, position, kind, orig_url, content_type, data, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO articles (
+                        biz, article_id, title, author, digest, cover, link, source_url,
+                        publish_at, raw_json, created_at, updated_at
+                    )
+                    VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s
+                    )
+                    ON CONFLICT (biz, article_id) DO UPDATE SET
+                        title=EXCLUDED.title,
+                        author=EXCLUDED.author,
+                        digest=EXCLUDED.digest,
+                        cover=EXCLUDED.cover,
+                        link=EXCLUDED.link,
+                        source_url=EXCLUDED.source_url,
+                        publish_at=EXCLUDED.publish_at,
+                        raw_json=EXCLUDED.raw_json,
+                        updated_at=EXCLUDED.updated_at
                     RETURNING id
                     """,
                     (
-                        article_pk,
-                        image.get("position", 0),
-                        image.get("kind", "inline"),
-                        image.get("orig_url"),
-                        image.get("content_type"),
-                        psycopg2.Binary(image.get("data")) if image.get("data") else None,
+                        article.biz,
+                        article.article_id,
+                        title,
+                        article.author,
+                        article.digest,
+                        cover_url,
+                        article.link,
+                        article.source_url,
+                        article.publish_at,
+                        json.dumps(article.raw, ensure_ascii=False),
+                        now,
                         now,
                     ),
                 )
-                orig_url = image.get("orig_url")
-                image_id = cur.fetchone()[0]
-                if orig_url:
-                    image_id_map[str(orig_url)] = image_id
+                article_pk = cur.fetchone()[0]
 
-            updated_blocks: list[dict] = []
-            for block in content_blocks:
-                if block.get("type") == "image":
-                    orig_url = block.get("orig_url")
-                    image_id = image_id_map.get(str(orig_url)) if orig_url else None
-                    updated = dict(block)
-                    if image_id is not None:
-                        updated["image_id"] = image_id
-                    updated_blocks.append(updated)
-                else:
-                    updated_blocks.append(block)
+                cur.execute("DELETE FROM article_images WHERE article_pk = %s", (article_pk,))
+                image_id_map: dict[str, int] = {}
+                seen_orig_urls: set[str] = set()
+                for image in images:
+                    orig_url = image.get("orig_url")
+                    if orig_url:
+                        orig_url = str(orig_url)
+                        if orig_url in seen_orig_urls:
+                            continue
+                        seen_orig_urls.add(orig_url)
+                    cur.execute(
+                        """
+                        INSERT INTO article_images
+                            (article_pk, position, kind, orig_url, content_type, data, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        (
+                            article_pk,
+                            image.get("position", 0),
+                            image.get("kind", "inline"),
+                            orig_url,
+                            image.get("content_type"),
+                            psycopg2.Binary(image.get("data")) if image.get("data") else None,
+                            now,
+                        ),
+                    )
+                    image_id = cur.fetchone()[0]
+                    if orig_url:
+                        image_id_map[orig_url] = image_id
 
-            cur.execute(
-                """
-                INSERT INTO article_content
-                    (article_pk, url_token, clean_html, content_markdown, content_json, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (article_pk) DO UPDATE SET
-                    url_token=EXCLUDED.url_token,
-                    clean_html=EXCLUDED.clean_html,
-                    content_markdown=EXCLUDED.content_markdown,
-                    content_json=EXCLUDED.content_json,
-                    updated_at=EXCLUDED.updated_at
-                """,
-                (
-                    article_pk,
-                    url_token,
-                    clean_html,
-                    content_markdown,
-                    psycopg2.extras.Json(updated_blocks),
-                    now,
-                    now,
-                ),
-            )
-        self.conn.commit()
+                updated_blocks: list[dict] = []
+                for block in content_blocks:
+                    if block.get("type") == "image":
+                        orig_url = block.get("orig_url")
+                        image_id = image_id_map.get(str(orig_url)) if orig_url else None
+                        updated = dict(block)
+                        if image_id is not None:
+                            updated["image_id"] = image_id
+                        updated_blocks.append(updated)
+                    else:
+                        updated_blocks.append(block)
+
+                cur.execute(
+                    """
+                    INSERT INTO article_content
+                        (article_pk, url_token, clean_html, content_markdown, content_json, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (article_pk) DO UPDATE SET
+                        url_token=EXCLUDED.url_token,
+                        clean_html=EXCLUDED.clean_html,
+                        content_markdown=EXCLUDED.content_markdown,
+                        content_json=EXCLUDED.content_json,
+                        updated_at=EXCLUDED.updated_at
+                    """,
+                    (
+                        article_pk,
+                        url_token,
+                        clean_html,
+                        content_markdown,
+                        psycopg2.extras.Json(updated_blocks),
+                        now,
+                        now,
+                    ),
+                )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def has_article_content(self, biz: str, article_id: str) -> bool:
         with self.conn.cursor() as cur:
