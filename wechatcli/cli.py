@@ -175,7 +175,9 @@ def _format_last_synced(last_synced_at: Optional[datetime]) -> str:
     return last_synced_at.isoformat(timespec="seconds") if last_synced_at else "-"
 
 
-def _resolve_account(storage: StorageLike, name: str) -> AccountCredential:
+def _resolve_account(storage: StorageLike, name: Optional[str]) -> AccountCredential:
+    if name is None:
+        raise LookupError("请输入公众号名称或 fakeid")
     target = name.strip()
     if not target:
         raise LookupError("请输入公众号名称或 fakeid")
