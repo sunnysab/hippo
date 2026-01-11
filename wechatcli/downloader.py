@@ -369,11 +369,8 @@ class ArticleDownloader(AbstractContextManager):
         self, article: ArticleRecord, account_name: Optional[str], *, create: bool
     ) -> Path:
         account_segment = slugify(account_name or article.biz or "account")
-        article_segment = (
-            f"{timestamp_to_datestr(article.publish_at)}-"
-            f"{account_segment}-"
-            f"{slugify(article.title)}"
-        )
+        title_segment = slugify(article.title) or article.article_id or "article"
+        article_segment = f"{timestamp_to_datestr(article.publish_at)}-{title_segment}"
         target = self.output_dir / account_segment / article_segment
         return ensure_directory(target) if create else target
 
