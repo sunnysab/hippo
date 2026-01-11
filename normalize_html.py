@@ -133,6 +133,17 @@ def _postprocess_markdown(markdown: str) -> str:
             continue
         processed.append(line.strip())
 
+    def is_plain_text_line(text: str) -> bool:
+        if not text:
+            return False
+        if text.startswith(('#', '-', '*', '+', '>', '|')):
+            return False
+        if text.startswith('!['):
+            return False
+        if re.search(r'\[[^\]]+]\([^)]*\)', text):
+            return False
+        return True
+
     cleaned: list[str] = []
     for line in processed:
         stripped = line.strip()
@@ -143,17 +154,39 @@ def _postprocess_markdown(markdown: str) -> str:
         cleaned.append(line)
 
     to_remove: set[int] = set()
-    for idx, line in enumerate(cleaned):
-        if js_void_pattern.search(line):
-            to_remove.add(idx)
-            if idx <= 5:
-                prev_idx = idx - 1
-                while prev_idx >= 0 and not cleaned[prev_idx].strip():
-                    prev_idx -= 1
-                if prev_idx >= 0:
-                    prev_line = cleaned[prev_idx].strip()
-                    if prev_line and not re.search(r'[#!\[\]\(\)]', prev_line):
-                        to_remove.add(prev_idx)
+    non_empty = [i for i, line in enumerate(cleaned) if line.strip()]
+    js_void_lines = [i for i, line in enumerate(cleaned) if js_void_pattern.search(line)]
+    for idx in js_void_lines:
+        to_remove.add(idx)
+        if idx in non_empty:
+            ordinal = non_empty.index(idx) + 1
+        else:
+            ordinal = len(non_empty) + 1
+        if ordinal <= 8:
+            prev_idx = idx - 1
+            while prev_idx >= 0 and not cleaned[prev_idx].strip():
+                prev_idx -= 1
+            if prev_idx >= 0:
+                prev_line = cleaned[prev_idx].strip()
+                if is_plain_text_line(prev_line):
+                    to_remove.add(prev_idx)
+            else:
+                for candidate in non_empty:
+                    candidate_line = cleaned[candidate].strip()
+                    if is_plain_text_line(candidate_line):
+                        to_remove.add(candidate)
+                        break
+    if js_void_lines and non_empty:
+        first_plain_idx = None
+        for candidate in non_empty:
+            candidate_line = cleaned[candidate].strip()
+            if is_plain_text_line(candidate_line):
+                first_plain_idx = candidate
+                break
+        if first_plain_idx is not None and first_plain_idx not in to_remove:
+            first_js_void_ordinal = min(non_empty.index(idx) + 1 for idx in js_void_lines if idx in non_empty)
+            if first_js_void_ordinal <= 8:
+                to_remove.add(first_plain_idx)
 
     final_lines = [line for i, line in enumerate(cleaned) if i not in to_remove]
     return '\n'.join(final_lines).strip()
