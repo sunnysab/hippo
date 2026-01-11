@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import mimetypes
 import re
 import time
@@ -374,6 +375,13 @@ class ArticleDownloader(AbstractContextManager):
         return ensure_directory(target) if create else target
 
     def _is_downloaded(self, article: ArticleRecord, account_name: Optional[str]) -> bool:
+        if self.storage and os.environ.get("WECHATCLI_PG_DSN"):
+            has_content = getattr(self.storage, "has_article_content", None)
+            if callable(has_content):
+                try:
+                    return bool(has_content(article.biz, article.article_id))
+                except Exception:
+                    return False
         target_dir = self._article_target_dir(article, account_name, create=False)
         html_path = target_dir / _FORMAT_EXTENSIONS["html"]
         md_path = target_dir / _FORMAT_EXTENSIONS["markdown"]

@@ -509,11 +509,77 @@ class PostgresStorage(AbstractContextManager):
                 )
                 """
             )
-            cur.execute("ALTER TABLE articles ADD COLUMN IF NOT EXISTS url_token TEXT")
-            cur.execute("ALTER TABLE articles ADD COLUMN IF NOT EXISTS clean_html TEXT")
-            cur.execute("ALTER TABLE articles ADD COLUMN IF NOT EXISTS content_markdown TEXT")
-            cur.execute("ALTER TABLE articles ADD COLUMN IF NOT EXISTS content_json JSONB")
-            cur.execute("ALTER TABLE articles ADD COLUMN IF NOT EXISTS cover_image_id INTEGER")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS article_content (
+                    id SERIAL PRIMARY KEY,
+                    article_pk INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+                    url_token TEXT,
+                    clean_html TEXT,
+                    content_markdown TEXT,
+                    content_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL,
+                    UNIQUE (article_pk)
+                )
+                """
+            )
+            cur.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'articles'
+                AND column_name IN (
+                    'url_token',
+                    'clean_html',
+                    'content_markdown',
+                    'content_json'
+                )
+                """
+            )
+            existing_columns = {row[0] for row in cur.fetchall()}
+            if {
+                "url_token",
+                "clean_html",
+                "content_markdown",
+                "content_json",
+            }.issubset(existing_columns):
+                cur.execute(
+                    """
+                    INSERT INTO article_content
+                        (article_pk, url_token, clean_html, content_markdown, content_json,
+                         created_at, updated_at)
+                    SELECT
+                        id,
+                        url_token,
+                        clean_html,
+                        content_markdown,
+                        content_json::jsonb,
+                        created_at,
+                        updated_at
+                    FROM articles
+                    WHERE url_token IS NOT NULL
+                       OR clean_html IS NOT NULL
+                       OR content_markdown IS NOT NULL
+                       OR content_json IS NOT NULL
+                    ON CONFLICT (article_pk) DO UPDATE SET
+                        url_token=EXCLUDED.url_token,
+                        clean_html=EXCLUDED.clean_html,
+                        content_markdown=EXCLUDED.content_markdown,
+                        content_json=EXCLUDED.content_json,
+                        updated_at=EXCLUDED.updated_at
+                    """
+                )
+            cur.execute(
+                """
+                ALTER TABLE articles
+                DROP COLUMN IF EXISTS url_token,
+                DROP COLUMN IF EXISTS clean_html,
+                DROP COLUMN IF EXISTS content_markdown,
+                DROP COLUMN IF EXISTS content_json,
+                DROP COLUMN IF EXISTS cover_image_id
+                """
+            )
             cur.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_articles_biz_publish
@@ -766,12 +832,10 @@ class PostgresStorage(AbstractContextManager):
                 """
                 INSERT INTO articles (
                     biz, article_id, title, author, digest, cover, link, source_url,
-                    publish_at, raw_json, created_at, updated_at, url_token,
-                    clean_html, content_markdown, content_json, cover_image_id
+                    publish_at, raw_json, created_at, updated_at
                 )
                 VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s,
                     %s, %s, %s, %s
                 )
                 ON CONFLICT (biz, article_id) DO UPDATE SET
@@ -783,12 +847,7 @@ class PostgresStorage(AbstractContextManager):
                     source_url=EXCLUDED.source_url,
                     publish_at=EXCLUDED.publish_at,
                     raw_json=EXCLUDED.raw_json,
-                    updated_at=EXCLUDED.updated_at,
-                    url_token=EXCLUDED.url_token,
-                    clean_html=EXCLUDED.clean_html,
-                    content_markdown=EXCLUDED.content_markdown,
-                    content_json=EXCLUDED.content_json,
-                    cover_image_id=EXCLUDED.cover_image_id
+                    updated_at=EXCLUDED.updated_at
                 RETURNING id
                 """,
                 (
@@ -804,17 +863,34 @@ class PostgresStorage(AbstractContextManager):
                     json.dumps(article.raw, ensure_ascii=False),
                     now,
                     now,
-                    url_token,
-                    clean_html,
-                    content_markdown,
-                    None,
-                    None,
                 ),
             )
             article_pk = cur.fetchone()[0]
 
+            cur.execute(
+                """
+                INSERT INTO article_content
+                    (article_pk, url_token, clean_html, content_markdown, content_json, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (article_pk) DO UPDATE SET
+                    url_token=EXCLUDED.url_token,
+                    clean_html=EXCLUDED.clean_html,
+                    content_markdown=EXCLUDED.content_markdown,
+                    content_json=EXCLUDED.content_json,
+                    updated_at=EXCLUDED.updated_at
+                """,
+                (
+                    article_pk,
+                    url_token,
+                    clean_html,
+                    content_markdown,
+                    psycopg2.extras.Json(content_blocks),
+                    now,
+                    now,
+                ),
+            )
+
             cur.execute("DELETE FROM article_images WHERE article_pk = %s", (article_pk,))
-            image_id_map: dict[str, int] = {}
             for image in images:
                 cur.execute(
                     """
@@ -826,7 +902,6 @@ class PostgresStorage(AbstractContextManager):
                         kind=EXCLUDED.kind,
                         content_type=EXCLUDED.content_type,
                         data=EXCLUDED.data
-                    RETURNING id
                     """,
                     (
                         article_pk,
@@ -838,31 +913,21 @@ class PostgresStorage(AbstractContextManager):
                         now,
                     ),
                 )
-                image_id_map[image.get("orig_url")] = cur.fetchone()[0]
+        self.conn.commit()
 
-            blocks_with_ids: list[dict] = []
-            for block in content_blocks:
-                if block.get("type") == "image":
-                    orig_url = block.get("orig_url")
-                    image_id = image_id_map.get(orig_url)
-                    updated = dict(block)
-                    updated["image_id"] = image_id
-                    blocks_with_ids.append(updated)
-                else:
-                    blocks_with_ids.append(block)
-
-            cover_image_id = image_id_map.get(cover_url) if cover_url else None
+    def has_article_content(self, biz: str, article_id: str) -> bool:
+        with self.conn.cursor() as cur:
             cur.execute(
                 """
-                UPDATE articles
-                SET content_json = %s,
-                    cover_image_id = %s,
-                    updated_at = %s
-                WHERE id = %s
+                SELECT 1
+                FROM article_content c
+                JOIN articles a ON a.id = c.article_pk
+                WHERE a.biz = %s AND a.article_id = %s
+                LIMIT 1
                 """,
-                (psycopg2.extras.Json(blocks_with_ids), cover_image_id, now, article_pk),
+                (biz, article_id),
             )
-        self.conn.commit()
+            return cur.fetchone() is not None
 
     def list_articles(
         self,
