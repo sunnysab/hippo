@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import re
+import time
 from typing import Dict, Tuple
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -139,19 +140,27 @@ class ArticleDownloader(AbstractContextManager):
         fmt: str = "html",
         with_images: bool = True,
         account_name: Optional[str] = None,
-    ) -> List[DownloadResult]:
+        progress: Optional[object] = None,
+        skip_if_downloaded: bool = True,
+    ) -> tuple[List[DownloadResult], int]:
         results: List[DownloadResult] = []
+        skipped = 0
         for article in articles:
-            html = self.client.fetch_article_html(article.link)
-            result = self._persist_article(
+            if skip_if_downloaded and self._is_downloaded(article, account_name):
+                skipped += 1
+                if progress is not None:
+                    progress.update(1)
+                continue
+            result = self._download_with_retry(
                 article,
-                raw_html=html,
                 fmt=fmt,
                 with_images=with_images,
                 account_name=account_name,
             )
             results.append(result)
-        return results
+            if progress is not None:
+                progress.update(1)
+        return results, skipped
 
     def download_from_url(
         self,
@@ -161,7 +170,7 @@ class ArticleDownloader(AbstractContextManager):
         with_images: bool = True,
         title: Optional[str] = None,
     ) -> DownloadResult:
-        raw_html = self.client.fetch_article_html(url)
+        raw_html = self._fetch_with_retry(url)
         inferred_title = title or _extract_title(raw_html) or "WeChat Article"
         token = _extract_url_token(url)
         stub = ArticleRecord(
@@ -184,6 +193,40 @@ class ArticleDownloader(AbstractContextManager):
             account_name="adhoc",
         )
 
+    def _fetch_with_retry(self, url: str) -> str:
+        last_exc: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                return self.client.fetch_article_html(url)
+            except Exception as exc:
+                last_exc = exc
+                time.sleep(min(2 ** attempt, 5))
+        raise RuntimeError(f"下载失败：{last_exc}") from last_exc
+
+    def _download_with_retry(
+        self,
+        article: ArticleRecord,
+        *,
+        fmt: str,
+        with_images: bool,
+        account_name: Optional[str],
+    ) -> DownloadResult:
+        last_exc: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                html = self.client.fetch_article_html(article.link)
+                return self._persist_article(
+                    article,
+                    raw_html=html,
+                    fmt=fmt,
+                    with_images=with_images,
+                    account_name=account_name,
+                )
+            except Exception as exc:
+                last_exc = exc
+                time.sleep(min(2 ** attempt, 5))
+        raise RuntimeError(f"下载失败：{last_exc}") from last_exc
+
     # ------------------------------------------------------------------
     def _persist_article(
         self,
@@ -194,13 +237,7 @@ class ArticleDownloader(AbstractContextManager):
         with_images: bool,
         account_name: Optional[str],
     ) -> DownloadResult:
-        account_segment = slugify(account_name or article.biz or "account")
-        article_segment = (
-            f"{timestamp_to_datestr(article.publish_at)}-"
-            f"{account_segment}-"
-            f"{slugify(article.title)}"
-        )
-        target_dir = ensure_directory(self.output_dir / account_segment / article_segment)
+        target_dir = self._article_target_dir(article, account_name, create=True)
 
         clean_html = normalize_html(raw_html, fmt="html")
         normalized_html = clean_html
@@ -323,6 +360,24 @@ class ArticleDownloader(AbstractContextManager):
             cover_url=cover_url,
             images=images,
         )
+
+    def _article_target_dir(
+        self, article: ArticleRecord, account_name: Optional[str], *, create: bool
+    ) -> Path:
+        account_segment = slugify(account_name or article.biz or "account")
+        article_segment = (
+            f"{timestamp_to_datestr(article.publish_at)}-"
+            f"{account_segment}-"
+            f"{slugify(article.title)}"
+        )
+        target = self.output_dir / account_segment / article_segment
+        return ensure_directory(target) if create else target
+
+    def _is_downloaded(self, article: ArticleRecord, account_name: Optional[str]) -> bool:
+        target_dir = self._article_target_dir(article, account_name, create=False)
+        html_path = target_dir / _FORMAT_EXTENSIONS["html"]
+        md_path = target_dir / _FORMAT_EXTENSIONS["markdown"]
+        return html_path.exists() and md_path.exists()
 
     def _download_images(
         self, html: str, target_dir: Path, *, referer: str

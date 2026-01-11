@@ -720,14 +720,29 @@ def sync_article_download(
             if isinstance(output_format, OutputFormat)
             else str(output_format)
         )
-        with ArticleDownloader(output_dir=target_dir, storage=storage) as downloader:
-            results = downloader.download_many(
-                articles,
-                fmt=fmt_value,
-                with_images=with_images,
-                account_name=account_record.nickname or account_record.biz,
-            )
-    typer.echo(f"下载完成，生成 {len(results)} 个目录")
+        progress = tqdm(
+            total=len(articles),
+            desc=f"下载 {account_record.nickname or account_record.biz}",
+            unit="篇",
+            dynamic_ncols=True,
+            leave=True,
+        )
+        try:
+            with ArticleDownloader(output_dir=target_dir, storage=storage) as downloader:
+                results, skipped = downloader.download_many(
+                    articles,
+                    fmt=fmt_value,
+                    with_images=with_images,
+                    account_name=account_record.nickname or account_record.biz,
+                    progress=progress,
+                    skip_if_downloaded=True,
+                )
+        except Exception as exc:
+            typer.echo(f"下载失败：{exc}")
+            raise typer.Exit(code=1)
+        finally:
+            progress.close()
+    typer.echo(f"下载完成，生成 {len(results)} 个目录，跳过 {skipped} 篇")
 
 
 @articles_app.command("sync-all")
@@ -754,21 +769,37 @@ def sync_all_article_download(
             else str(output_format)
         )
         with ArticleDownloader(output_dir=target_dir, storage=storage) as downloader:
+            total_skipped = 0
             for account in accounts:
                 articles = storage.list_articles(
                     account.biz, limit=limit, since_timestamp=since_timestamp
                 )
                 if not articles:
                     continue
-                typer.echo(f"开始下载 {len(articles)} 篇文章: {account.nickname}")
-                results = downloader.download_many(
-                    articles,
-                    fmt=fmt_value,
-                    with_images=with_images,
-                    account_name=account.nickname or account.biz,
+                progress = tqdm(
+                    total=len(articles),
+                    desc=f"下载 {account.nickname or account.biz}",
+                    unit="篇",
+                    dynamic_ncols=True,
+                    leave=True,
                 )
+                try:
+                    results, skipped = downloader.download_many(
+                        articles,
+                        fmt=fmt_value,
+                        with_images=with_images,
+                        account_name=account.nickname or account.biz,
+                        progress=progress,
+                        skip_if_downloaded=True,
+                    )
+                except Exception as exc:
+                    typer.echo(f"下载失败：{exc}")
+                    raise typer.Exit(code=1)
+                finally:
+                    progress.close()
                 total_downloads += len(results)
-    typer.echo(f"全部下载完成，生成 {total_downloads} 个目录")
+                total_skipped += skipped
+    typer.echo(f"全部下载完成，生成 {total_downloads} 个目录，跳过 {total_skipped} 篇")
 
 
 @articles_app.command("download")
@@ -791,12 +822,16 @@ def download_article(
     with open_storage(DB_PATH) as storage, ArticleDownloader(
         output_dir=target_dir, storage=storage
     ) as downloader:
-        result = downloader.download_from_url(
-            url,
-            fmt=fmt_value,
-            with_images=with_images,
-            title=title,
-        )
+        try:
+            result = downloader.download_from_url(
+                url,
+                fmt=fmt_value,
+                with_images=with_images,
+                title=title,
+            )
+        except Exception as exc:
+            typer.echo(f"下载失败：{exc}")
+            raise typer.Exit(code=1)
     typer.echo(f"单篇文章已保存至 {result.output_path}")
 
 
