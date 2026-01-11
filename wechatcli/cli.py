@@ -371,24 +371,24 @@ def search_accounts(
         if not records:
             typer.echo("未找到匹配的公众号")
             return
-    headers = ["序号", "昵称", "fakeid", "别名"]
-    rows: list[list[str]] = []
+        headers = ["序号", "昵称", "fakeid", "别名"]
+        rows: list[list[str]] = []
         for idx, item in enumerate(records, start=1):
             fakeid = item.get("fakeid", "-")
             nickname = item.get("nickname", "-")
             if fakeid in existing_biz:
                 nickname = f"{nickname}（已添加）"
-        rows.append(
-            [
-                str(idx),
-                nickname,
-                fakeid,
-                item.get("alias", "-"),
-            ]
-        )
-    table_text = _format_table(headers, rows)
-    if table_text:
-        typer.echo(table_text)
+            rows.append(
+                [
+                    str(idx),
+                    nickname,
+                    fakeid,
+                    item.get("alias", "-"),
+                ]
+            )
+        table_text = _format_table(headers, rows)
+        if table_text:
+            typer.echo(table_text)
 
         if not interactive:
             return
