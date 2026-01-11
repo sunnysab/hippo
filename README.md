@@ -37,7 +37,7 @@ python -m wechatcli login
 ### 搜索公众号（推荐交互式）
 
 ```bash
-python -m wechatcli accounts search 关键词 --interactive
+python -m wechatcli account search 关键词 --interactive
 ```
 
 - 默认每页 10 条
@@ -47,10 +47,10 @@ python -m wechatcli accounts search 关键词 --interactive
 ### 管理已保存账号
 
 ```bash
-python -m wechatcli accounts list
-python -m wechatcli accounts add        # 手动保存 fakeid
-python -m wechatcli accounts remove <biz>
-python -m wechatcli accounts set-default <biz>
+python -m wechatcli account list
+python -m wechatcli account add        # 手动保存 fakeid
+python -m wechatcli account remove <biz>
+python -m wechatcli account set-default <biz>
 ```
 
 ---
@@ -60,7 +60,7 @@ python -m wechatcli accounts set-default <biz>
 ### 单账号同步
 
 ```bash
-python -m wechatcli articles sync --biz <fakeid>
+python -m wechatcli account sync --biz <fakeid>
 ```
 
 默认按最新 -> 更早 翻页。
@@ -68,7 +68,7 @@ python -m wechatcli articles sync --biz <fakeid>
 ### 全部账号同步
 
 ```bash
-python -m wechatcli articles sync-all
+python -m wechatcli account sync-all
 ```
 
 特点：
@@ -83,8 +83,8 @@ python -m wechatcli articles sync-all
 默认会跳过“今日已完成”的账号。可用以下参数控制：
 
 ```bash
-python -m wechatcli articles sync-all --force
-python -m wechatcli articles sync-all --skip-time 30
+python -m wechatcli account sync-all --force
+python -m wechatcli account sync-all --skip-time 30
 ```
 
 - `--force`：忽略跳过逻辑
@@ -101,8 +101,7 @@ python -m wechatcli articles sync-all --skip-time 30
 ## 下载文章内容
 
 ```bash
-python -m wechatcli articles download --limit 5 --format html
-python -m wechatcli articles download-single "https://mp.weixin.qq.com/..."
+python -m wechatcli articles download "https://mp.weixin.qq.com/..."
 ```
 
 默认输出目录：

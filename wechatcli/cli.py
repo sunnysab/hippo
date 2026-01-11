@@ -28,11 +28,11 @@ accounts_app = typer.Typer(
     rich_markup_mode=None,
 )
 articles_app = typer.Typer(
-    help="Sync, inspect, and download articles",
+    help="Inspect and download articles",
     no_args_is_help=True,
     rich_markup_mode=None,
 )
-app.add_typer(accounts_app, name="accounts")
+app.add_typer(accounts_app, name="account")
 app.add_typer(articles_app, name="articles")
 
 console = typer.echo
@@ -435,7 +435,7 @@ def list_accounts() -> None:
     with open_storage(DB_PATH) as storage:
         accounts = storage.list_accounts()
     if not accounts:
-        typer.echo("尚未保存任何账号，使用 `accounts add` 添加")
+        typer.echo("尚未保存任何账号，使用 `account add` 添加")
         return
     headers = ["默认", "昵称", "fakeid", "最近同步"]
     rows: list[list[str]] = []
@@ -470,8 +470,8 @@ def set_default_account(
 
 # ---------------------------------------------------------------------------
 # Article helpers
-@articles_app.command("sync")
-def sync_articles(
+@accounts_app.command("sync")
+def sync_account_articles(
     biz: Optional[str] = typer.Option(None, help="指定账号 fakeid，留空使用默认账号"),
     pages: int = typer.Option(1, min=1, help="抓取的分页数量，每页默认 10 篇"),
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help="每页抓取数量"),
@@ -526,8 +526,8 @@ def sync_articles(
         typer.echo(f"同步完成，共写入 {total_saved} 条记录")
 
 
-@articles_app.command("sync-all")
-def sync_all_articles(
+@accounts_app.command("sync-all")
+def sync_all_accounts(
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help="每页抓取数量"),
     sleep_seconds: float = typer.Option(
         0.05, min=0, help="翻页间隔秒数（可为小数）"
@@ -542,7 +542,7 @@ def sync_all_articles(
     with open_storage(DB_PATH) as storage:
         accounts = storage.list_accounts()
         if not accounts:
-            typer.echo("尚未保存任何账号，使用 `accounts add` 添加")
+            typer.echo("尚未保存任何账号，使用 `account add` 添加")
             return
         header = "开始同步全部账号（从最新文章往更早翻页）"
         if reset:
@@ -640,7 +640,7 @@ def list_articles(
         account = storage.get_account(biz)
         articles = storage.list_articles(account.biz, limit=limit, since_timestamp=since_timestamp)
     if not articles:
-        typer.echo("未找到文章，请先执行 `articles sync`")
+        typer.echo("未找到文章，请先执行 `account sync`")
         return
     headers = ["日期", "标题", "作者", "链接"]
     rows: list[list[str]] = []
@@ -657,42 +657,7 @@ def list_articles(
 
 
 @articles_app.command("download")
-def download_articles(
-    biz: Optional[str] = typer.Option(None, help="指定账号 fakeid，留空使用默认账号"),
-    limit: int = typer.Option(5, min=1, max=50, help="下载文章数量"),
-    output_format: OutputFormat = typer.Option(
-        OutputFormat.html, "--format", "-f", help="导出格式", show_default=True
-    ),
-    with_images: bool = typer.Option(True, help="是否下载图片", flag_value=True),
-    since: Optional[str] = typer.Option(None, help="仅下载某日期后的文章"),
-    output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
-) -> None:
-    since_timestamp = _parse_since(since)
-    with open_storage(DB_PATH) as storage:
-        account = storage.get_account(biz)
-        articles = storage.list_articles(account.biz, limit=limit, since_timestamp=since_timestamp)
-    if not articles:
-        typer.echo("没有可下载的文章，先执行 `articles sync`")
-        return
-    target_dir = ensure_directory(output or DOWNLOAD_ROOT)
-    typer.echo(f"开始下载 {len(articles)} 篇文章 -> {target_dir}")
-    fmt_value = (
-        output_format.value
-        if isinstance(output_format, OutputFormat)
-        else str(output_format)
-    )
-    with ArticleDownloader(output_dir=target_dir) as downloader:
-        results = downloader.download_many(
-            articles,
-            fmt=fmt_value,
-            with_images=with_images,
-            account_name=account.nickname or account.biz,
-        )
-    typer.echo(f"下载完成，生成 {len(results)} 个目录")
-
-
-@articles_app.command("download-single")
-def download_single(
+def download_article(
     url: str = typer.Argument(..., help="文章 URL"),
     output_format: OutputFormat = typer.Option(OutputFormat.html, "--format", "-f", help="导出格式"),
     with_images: bool = typer.Option(True, help="是否下载图片", flag_value=True),
