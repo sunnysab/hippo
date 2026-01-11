@@ -13,15 +13,8 @@ from typing import Optional
 import httpx
 import typer
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    Progress,
-    ProgressColumn,
-    SpinnerColumn,
-    TextColumn,
-    TimeElapsedColumn,
-)
 from rich.table import Table
+from tqdm import tqdm
 
 from .config import DB_PATH, DEFAULT_PAGE_SIZE, DOWNLOAD_ROOT, HOME_DIR
 from .downloader import ArticleDownloader
@@ -58,12 +51,6 @@ class OutputFormat(str, Enum):
 
 class SyncInterrupted(Exception):
     pass
-
-
-class CountColumn(ProgressColumn):
-    def render(self, task) -> str:  # type: ignore[override]
-        total = "?" if task.total is None else str(int(task.total))
-        return f"{int(task.completed)}/{total}"
 
 
 def _parse_since(value: Optional[str]) -> Optional[int]:
@@ -147,6 +134,13 @@ def _today_str() -> str:
     return date.today().isoformat()
 
 
+def _pbar_write(progress: Optional[tqdm], message: str) -> None:
+    if progress is not None:
+        progress.write(message)
+    else:
+        console.print(message)
+
+
 def _enforce_exclusive_flags(force: bool, skip_minutes: Optional[int]) -> None:
     if force and skip_minutes is not None:
         raise typer.BadParameter("--force 与 --skip-time 不能同时使用")
@@ -190,8 +184,7 @@ def _sync_account_pages(
     sleep_seconds: float,
     resume_key: Optional[str] = None,
     full_synced_hint: bool = False,
-    progress: Optional[Progress] = None,
-    task_id: Optional[int] = None,
+    progress: Optional[tqdm] = None,
 ) -> tuple[int, int, bool]:
     session = _get_login_session(storage)
     offset = 0
@@ -199,13 +192,11 @@ def _sync_account_pages(
         saved_offset = storage.get_meta(resume_key)
         if saved_offset and saved_offset.isdigit():
             offset = int(saved_offset)
-            message = f"检测到断点进度，继续 {account.nickname} offset={offset}"
-            if progress is not None:
-                progress.console.log(f"[yellow]{message}[/yellow]")
-            else:
-                console.print(f"[yellow]{message}[/yellow]")
-    if progress is not None and task_id is not None and offset > 0:
-        progress.update(task_id, completed=offset)
+            message = f"[yellow]检测到断点进度，继续 {account.nickname} offset={offset}[/yellow]"
+            _pbar_write(progress, message)
+    if progress is not None and offset > 0:
+        progress.n = offset
+        progress.refresh()
     total_saved = 0
     page_count = 0
     total_count: Optional[int] = None
@@ -239,11 +230,8 @@ def _sync_account_pages(
                             wait_seconds = 15
                         else:
                             wait_seconds = min(15 + 5 * (freq_attempt - 1), 60)
-                        message = f"触发频率控制，等待 {wait_seconds} 秒后重试"
-                        if progress is not None:
-                            progress.console.log(f"[yellow]{message}[/yellow]")
-                        else:
-                            console.print(f"[yellow]{message}[/yellow]")
+                        message = f"[yellow]触发频率控制，等待 {wait_seconds} 秒后重试[/yellow]"
+                        _pbar_write(progress, message)
                         time.sleep(wait_seconds)
                         continue
                     raise
@@ -254,19 +242,20 @@ def _sync_account_pages(
                     time.sleep(min(2 ** attempt, 5))
             request_count += 1
             if request_count % 60 == 0:
-                message = "达到 60 次请求，等待 15 秒"
-                if progress is not None:
-                    progress.console.log(f"[yellow]{message}[/yellow]")
-                else:
-                    console.print(f"[yellow]{message}[/yellow]")
+                message = "[yellow]达到 60 次请求，等待 15 秒[/yellow]"
+                _pbar_write(progress, message)
                 time.sleep(15)
             publish_page = _extract_publish_page(payload)
             publish_list = publish_page.get("publish_list") or []
             publish_list_len = len(publish_list)
             total_count = _extract_publish_total(payload) or total_count
-            if progress is not None and task_id is not None and total_count and total_count > 0:
+            if progress is not None and total_count and total_count > 0:
                 completed_offset = offset if offset <= total_count else total_count
-                progress.update(task_id, total=total_count, completed=completed_offset)
+                if progress.total != total_count:
+                    progress.total = total_count
+                if progress.n != completed_offset:
+                    progress.n = completed_offset
+                progress.refresh()
             if publish_list_len == 0:
                 completed = True
                 break
@@ -288,24 +277,24 @@ def _sync_account_pages(
             offset += page_size
             if resume_key:
                 storage.set_meta(resume_key, str(offset))
-            if progress is not None and task_id is not None:
-                progress.update(task_id, completed=current_completed)
+            if progress is not None:
+                delta = current_completed - progress.n
+                if delta:
+                    progress.update(delta)
             if pages is not None and page_count >= pages:
                 completed = False
                 break
             if sleep_seconds > 0:
                 time.sleep(sleep_seconds)
         except KeyboardInterrupt as exc:
-            message = f"检测到中断，已保存断点：{account.nickname}"
-            if progress is not None:
-                progress.console.log(f"[yellow]{message}[/yellow]")
-            else:
-                console.print(f"[yellow]{message}[/yellow]")
+            message = f"[yellow]检测到中断，已保存断点：{account.nickname}[/yellow]"
+            _pbar_write(progress, message)
             raise SyncInterrupted() from exc
     if resume_key and completed:
         storage.delete_meta(resume_key)
-    if progress is not None and task_id is not None and total_count and completed:
-        progress.update(task_id, completed=total_count)
+    if progress is not None and total_count and completed:
+        progress.n = total_count
+        progress.refresh()
     return total_saved, page_count, completed
 
 
@@ -488,20 +477,13 @@ def sync_articles(
             return
         console.print(f"[cyan]开始同步 {account.nickname} 的文章[/cyan]")
         total_saved = 0
-        columns = [
-            SpinnerColumn(),
-            TextColumn("{task.description}"),
-            CountColumn(),
-            BarColumn(),
-            TimeElapsedColumn(),
-            TextColumn("{task.fields[status]}"),
-        ]
-        with MPClient() as client, Progress(*columns, transient=True) as progress:
-            task_id = progress.add_task(
-                f"同步 {account.nickname}",
+        with MPClient() as client:
+            progress = tqdm(
                 total=None,
-                completed=0,
-                status="",
+                desc=f"同步 {account.nickname}",
+                unit="msg",
+                dynamic_ncols=True,
+                leave=True,
             )
             try:
                 total_saved, _, completed = _sync_account_pages(
@@ -513,20 +495,21 @@ def sync_articles(
                     sleep_seconds=0,
                     full_synced_hint=storage.get_meta(f"sync_complete:{account.biz}") is not None,
                     progress=progress,
-                    task_id=task_id,
                 )
                 status = "成功" if completed else "未完成"
                 if completed and total_saved == 0:
                     status = "已是最新"
-                progress.update(task_id, status=status)
+                progress.set_postfix_str(status, refresh=True)
             except SyncInterrupted:
-                progress.update(task_id, status="未完成")
+                progress.set_postfix_str("未完成", refresh=True)
                 console.print("[yellow]同步中断，断点已保存[/yellow]")
                 raise typer.Exit(code=130)
             except RuntimeError as exc:
-                progress.update(task_id, status="失败")
+                progress.set_postfix_str("失败", refresh=True)
                 console.print(f"[red]同步失败：{exc}[/red]")
                 raise typer.Exit(code=1)
+            finally:
+                progress.close()
         console.print(f"[green]同步完成，共写入 {total_saved} 条记录[/green]")
 
 
@@ -561,75 +544,73 @@ def sync_all_articles(
         with MPClient() as client:
             total_saved = 0
             summary: list[tuple[str, int]] = []
-            columns = [
-                SpinnerColumn(),
-                TextColumn("{task.description}"),
-                CountColumn(),
-                BarColumn(),
-                TimeElapsedColumn(),
-                TextColumn("{task.fields[status]}"),
-            ]
-            with Progress(*columns, transient=False) as progress:
-                for account in accounts:
-                    resume_key = f"sync_progress:{account.biz}"
-                    complete_key = f"sync_complete:{account.biz}"
-                    if reset:
-                        storage.delete_meta(resume_key)
-                        storage.delete_meta(complete_key)
-                    elif not force and storage.get_meta(complete_key) == _today_str():
-                        task_id = progress.add_task(
-                            f"同步 {account.nickname} ({account.biz})",
-                            total=0,
-                            completed=0,
-                            status="跳过(今日已完成)",
-                        )
-                        progress.update(task_id, completed=0)
-                        continue
-                    if not force and _should_skip_by_time(account.last_synced_at, skip_time):
-                        last_synced = _format_last_synced(account.last_synced_at)
-                        task_id = progress.add_task(
-                            f"同步 {account.nickname} ({account.biz})",
-                            total=0,
-                            completed=0,
-                            status=f"跳过(近期已同步 {last_synced})",
-                        )
-                        progress.update(task_id, completed=0)
-                        continue
-                    task_id = progress.add_task(
-                        f"同步 {account.nickname} ({account.biz})",
-                        total=None,
-                        completed=0,
-                        status="",
+            for account in accounts:
+                resume_key = f"sync_progress:{account.biz}"
+                complete_key = f"sync_complete:{account.biz}"
+                if reset:
+                    storage.delete_meta(resume_key)
+                    storage.delete_meta(complete_key)
+                elif not force and storage.get_meta(complete_key) == _today_str():
+                    progress = tqdm(
+                        total=0,
+                        desc=f"同步 {account.nickname} ({account.biz})",
+                        unit="msg",
+                        dynamic_ncols=True,
+                        leave=True,
                     )
-                    try:
-                        saved, _, completed = _sync_account_pages(
-                            storage=storage,
-                            client=client,
-                            account=account,
-                            page_size=page_size,
-                            pages=None,
-                            sleep_seconds=sleep_seconds,
-                            resume_key=resume_key,
-                            full_synced_hint=storage.get_meta(complete_key) is not None,
-                            progress=progress,
-                            task_id=task_id,
-                        )
-                        status = "成功" if completed else "未完成"
-                        if completed and saved == 0:
-                            status = "已是最新"
-                        progress.update(task_id, status=status)
-                        if completed:
-                            storage.set_meta(complete_key, _today_str())
-                    except SyncInterrupted:
-                        progress.update(task_id, status="未完成")
-                        console.print("[yellow]同步中断，断点已保存[/yellow]")
-                        raise typer.Exit(code=130)
-                    except RuntimeError as exc:
-                        progress.update(task_id, status="失败")
-                        console.print(f"[red]同步失败：{exc}[/red]")
-                        raise typer.Exit(code=1)
-                    total_saved += saved
-                    summary.append((account.nickname or account.biz, saved))
+                    progress.set_postfix_str("跳过(今日已完成)", refresh=True)
+                    progress.close()
+                    continue
+                if not force and _should_skip_by_time(account.last_synced_at, skip_time):
+                    last_synced = _format_last_synced(account.last_synced_at)
+                    progress = tqdm(
+                        total=0,
+                        desc=f"同步 {account.nickname} ({account.biz})",
+                        unit="msg",
+                        dynamic_ncols=True,
+                        leave=True,
+                    )
+                    progress.set_postfix_str(f"跳过(近期已同步 {last_synced})", refresh=True)
+                    progress.close()
+                    continue
+
+                progress = tqdm(
+                    total=None,
+                    desc=f"同步 {account.nickname} ({account.biz})",
+                    unit="msg",
+                    dynamic_ncols=True,
+                    leave=True,
+                )
+                try:
+                    saved, _, completed = _sync_account_pages(
+                        storage=storage,
+                        client=client,
+                        account=account,
+                        page_size=page_size,
+                        pages=None,
+                        sleep_seconds=sleep_seconds,
+                        resume_key=resume_key,
+                        full_synced_hint=storage.get_meta(complete_key) is not None,
+                        progress=progress,
+                    )
+                    status = "成功" if completed else "未完成"
+                    if completed and saved == 0:
+                        status = "已是最新"
+                    progress.set_postfix_str(status, refresh=True)
+                    if completed:
+                        storage.set_meta(complete_key, _today_str())
+                except SyncInterrupted:
+                    progress.set_postfix_str("未完成", refresh=True)
+                    console.print("[yellow]同步中断，断点已保存[/yellow]")
+                    raise typer.Exit(code=130)
+                except RuntimeError as exc:
+                    progress.set_postfix_str("失败", refresh=True)
+                    console.print(f"[red]同步失败：{exc}[/red]")
+                    raise typer.Exit(code=1)
+                finally:
+                    progress.close()
+                total_saved += saved
+                summary.append((account.nickname or account.biz, saved))
             if summary:
                 table = Table(show_header=True, header_style="bold green")
                 table.add_column("账号")
