@@ -154,6 +154,12 @@ def _format_table(headers: list[str], rows: list[list[str]]) -> str:
     return "\n".join(lines)
 
 
+def _require_nonempty(value: Optional[str], message: str) -> None:
+    if value is None or not str(value).strip():
+        typer.echo(message)
+        raise typer.Exit(code=2)
+
+
 def _enforce_exclusive_flags(force: bool, skip_minutes: Optional[int]) -> None:
     if force and skip_minutes is not None:
         raise typer.BadParameter("--force 与 --skip-time 不能同时使用")
@@ -360,6 +366,7 @@ def search_accounts(
     begin: Optional[int] = typer.Option(None, min=0, help="起始偏移，优先于分页"),
     interactive: bool = typer.Option(False, help="交互式选择并添加账号", flag_value=True),
 ) -> None:
+    _require_nonempty(keyword, "请提供搜索关键词。")
     with open_storage(DB_PATH) as storage:
         session = _get_login_session(storage)
         existing_biz = {account.biz for account in storage.list_accounts()}
@@ -451,6 +458,7 @@ def list_accounts() -> None:
 def remove_account(
     biz: str = typer.Argument(..., help="要移除的账号 fakeid")
 ) -> None:
+    _require_nonempty(biz, "请提供要移除的账号 fakeid。")
     with open_storage(DB_PATH) as storage:
         removed = storage.remove_account(biz)
     if removed:
@@ -463,6 +471,7 @@ def remove_account(
 def set_default_account(
     biz: str = typer.Argument(..., help="设置为默认账号的 fakeid")
 ) -> None:
+    _require_nonempty(biz, "请提供要设置的账号 fakeid。")
     with open_storage(DB_PATH) as storage:
         storage.set_default_account(biz)
     typer.echo(f"{biz} 已设为默认账号")
@@ -664,6 +673,9 @@ def download_article(
     output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
     title: Optional[str] = typer.Option(None, help="覆盖文章标题"),
 ) -> None:
+    if not url:
+        typer.echo("请提供文章 URL。示例：python -m wechatcli articles download \"https://mp.weixin.qq.com/...\"")
+        raise typer.Exit(code=2)
     target_dir = ensure_directory(output or DOWNLOAD_ROOT)
     fmt_value = (
         output_format.value
