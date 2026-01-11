@@ -109,12 +109,26 @@ def _postprocess_markdown(markdown: str) -> str:
             processed.append('')
             continue
         prev_blank = False
-        match = image_pattern.fullmatch(stripped)
-        if match:
+        rebuilt = []
+        last_end = 0
+        found = False
+        for match in image_pattern.finditer(line):
+            found = True
+            if match.start() > last_end:
+                chunk = line[last_end:match.start()].strip()
+                if chunk:
+                    rebuilt.append(chunk)
             alt, url = match.groups()
-            processed.append(f'![{alt}]({url})')
-        else:
-            processed.append(line.strip())
+            rebuilt.append(f'![{alt}]({url})')
+            last_end = match.end()
+        if found:
+            tail = line[last_end:].strip()
+            if tail:
+                rebuilt.append(tail)
+            for part in rebuilt:
+                processed.append(part)
+            continue
+        processed.append(line.strip())
     return '\n'.join(processed).strip()
 
 
