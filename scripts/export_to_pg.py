@@ -7,17 +7,20 @@ import argparse
 import os
 import sqlite3
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
 import psycopg2
 import psycopg2.extras
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from wechatcli.config import DB_PATH
+from wechatcli.storage import ISO_FORMAT
 from wechatcli.storage import PostgresStorage
 
 
@@ -30,6 +33,13 @@ def chunked(iterable: Iterable, size: int):
             batch = []
     if batch:
         yield batch
+
+
+def parse_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    dt = datetime.strptime(value, ISO_FORMAT)
+    return dt.replace(tzinfo=timezone.utc)
 
 
 def export_meta(pg_conn, rows):
@@ -152,13 +162,31 @@ def main() -> int:
                 )
             pg_conn.commit()
 
-        with sqlite_conn:
-            meta_rows = sqlite_conn.execute("SELECT key, value FROM meta").fetchall()
-            if meta_rows:
-                export_meta(pg_conn, [(row["key"], row["value"]) for row in meta_rows])
+        total_meta = sqlite_conn.execute("SELECT COUNT(*) FROM meta").fetchone()[0]
+        total_accounts = sqlite_conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
+        total_logins = sqlite_conn.execute("SELECT COUNT(*) FROM login_sessions").fetchone()[0]
+        total_articles = sqlite_conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
 
-            account_rows = sqlite_conn.execute("SELECT * FROM accounts").fetchall()
-            if account_rows:
+        progress_columns = [
+            SpinnerColumn(),
+            TextColumn("{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeElapsedColumn(),
+        ]
+        with Progress(*progress_columns) as progress, sqlite_conn:
+            meta_task = progress.add_task("导出 meta", total=total_meta)
+            account_task = progress.add_task("导出 accounts", total=total_accounts)
+            login_task = progress.add_task("导出 login_sessions", total=total_logins)
+            article_task = progress.add_task("导出 articles", total=total_articles)
+
+            if total_meta:
+                meta_rows = sqlite_conn.execute("SELECT key, value FROM meta").fetchall()
+                export_meta(pg_conn, [(row["key"], row["value"]) for row in meta_rows])
+                progress.update(meta_task, completed=total_meta)
+
+            if total_accounts:
+                account_rows = sqlite_conn.execute("SELECT * FROM accounts").fetchall()
                 export_accounts(
                     pg_conn,
                     [
@@ -171,16 +199,17 @@ def main() -> int:
                             row["key"],
                             row["pass_ticket"],
                             bool(row["is_default"]),
-                            row["last_synced_at"],
-                            row["created_at"],
-                            row["updated_at"],
+                            parse_ts(row["last_synced_at"]),
+                            parse_ts(row["created_at"]),
+                            parse_ts(row["updated_at"]),
                         )
                         for row in account_rows
                     ],
                 )
+                progress.update(account_task, completed=total_accounts)
 
-            login_rows = sqlite_conn.execute("SELECT * FROM login_sessions").fetchall()
-            if login_rows:
+            if total_logins:
+                login_rows = sqlite_conn.execute("SELECT * FROM login_sessions").fetchall()
                 export_login_sessions(
                     pg_conn,
                     [
@@ -191,38 +220,41 @@ def main() -> int:
                             row["nickname"],
                             row["avatar"],
                             bool(row["is_default"]),
-                            row["created_at"],
-                            row["updated_at"],
+                            parse_ts(row["created_at"]),
+                            parse_ts(row["updated_at"]),
                         )
                         for row in login_rows
                     ],
                 )
+                progress.update(login_task, completed=total_logins)
 
-            article_cursor = sqlite_conn.execute("SELECT * FROM articles")
-            while True:
-                batch = article_cursor.fetchmany(2000)
-                if not batch:
-                    break
-                export_articles(
-                    pg_conn,
-                    [
-                        (
-                            row["biz"],
-                            row["article_id"],
-                            row["title"],
-                            row["author"],
-                            row["digest"],
-                            row["cover"],
-                            row["link"],
-                            row["source_url"],
-                            row["publish_at"],
-                            row["raw_json"],
-                            row["created_at"],
-                            row["updated_at"],
-                        )
-                        for row in batch
-                    ],
-                )
+            if total_articles:
+                article_cursor = sqlite_conn.execute("SELECT * FROM articles")
+                while True:
+                    batch = article_cursor.fetchmany(2000)
+                    if not batch:
+                        break
+                    export_articles(
+                        pg_conn,
+                        [
+                            (
+                                row["biz"],
+                                row["article_id"],
+                                row["title"],
+                                row["author"],
+                                row["digest"],
+                                row["cover"],
+                                row["link"],
+                                row["source_url"],
+                                row["publish_at"],
+                                row["raw_json"],
+                                parse_ts(row["created_at"]),
+                                parse_ts(row["updated_at"]),
+                            )
+                            for row in batch
+                        ],
+                    )
+                    progress.advance(article_task, len(batch))
 
         pg_conn.commit()
     finally:

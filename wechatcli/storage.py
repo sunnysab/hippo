@@ -6,7 +6,7 @@ import json
 import os
 import sqlite3
 from contextlib import AbstractContextManager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, List, Optional, Protocol
 
@@ -22,6 +22,10 @@ SCHEMA_VERSION = "3"
 
 def _utc_now() -> str:
     return datetime.utcnow().strftime(ISO_FORMAT)
+
+
+def _utc_now_dt() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class StorageLike(Protocol):
@@ -477,9 +481,9 @@ class PostgresStorage(AbstractContextManager):
                     key TEXT NOT NULL,
                     pass_ticket TEXT NOT NULL,
                     is_default BOOLEAN NOT NULL DEFAULT FALSE,
-                    last_synced_at TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    last_synced_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL
                 )
                 """
             )
@@ -497,8 +501,8 @@ class PostgresStorage(AbstractContextManager):
                     source_url TEXT,
                     publish_at BIGINT,
                     raw_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL,
                     UNIQUE (biz, article_id)
                 )
                 """
@@ -518,8 +522,8 @@ class PostgresStorage(AbstractContextManager):
                     nickname TEXT,
                     avatar TEXT,
                     is_default BOOLEAN NOT NULL DEFAULT TRUE,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    created_at TIMESTAMPTZ NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL
                 )
                 """
             )
@@ -555,7 +559,7 @@ class PostgresStorage(AbstractContextManager):
 
     # Account helpers -----------------------------------------------------
     def upsert_account(self, account: AccountCredential) -> AccountCredential:
-        now = _utc_now()
+        now = _utc_now_dt()
         with self.conn.cursor() as cur:
             cur.execute(
                 """
@@ -580,7 +584,7 @@ class PostgresStorage(AbstractContextManager):
                     account.key or "",
                     account.pass_ticket or "",
                     account.is_default,
-                    account.last_synced_at.strftime(ISO_FORMAT) if account.last_synced_at else None,
+                    account.last_synced_at,
                     now,
                     now,
                 ),
@@ -631,7 +635,7 @@ class PostgresStorage(AbstractContextManager):
             raise LookupError(f"Account {biz} not found")
 
     def update_last_synced(self, biz: str) -> None:
-        now = _utc_now()
+        now = _utc_now_dt()
         with self.conn.cursor() as cur:
             cur.execute(
                 "UPDATE accounts SET last_synced_at = %s, updated_at = %s WHERE biz = %s",
@@ -641,7 +645,7 @@ class PostgresStorage(AbstractContextManager):
 
     # Login session helpers ------------------------------------------------
     def save_login_session(self, session: LoginSession, *, set_default: bool = True) -> LoginSession:
-        now = _utc_now()
+        now = _utc_now_dt()
         with self.conn.cursor() as cur:
             if set_default:
                 cur.execute("UPDATE login_sessions SET is_default = FALSE")
@@ -681,7 +685,7 @@ class PostgresStorage(AbstractContextManager):
 
     # Article helpers -----------------------------------------------------
     def save_articles(self, articles: Iterable[ArticleRecord]) -> int:
-        now = _utc_now()
+        now = _utc_now_dt()
         inserted = 0
         with self.conn.cursor() as cur:
             for article in articles:
@@ -760,9 +764,7 @@ class PostgresStorage(AbstractContextManager):
     # Internal helpers ----------------------------------------------------
     @staticmethod
     def _row_to_account(row: psycopg2.extras.DictRow) -> AccountCredential:
-        last_synced_at = None
-        if row["last_synced_at"]:
-            last_synced_at = datetime.strptime(row["last_synced_at"], ISO_FORMAT)
+        last_synced_at = row["last_synced_at"] if row["last_synced_at"] else None
         return AccountCredential(
             biz=row["biz"],
             nickname=row["nickname"],
