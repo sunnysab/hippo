@@ -130,17 +130,19 @@ class ArticleDownloader(AbstractContextManager):
                 normalized_html, target_dir, referer=article.link
             )
 
-        output_name = _FORMAT_EXTENSIONS.get(fmt, _FORMAT_EXTENSIONS["html"])
-        output_path = target_dir / output_name
-        if fmt == "html":
-            output_path.write_text(normalized_html, encoding="utf-8")
-        elif fmt == "markdown":
-            content = normalize_html(raw_html, fmt="markdown")
-            output_path.write_text(content, encoding="utf-8")
-        elif fmt == "text":
-            content = normalize_html(raw_html, fmt="text")
-            output_path.write_text(content, encoding="utf-8")
-        else:
+        output_path = target_dir / _FORMAT_EXTENSIONS["html"]
+        output_path.write_text(normalized_html, encoding="utf-8")
+
+        markdown_path = target_dir / _FORMAT_EXTENSIONS["markdown"]
+        markdown_content = normalize_html(raw_html, fmt="markdown")
+        markdown_path.write_text(markdown_content, encoding="utf-8")
+
+        text_path = None
+        if fmt == "text":
+            text_path = target_dir / _FORMAT_EXTENSIONS["text"]
+            text_content = normalize_html(raw_html, fmt="text")
+            text_path.write_text(text_content, encoding="utf-8")
+        elif fmt not in ("html", "markdown"):
             raise ValueError(f"Unsupported format: {fmt}")
 
         metadata = {
@@ -150,7 +152,9 @@ class ArticleDownloader(AbstractContextManager):
             "author": article.author,
             "digest": article.digest,
             "publish_at": article.publish_at,
-            "downloaded_path": output_name,
+            "html_path": _FORMAT_EXTENSIONS["html"],
+            "markdown_path": _FORMAT_EXTENSIONS["markdown"],
+            "text_path": _FORMAT_EXTENSIONS["text"] if text_path else None,
             "assets": asset_count,
         }
         (target_dir / "metadata.json").write_text(
