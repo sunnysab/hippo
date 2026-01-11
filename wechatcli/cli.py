@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import random
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -141,6 +141,18 @@ def _extract_publish_page(payload: dict) -> dict:
 
 def _today_str() -> str:
     return date.today().isoformat()
+
+
+def _enforce_exclusive_flags(force: bool, skip_minutes: Optional[int]) -> None:
+    if force and skip_minutes is not None:
+        raise typer.BadParameter("--force 与 --skip-time 不能同时使用")
+
+
+def _should_skip_by_time(last_synced_at: Optional[datetime], skip_minutes: Optional[int]) -> bool:
+    if skip_minutes is None or not last_synced_at:
+        return False
+    threshold = datetime.utcnow() - timedelta(minutes=skip_minutes)
+    return last_synced_at >= threshold
 
 
 def _is_login_error(message: str) -> bool:
@@ -445,9 +457,17 @@ def sync_articles(
     biz: Optional[str] = typer.Option(None, help="指定账号 fakeid，留空使用默认账号"),
     pages: int = typer.Option(1, min=1, help="抓取的分页数量，每页默认 10 篇"),
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help="每页抓取数量"),
+    force: bool = typer.Option(False, help="忽略跳过条件，强制同步", flag_value=True),
+    skip_time: Optional[int] = typer.Option(
+        None, min=1, help="多少分钟内同步过则跳过"
+    ),
 ) -> None:
+    _enforce_exclusive_flags(force, skip_time)
     with Storage(DB_PATH) as storage:
         account = storage.get_account(biz)
+        if not force and _should_skip_by_time(account.last_synced_at, skip_time):
+            console.print("[yellow]该账号近期已同步，跳过[/yellow]")
+            return
         console.print(f"[cyan]开始同步 {account.nickname} 的文章[/cyan]")
         total_saved = 0
         columns = [
@@ -495,7 +515,12 @@ def sync_all_articles(
         0.05, min=0, help="翻页间隔秒数（可为小数）"
     ),
     reset: bool = typer.Option(False, help="清除断点后从头同步", flag_value=True),
+    force: bool = typer.Option(False, help="忽略跳过条件，强制同步", flag_value=True),
+    skip_time: Optional[int] = typer.Option(
+        None, min=1, help="多少分钟内同步过则跳过"
+    ),
 ) -> None:
+    _enforce_exclusive_flags(force, skip_time)
     with Storage(DB_PATH) as storage:
         accounts = storage.list_accounts()
         if not accounts:
@@ -529,12 +554,21 @@ def sync_all_articles(
                     if reset:
                         storage.delete_meta(resume_key)
                         storage.delete_meta(complete_key)
-                    elif storage.get_meta(complete_key) == _today_str():
+                    elif not force and storage.get_meta(complete_key) == _today_str():
                         task_id = progress.add_task(
                             f"同步 {account.nickname} ({account.biz})",
                             total=0,
                             completed=0,
                             status="跳过(今日已完成)",
+                        )
+                        progress.update(task_id, completed=0)
+                        continue
+                    if not force and _should_skip_by_time(account.last_synced_at, skip_time):
+                        task_id = progress.add_task(
+                            f"同步 {account.nickname} ({account.biz})",
+                            total=0,
+                            completed=0,
+                            status="跳过(近期已同步)",
                         )
                         progress.update(task_id, completed=0)
                         continue
