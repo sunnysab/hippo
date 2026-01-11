@@ -21,14 +21,16 @@ from .models import AccountCredential, LoginSession
 from .storage import StorageLike, open_storage
 from .utils import ensure_directory
 
-app = typer.Typer(help="WeChat article exporter CLI", no_args_is_help=True)
+app = typer.Typer(help="WeChat article exporter CLI", no_args_is_help=True, rich_markup_mode=None)
 accounts_app = typer.Typer(
     help="Manage stored WeChat accounts",
     no_args_is_help=True,
+    rich_markup_mode=None,
 )
 articles_app = typer.Typer(
     help="Sync, inspect, and download articles",
     no_args_is_help=True,
+    rich_markup_mode=None,
 )
 app.add_typer(accounts_app, name="accounts")
 app.add_typer(articles_app, name="articles")
