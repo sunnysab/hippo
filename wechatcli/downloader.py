@@ -116,7 +116,11 @@ class ArticleDownloader(AbstractContextManager):
         account_name: Optional[str],
     ) -> DownloadResult:
         account_segment = slugify(account_name or article.biz or "account")
-        article_segment = f"{timestamp_to_datestr(article.publish_at)}-{slugify(article.title)}"
+        article_segment = (
+            f"{timestamp_to_datestr(article.publish_at)}-"
+            f"{account_segment}-"
+            f"{slugify(article.title)}"
+        )
         target_dir = ensure_directory(self.output_dir / account_segment / article_segment)
 
         normalized_html = normalize_html(raw_html, fmt="html")
@@ -146,7 +150,7 @@ class ArticleDownloader(AbstractContextManager):
             "author": article.author,
             "digest": article.digest,
             "publish_at": article.publish_at,
-            "downloaded_path": str(output_path),
+            "downloaded_path": output_name,
             "assets": asset_count,
         }
         (target_dir / "metadata.json").write_text(

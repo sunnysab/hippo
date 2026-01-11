@@ -34,8 +34,8 @@ def ensure_directory(path: Path | None = None) -> Path:
 
 def timestamp_to_datestr(ts: Optional[int]) -> str:
     if not ts:
-        return datetime.utcnow().strftime("%Y%m%d")
-    return datetime.utcfromtimestamp(ts).strftime("%Y%m%d")
+        return datetime.utcnow().strftime("%Y-%m-%d")
+    return datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d")
 
 
 __all__ = ["slugify", "ensure_directory", "timestamp_to_datestr"]
