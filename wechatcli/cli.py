@@ -56,6 +56,10 @@ class OutputFormat(str, Enum):
         return self.value
 
 
+class SyncInterrupted(Exception):
+    pass
+
+
 class CountColumn(ProgressColumn):
     def render(self, task) -> str:  # type: ignore[override]
         total = "?" if task.total is None else str(int(task.total))
@@ -208,88 +212,96 @@ def _sync_account_pages(
     completed = False
     request_count = 0
     while True:
-        attempt = 0
-        freq_attempt = 0
-        while True:
-            try:
-                payload = client.fetch_appmsg_publish(
-                    session, fakeid=account.biz, begin=offset, count=page_size
-                )
+        try:
+            attempt = 0
+            freq_attempt = 0
+            while True:
+                try:
+                    payload = client.fetch_appmsg_publish(
+                        session, fakeid=account.biz, begin=offset, count=page_size
+                    )
+                    break
+                except RuntimeError as exc:
+                    if _is_login_error(str(exc)):
+                        if not _handle_login_expired():
+                            console.print("[yellow]已暂停同步，断点进度已保留[/yellow]")
+                            raise typer.Exit(code=1)
+                        try:
+                            login()
+                        except typer.Exit:
+                            console.print("[yellow]登录未完成，断点进度已保留[/yellow]")
+                            raise
+                        session = _get_login_session(storage)
+                        continue
+                    if _is_freq_control(str(exc)):
+                        freq_attempt += 1
+                        if freq_attempt == 1:
+                            wait_seconds = 15
+                        else:
+                            wait_seconds = min(15 + 5 * (freq_attempt - 1), 60)
+                        message = f"触发频率控制，等待 {wait_seconds} 秒后重试"
+                        if progress is not None:
+                            progress.console.log(f"[yellow]{message}[/yellow]")
+                        else:
+                            console.print(f"[yellow]{message}[/yellow]")
+                        time.sleep(wait_seconds)
+                        continue
+                    raise
+                except (httpx.ReadTimeout, httpx.TimeoutException, httpx.TransportError) as exc:
+                    attempt += 1
+                    if attempt >= 3:
+                        raise RuntimeError(f"网络请求超时或失败：{exc}") from exc
+                    time.sleep(min(2 ** attempt, 5))
+            request_count += 1
+            if request_count % 60 == 0:
+                message = "达到 60 次请求，等待 15 秒"
+                if progress is not None:
+                    progress.console.log(f"[yellow]{message}[/yellow]")
+                else:
+                    console.print(f"[yellow]{message}[/yellow]")
+                time.sleep(15)
+            publish_page = _extract_publish_page(payload)
+            publish_list = publish_page.get("publish_list") or []
+            publish_list_len = len(publish_list)
+            total_count = _extract_publish_total(payload) or total_count
+            if progress is not None and task_id is not None and total_count and total_count > 0:
+                completed_offset = offset if offset <= total_count else total_count
+                progress.update(task_id, total=total_count, completed=completed_offset)
+            if publish_list_len == 0:
+                completed = True
                 break
-            except RuntimeError as exc:
-                if _is_login_error(str(exc)):
-                    if not _handle_login_expired():
-                        console.print("[yellow]已暂停同步，断点进度已保留[/yellow]")
-                        raise typer.Exit(code=1)
-                    try:
-                        login()
-                    except typer.Exit:
-                        console.print("[yellow]登录未完成，断点进度已保留[/yellow]")
-                        raise
-                    session = _get_login_session(storage)
-                    continue
-                if _is_freq_control(str(exc)):
-                    freq_attempt += 1
-                    if freq_attempt == 1:
-                        wait_seconds = 15
-                    else:
-                        wait_seconds = min(15 + 5 * (freq_attempt - 1), 60)
-                    message = f"触发频率控制，等待 {wait_seconds} 秒后重试"
-                    if progress is not None:
-                        progress.console.log(f"[yellow]{message}[/yellow]")
-                    else:
-                        console.print(f"[yellow]{message}[/yellow]")
-                    time.sleep(wait_seconds)
-                    continue
-                raise
-            except (httpx.ReadTimeout, httpx.TimeoutException, httpx.TransportError) as exc:
-                attempt += 1
-                if attempt >= 3:
-                    raise RuntimeError(f"网络请求超时或失败：{exc}") from exc
-                time.sleep(min(2 ** attempt, 5))
-        request_count += 1
-        if request_count % 60 == 0:
-            message = "达到 60 次请求，等待 15 秒"
+            records = parse_appmsg_publish(account.biz, payload)
+            if full_synced_hint:
+                existing_ids = storage.get_existing_article_ids(
+                    account.biz, [record.article_id for record in records]
+                )
+                if records and len(existing_ids) == len(records):
+                    completed = True
+                    break
+            saved = storage.save_articles(records)
+            storage.update_last_synced(account.biz)
+            total_saved += saved
+            page_count += 1
+            current_completed = offset + publish_list_len
+            if total_count is not None and current_completed > total_count:
+                current_completed = total_count
+            offset += page_size
+            if resume_key:
+                storage.set_meta(resume_key, str(offset))
+            if progress is not None and task_id is not None:
+                progress.update(task_id, completed=current_completed)
+            if pages is not None and page_count >= pages:
+                completed = False
+                break
+            if sleep_seconds > 0:
+                time.sleep(sleep_seconds)
+        except KeyboardInterrupt as exc:
+            message = f"检测到中断，已保存断点：{account.nickname}"
             if progress is not None:
                 progress.console.log(f"[yellow]{message}[/yellow]")
             else:
                 console.print(f"[yellow]{message}[/yellow]")
-            time.sleep(15)
-        publish_page = _extract_publish_page(payload)
-        publish_list = publish_page.get("publish_list") or []
-        publish_list_len = len(publish_list)
-        total_count = _extract_publish_total(payload) or total_count
-        if progress is not None and task_id is not None and total_count and total_count > 0:
-            completed_offset = offset if offset <= total_count else total_count
-            progress.update(task_id, total=total_count, completed=completed_offset)
-        if publish_list_len == 0:
-            completed = True
-            break
-        records = parse_appmsg_publish(account.biz, payload)
-        if full_synced_hint:
-            existing_ids = storage.get_existing_article_ids(
-                account.biz, [record.article_id for record in records]
-            )
-            if records and len(existing_ids) == len(records):
-                completed = True
-                break
-        saved = storage.save_articles(records)
-        storage.update_last_synced(account.biz)
-        total_saved += saved
-        page_count += 1
-        current_completed = offset + publish_list_len
-        if total_count is not None and current_completed > total_count:
-            current_completed = total_count
-        offset += page_size
-        if resume_key:
-            storage.set_meta(resume_key, str(offset))
-        if progress is not None and task_id is not None:
-            progress.update(task_id, completed=current_completed)
-        if pages is not None and page_count >= pages:
-            completed = False
-            break
-        if sleep_seconds > 0:
-            time.sleep(sleep_seconds)
+            raise SyncInterrupted() from exc
     if resume_key and completed:
         storage.delete_meta(resume_key)
     if progress is not None and task_id is not None and total_count and completed:
@@ -507,6 +519,10 @@ def sync_articles(
                 if completed and total_saved == 0:
                     status = "已是最新"
                 progress.update(task_id, status=status)
+            except SyncInterrupted:
+                progress.update(task_id, status="未完成")
+                console.print("[yellow]同步中断，断点已保存[/yellow]")
+                raise typer.Exit(code=130)
             except RuntimeError as exc:
                 progress.update(task_id, status="失败")
                 console.print(f"[red]同步失败：{exc}[/red]")
@@ -604,6 +620,10 @@ def sync_all_articles(
                         progress.update(task_id, status=status)
                         if completed:
                             storage.set_meta(complete_key, _today_str())
+                    except SyncInterrupted:
+                        progress.update(task_id, status="未完成")
+                        console.print("[yellow]同步中断，断点已保存[/yellow]")
+                        raise typer.Exit(code=130)
                     except RuntimeError as exc:
                         progress.update(task_id, status="失败")
                         console.print(f"[red]同步失败：{exc}[/red]")
