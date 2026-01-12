@@ -8,12 +8,12 @@ import mimetypes
 import re
 import time
 from typing import Dict, Tuple
+from datetime import datetime, timezone
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Iterable, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
-import httpx
 from bs4 import BeautifulSoup
 
 try:
@@ -22,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover - fallback for running inside python/
     from normalize_html import normalize_html
 
-from .config import DOWNLOAD_ROOT
+from .config import DOWNLOAD_ROOT, HOME_DIR
 from .http import MPClient
 from .models import ArticleRecord, DownloadResult
 from .storage import StorageLike
@@ -47,6 +47,20 @@ def _extract_url_token(url: str) -> Optional[str]:
         if token:
             return token.split("?", 1)[0]
     return None
+
+
+def _resolve_asset_url(url: str, *, base: str) -> Optional[str]:
+    if not url:
+        return None
+    lowered = url.strip().lower()
+    if lowered.startswith(("data:", "javascript:", "about:")):
+        return None
+    if url.startswith("//"):
+        return f"https:{url}"
+    parsed = urlparse(url)
+    if parsed.scheme:
+        return url
+    return urljoin(base, url)
 
 
 def _parse_markdown_blocks(markdown: str) -> Tuple[Optional[str], Optional[str], list[dict], str]:
@@ -152,13 +166,24 @@ class ArticleDownloader(AbstractContextManager):
                 if progress is not None:
                     progress.update(1)
                 continue
-            result = self._download_with_retry(
-                article,
-                fmt=fmt,
-                with_images=with_images,
-                account_name=account_name,
-            )
-            results.append(result)
+            try:
+                result = self._download_with_retry(
+                    article,
+                    fmt=fmt,
+                    with_images=with_images,
+                    account_name=account_name,
+                )
+                results.append(result)
+            except Exception as exc:
+                self._log_download_error(
+                    stage="article_download",
+                    article=article,
+                    error=str(exc),
+                )
+                if progress is not None:
+                    progress.write(f"下载失败：{article.title} ({article.article_id}) {exc}")
+                    progress.update(1)
+                continue
             if progress is not None:
                 progress.update(1)
         return results, skipped
@@ -245,8 +270,9 @@ class ArticleDownloader(AbstractContextManager):
         asset_count = 0
         url_map: dict[str, str] = {}
         if with_images:
+            referer = article.link or "https://mp.weixin.qq.com/"
             normalized_html, asset_count, url_map = self._download_images(
-                normalized_html, target_dir, referer=article.link
+                normalized_html, target_dir, referer=referer, article=article
             )
 
         output_path = target_dir / _FORMAT_EXTENSIONS["html"]
@@ -304,7 +330,11 @@ class ArticleDownloader(AbstractContextManager):
         if not hasattr(self.storage, "save_article_content"):
             return
         title, cover_local, blocks, body_markdown = _parse_markdown_blocks(markdown_content)
-        local_to_orig = {local: orig for orig, local in url_map.items()}
+        base_url = article.link or "https://mp.weixin.qq.com/"
+        local_to_orig = {
+            local: _resolve_asset_url(orig, base=base_url) or orig
+            for orig, local in url_map.items()
+        }
         content_markdown = body_markdown
         for local_path, orig_url in local_to_orig.items():
             content_markdown = content_markdown.replace(f"]({local_path})", f"]({orig_url})")
@@ -388,7 +418,7 @@ class ArticleDownloader(AbstractContextManager):
         return html_path.exists() and md_path.exists()
 
     def _download_images(
-        self, html: str, target_dir: Path, *, referer: str
+        self, html: str, target_dir: Path, *, referer: str, article: ArticleRecord
     ) -> tuple[str, int, dict[str, str]]:
         soup = BeautifulSoup(html, "html.parser")
         images_dir = ensure_directory(target_dir / "images")
@@ -397,13 +427,24 @@ class ArticleDownloader(AbstractContextManager):
 
         def download_asset(url: str, *, prefix: str) -> str | None:
             nonlocal count
+            resolved = _resolve_asset_url(url, base=referer)
+            if not resolved:
+                return None
             if url in url_map:
                 return url_map[url]
             try:
-                data = self.client.download_binary(url, referer=referer)
-            except httpx.HTTPError:
+                data = self.client.download_binary(resolved, referer=referer)
+            except Exception as exc:
+                self._log_download_error(
+                    stage="asset_download",
+                    article=article,
+                    error=str(exc),
+                    asset_url=url,
+                    resolved_url=resolved,
+                    referer=referer,
+                )
                 return None
-            extension = _guess_extension(url) or ".bin"
+            extension = _guess_extension(resolved) or ".bin"
             count += 1
             filename = f"{prefix}_{count:03d}{extension}"
             (images_dir / filename).write_bytes(data)
@@ -445,6 +486,41 @@ class ArticleDownloader(AbstractContextManager):
             style_tag.string.replace_with(rewrite_css_urls(style_tag.string))
 
         return soup.decode(), count, url_map
+
+    def _log_download_error(
+        self,
+        *,
+        stage: str,
+        article: ArticleRecord,
+        error: str,
+        asset_url: Optional[str] = None,
+        resolved_url: Optional[str] = None,
+        referer: Optional[str] = None,
+    ) -> None:
+        log_dir = ensure_directory(HOME_DIR / "logs")
+        log_path = log_dir / "download_errors.jsonl"
+        payload = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "stage": stage,
+            "error": error,
+            "article": {
+                "biz": article.biz,
+                "article_id": article.article_id,
+                "title": article.title,
+                "link": article.link,
+            },
+        }
+        if asset_url:
+            payload["asset_url"] = asset_url
+        if resolved_url:
+            payload["resolved_url"] = resolved_url
+        if referer:
+            payload["referer"] = referer
+        try:
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
 
 
 # Helper functions ---------------------------------------------------------
