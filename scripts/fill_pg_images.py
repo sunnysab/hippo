@@ -11,6 +11,7 @@ from typing import Iterable, Iterator, Optional
 
 from wechatcli.http import MPClient
 from wechatcli.storage import PostgresStorage
+from tqdm import tqdm
 
 
 def _iter_missing_images(
@@ -82,7 +83,7 @@ def main() -> int:
         try:
             items = list(_iter_missing_images(storage, limit=args.limit))
             if args.dry_run:
-                for item in items:
+                for item in tqdm(items, desc="Backfill images", unit="img"):
                     print(f"DRY-RUN {item['orig_url']}")
                     skipped += 1
             else:
@@ -102,24 +103,27 @@ def main() -> int:
                     max_workers=worker_count
                 ) as executor:
                     future_map = {executor.submit(worker, item): item for item in items}
-                    for future in concurrent.futures.as_completed(future_map):
-                        item = future_map[future]
-                        orig_url = str(item["orig_url"])
-                        try:
-                            _, data, content_type = future.result()
-                            storage.update_article_image_data(
-                                item["biz"],
-                                item["article_id"],
-                                orig_url,
-                                content_type,
-                                data,
-                            )
-                            updated += 1
-                            if updated % 20 == 0:
-                                print(f"Updated {updated} images...")
-                        except Exception as exc:
-                            failed += 1
-                            print(f"FAILED {orig_url}: {exc}", file=sys.stderr)
+                    with tqdm(total=len(items), desc="Backfill images", unit="img") as bar:
+                        for future in concurrent.futures.as_completed(future_map):
+                            item = future_map[future]
+                            orig_url = str(item["orig_url"])
+                            try:
+                                _, data, content_type = future.result()
+                                storage.update_article_image_data(
+                                    item["biz"],
+                                    item["article_id"],
+                                    orig_url,
+                                    content_type,
+                                    data,
+                                )
+                                updated += 1
+                                if updated % 20 == 0:
+                                    print(f"Updated {updated} images...")
+                            except Exception as exc:
+                                failed += 1
+                                print(f"FAILED {orig_url}: {exc}", file=sys.stderr)
+                            finally:
+                                bar.update(1)
         except KeyboardInterrupt:
             print("Interrupted. Exiting.")
 

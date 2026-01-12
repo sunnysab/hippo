@@ -953,9 +953,20 @@ def backfill_article_images(
             rows = cur.fetchall()
         try:
             if dry_run:
-                for _, _, _, orig_url in rows:
-                    typer.echo(f"DRY-RUN {orig_url}")
-                    skipped += 1
+                progress = tqdm(
+                    total=len(rows),
+                    desc="Backfill images",
+                    unit="img",
+                    dynamic_ncols=True,
+                    leave=True,
+                )
+                try:
+                    for _, _, _, orig_url in rows:
+                        typer.echo(f"DRY-RUN {orig_url}")
+                        skipped += 1
+                        progress.update(1)
+                finally:
+                    progress.close()
             else:
                 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -968,26 +979,38 @@ def backfill_article_images(
                     )
                     return item, data, content_type
 
-                with ThreadPoolExecutor(max_workers=worker_count) as executor:
-                    future_map = {executor.submit(worker, item): item for item in rows}
-                    for future in as_completed(future_map):
-                        item = future_map[future]
-                        biz, article_id, _, orig_url = item
-                        try:
-                            _, data, content_type = future.result()
-                            storage.update_article_image_data(
-                                biz,
-                                article_id,
-                                str(orig_url),
-                                content_type,
-                                data,
-                            )
-                            updated += 1
-                            if updated % 20 == 0:
-                                typer.echo(f"Updated {updated} images...")
-                        except Exception as exc:
-                            failed += 1
-                            typer.echo(f"FAILED {orig_url}: {exc}")
+                progress = tqdm(
+                    total=len(rows),
+                    desc="Backfill images",
+                    unit="img",
+                    dynamic_ncols=True,
+                    leave=True,
+                )
+                try:
+                    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                        future_map = {executor.submit(worker, item): item for item in rows}
+                        for future in as_completed(future_map):
+                            item = future_map[future]
+                            biz, article_id, _, orig_url = item
+                            try:
+                                _, data, content_type = future.result()
+                                storage.update_article_image_data(
+                                    biz,
+                                    article_id,
+                                    str(orig_url),
+                                    content_type,
+                                    data,
+                                )
+                                updated += 1
+                                if updated % 20 == 0:
+                                    typer.echo(f"Updated {updated} images...")
+                            except Exception as exc:
+                                failed += 1
+                                typer.echo(f"FAILED {orig_url}: {exc}")
+                            finally:
+                                progress.update(1)
+                finally:
+                    progress.close()
         except KeyboardInterrupt:
             typer.echo("Interrupted. Exiting.")
             raise typer.Exit(code=130)
