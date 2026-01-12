@@ -737,6 +737,11 @@ def sync_article_download(
     with_images: bool = typer.Option(True, help="是否下载图片", flag_value=True),
     since: Optional[str] = typer.Option(None, help="仅下载某日期后的文章"),
     output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
+    worker_prefix: Optional[str] = typer.Option(None, help="文章 HTML worker 前缀或模板，留空使用环境变量"),
+    worker_proxy: Optional[str] = typer.Option(None, help="访问 worker 时使用的代理（HTTP/SOCKS5），留空直连"),
+    worker_max_connections: Optional[int] = typer.Option(
+        None, min=1, help="worker 客户端最大连接数，留空使用默认"
+    ),
 ) -> None:
     since_timestamp = _parse_since(since)
     with open_storage(DB_PATH) as storage:
@@ -766,7 +771,13 @@ def sync_article_download(
             leave=True,
         )
         try:
-            with ArticleDownloader(output_dir=target_dir, storage=storage) as downloader:
+            with ArticleDownloader(
+                output_dir=target_dir,
+                storage=storage,
+                article_worker=worker_prefix,
+                article_worker_proxy=worker_proxy,
+                article_max_connections=worker_max_connections,
+            ) as downloader:
                 results, skipped = downloader.download_many(
                     articles,
                     fmt=fmt_value,
@@ -792,6 +803,11 @@ def sync_all_article_download(
     with_images: bool = typer.Option(True, help="是否下载图片", flag_value=True),
     since: Optional[str] = typer.Option(None, help="仅下载某日期后的文章"),
     output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
+    worker_prefix: Optional[str] = typer.Option(None, help="文章 HTML worker 前缀或模板，留空使用环境变量"),
+    worker_proxy: Optional[str] = typer.Option(None, help="访问 worker 时使用的代理（HTTP/SOCKS5），留空直连"),
+    worker_max_connections: Optional[int] = typer.Option(
+        None, min=1, help="worker 客户端最大连接数，留空使用默认"
+    ),
 ) -> None:
     since_timestamp = _parse_since(since)
     total_downloads = 0
@@ -806,7 +822,13 @@ def sync_all_article_download(
             if isinstance(output_format, OutputFormat)
             else str(output_format)
         )
-        with ArticleDownloader(output_dir=target_dir, storage=storage) as downloader:
+        with ArticleDownloader(
+            output_dir=target_dir,
+            storage=storage,
+            article_worker=worker_prefix,
+            article_worker_proxy=worker_proxy,
+            article_max_connections=worker_max_connections,
+        ) as downloader:
             total_skipped = 0
             for account in accounts:
                 articles = storage.list_articles(
@@ -847,6 +869,11 @@ def download_article(
     with_images: bool = typer.Option(True, help="是否下载图片", flag_value=True),
     output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
     title: Optional[str] = typer.Option(None, help="覆盖文章标题"),
+    worker_prefix: Optional[str] = typer.Option(None, help="文章 HTML worker 前缀或模板，留空使用环境变量"),
+    worker_proxy: Optional[str] = typer.Option(None, help="访问 worker 时使用的代理（HTTP/SOCKS5），留空直连"),
+    worker_max_connections: Optional[int] = typer.Option(
+        None, min=1, help="worker 客户端最大连接数，留空使用默认"
+    ),
 ) -> None:
     if not url:
         typer.echo("请提供文章 URL。示例：python -m wechatcli articles download \"https://mp.weixin.qq.com/...\"")
@@ -858,7 +885,11 @@ def download_article(
         else str(output_format)
     )
     with open_storage(DB_PATH) as storage, ArticleDownloader(
-        output_dir=target_dir, storage=storage
+        output_dir=target_dir,
+        storage=storage,
+        article_worker=worker_prefix,
+        article_worker_proxy=worker_proxy,
+        article_max_connections=worker_max_connections,
     ) as downloader:
         try:
             result = downloader.download_from_url(

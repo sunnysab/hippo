@@ -26,10 +26,24 @@ def _resolve_home() -> Path:
     return Path(user_data_dir(appname=CLI_NAME, appauthor=APP_NAME))
 
 
+def _env_int(name: str, default: int | None = None) -> int | None:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 HOME_DIR: Final = _resolve_home()
 DB_PATH: Final = HOME_DIR / "cli.db"
 DOWNLOAD_ROOT: Final = HOME_DIR / "downloads"
 LOG_PATH: Final = HOME_DIR / "cli.log"
+ARTICLE_WORKER_URL: Final = os.environ.get("WECHATCLI_ARTICLE_WORKER")
+ARTICLE_WORKER_PROXY: Final = os.environ.get("WECHATCLI_ARTICLE_WORKER_PROXY")
+ARTICLE_WORKER_MAX_CONNECTIONS: Final = _env_int("WECHATCLI_ARTICLE_MAX_CONNECTIONS")
 
 __all__ = [
     "APP_NAME",
@@ -42,4 +56,7 @@ __all__ = [
     "DB_PATH",
     "DOWNLOAD_ROOT",
     "LOG_PATH",
+    "ARTICLE_WORKER_URL",
+    "ARTICLE_WORKER_PROXY",
+    "ARTICLE_WORKER_MAX_CONNECTIONS",
 ]

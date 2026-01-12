@@ -103,6 +103,10 @@ python -m wechatcli articles download "https://mp.weixin.qq.com/..."
 
 - `articles sync` / `sync-all`：根据已同步的列表下载文章内容
 - `articles download`：直接下载单篇 URL
+- 文章 HTML 可通过 Cloudflare Workers 代理抓取（图片仍直连）：命令行可指定
+  - `--worker-prefix`：worker 前缀或模板（可用 `{url}` 占位），默认读环境变量 `WECHATCLI_ARTICLE_WORKER`
+  - `--worker-proxy`：仅访问 worker 时使用的代理（HTTP/SOCKS5），默认读 `WECHATCLI_ARTICLE_WORKER_PROXY`
+  - `--worker-max-connections`：worker 客户端最大并发连接，默认读 `WECHATCLI_ARTICLE_MAX_CONNECTIONS`
 
 默认输出目录：
 `~/.local/share/wechatcli/downloads/`（可通过 `WECHATCLI_HOME` 改）
@@ -195,6 +199,13 @@ python scripts/export_to_pg.py \
 | `WECHATCLI_PG_DSN` | 使用 PostgreSQL |
 | `DB_PATH` | SQLite DB 路径 |
 | `DOWNLOAD_ROOT` | 下载目录 |
+
+### Article HTML proxy (images stay direct)
+
+- `WECHATCLI_ARTICLE_WORKER`: Cloudflare Workers relay for article HTML, e.g. `https://c0c0.sunnysab.workers.dev/?url=` or `https://c0c0.sunnysab.workers.dev/?url={url}`.
+- `WECHATCLI_ARTICLE_WORKER_PROXY`: Optional HTTP/SOCKS5 proxy for reaching the worker (e.g. `http://192.168.133.201:8080/`); omit to access the worker directly.
+- `WECHATCLI_ARTICLE_MAX_CONNECTIONS`: Optional max concurrent connections to the worker client (e.g. `2`) to keep proxy usage under control.
+- When the downloader sees `https://mp.weixin.qq.com/s/...`, it requests the worker URL (with the encoded article URL) using the configured proxy; images are fetched without any proxy using the original URLs.
 
 ---
 

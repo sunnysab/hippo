@@ -210,9 +210,16 @@ class ArticleDownloader(AbstractContextManager):
         client: Optional[MPClient] = None,
         output_dir: Optional[Path] = None,
         storage: Optional[StorageLike] = None,
+        article_worker: Optional[str] = None,
+        article_worker_proxy: Optional[str] = None,
+        article_max_connections: Optional[int] = None,
     ) -> None:
         self._managed_client = client is None
-        self.client = client or MPClient()
+        self.client = client or MPClient(
+            article_worker=article_worker,
+            article_worker_proxy=article_worker_proxy,
+            article_max_connections=article_max_connections,
+        )
         self.output_dir = ensure_directory(output_dir or DOWNLOAD_ROOT)
         self.storage = storage
         self._pg_dsn = os.environ.get("WECHATCLI_PG_DSN")

@@ -5,13 +5,19 @@ from __future__ import annotations
 import json
 import time
 from http.cookies import SimpleCookie
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, quote, urlparse
 from contextlib import AbstractContextManager
-from typing import Iterable, List, Dict, Any, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import httpx
 
-from .config import DEFAULT_USER_AGENT, WECHAT_PROFILE_ENDPOINT
+from .config import (
+    ARTICLE_WORKER_MAX_CONNECTIONS,
+    ARTICLE_WORKER_PROXY,
+    ARTICLE_WORKER_URL,
+    DEFAULT_USER_AGENT,
+    WECHAT_PROFILE_ENDPOINT,
+)
 from .models import AccountCredential, ArticleRecord, LoginSession
 
 HEADERS = {
@@ -24,8 +30,34 @@ HEADERS = {
 class MPClient(AbstractContextManager):
     """Tiny wrapper around httpx for the few WeChat endpoints we need."""
 
-    def __init__(self, *, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        *,
+        timeout: float = 30.0,
+        article_worker: Optional[str] = ARTICLE_WORKER_URL,
+        article_worker_proxy: Optional[str] = ARTICLE_WORKER_PROXY,
+        article_max_connections: Optional[int] = ARTICLE_WORKER_MAX_CONNECTIONS,
+    ) -> None:
         self.client = httpx.Client(timeout=timeout, headers=HEADERS, follow_redirects=True)
+        self.article_worker = article_worker.rstrip("/") if article_worker else None
+        self.article_worker_host = _extract_host(self.article_worker) if self.article_worker else None
+        limits = (
+            httpx.Limits(
+                max_connections=article_max_connections,
+                max_keepalive_connections=article_max_connections,
+            )
+            if article_max_connections
+            else None
+        )
+        self.article_client: Optional[httpx.Client] = None
+        if self.article_worker or article_worker_proxy or limits:
+            self.article_client = httpx.Client(
+                timeout=timeout,
+                headers=HEADERS,
+                follow_redirects=True,
+                proxies=article_worker_proxy,
+                limits=limits,
+            )
 
     def __enter__(self) -> "MPClient":
         return self
@@ -35,6 +67,8 @@ class MPClient(AbstractContextManager):
 
     def close(self) -> None:
         self.client.close()
+        if self.article_client:
+            self.article_client.close()
 
     # ------------------------------------------------------------------
     def fetch_profile_messages(
@@ -65,7 +99,8 @@ class MPClient(AbstractContextManager):
         return records
 
     def fetch_article_html(self, url: str) -> str:
-        resp = self.client.get(url)
+        target_url, client = self._prepare_article_request(url)
+        resp = client.get(target_url)
         resp.raise_for_status()
         return resp.text
 
@@ -87,6 +122,15 @@ class MPClient(AbstractContextManager):
         resp.raise_for_status()
         content_type = resp.headers.get("content-type")
         return resp.content, content_type
+
+    def _prepare_article_request(self, url: str) -> Tuple[str, httpx.Client]:
+        if self.article_worker and _is_mp_article(url):
+            wrapped = _wrap_worker_url(url, self.article_worker)
+            return wrapped, self.article_client or self.client
+        parsed = urlparse(url)
+        if self.article_client and _is_worker_host(parsed.netloc, self.article_worker_host):
+            return url, self.article_client
+        return url, self.client
 
     # ------------------------------------------------------------------
     def start_login_session(self, sid: str) -> str:
@@ -237,6 +281,42 @@ class MPClient(AbstractContextManager):
 
 
 # Parsing helpers -----------------------------------------------------------
+
+
+def _extract_host(url: str | None) -> Optional[str]:
+    if not url:
+        return None
+    try:
+        return urlparse(url).netloc
+    except Exception:
+        return None
+
+
+def _is_worker_host(netloc: str, expected: Optional[str]) -> bool:
+    if not netloc:
+        return False
+    lowered = netloc.lower()
+    if expected:
+        return lowered == expected.lower()
+    return lowered.endswith(".workers.dev")
+
+
+def _is_mp_article(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    return parsed.netloc.lower() == "mp.weixin.qq.com" and "/s/" in parsed.path
+
+
+def _wrap_worker_url(original: str, worker: str) -> str:
+    encoded = quote(original, safe="")
+    if "{url}" in worker:
+        return worker.format(url=encoded)
+    if worker.endswith(("?", "&", "=")):
+        return f"{worker}{encoded}"
+    separator = "&" if "?" in worker else "?"
+    return f"{worker}{separator}url={encoded}"
 
 def _parse_general_msg_list(raw: str) -> List[dict]:
     if not raw:
