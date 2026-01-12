@@ -366,12 +366,33 @@ class ArticleDownloader(AbstractContextManager):
         results: List[DownloadResult] = []
         skipped = 0
         pending: List[ArticleRecord] = []
-        for article in articles:
-            if skip_if_downloaded and self._is_downloaded(article, account_name):
-                skipped += 1
-                if progress is not None:
-                    progress.update(1)
-                continue
+        articles_list = list(articles)
+        content_ids: Optional[set[str]] = None
+        if self.storage and os.environ.get("WECHATCLI_PG_DSN"):
+            get_content_ids = getattr(self.storage, "get_article_content_ids", None)
+            if callable(get_content_ids):
+                try:
+                    article_ids = [article.article_id for article in articles_list]
+                    if article_ids:
+                        content_ids = set(get_content_ids(articles_list[0].biz, article_ids))
+                except Exception:
+                    content_ids = None
+        for article in articles_list:
+            if skip_if_downloaded:
+                if content_ids is not None:
+                    db_ok = article.article_id in content_ids
+                    file_ok = self._has_local_files(article, account_name)
+                    if db_ok and file_ok:
+                        skipped += 1
+                        if progress is not None:
+                            progress.update(1)
+                        continue
+                else:
+                    if self._is_downloaded(article, account_name):
+                        skipped += 1
+                        if progress is not None:
+                            progress.update(1)
+                        continue
             pending.append(article)
 
         if not pending:
@@ -664,14 +685,7 @@ class ArticleDownloader(AbstractContextManager):
                 return ensure_directory(candidate)
             index += 1
 
-    def _is_downloaded(self, article: ArticleRecord, account_name: Optional[str]) -> bool:
-        if self.storage and os.environ.get("WECHATCLI_PG_DSN"):
-            has_content = getattr(self.storage, "has_article_content", None)
-            if callable(has_content):
-                try:
-                    return bool(has_content(article.biz, article.article_id))
-                except Exception:
-                    return False
+    def _has_local_files(self, article: ArticleRecord, account_name: Optional[str]) -> bool:
         account_segment = slugify(account_name or article.biz or "account")
         title_segment = _safe_title_segment(article.title) or article.article_id or "article"
         base_segment = f"{timestamp_to_datestr(article.publish_at)}-{title_segment}"
@@ -702,6 +716,19 @@ class ArticleDownloader(AbstractContextManager):
             if html_path.exists() and md_path.exists() and not article.link:
                 return True
         return False
+
+    def _is_downloaded(self, article: ArticleRecord, account_name: Optional[str]) -> bool:
+        if self.storage and os.environ.get("WECHATCLI_PG_DSN"):
+            has_content = getattr(self.storage, "has_article_content", None)
+            if callable(has_content):
+                try:
+                    db_has_content = bool(has_content(article.biz, article.article_id))
+                except Exception:
+                    db_has_content = False
+                if not db_has_content:
+                    return False
+                return self._has_local_files(article, account_name)
+        return self._has_local_files(article, account_name)
 
     def _download_images(
         self, html: str, target_dir: Path, *, referer: str, article: ArticleRecord

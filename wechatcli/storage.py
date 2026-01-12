@@ -952,6 +952,22 @@ class PostgresStorage(AbstractContextManager):
             )
             return cur.fetchone() is not None
 
+    def get_article_content_ids(self, biz: str, article_ids: Iterable[str]) -> set[str]:
+        ids = [item for item in article_ids if item]
+        if not ids:
+            return set()
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT a.article_id
+                FROM article_content c
+                JOIN articles a ON a.id = c.article_pk
+                WHERE a.biz = %s AND a.article_id = ANY(%s)
+                """,
+                (biz, ids),
+            )
+            return {row[0] for row in cur.fetchall()}
+
     def update_article_image_data(
         self,
         biz: str,
