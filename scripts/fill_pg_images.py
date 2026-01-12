@@ -9,6 +9,7 @@ import sys
 import time
 from typing import Iterable, Iterator, Optional
 
+import httpx
 from wechatcli.http import MPClient
 from wechatcli.storage import PostgresStorage
 from tqdm import tqdm
@@ -70,6 +71,16 @@ def _normalize_image_url(url: str) -> str:
     return trimmed
 
 
+def _format_error(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        url = exc.request.url
+        return f"{exc} status={status} url={url}"
+    if isinstance(exc, httpx.RequestError):
+        return f"{exc} url={exc.request.url}"
+    return str(exc)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Backfill missing image data in PostgreSQL")
     parser.add_argument("--pg-dsn", default=os.environ.get("WECHATCLI_PG_DSN"))
@@ -128,9 +139,12 @@ def main() -> int:
                                 updated += 1
                                 if updated % 20 == 0:
                                     print(f"Updated {updated} images...")
-                            except Exception as exc:
-                                failed += 1
-                                print(f"FAILED {orig_url}: {exc}", file=sys.stderr)
+                        except Exception as exc:
+                            failed += 1
+                            print(
+                                f"FAILED {orig_url}: {_format_error(exc)}",
+                                file=sys.stderr,
+                            )
                             finally:
                                 bar.update(1)
         except KeyboardInterrupt:

@@ -954,6 +954,15 @@ def backfill_article_images(
                 time.sleep(min(sleep_base * (2**attempt), 5.0))
         raise RuntimeError(str(last_exc)) from last_exc
 
+    def format_error(exc: Exception) -> str:
+        if isinstance(exc, httpx.HTTPStatusError):
+            status = exc.response.status_code
+            url = exc.request.url
+            return f"{exc} status={status} url={url}"
+        if isinstance(exc, httpx.RequestError):
+            return f"{exc} url={exc.request.url}"
+        return str(exc)
+
     updated = 0
     skipped = 0
     failed = 0
@@ -1026,9 +1035,9 @@ def backfill_article_images(
                                 updated += 1
                                 if updated % 20 == 0:
                                     typer.echo(f"Updated {updated} images...")
-                            except Exception as exc:
-                                failed += 1
-                                typer.echo(f"FAILED {orig_url}: {exc}")
+                        except Exception as exc:
+                            failed += 1
+                            typer.echo(f"FAILED {orig_url}: {format_error(exc)}")
                             finally:
                                 progress.update(1)
                 finally:
