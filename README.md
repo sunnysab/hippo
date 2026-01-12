@@ -93,7 +93,7 @@ python -m wechatcli account sync-all --skip-time 30
 
 ---
 
-## 下载文章内容
+## Download Articles
 
 ```bash
 python -m wechatcli articles sync --biz <fakeid>
@@ -101,24 +101,32 @@ python -m wechatcli articles sync-all
 python -m wechatcli articles download "https://mp.weixin.qq.com/..."
 ```
 
-- `articles sync` / `sync-all`：根据已同步的列表下载文章内容
-- `articles download`：直接下载单篇 URL
-- 文章 HTML 可通过 Cloudflare Workers 代理抓取（图片仍直连）：命令行可指定
-  - `--worker-prefix`：worker 前缀或模板（可用 `{url}` 占位），默认读环境变量 `WECHATCLI_ARTICLE_WORKER`
-  - `--worker-proxy`：仅访问 worker 时使用的代理（HTTP/SOCKS5），默认读 `WECHATCLI_ARTICLE_WORKER_PROXY`
-  - `--worker-max-connections`：worker 客户端最大并发连接，默认读 `WECHATCLI_ARTICLE_MAX_CONNECTIONS`
+- `articles sync` / `sync-all`: download content based on the synced article list
+- `articles download`: download a single article URL
+- Article HTML can be fetched via a Cloudflare Worker (images are still direct):
+  - `--worker-prefix`: worker prefix or template (`{url}` placeholder), defaults to `WECHATCLI_ARTICLE_WORKER`
+  - `--worker-proxy`: proxy for worker requests (HTTP/SOCKS5), defaults to `WECHATCLI_ARTICLE_WORKER_PROXY`
+  - `--worker-max-connections`: max concurrent worker connections, defaults to `WECHATCLI_ARTICLE_MAX_CONNECTIONS`
 
-默认输出目录：
-`~/.local/share/wechatcli/downloads/`（可通过 `WECHATCLI_HOME` 改）
+Download behavior:
+- Article HTML fetch retries up to 5 times before skipping the article.
+- Image downloads run on 2 background threads and retry up to 3 times.
+- Failed image downloads are logged to `~/.local/share/wechatcli/logs/download_errors.jsonl` and are retried automatically when a download command starts.
+- For `sync-all`, each account waits for its image queue to finish before moving to the next account.
 
-目录结构示例：
+Default output directory:
+`~/.local/share/wechatcli/downloads/` (override with `WECHATCLI_HOME`)
+
+Directory structure example:
 
 ```
-downloads/<账号名或biz>/<YYYY-MM-DD-标题>/
+downloads/<account-or-biz>/<YYYY-MM-DD-full-title>/
   ├── index.html / article.md / article.txt
   ├── metadata.json
   └── images/
 ```
+
+If a directory name already exists, a numeric suffix is appended (e.g. `-2`, `-3`).
 
 ---
 

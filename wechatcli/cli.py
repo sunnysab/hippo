@@ -857,6 +857,7 @@ def sync_all_article_download(
                     raise typer.Exit(code=1)
                 finally:
                     progress.close()
+                downloader.wait_for_images()
                 total_downloads += len(results)
                 total_skipped += skipped
     typer.echo(f"全部下载完成，生成 {total_downloads} 个目录，跳过 {total_skipped} 篇")

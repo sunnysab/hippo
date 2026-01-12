@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
 import mimetypes
@@ -36,6 +37,11 @@ _FORMAT_EXTENSIONS = {
     "text": "article.txt",
 }
 _URL_PATTERN = re.compile(r"url\((?P<quote>[\"']?)(?P<url>[^\"')]+)(?P=quote)\)", re.IGNORECASE)
+_ARTICLE_MAX_RETRIES = 5
+_IMAGE_WORKERS = 2
+_IMAGE_MAX_RETRIES = 3
+_ERROR_LOG_NAME = "download_errors.jsonl"
+_SUFFIX_PATTERN = re.compile(r"^(?P<base>.+)-(?P<index>\d+)$")
 
 
 def _extract_url_token(url: str) -> Optional[str]:
@@ -134,26 +140,64 @@ def _parse_markdown_blocks(markdown: str) -> Tuple[Optional[str], Optional[str],
     return title, cover_local, blocks, body_markdown
 
 
+def _safe_title_segment(title: Optional[str]) -> str:
+    if not title:
+        return "article"
+    sanitized = title.strip()
+    if not sanitized:
+        return "article"
+    sanitized = sanitized.replace(os.sep, "-")
+    if os.altsep:
+        sanitized = sanitized.replace(os.altsep, "-")
+    sanitized = sanitized.replace(":", "-")
+    sanitized = re.sub(r"\s+", " ", sanitized)
+    sanitized = sanitized.strip(" .")
+    return sanitized or "article"
+
+
 class ImageDownloadWorker:
     def __init__(
         self,
         *,
         log_error: Callable[..., None],
         pg_dsn: Optional[str],
+        workers: int = _IMAGE_WORKERS,
+        max_retries: int = _IMAGE_MAX_RETRIES,
     ) -> None:
         self._log_error = log_error
         self._pg_dsn = pg_dsn
+        self._max_retries = max_retries
         self._queue: "queue.Queue[Optional[dict]]" = queue.Queue()
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        self._stop = threading.Event()
+        self._closed = False
+        self._threads = [
+            threading.Thread(target=self._run, daemon=True)
+            for _ in range(max(1, workers))
+        ]
+        for thread in self._threads:
+            thread.start()
 
     def enqueue(self, task: dict) -> None:
+        if self._closed:
+            return
         self._queue.put(task)
 
-    def close(self) -> None:
+    def wait(self) -> None:
         self._queue.join()
-        self._queue.put(None)
-        self._thread.join()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        try:
+            self._queue.join()
+        except KeyboardInterrupt:
+            self._stop.set()
+        finally:
+            self._closed = True
+            for _ in self._threads:
+                self._queue.put(None)
+            for thread in self._threads:
+                thread.join(timeout=2)
 
     def _run(self) -> None:
         storage = None
@@ -167,12 +211,16 @@ class ImageDownloadWorker:
                 if task is None:
                     self._queue.task_done()
                     break
+                if self._stop.is_set():
+                    self._queue.task_done()
+                    continue
                 article = task["article"]
                 resolved_url = task["resolved_url"]
                 orig_url = task.get("orig_url")
                 referer = task.get("referer")
                 target_dir = task["target_dir"]
                 local_path = task["local_path"]
+                attempt = int(task.get("attempt", 1))
                 try:
                     data, content_type = client.download_binary_with_type(
                         resolved_url, referer=referer
@@ -189,14 +237,20 @@ class ImageDownloadWorker:
                             data,
                         )
                 except Exception as exc:
-                    self._log_error(
-                        stage="asset_download",
-                        article=article,
-                        error=str(exc),
-                        asset_url=orig_url or resolved_url,
-                        resolved_url=resolved_url,
-                        referer=referer,
-                    )
+                    if attempt < self._max_retries and not self._stop.is_set():
+                        task["attempt"] = attempt + 1
+                        self._queue.put(task)
+                    else:
+                        self._log_error(
+                            stage="asset_download",
+                            article=article,
+                            error=str(exc),
+                            asset_url=orig_url or resolved_url,
+                            resolved_url=resolved_url,
+                            referer=referer,
+                            target_dir=target_dir,
+                            local_path=local_path,
+                        )
                 finally:
                     self._queue.task_done()
         if storage:
@@ -224,8 +278,10 @@ class ArticleDownloader(AbstractContextManager):
         self.storage = storage
         self._pg_dsn = os.environ.get("WECHATCLI_PG_DSN")
         self._image_worker: Optional[ImageDownloadWorker] = None
+        self._article_workers = article_max_connections if article_max_connections and article_max_connections > 0 else 1
 
     def __enter__(self) -> "ArticleDownloader":
+        self._retry_failed_images()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
@@ -245,6 +301,18 @@ class ArticleDownloader(AbstractContextManager):
             )
         return self._image_worker
 
+    def wait_for_images(self) -> None:
+        if self._image_worker:
+            self._image_worker.wait()
+
+    def _retry_failed_images(self) -> None:
+        tasks = _load_failed_image_tasks()
+        if not tasks:
+            return
+        worker = self._ensure_image_worker()
+        for task in tasks:
+            worker.enqueue(task)
+
     # ------------------------------------------------------------------
     def download_many(
         self,
@@ -258,32 +326,75 @@ class ArticleDownloader(AbstractContextManager):
     ) -> tuple[List[DownloadResult], int]:
         results: List[DownloadResult] = []
         skipped = 0
+        pending: List[ArticleRecord] = []
         for article in articles:
             if skip_if_downloaded and self._is_downloaded(article, account_name):
                 skipped += 1
                 if progress is not None:
                     progress.update(1)
                 continue
-            try:
-                result = self._download_with_retry(
-                    article,
-                    fmt=fmt,
-                    with_images=with_images,
-                    account_name=account_name,
-                )
-                results.append(result)
-            except Exception as exc:
-                self._log_download_error(
-                    stage="article_download",
-                    article=article,
-                    error=str(exc),
-                )
+            pending.append(article)
+
+        if not pending:
+            return results, skipped
+
+        def download_one(target: ArticleRecord) -> DownloadResult:
+            return self._download_with_retry(
+                target,
+                fmt=fmt,
+                with_images=with_images,
+                account_name=account_name,
+            )
+
+        if self._article_workers <= 1:
+            for article in pending:
+                try:
+                    result = download_one(article)
+                    results.append(result)
+                except Exception as exc:
+                    self._log_download_error(
+                        stage="article_download",
+                        article=article,
+                        error=str(exc),
+                    )
+                    if progress is not None:
+                        progress.write(f"下载失败：{article.title} ({article.article_id}) {exc}")
+                        progress.update(1)
+                    continue
                 if progress is not None:
-                    progress.write(f"下载失败：{article.title} ({article.article_id}) {exc}")
                     progress.update(1)
-                continue
-            if progress is not None:
-                progress.update(1)
+            return results, skipped
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=self._article_workers
+        ) as executor:
+            future_map = {
+                executor.submit(download_one, article): article for article in pending
+            }
+            try:
+                for future in concurrent.futures.as_completed(future_map):
+                    article = future_map[future]
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        self._log_download_error(
+                            stage="article_download",
+                            article=article,
+                            error=str(exc),
+                        )
+                        if progress is not None:
+                            progress.write(
+                                f"下载失败：{article.title} ({article.article_id}) {exc}"
+                            )
+                    else:
+                        results.append(result)
+                    if progress is not None:
+                        progress.update(1)
+            except KeyboardInterrupt:
+                for future in future_map:
+                    future.cancel()
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
         return results, skipped
 
     def download_from_url(
@@ -319,7 +430,7 @@ class ArticleDownloader(AbstractContextManager):
 
     def _fetch_with_retry(self, url: str) -> str:
         last_exc: Optional[Exception] = None
-        for attempt in range(3):
+        for attempt in range(_ARTICLE_MAX_RETRIES):
             try:
                 return self.client.fetch_article_html(url)
             except Exception as exc:
@@ -336,7 +447,7 @@ class ArticleDownloader(AbstractContextManager):
         account_name: Optional[str],
     ) -> DownloadResult:
         last_exc: Optional[Exception] = None
-        for attempt in range(3):
+        for attempt in range(_ARTICLE_MAX_RETRIES):
             try:
                 html = self.client.fetch_article_html(article.link)
                 return self._persist_article(
@@ -492,10 +603,20 @@ class ArticleDownloader(AbstractContextManager):
         self, article: ArticleRecord, account_name: Optional[str], *, create: bool
     ) -> Path:
         account_segment = slugify(account_name or article.biz or "account")
-        title_segment = slugify(article.title) or article.article_id or "article"
-        article_segment = f"{timestamp_to_datestr(article.publish_at)}-{title_segment}"
-        target = self.output_dir / account_segment / article_segment
-        return ensure_directory(target) if create else target
+        title_segment = _safe_title_segment(article.title) or article.article_id or "article"
+        base_segment = f"{timestamp_to_datestr(article.publish_at)}-{title_segment}"
+        base_dir = self.output_dir / account_segment
+        if not create:
+            return base_dir / base_segment
+        target = base_dir / base_segment
+        if not target.exists():
+            return ensure_directory(target)
+        index = 2
+        while True:
+            candidate = base_dir / f"{base_segment}-{index}"
+            if not candidate.exists():
+                return ensure_directory(candidate)
+            index += 1
 
     def _is_downloaded(self, article: ArticleRecord, account_name: Optional[str]) -> bool:
         if self.storage and os.environ.get("WECHATCLI_PG_DSN"):
@@ -505,10 +626,36 @@ class ArticleDownloader(AbstractContextManager):
                     return bool(has_content(article.biz, article.article_id))
                 except Exception:
                     return False
-        target_dir = self._article_target_dir(article, account_name, create=False)
-        html_path = target_dir / _FORMAT_EXTENSIONS["html"]
-        md_path = target_dir / _FORMAT_EXTENSIONS["markdown"]
-        return html_path.exists() and md_path.exists()
+        account_segment = slugify(account_name or article.biz or "account")
+        title_segment = _safe_title_segment(article.title) or article.article_id or "article"
+        base_segment = f"{timestamp_to_datestr(article.publish_at)}-{title_segment}"
+        base_dir = self.output_dir / account_segment
+        if not base_dir.exists():
+            return False
+        for candidate in base_dir.iterdir():
+            if not candidate.is_dir():
+                continue
+            name = candidate.name
+            if name == base_segment:
+                pass
+            else:
+                match = _SUFFIX_PATTERN.match(name)
+                if not match or match.group("base") != base_segment:
+                    continue
+            metadata_path = candidate / "metadata.json"
+            if metadata_path.exists():
+                try:
+                    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+                except Exception:
+                    payload = {}
+                link = payload.get("link")
+                if link and article.link and link == article.link:
+                    return True
+            html_path = candidate / _FORMAT_EXTENSIONS["html"]
+            md_path = candidate / _FORMAT_EXTENSIONS["markdown"]
+            if html_path.exists() and md_path.exists() and not article.link:
+                return True
+        return False
 
     def _download_images(
         self, html: str, target_dir: Path, *, referer: str, article: ArticleRecord
@@ -586,9 +733,11 @@ class ArticleDownloader(AbstractContextManager):
         asset_url: Optional[str] = None,
         resolved_url: Optional[str] = None,
         referer: Optional[str] = None,
+        target_dir: Optional[Path] = None,
+        local_path: Optional[str] = None,
     ) -> None:
         log_dir = ensure_directory(HOME_DIR / "logs")
-        log_path = log_dir / "download_errors.jsonl"
+        log_path = log_dir / _ERROR_LOG_NAME
         payload = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "stage": stage,
@@ -606,6 +755,10 @@ class ArticleDownloader(AbstractContextManager):
             payload["resolved_url"] = resolved_url
         if referer:
             payload["referer"] = referer
+        if target_dir:
+            payload["target_dir"] = str(target_dir)
+        if local_path:
+            payload["local_path"] = local_path
         try:
             with log_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
@@ -634,6 +787,62 @@ def _extract_title(raw_html: str) -> Optional[str]:
     if h1 and h1.get_text(strip=True):
         return h1.get_text(strip=True)
     return None
+
+
+def _load_failed_image_tasks() -> list[dict]:
+    log_path = HOME_DIR / "logs" / _ERROR_LOG_NAME
+    if not log_path.exists():
+        return []
+    tasks: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    try:
+        with log_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if payload.get("stage") != "asset_download":
+                    continue
+                target_dir = payload.get("target_dir")
+                local_path = payload.get("local_path")
+                resolved_url = payload.get("resolved_url") or payload.get("asset_url")
+                referer = payload.get("referer")
+                article_info = payload.get("article") or {}
+                if not target_dir or not local_path or not resolved_url:
+                    continue
+                key = (target_dir, local_path)
+                if key in seen:
+                    continue
+                seen.add(key)
+                file_path = Path(target_dir) / local_path
+                if file_path.exists() and file_path.stat().st_size > 0:
+                    continue
+                article = ArticleRecord(
+                    biz=article_info.get("biz") or "unknown",
+                    article_id=article_info.get("article_id") or local_path,
+                    title=article_info.get("title") or "Unknown",
+                    author=None,
+                    digest=None,
+                    cover=None,
+                    link=article_info.get("link") or referer or "",
+                    source_url=article_info.get("link") or referer or "",
+                    publish_at=None,
+                    raw={"source": "retry"},
+                )
+                tasks.append(
+                    {
+                        "article": article,
+                        "resolved_url": resolved_url,
+                        "orig_url": payload.get("asset_url"),
+                        "referer": referer,
+                        "target_dir": Path(target_dir),
+                        "local_path": local_path,
+                    }
+                )
+    except Exception:
+        return tasks
+    return tasks
 
 
 __all__ = ["ArticleDownloader"]
