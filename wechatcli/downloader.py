@@ -171,6 +171,9 @@ class ImageDownloadWorker:
         self._queue: "queue.Queue[Optional[dict]]" = queue.Queue()
         self._stop = threading.Event()
         self._closed = False
+        self._total = 0
+        self._done = 0
+        self._lock = threading.Lock()
         self._threads = [
             threading.Thread(target=self._run, daemon=True)
             for _ in range(max(1, workers))
@@ -181,10 +184,18 @@ class ImageDownloadWorker:
     def enqueue(self, task: dict) -> None:
         if self._closed:
             return
+        if not task.get("_counted"):
+            task["_counted"] = True
+            with self._lock:
+                self._total += 1
         self._queue.put(task)
 
     def wait(self) -> None:
         self._queue.join()
+
+    def stats(self) -> tuple[int, int]:
+        with self._lock:
+            return self._total, self._done
 
     def mark_pending_as_failed(self) -> None:
         if self._closed:
@@ -215,6 +226,8 @@ class ImageDownloadWorker:
                         target_dir=target_dir,
                         local_path=local_path,
                     )
+                with self._lock:
+                    self._done += 1
             finally:
                 self._queue.task_done()
 
@@ -269,6 +282,8 @@ class ImageDownloadWorker:
                             content_type,
                             data,
                         )
+                    with self._lock:
+                        self._done += 1
                 except Exception as exc:
                     if attempt < self._max_retries and not self._stop.is_set():
                         task["attempt"] = attempt + 1
@@ -284,6 +299,8 @@ class ImageDownloadWorker:
                             target_dir=target_dir,
                             local_path=local_path,
                         )
+                        with self._lock:
+                            self._done += 1
                 finally:
                     self._queue.task_done()
         if storage:
@@ -342,6 +359,41 @@ class ArticleDownloader(AbstractContextManager):
     def wait_for_images(self) -> None:
         if self._image_worker:
             self._image_worker.wait()
+
+    def wait_for_images_with_progress(self, *, label: str = "下载图片") -> None:
+        if not self._image_worker:
+            return
+        try:
+            from tqdm import tqdm
+        except Exception:
+            self._image_worker.wait()
+            return
+        total, done = self._image_worker.stats()
+        if total == 0:
+            return
+        bar = tqdm(
+            total=total,
+            desc=label,
+            unit="张",
+            dynamic_ncols=True,
+            leave=True,
+        )
+        try:
+            while True:
+                total, done = self._image_worker.stats()
+                if total > bar.total:
+                    bar.total = total
+                bar.n = done
+                bar.refresh()
+                if done >= total:
+                    break
+                time.sleep(0.2)
+        except KeyboardInterrupt:
+            self.abort_image_queue()
+            raise
+        finally:
+            bar.close()
+        self._image_worker.wait()
 
     def abort_image_queue(self) -> None:
         if self._image_worker:
