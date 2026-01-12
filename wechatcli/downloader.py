@@ -10,6 +10,7 @@ import queue
 import re
 import threading
 import time
+from queue import Empty
 from typing import Callable, Dict, Tuple
 from datetime import datetime, timezone
 from contextlib import AbstractContextManager
@@ -185,6 +186,38 @@ class ImageDownloadWorker:
     def wait(self) -> None:
         self._queue.join()
 
+    def mark_pending_as_failed(self) -> None:
+        if self._closed:
+            return
+        self._stop.set()
+        while True:
+            try:
+                task = self._queue.get_nowait()
+            except Empty:
+                break
+            try:
+                if task is None:
+                    continue
+                article = task.get("article")
+                resolved_url = task.get("resolved_url")
+                orig_url = task.get("orig_url")
+                referer = task.get("referer")
+                target_dir = task.get("target_dir")
+                local_path = task.get("local_path")
+                if article and resolved_url and target_dir and local_path:
+                    self._log_error(
+                        stage="asset_download",
+                        article=article,
+                        error="aborted",
+                        asset_url=orig_url or resolved_url,
+                        resolved_url=resolved_url,
+                        referer=referer,
+                        target_dir=target_dir,
+                        local_path=local_path,
+                    )
+            finally:
+                self._queue.task_done()
+
     def close(self) -> None:
         if self._closed:
             return
@@ -285,6 +318,8 @@ class ArticleDownloader(AbstractContextManager):
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+        if exc_type is KeyboardInterrupt:
+            self.abort_image_queue()
         self.close()
 
     def close(self) -> None:
@@ -304,6 +339,10 @@ class ArticleDownloader(AbstractContextManager):
     def wait_for_images(self) -> None:
         if self._image_worker:
             self._image_worker.wait()
+
+    def abort_image_queue(self) -> None:
+        if self._image_worker:
+            self._image_worker.mark_pending_as_failed()
 
     def _retry_failed_images(self) -> None:
         tasks = _load_failed_image_tasks()
@@ -347,22 +386,28 @@ class ArticleDownloader(AbstractContextManager):
             )
 
         if self._article_workers <= 1:
-            for article in pending:
-                try:
-                    result = download_one(article)
-                    results.append(result)
-                except Exception as exc:
-                    self._log_download_error(
-                        stage="article_download",
-                        article=article,
-                        error=str(exc),
-                    )
+            try:
+                for article in pending:
+                    try:
+                        result = download_one(article)
+                        results.append(result)
+                    except Exception as exc:
+                        self._log_download_error(
+                            stage="article_download",
+                            article=article,
+                            error=str(exc),
+                        )
+                        if progress is not None:
+                            progress.write(
+                                f"下载失败：{article.title} ({article.article_id}) {exc}"
+                            )
+                            progress.update(1)
+                        continue
                     if progress is not None:
-                        progress.write(f"下载失败：{article.title} ({article.article_id}) {exc}")
                         progress.update(1)
-                    continue
-                if progress is not None:
-                    progress.update(1)
+            except KeyboardInterrupt:
+                self.abort_image_queue()
+                raise
             return results, skipped
 
         with concurrent.futures.ThreadPoolExecutor(
@@ -391,6 +436,7 @@ class ArticleDownloader(AbstractContextManager):
                     if progress is not None:
                         progress.update(1)
             except KeyboardInterrupt:
+                self.abort_image_queue()
                 for future in future_map:
                     future.cancel()
                 executor.shutdown(wait=False, cancel_futures=True)

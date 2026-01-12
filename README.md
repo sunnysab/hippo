@@ -113,6 +113,7 @@ Download behavior:
 - Image downloads run on 2 background threads and retry up to 3 times.
 - Failed image downloads are logged to `~/.local/share/wechatcli/logs/download_errors.jsonl` and are retried automatically when a download command starts.
 - For `sync-all`, each account waits for its image queue to finish before moving to the next account.
+- If interrupted with Ctrl+C, any queued images are recorded to the failure log for retry.
 
 Default output directory:
 `~/.local/share/wechatcli/downloads/` (override with `WECHATCLI_HOME`)
