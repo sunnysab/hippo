@@ -1035,9 +1035,9 @@ def backfill_article_images(
                                 updated += 1
                                 if updated % 20 == 0:
                                     typer.echo(f"Updated {updated} images...")
-                        except Exception as exc:
-                            failed += 1
-                            typer.echo(f"FAILED {orig_url}: {format_error(exc)}")
+                            except Exception as exc:
+                                failed += 1
+                                typer.echo(f"FAILED {orig_url}: {format_error(exc)}")
                             finally:
                                 progress.update(1)
                 finally:
