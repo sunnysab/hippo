@@ -952,6 +952,42 @@ class PostgresStorage(AbstractContextManager):
             )
             return cur.fetchone() is not None
 
+    def update_article_image_data(
+        self,
+        biz: str,
+        article_id: str,
+        orig_url: str,
+        content_type: Optional[str],
+        data: bytes,
+    ) -> None:
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM articles WHERE biz = %s AND article_id = %s",
+                    (biz, article_id),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return
+                article_pk = row[0]
+                cur.execute(
+                    """
+                    UPDATE article_images
+                    SET content_type = %s, data = %s
+                    WHERE article_pk = %s AND orig_url = %s
+                    """,
+                    (
+                        content_type,
+                        psycopg2.Binary(data) if data else None,
+                        article_pk,
+                        orig_url,
+                    ),
+                )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
     def list_articles(
         self,
         biz: str,

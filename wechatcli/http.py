@@ -7,7 +7,7 @@ import time
 from http.cookies import SimpleCookie
 from urllib.parse import urlparse, parse_qs
 from contextlib import AbstractContextManager
-from typing import Iterable, List, Dict, Any
+from typing import Iterable, List, Dict, Any, Optional
 
 import httpx
 
@@ -76,6 +76,17 @@ class MPClient(AbstractContextManager):
         resp = self.client.get(url, headers=headers)
         resp.raise_for_status()
         return resp.content
+
+    def download_binary_with_type(
+        self, url: str, *, referer: str | None = None
+    ) -> tuple[bytes, Optional[str]]:
+        headers = {}
+        if referer:
+            headers["Referer"] = referer
+        resp = self.client.get(url, headers=headers)
+        resp.raise_for_status()
+        content_type = resp.headers.get("content-type")
+        return resp.content, content_type
 
     # ------------------------------------------------------------------
     def start_login_session(self, sid: str) -> str:

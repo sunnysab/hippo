@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import os
 import mimetypes
+import queue
 import re
+import threading
 import time
-from typing import Dict, Tuple
+from typing import Callable, Dict, Tuple
 from datetime import datetime, timezone
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -56,11 +58,19 @@ def _resolve_asset_url(url: str, *, base: str) -> Optional[str]:
     if lowered.startswith(("data:", "javascript:", "about:")):
         return None
     if url.startswith("//"):
-        return f"https:{url}"
-    parsed = urlparse(url)
-    if parsed.scheme:
-        return url
-    return urljoin(base, url)
+        resolved = f"https:{url}"
+    else:
+        parsed = urlparse(url)
+        if parsed.scheme:
+            resolved = url
+        else:
+            resolved = urljoin(base, url)
+    parsed_resolved = urlparse(resolved)
+    if parsed_resolved.scheme not in ("http", "https"):
+        return None
+    if not parsed_resolved.path or parsed_resolved.path == "/":
+        return None
+    return resolved
 
 
 def _parse_markdown_blocks(markdown: str) -> Tuple[Optional[str], Optional[str], list[dict], str]:
@@ -124,6 +134,75 @@ def _parse_markdown_blocks(markdown: str) -> Tuple[Optional[str], Optional[str],
     return title, cover_local, blocks, body_markdown
 
 
+class ImageDownloadWorker:
+    def __init__(
+        self,
+        *,
+        log_error: Callable[..., None],
+        pg_dsn: Optional[str],
+    ) -> None:
+        self._log_error = log_error
+        self._pg_dsn = pg_dsn
+        self._queue: "queue.Queue[Optional[dict]]" = queue.Queue()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def enqueue(self, task: dict) -> None:
+        self._queue.put(task)
+
+    def close(self) -> None:
+        self._queue.join()
+        self._queue.put(None)
+        self._thread.join()
+
+    def _run(self) -> None:
+        storage = None
+        if self._pg_dsn:
+            from .storage import PostgresStorage
+
+            storage = PostgresStorage(self._pg_dsn)
+        with MPClient() as client:
+            while True:
+                task = self._queue.get()
+                if task is None:
+                    self._queue.task_done()
+                    break
+                article = task["article"]
+                resolved_url = task["resolved_url"]
+                orig_url = task.get("orig_url")
+                referer = task.get("referer")
+                target_dir = task["target_dir"]
+                local_path = task["local_path"]
+                try:
+                    data, content_type = client.download_binary_with_type(
+                        resolved_url, referer=referer
+                    )
+                    file_path = target_dir / local_path
+                    ensure_directory(file_path.parent)
+                    file_path.write_bytes(data)
+                    if storage and orig_url:
+                        storage.update_article_image_data(
+                            article.biz,
+                            article.article_id,
+                            str(orig_url),
+                            content_type,
+                            data,
+                        )
+                except Exception as exc:
+                    self._log_error(
+                        stage="asset_download",
+                        article=article,
+                        error=str(exc),
+                        asset_url=orig_url or resolved_url,
+                        resolved_url=resolved_url,
+                        referer=referer,
+                    )
+                finally:
+                    self._queue.task_done()
+        if storage:
+            storage.close()
+
+
 class ArticleDownloader(AbstractContextManager):
     def __init__(
         self,
@@ -136,6 +215,8 @@ class ArticleDownloader(AbstractContextManager):
         self.client = client or MPClient()
         self.output_dir = ensure_directory(output_dir or DOWNLOAD_ROOT)
         self.storage = storage
+        self._pg_dsn = os.environ.get("WECHATCLI_PG_DSN")
+        self._image_worker: Optional[ImageDownloadWorker] = None
 
     def __enter__(self) -> "ArticleDownloader":
         return self
@@ -144,8 +225,18 @@ class ArticleDownloader(AbstractContextManager):
         self.close()
 
     def close(self) -> None:
+        if self._image_worker:
+            self._image_worker.close()
         if self._managed_client:
             self.client.close()
+
+    def _ensure_image_worker(self) -> ImageDownloadWorker:
+        if not self._image_worker:
+            self._image_worker = ImageDownloadWorker(
+                log_error=self._log_download_error,
+                pg_dsn=self._pg_dsn,
+            )
+        return self._image_worker
 
     # ------------------------------------------------------------------
     def download_many(
@@ -355,18 +446,13 @@ class ArticleDownloader(AbstractContextManager):
             if not local_path:
                 continue
             orig_url = local_to_orig.get(local_path, local_path)
-            file_path = target_dir / local_path
-            if not file_path.exists():
-                continue
-            data = file_path.read_bytes()
-            content_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
             images.append(
                 {
                     "orig_url": orig_url,
                     "kind": kind,
                     "position": position,
-                    "content_type": content_type,
-                    "data": data,
+                    "content_type": None,
+                    "data": None,
                 }
             )
             position += 1
@@ -421,9 +507,9 @@ class ArticleDownloader(AbstractContextManager):
         self, html: str, target_dir: Path, *, referer: str, article: ArticleRecord
     ) -> tuple[str, int, dict[str, str]]:
         soup = BeautifulSoup(html, "html.parser")
-        images_dir = ensure_directory(target_dir / "images")
         count = 0
         url_map: dict[str, str] = {}
+        worker = self._ensure_image_worker()
 
         def download_asset(url: str, *, prefix: str) -> str | None:
             nonlocal count
@@ -432,24 +518,21 @@ class ArticleDownloader(AbstractContextManager):
                 return None
             if url in url_map:
                 return url_map[url]
-            try:
-                data = self.client.download_binary(resolved, referer=referer)
-            except Exception as exc:
-                self._log_download_error(
-                    stage="asset_download",
-                    article=article,
-                    error=str(exc),
-                    asset_url=url,
-                    resolved_url=resolved,
-                    referer=referer,
-                )
-                return None
             extension = _guess_extension(resolved) or ".bin"
             count += 1
             filename = f"{prefix}_{count:03d}{extension}"
-            (images_dir / filename).write_bytes(data)
             local_path = f"images/{filename}"
             url_map[url] = local_path
+            worker.enqueue(
+                {
+                    "article": article,
+                    "resolved_url": resolved,
+                    "orig_url": url,
+                    "referer": referer,
+                    "target_dir": target_dir,
+                    "local_path": local_path,
+                }
+            )
             return local_path
 
         def rewrite_css_urls(text: str) -> str:
