@@ -90,7 +90,7 @@ CREATE TABLE public.article_images (
     orig_url text,
     content_type text,
     data bytea,
-    created_at timestamp with time zone NOT NULL
+    updated_at timestamp with time zone NOT NULL
 );
 
 
@@ -337,4 +337,3 @@ ALTER TABLE ONLY public.articles
 --
 
 \unrestrict vdhxbLf8gWEI9PybE6JKlRIptnYYRvnlhD3tYdUzP3Rc3xueFQQl6KdB9KSCNBv
-

@@ -596,7 +596,7 @@ class PostgresStorage(AbstractContextManager):
                     orig_url TEXT,
                     content_type TEXT,
                     data BYTEA,
-                    created_at TIMESTAMPTZ NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL,
                     UNIQUE (article_pk, orig_url)
                 )
                 """
@@ -881,7 +881,7 @@ class PostgresStorage(AbstractContextManager):
                     cur.execute(
                         """
                         INSERT INTO article_images
-                            (article_pk, position, kind, orig_url, content_type, data, created_at)
+                            (article_pk, position, kind, orig_url, content_type, data, updated_at)
                         VALUES (%s, %s, %s, %s, %s, %s, %s)
                         RETURNING id
                         """,
@@ -989,12 +989,13 @@ class PostgresStorage(AbstractContextManager):
                 cur.execute(
                     """
                     UPDATE article_images
-                    SET content_type = %s, data = %s
+                    SET content_type = %s, data = %s, updated_at = %s
                     WHERE article_pk = %s AND orig_url = %s
                     """,
                     (
                         content_type,
                         psycopg2.Binary(data) if data else None,
+                        _utc_now_dt(),
                         article_pk,
                         orig_url,
                     ),
