@@ -922,11 +922,21 @@ def backfill_article_images(
         typer.echo("Missing PostgreSQL DSN. Set WECHATCLI_PG_DSN or pass --pg-dsn.")
         raise typer.Exit(code=2)
 
+    def normalize_image_url(url: str) -> str:
+        trimmed = url.strip().strip("\"'")
+        if " " in trimmed:
+            trimmed = trimmed.split(" ", 1)[0]
+        if trimmed.endswith("\""):
+            trimmed = trimmed.rstrip("\"")
+        return trimmed
+
     def download_with_retry(url: str, *, referer: Optional[str]) -> tuple[bytes, Optional[str]]:
         last_exc: Optional[Exception] = None
         for attempt in range(retries):
             try:
-                return client.download_binary_with_type(url, referer=referer)
+                return client.download_binary_with_type(
+                    normalize_image_url(url), referer=referer
+                )
             except Exception as exc:
                 last_exc = exc
                 time.sleep(min(sleep_base * (2**attempt), 5.0))

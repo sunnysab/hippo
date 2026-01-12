@@ -61,6 +61,15 @@ def _download_with_retry(
     raise RuntimeError(str(last_exc)) from last_exc
 
 
+def _normalize_image_url(url: str) -> str:
+    trimmed = url.strip().strip("\"'")
+    if " " in trimmed:
+        trimmed = trimmed.split(" ", 1)[0]
+    if trimmed.endswith("\""):
+        trimmed = trimmed.rstrip("\"")
+    return trimmed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Backfill missing image data in PostgreSQL")
     parser.add_argument("--pg-dsn", default=os.environ.get("WECHATCLI_PG_DSN"))
@@ -92,7 +101,7 @@ def main() -> int:
                 def worker(item: dict) -> tuple[dict, bytes, Optional[str]]:
                     data, content_type = _download_with_retry(
                         client,
-                        str(item["orig_url"]),
+                        _normalize_image_url(str(item["orig_url"])),
                         referer=item.get("referer"),
                         retries=max(1, args.retries),
                         sleep_base=max(0.1, args.sleep_base),
