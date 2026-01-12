@@ -743,6 +743,9 @@ def sync_article_download(
     worker_max_connections: Optional[int] = typer.Option(
         None, min=1, help="worker 客户端最大连接数，留空使用默认"
     ),
+    image_workers: Optional[int] = typer.Option(
+        None, min=1, help="图片下载并发数，留空使用默认"
+    ),
 ) -> None:
     since_timestamp = _parse_since(since)
     with open_storage(DB_PATH) as storage:
@@ -778,6 +781,7 @@ def sync_article_download(
                 article_worker=worker_prefix,
                 article_worker_proxy=worker_proxy,
                 article_max_connections=worker_max_connections,
+                image_workers=image_workers,
             ) as downloader:
                 results, skipped = downloader.download_many(
                     articles,
@@ -809,6 +813,9 @@ def sync_all_article_download(
     worker_max_connections: Optional[int] = typer.Option(
         None, min=1, help="worker 客户端最大连接数，留空使用默认"
     ),
+    image_workers: Optional[int] = typer.Option(
+        None, min=1, help="图片下载并发数，留空使用默认"
+    ),
 ) -> None:
     since_timestamp = _parse_since(since)
     total_downloads = 0
@@ -829,6 +836,7 @@ def sync_all_article_download(
             article_worker=worker_prefix,
             article_worker_proxy=worker_proxy,
             article_max_connections=worker_max_connections,
+            image_workers=image_workers,
         ) as downloader:
             total_skipped = 0
             for account in accounts:
@@ -876,6 +884,9 @@ def download_article(
     worker_max_connections: Optional[int] = typer.Option(
         None, min=1, help="worker 客户端最大连接数，留空使用默认"
     ),
+    image_workers: Optional[int] = typer.Option(
+        None, min=1, help="图片下载并发数，留空使用默认"
+    ),
 ) -> None:
     if not url:
         typer.echo("请提供文章 URL。示例：python -m wechatcli articles download \"https://mp.weixin.qq.com/...\"")
@@ -892,6 +903,7 @@ def download_article(
         article_worker=worker_prefix,
         article_worker_proxy=worker_proxy,
         article_max_connections=worker_max_connections,
+        image_workers=image_workers,
     ) as downloader:
         try:
             result = downloader.download_from_url(

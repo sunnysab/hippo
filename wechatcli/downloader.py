@@ -300,6 +300,7 @@ class ArticleDownloader(AbstractContextManager):
         article_worker: Optional[str] = None,
         article_worker_proxy: Optional[str] = None,
         article_max_connections: Optional[int] = None,
+        image_workers: Optional[int] = None,
     ) -> None:
         self._managed_client = client is None
         self.client = client or MPClient(
@@ -312,6 +313,7 @@ class ArticleDownloader(AbstractContextManager):
         self._pg_dsn = os.environ.get("WECHATCLI_PG_DSN")
         self._image_worker: Optional[ImageDownloadWorker] = None
         self._article_workers = article_max_connections if article_max_connections and article_max_connections > 0 else 1
+        self._image_workers = image_workers if image_workers and image_workers > 0 else _IMAGE_WORKERS
 
     def __enter__(self) -> "ArticleDownloader":
         self._retry_failed_images()
@@ -333,6 +335,7 @@ class ArticleDownloader(AbstractContextManager):
             self._image_worker = ImageDownloadWorker(
                 log_error=self._log_download_error,
                 pg_dsn=self._pg_dsn,
+                workers=self._image_workers,
             )
         return self._image_worker
 
