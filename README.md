@@ -200,6 +200,25 @@ python scripts/export_to_pg.py \
 
 ## 配置与路径
 
+## Backfill missing images (PostgreSQL)
+
+If you have pending `article_images` rows without binary data, you can backfill them:
+
+```bash
+python scripts/fill_pg_images.py --pg-dsn "postgresql://user:pass@host:5432/dbname"
+```
+
+CLI alternative:
+
+```bash
+python -m wechatcli articles backfill-images --pg-dsn "postgresql://user:pass@host:5432/dbname"
+```
+
+Optional flags:
+- `--limit 1000` to cap the number of images per run
+- `--retries 3` to control download retries
+- `--dry-run` to list targets without writing
+
 核心配置：`wechatcli/config.py`
 
 | 配置项 | 说明 |

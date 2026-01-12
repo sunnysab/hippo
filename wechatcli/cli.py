@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -19,7 +20,7 @@ from .config import DB_PATH, DEFAULT_PAGE_SIZE, DOWNLOAD_ROOT, HOME_DIR
 from .downloader import ArticleDownloader
 from .http import MPClient, parse_appmsg_publish
 from .models import AccountCredential, LoginSession
-from .storage import StorageLike, open_storage
+from .storage import StorageLike, PostgresStorage, open_storage
 from .utils import ensure_directory
 
 app = typer.Typer(help="WeChat article exporter CLI", no_args_is_help=True, rich_markup_mode=None)
@@ -903,6 +904,80 @@ def download_article(
             typer.echo(f"下载失败：{exc}")
             raise typer.Exit(code=1)
     typer.echo(f"单篇文章已保存至 {result.output_path}")
+
+
+@articles_app.command("backfill-images")
+def backfill_article_images(
+    pg_dsn: Optional[str] = typer.Option(
+        None, help="PostgreSQL DSN (defaults to WECHATCLI_PG_DSN)"
+    ),
+    limit: Optional[int] = typer.Option(None, min=1, help="Max images to backfill per run"),
+    retries: int = typer.Option(3, min=1, help="Download retries per image"),
+    sleep_base: float = typer.Option(0.5, min=0.1, help="Base backoff sleep in seconds"),
+    dry_run: bool = typer.Option(False, help="List targets without writing", flag_value=True),
+) -> None:
+    resolved_dsn = pg_dsn or os.environ.get("WECHATCLI_PG_DSN")
+    if not resolved_dsn:
+        typer.echo("Missing PostgreSQL DSN. Set WECHATCLI_PG_DSN or pass --pg-dsn.")
+        raise typer.Exit(code=2)
+
+    def download_with_retry(url: str, *, referer: Optional[str]) -> tuple[bytes, Optional[str]]:
+        last_exc: Optional[Exception] = None
+        for attempt in range(retries):
+            try:
+                return client.download_binary_with_type(url, referer=referer)
+            except Exception as exc:
+                last_exc = exc
+                time.sleep(min(sleep_base * (2**attempt), 5.0))
+        raise RuntimeError(str(last_exc)) from last_exc
+
+    updated = 0
+    skipped = 0
+    failed = 0
+
+    with PostgresStorage(resolved_dsn) as storage, MPClient() as client:
+        query = """
+            SELECT a.biz, a.article_id, a.link, i.orig_url
+            FROM article_images i
+            JOIN articles a ON a.id = i.article_pk
+            WHERE i.data IS NULL AND i.orig_url IS NOT NULL
+            ORDER BY a.id DESC, i.position ASC
+        """
+        params: list = []
+        if limit is not None:
+            query += " LIMIT %s"
+            params.append(limit)
+        with storage.conn.cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+        try:
+            for biz, article_id, referer, orig_url in rows:
+                if dry_run:
+                    typer.echo(f"DRY-RUN {orig_url}")
+                    skipped += 1
+                    continue
+                try:
+                    data, content_type = download_with_retry(
+                        str(orig_url), referer=str(referer) if referer else None
+                    )
+                    storage.update_article_image_data(
+                        biz,
+                        article_id,
+                        str(orig_url),
+                        content_type,
+                        data,
+                    )
+                    updated += 1
+                    if updated % 20 == 0:
+                        typer.echo(f"Updated {updated} images...")
+                except Exception as exc:
+                    failed += 1
+                    typer.echo(f"FAILED {orig_url}: {exc}")
+        except KeyboardInterrupt:
+            typer.echo("Interrupted. Exiting.")
+            raise typer.Exit(code=130)
+
+    typer.echo(f"Done. updated={updated} skipped={skipped} failed={failed}")
 
 
 # ---------------------------------------------------------------------------
