@@ -380,9 +380,7 @@ class ArticleDownloader(AbstractContextManager):
         for article in articles_list:
             if skip_if_downloaded:
                 if content_ids is not None:
-                    db_ok = article.article_id in content_ids
-                    file_ok = self._has_local_files(article, account_name)
-                    if db_ok and file_ok:
+                    if article.article_id in content_ids:
                         skipped += 1
                         if progress is not None:
                             progress.update(1)
@@ -492,7 +490,7 @@ class ArticleDownloader(AbstractContextManager):
             raw_html=raw_html,
             fmt=fmt,
             with_images=with_images,
-            account_name="adhoc",
+            account_name=None,
         )
 
     def _fetch_with_retry(self, url: str) -> str:
@@ -669,10 +667,12 @@ class ArticleDownloader(AbstractContextManager):
     def _article_target_dir(
         self, article: ArticleRecord, account_name: Optional[str], *, create: bool
     ) -> Path:
-        account_segment = slugify(account_name or article.biz or "account")
         title_segment = _safe_title_segment(article.title) or article.article_id or "article"
         base_segment = f"{timestamp_to_datestr(article.publish_at)}-{title_segment}"
-        base_dir = self.output_dir / account_segment
+        if account_name:
+            base_dir = self.output_dir / slugify(account_name)
+        else:
+            base_dir = self.output_dir
         if not create:
             return base_dir / base_segment
         target = base_dir / base_segment
@@ -686,10 +686,10 @@ class ArticleDownloader(AbstractContextManager):
             index += 1
 
     def _has_local_files(self, article: ArticleRecord, account_name: Optional[str]) -> bool:
-        account_segment = slugify(account_name or article.biz or "account")
+        account_segment = slugify(account_name) if account_name else ""
         title_segment = _safe_title_segment(article.title) or article.article_id or "article"
         base_segment = f"{timestamp_to_datestr(article.publish_at)}-{title_segment}"
-        base_dir = self.output_dir / account_segment
+        base_dir = self.output_dir / account_segment if account_segment else self.output_dir
         if not base_dir.exists():
             return False
         for candidate in base_dir.iterdir():
@@ -722,12 +722,9 @@ class ArticleDownloader(AbstractContextManager):
             has_content = getattr(self.storage, "has_article_content", None)
             if callable(has_content):
                 try:
-                    db_has_content = bool(has_content(article.biz, article.article_id))
+                    return bool(has_content(article.biz, article.article_id))
                 except Exception:
-                    db_has_content = False
-                if not db_has_content:
                     return False
-                return self._has_local_files(article, account_name)
         return self._has_local_files(article, account_name)
 
     def _download_images(
