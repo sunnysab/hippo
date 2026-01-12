@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import os
 import sys
 import time
@@ -63,6 +64,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Backfill missing image data in PostgreSQL")
     parser.add_argument("--pg-dsn", default=os.environ.get("WECHATCLI_PG_DSN"))
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--retries", type=int, default=3)
     parser.add_argument("--sleep-base", type=float, default=0.5)
     parser.add_argument("--dry-run", action="store_true")
@@ -78,34 +80,46 @@ def main() -> int:
 
     with PostgresStorage(args.pg_dsn) as storage, MPClient() as client:
         try:
-            for item in _iter_missing_images(storage, limit=args.limit):
-                orig_url = str(item["orig_url"])
-                referer = item.get("referer")
-                if args.dry_run:
-                    print(f"DRY-RUN {orig_url}")
+            items = list(_iter_missing_images(storage, limit=args.limit))
+            if args.dry_run:
+                for item in items:
+                    print(f"DRY-RUN {item['orig_url']}")
                     skipped += 1
-                    continue
-                try:
+            else:
+                worker_count = max(1, args.workers)
+
+                def worker(item: dict) -> tuple[dict, bytes, Optional[str]]:
                     data, content_type = _download_with_retry(
                         client,
-                        orig_url,
-                        referer=referer,
+                        str(item["orig_url"]),
+                        referer=item.get("referer"),
                         retries=max(1, args.retries),
                         sleep_base=max(0.1, args.sleep_base),
                     )
-                    storage.update_article_image_data(
-                        item["biz"],
-                        item["article_id"],
-                        orig_url,
-                        content_type,
-                        data,
-                    )
-                    updated += 1
-                    if updated % 20 == 0:
-                        print(f"Updated {updated} images...")
-                except Exception as exc:
-                    failed += 1
-                    print(f"FAILED {orig_url}: {exc}", file=sys.stderr)
+                    return item, data, content_type
+
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=worker_count
+                ) as executor:
+                    future_map = {executor.submit(worker, item): item for item in items}
+                    for future in concurrent.futures.as_completed(future_map):
+                        item = future_map[future]
+                        orig_url = str(item["orig_url"])
+                        try:
+                            _, data, content_type = future.result()
+                            storage.update_article_image_data(
+                                item["biz"],
+                                item["article_id"],
+                                orig_url,
+                                content_type,
+                                data,
+                            )
+                            updated += 1
+                            if updated % 20 == 0:
+                                print(f"Updated {updated} images...")
+                        except Exception as exc:
+                            failed += 1
+                            print(f"FAILED {orig_url}: {exc}", file=sys.stderr)
         except KeyboardInterrupt:
             print("Interrupted. Exiting.")
 

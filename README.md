@@ -216,6 +216,7 @@ python -m wechatcli articles backfill-images --pg-dsn "postgresql://user:pass@ho
 
 Optional flags:
 - `--limit 1000` to cap the number of images per run
+- `--workers 8` to control concurrent downloads
 - `--retries 3` to control download retries
 - `--dry-run` to list targets without writing
 

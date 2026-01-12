@@ -912,6 +912,7 @@ def backfill_article_images(
         None, help="PostgreSQL DSN (defaults to WECHATCLI_PG_DSN)"
     ),
     limit: Optional[int] = typer.Option(None, min=1, help="Max images to backfill per run"),
+    workers: int = typer.Option(8, min=1, help="Concurrent image downloads"),
     retries: int = typer.Option(3, min=1, help="Download retries per image"),
     sleep_base: float = typer.Option(0.5, min=0.1, help="Base backoff sleep in seconds"),
     dry_run: bool = typer.Option(False, help="List targets without writing", flag_value=True),
@@ -951,28 +952,42 @@ def backfill_article_images(
             cur.execute(query, params)
             rows = cur.fetchall()
         try:
-            for biz, article_id, referer, orig_url in rows:
-                if dry_run:
+            if dry_run:
+                for _, _, _, orig_url in rows:
                     typer.echo(f"DRY-RUN {orig_url}")
                     skipped += 1
-                    continue
-                try:
+            else:
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+
+                worker_count = max(1, workers)
+
+                def worker(item: tuple) -> tuple[tuple, bytes, Optional[str]]:
+                    biz, article_id, referer, orig_url = item
                     data, content_type = download_with_retry(
                         str(orig_url), referer=str(referer) if referer else None
                     )
-                    storage.update_article_image_data(
-                        biz,
-                        article_id,
-                        str(orig_url),
-                        content_type,
-                        data,
-                    )
-                    updated += 1
-                    if updated % 20 == 0:
-                        typer.echo(f"Updated {updated} images...")
-                except Exception as exc:
-                    failed += 1
-                    typer.echo(f"FAILED {orig_url}: {exc}")
+                    return item, data, content_type
+
+                with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                    future_map = {executor.submit(worker, item): item for item in rows}
+                    for future in as_completed(future_map):
+                        item = future_map[future]
+                        biz, article_id, _, orig_url = item
+                        try:
+                            _, data, content_type = future.result()
+                            storage.update_article_image_data(
+                                biz,
+                                article_id,
+                                str(orig_url),
+                                content_type,
+                                data,
+                            )
+                            updated += 1
+                            if updated % 20 == 0:
+                                typer.echo(f"Updated {updated} images...")
+                        except Exception as exc:
+                            failed += 1
+                            typer.echo(f"FAILED {orig_url}: {exc}")
         except KeyboardInterrupt:
             typer.echo("Interrupted. Exiting.")
             raise typer.Exit(code=130)
