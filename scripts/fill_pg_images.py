@@ -137,8 +137,6 @@ def main() -> int:
                                     data,
                                 )
                                 updated += 1
-                                if updated % 20 == 0:
-                                    print(f"Updated {updated} images...")
                         except Exception as exc:
                             failed += 1
                             print(
