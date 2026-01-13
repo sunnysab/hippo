@@ -24,6 +24,7 @@ dependencies = [
   "platformdirs==4.3.6",
   "psycopg2-binary==2.9.11",
   "tqdm==4.66.4",
+  "tomli>=2.0.1; python_version<'3.11'",
 ]
 
 [project.scripts]

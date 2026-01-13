@@ -22,6 +22,24 @@ pip install -e .
 wechatcli --help
 ```
 
+### 方式 C：Docker
+
+```bash
+# Build image
+docker build -t wechatcli .
+
+# Run with volume mount for persistent data
+docker run -it --rm -v ~/.local/share/wechatcli:/data wechatcli --help
+
+# Example: login
+docker run -it --rm -v ~/.local/share/wechatcli:/data wechatcli login
+
+# Example: sync articles with profile
+docker run -it --rm -v ~/.local/share/wechatcli:/data wechatcli articles sync-all --profile production
+```
+
+Note: Place `profiles.toml` in your local `~/.local/share/wechatcli/` directory so the container can read it.
+
 ---
 
 ## 登录与账号管理
@@ -95,6 +113,8 @@ python -m wechatcli account sync-all --skip-time 30
 
 ## Download Articles
 
+### Basic usage
+
 ```bash
 python -m wechatcli articles sync --biz <fakeid>
 python -m wechatcli articles sync-all
@@ -103,12 +123,39 @@ python -m wechatcli articles download "https://mp.weixin.qq.com/..."
 
 - `articles sync` / `sync-all`: download content based on the synced article list
 - `articles download`: download a single article URL
+
+### Profile-based configuration
+
+Instead of passing many command-line options, you can define profiles in `~/.local/share/wechatcli/profiles.toml`:
+
+```toml
+[profiles.production]
+limit = 5000
+format = "html"
+with_images = true
+workers = 20
+image_workers = 10
+worker_prefix = "https://your-worker.example.com"
+worker_proxy = "http://proxy.example.com:1080"
+```
+
+Then use it with:
+
+```bash
+python -m wechatcli articles sync-all --profile production
+python -m wechatcli articles sync <account> --profile production
+```
+
+See `profiles.toml.example` for more examples.
+
+### Worker configuration
+
 - Article HTML can be fetched via a Cloudflare Worker (images are still direct):
   - `--worker-prefix`: worker prefix or template (`{url}` placeholder), defaults to `WECHATCLI_ARTICLE_WORKER`
   - `--worker-proxy`: proxy for worker requests (HTTP/SOCKS5), defaults to `WECHATCLI_ARTICLE_WORKER_PROXY`
   - `--workers`: article download concurrency, defaults to `WECHATCLI_ARTICLE_MAX_CONNECTIONS` (alias: `--worker-max-connections`)
 
-Download behavior:
+### Download behavior
 - Article HTML fetch retries up to 5 times before skipping the article.
 - Image downloads run on 2 background threads and retry up to 3 times.
 - Failed image downloads are logged to `~/.local/share/wechatcli/logs/download_errors.jsonl` and are retried automatically when a download command starts.
@@ -199,6 +246,38 @@ python scripts/export_to_pg.py \
 ---
 
 ## 配置与路径
+
+### Profile-based configuration
+
+Create `~/.local/share/wechatcli/profiles.toml` to define reusable settings:
+
+```toml
+[profiles.production]
+limit = 5000
+format = "html"
+with_images = true
+workers = 20
+image_workers = 10
+worker_prefix = "https://your-worker.example.com"
+worker_proxy = "http://proxy.example.com:1080"
+```
+
+Use with `--profile` or `-p`:
+
+```bash
+wechatcli articles sync-all --profile production
+```
+
+### Environment variables
+
+核心配置：`wechatcli/config.py`
+
+| 配置项 | 说明 |
+| --- | --- |
+| `WECHATCLI_HOME` | 覆盖数据目录 |
+| `WECHATCLI_PG_DSN` | 使用 PostgreSQL |
+| `DB_PATH` | SQLite DB 路径 |
+| `DOWNLOAD_ROOT` | 下载目录 |
 
 ## Backfill missing images (PostgreSQL)
 

@@ -16,7 +16,7 @@ import typer
 import click
 from tqdm import tqdm
 
-from .config import DB_PATH, DEFAULT_PAGE_SIZE, DOWNLOAD_ROOT, HOME_DIR
+from .config import DB_PATH, DEFAULT_PAGE_SIZE, DOWNLOAD_ROOT, HOME_DIR, load_profile, get_profile_value
 from .downloader import ArticleDownloader
 from .http import MPClient, parse_appmsg_publish
 from .models import AccountCredential, LoginSession
@@ -731,6 +731,7 @@ def list_articles(
 @articles_app.command("sync")
 def sync_article_download(
     account: str = typer.Argument(..., help="公众号名称或 fakeid"),
+    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="使用配置文件中的 profile"),
     limit: Optional[int] = typer.Option(None, min=1, max=5000, help="下载文章数量，默认全部"),
     output_format: OutputFormat = typer.Option(
         OutputFormat.html, "--format", "-f", help="导出格式", show_default=True
@@ -754,6 +755,26 @@ def sync_article_download(
         None, min=1, help="图片下载并发数，留空使用默认"
     ),
 ) -> None:
+    # Load profile if specified
+    if profile:
+        try:
+            profile_config = load_profile(profile)
+            # Apply profile values if CLI args not explicitly set
+            limit = limit or get_profile_value(profile_config, "limit")
+            if "format" in profile_config and output_format == OutputFormat.html:
+                output_format = OutputFormat(get_profile_value(profile_config, "format", "html"))
+            with_images = get_profile_value(profile_config, "with_images", with_images)
+            article_only = get_profile_value(profile_config, "article_only", article_only)
+            since = since or get_profile_value(profile_config, "since")
+            output = output or (Path(p) if (p := get_profile_value(profile_config, "output")) else None)
+            worker_prefix = worker_prefix or get_profile_value(profile_config, "worker_prefix")
+            worker_proxy = worker_proxy or get_profile_value(profile_config, "worker_proxy")
+            workers = workers or get_profile_value(profile_config, "workers")
+            image_workers = image_workers or get_profile_value(profile_config, "image_workers")
+        except (FileNotFoundError, ValueError) as exc:
+            typer.echo(f"加载 profile 失败：{exc}")
+            raise typer.Exit(code=1)
+    
     since_timestamp = _parse_since(since)
     with open_storage(DB_PATH) as storage:
         try:
@@ -812,6 +833,7 @@ def sync_article_download(
 
 @articles_app.command("sync-all")
 def sync_all_article_download(
+    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="使用配置文件中的 profile"),
     limit: Optional[int] = typer.Option(None, min=1, max=5000, help="每个账号下载文章数量，默认全部"),
     output_format: OutputFormat = typer.Option(
         OutputFormat.html, "--format", "-f", help="导出格式", show_default=True
@@ -835,6 +857,26 @@ def sync_all_article_download(
         None, min=1, help="图片下载并发数，留空使用默认"
     ),
 ) -> None:
+    # Load profile if specified
+    if profile:
+        try:
+            profile_config = load_profile(profile)
+            # Apply profile values if CLI args not explicitly set
+            limit = limit or get_profile_value(profile_config, "limit")
+            if "format" in profile_config and output_format == OutputFormat.html:
+                output_format = OutputFormat(get_profile_value(profile_config, "format", "html"))
+            with_images = get_profile_value(profile_config, "with_images", with_images)
+            article_only = get_profile_value(profile_config, "article_only", article_only)
+            since = since or get_profile_value(profile_config, "since")
+            output = output or (Path(p) if (p := get_profile_value(profile_config, "output")) else None)
+            worker_prefix = worker_prefix or get_profile_value(profile_config, "worker_prefix")
+            worker_proxy = worker_proxy or get_profile_value(profile_config, "worker_proxy")
+            workers = workers or get_profile_value(profile_config, "workers")
+            image_workers = image_workers or get_profile_value(profile_config, "image_workers")
+        except (FileNotFoundError, ValueError) as exc:
+            typer.echo(f"加载 profile 失败：{exc}")
+            raise typer.Exit(code=1)
+    
     since_timestamp = _parse_since(since)
     total_downloads = 0
     with open_storage(DB_PATH) as storage:

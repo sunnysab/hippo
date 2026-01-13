@@ -1,0 +1,42 @@
+# WeChat CLI profiles configuration
+# Copy this file to ~/.local/share/wechatcli/profiles.toml and customize
+
+[profiles.default]
+# Default profile - basic settings
+limit = 100
+format = "html"
+with_images = true
+article_only = false
+workers = 10
+image_workers = 5
+
+[profiles.production]
+# Production profile - optimized for batch downloads
+limit = 5000
+format = "html"
+with_images = true
+article_only = false
+workers = 20
+image_workers = 10
+worker_prefix = "https://your-worker.example.com"
+worker_proxy = "http://proxy.example.com:1080"
+# since = "2024-01-01"
+# output = "/custom/output/path"
+
+[profiles.fast]
+# Fast profile - articles only without images
+limit = 1000
+format = "html"
+with_images = false
+article_only = true
+workers = 30
+image_workers = 0
+
+[profiles.markdown]
+# Markdown export profile
+limit = 500
+format = "markdown"
+with_images = true
+article_only = false
+workers = 10
+image_workers = 5
