@@ -743,8 +743,12 @@ def sync_article_download(
     output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
     worker_prefix: Optional[str] = typer.Option(None, help="文章 HTML worker 前缀或模板，留空使用环境变量"),
     worker_proxy: Optional[str] = typer.Option(None, help="访问 worker 时使用的代理（HTTP/SOCKS5），留空直连"),
-    worker_max_connections: Optional[int] = typer.Option(
-        None, min=1, help="worker 客户端最大连接数，留空使用默认"
+    workers: Optional[int] = typer.Option(
+        None,
+        "--workers",
+        "--worker-max-connections",
+        min=1,
+        help="文章下载并发数（原 --worker-max-connections）",
     ),
     image_workers: Optional[int] = typer.Option(
         None, min=1, help="图片下载并发数，留空使用默认"
@@ -785,7 +789,7 @@ def sync_article_download(
                 storage=storage,
                 article_worker=worker_prefix,
                 article_worker_proxy=worker_proxy,
-                article_max_connections=worker_max_connections,
+                article_max_connections=workers,
                 image_workers=image_workers,
                 enable_image_worker=not article_only,
             ) as downloader:
@@ -820,8 +824,12 @@ def sync_all_article_download(
     output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
     worker_prefix: Optional[str] = typer.Option(None, help="文章 HTML worker 前缀或模板，留空使用环境变量"),
     worker_proxy: Optional[str] = typer.Option(None, help="访问 worker 时使用的代理（HTTP/SOCKS5），留空直连"),
-    worker_max_connections: Optional[int] = typer.Option(
-        None, min=1, help="worker 客户端最大连接数，留空使用默认"
+    workers: Optional[int] = typer.Option(
+        None,
+        "--workers",
+        "--worker-max-connections",
+        min=1,
+        help="文章下载并发数（原 --worker-max-connections）",
     ),
     image_workers: Optional[int] = typer.Option(
         None, min=1, help="图片下载并发数，留空使用默认"
@@ -847,7 +855,7 @@ def sync_all_article_download(
             storage=storage,
             article_worker=worker_prefix,
             article_worker_proxy=worker_proxy,
-            article_max_connections=worker_max_connections,
+            article_max_connections=workers,
             image_workers=image_workers,
             enable_image_worker=not article_only,
         ) as downloader:
@@ -896,8 +904,12 @@ def download_article(
     title: Optional[str] = typer.Option(None, help="覆盖文章标题"),
     worker_prefix: Optional[str] = typer.Option(None, help="文章 HTML worker 前缀或模板，留空使用环境变量"),
     worker_proxy: Optional[str] = typer.Option(None, help="访问 worker 时使用的代理（HTTP/SOCKS5），留空直连"),
-    worker_max_connections: Optional[int] = typer.Option(
-        None, min=1, help="worker 客户端最大连接数，留空使用默认"
+    workers: Optional[int] = typer.Option(
+        None,
+        "--workers",
+        "--worker-max-connections",
+        min=1,
+        help="文章下载并发数（原 --worker-max-connections）",
     ),
     image_workers: Optional[int] = typer.Option(
         None, min=1, help="图片下载并发数，留空使用默认"
@@ -917,7 +929,7 @@ def download_article(
         storage=storage,
         article_worker=worker_prefix,
         article_worker_proxy=worker_proxy,
-        article_max_connections=worker_max_connections,
+        article_max_connections=workers,
         image_workers=image_workers,
     ) as downloader:
         try:

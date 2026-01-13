@@ -106,7 +106,7 @@ python -m wechatcli articles download "https://mp.weixin.qq.com/..."
 - Article HTML can be fetched via a Cloudflare Worker (images are still direct):
   - `--worker-prefix`: worker prefix or template (`{url}` placeholder), defaults to `WECHATCLI_ARTICLE_WORKER`
   - `--worker-proxy`: proxy for worker requests (HTTP/SOCKS5), defaults to `WECHATCLI_ARTICLE_WORKER_PROXY`
-  - `--worker-max-connections`: max concurrent worker connections, defaults to `WECHATCLI_ARTICLE_MAX_CONNECTIONS`
+  - `--workers`: article download concurrency, defaults to `WECHATCLI_ARTICLE_MAX_CONNECTIONS` (alias: `--worker-max-connections`)
 
 Download behavior:
 - Article HTML fetch retries up to 5 times before skipping the article.
