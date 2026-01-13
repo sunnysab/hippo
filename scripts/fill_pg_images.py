@@ -137,12 +137,12 @@ def main() -> int:
                                     data,
                                 )
                                 updated += 1
-                        except Exception as exc:
-                            failed += 1
-                            print(
-                                f"FAILED {orig_url}: {_format_error(exc)}",
-                                file=sys.stderr,
-                            )
+                            except Exception as exc:
+                                failed += 1
+                                print(
+                                    f"FAILED {orig_url}: {_format_error(exc)}",
+                                    file=sys.stderr,
+                                )
                             finally:
                                 bar.update(1)
         except KeyboardInterrupt:
