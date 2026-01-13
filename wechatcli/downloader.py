@@ -65,7 +65,8 @@ def _resolve_asset_url(url: str, *, base: str) -> Optional[str]:
     if not url:
         return None
     lowered = url.strip().lower()
-    if lowered.startswith(("data:", "javascript:", "about:")):
+    if lowered.startswith(("data:", "javascript:", "about:", "file:")):
+        logger.debug("Skipping invalid URL scheme: %s", url[:100])
         return None
     
     # Handle Sogou proxy URLs: extract the actual WeChat URL from url= parameter
@@ -77,6 +78,7 @@ def _resolve_asset_url(url: str, *, base: str) -> Optional[str]:
                 actual_url = params["url"][0]
                 # Check if it's a WeChat domain
                 if "mmbiz.qpic.cn" in actual_url.lower() or "wx.qlogo.cn" in actual_url.lower():
+                    logger.debug("Unwrapped Sogou proxy URL: %s -> %s", url[:100], actual_url[:100])
                     url = actual_url
     
     if url.startswith("//"):
@@ -89,8 +91,10 @@ def _resolve_asset_url(url: str, *, base: str) -> Optional[str]:
             resolved = urljoin(base, url)
     parsed_resolved = urlparse(resolved)
     if parsed_resolved.scheme not in ("http", "https"):
+        logger.debug("Skipping non-HTTP(S) URL: %s", resolved[:100])
         return None
     if not parsed_resolved.path or parsed_resolved.path == "/":
+        logger.debug("Skipping URL without valid path: %s", resolved[:100])
         return None
     return resolved
 
