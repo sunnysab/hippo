@@ -18,7 +18,7 @@ classifiers = [
 ]
 dependencies = [
   "typer>=0.21.0",
-  "httpx[http2]>=0.28.0",
+  "httpx[http2,socks]>=0.28.0",
   "beautifulsoup4>=4.14.0",
   "markdownify>=1.2.0",
   "platformdirs>=4.5.0",

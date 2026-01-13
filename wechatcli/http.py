@@ -50,17 +50,20 @@ class MPClient(AbstractContextManager):
                 max_keepalive_connections=article_max_connections,
             )
             if article_max_connections
-            else None
+            else httpx.Limits()
         )
         self.article_client: Optional[httpx.Client] = None
-        if self.article_worker or article_worker_proxy or limits:
-            self.article_client = httpx.Client(
-                timeout=timeout,
-                headers=HEADERS,
-                follow_redirects=True,
-                proxies=article_worker_proxy,
-                limits=limits,
-            )
+        if self.article_worker or article_worker_proxy:
+            client_kwargs = {
+                "timeout": timeout,
+                "headers": HEADERS,
+                "follow_redirects": True,
+            }
+            if article_worker_proxy:
+                client_kwargs["proxy"] = article_worker_proxy
+            if article_max_connections:
+                client_kwargs["limits"] = limits
+            self.article_client = httpx.Client(**client_kwargs)
         
         logger.info(
             "MPClient initialized: worker=%s, proxy=%s, max_conn=%s",
