@@ -70,15 +70,20 @@ def _resolve_asset_url(url: str, *, base: str) -> Optional[str]:
         return None
     
     # Handle Sogou proxy URLs: extract the actual WeChat URL from url= parameter
-    if "img01.store.sogou.com" in lowered or "img02.store.sogou.com" in lowered or "img03.store.sogou.com" in lowered:
+    # Match any sogou.com domain, not just specific subdomains
+    if "sogou.com" in lowered and ("url=" in lowered or "url%3d" in lowered):
         parsed = urlparse(url)
         if parsed.query:
             params = parse_qs(parsed.query)
             if "url" in params and params["url"]:
                 actual_url = params["url"][0]
-                # Check if it's a WeChat domain
-                if "mmbiz.qpic.cn" in actual_url.lower() or "wx.qlogo.cn" in actual_url.lower():
+                # Accept any URL that looks like a WeChat image
+                if any(domain in actual_url.lower() for domain in ["mmbiz.qpic.cn", "wx.qlogo.cn", "mmbiz.qlogo.cn", "weixin.qq.com"]):
                     logger.debug("Unwrapped Sogou proxy URL: %s -> %s", url[:100], actual_url[:100])
+                    url = actual_url
+                else:
+                    # Even if not WeChat, try to use the extracted URL
+                    logger.debug("Extracted URL from Sogou proxy (non-WeChat): %s -> %s", url[:100], actual_url[:100])
                     url = actual_url
     
     if url.startswith("//"):
@@ -270,7 +275,7 @@ class ImageDownloadWorker:
             from .storage import PostgresStorage
 
             storage = PostgresStorage(self._pg_dsn)
-        with MPClient() as client:
+        with MPClient(timeout=15.0) as client:
             while True:
                 task = self._queue.get()
                 if task is None:
