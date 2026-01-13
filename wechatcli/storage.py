@@ -17,7 +17,7 @@ from .config import DB_PATH
 from .models import AccountCredential, ArticleRecord, LoginSession
 
 ISO_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 
 
 def _utc_now() -> str:
@@ -41,6 +41,7 @@ class StorageLike(Protocol):
     def remove_account(self, biz: str) -> int: ...
     def set_default_account(self, biz: str) -> None: ...
     def update_last_synced(self, biz: str) -> None: ...
+    def set_account_disabled(self, biz: str, is_disabled: bool) -> None: ...
     def save_login_session(
         self, session: LoginSession, *, set_default: bool = True
     ) -> LoginSession: ...
@@ -93,6 +94,7 @@ class Storage(AbstractContextManager):
                 key TEXT NOT NULL,
                 pass_ticket TEXT NOT NULL,
                 is_default INTEGER NOT NULL DEFAULT 0,
+                is_disabled INTEGER NOT NULL DEFAULT 0,
                 last_synced_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -196,6 +198,18 @@ class Storage(AbstractContextManager):
                 ON articles (biz, publish_at DESC)
                 """
             )
+        if current_version in (None, "2", "3"):
+            self._ensure_account_disabled_column(cur)
+
+    @staticmethod
+    def _ensure_account_disabled_column(cur: sqlite3.Cursor) -> None:
+        columns = {
+            row[1] for row in cur.execute("PRAGMA table_info(accounts)").fetchall()
+        }
+        if "is_disabled" not in columns:
+            cur.execute(
+                "ALTER TABLE accounts ADD COLUMN is_disabled INTEGER NOT NULL DEFAULT 0"
+            )
 
     # Meta helpers --------------------------------------------------------
     def get_meta(self, key: str) -> Optional[str]:
@@ -218,9 +232,9 @@ class Storage(AbstractContextManager):
         self.conn.execute(
             """
             INSERT INTO accounts (biz, nickname, alias, round_head_img, uin, key, pass_ticket,
-                                  is_default, last_synced_at, created_at, updated_at)
+                                  is_default, is_disabled, last_synced_at, created_at, updated_at)
             VALUES (:biz, :nickname, :alias, :round_head_img, :uin, :key, :pass_ticket,
-                    :is_default, :last_synced_at, :created_at, :updated_at)
+                    :is_default, :is_disabled, :last_synced_at, :created_at, :updated_at)
             ON CONFLICT(biz) DO UPDATE SET
                 nickname=excluded.nickname,
                 alias=excluded.alias,
@@ -239,6 +253,7 @@ class Storage(AbstractContextManager):
                 "key": account.key or "",
                 "pass_ticket": account.pass_ticket or "",
                 "is_default": 1 if account.is_default else 0,
+                "is_disabled": 1 if account.is_disabled else 0,
                 "last_synced_at": account.last_synced_at.strftime(ISO_FORMAT)
                 if account.last_synced_at
                 else None,
@@ -295,6 +310,15 @@ class Storage(AbstractContextManager):
             (_utc_now(), _utc_now(), biz),
         )
         self.conn.commit()
+
+    def set_account_disabled(self, biz: str, is_disabled: bool) -> None:
+        with self.conn:
+            updated = self.conn.execute(
+                "UPDATE accounts SET is_disabled = ?, updated_at = ? WHERE biz = ?",
+                (1 if is_disabled else 0, _utc_now(), biz),
+            ).rowcount
+            if updated == 0:
+                raise LookupError(f"Account {biz} not found")
 
     # Login session helpers ------------------------------------------------
     def save_login_session(self, session: LoginSession, *, set_default: bool = True) -> LoginSession:
@@ -426,6 +450,7 @@ class Storage(AbstractContextManager):
             key=row["key"] or "",
             pass_ticket=row["pass_ticket"] or "",
             is_default=bool(row["is_default"]),
+            is_disabled=bool(row["is_disabled"]) if "is_disabled" in row.keys() else False,
             last_synced_at=last_synced_at,
         )
 
@@ -483,10 +508,17 @@ class PostgresStorage(AbstractContextManager):
                     key TEXT NOT NULL,
                     pass_ticket TEXT NOT NULL,
                     is_default BOOLEAN NOT NULL DEFAULT FALSE,
+                    is_disabled BOOLEAN NOT NULL DEFAULT FALSE,
                     last_synced_at TIMESTAMPTZ,
                     created_at TIMESTAMPTZ NOT NULL,
                     updated_at TIMESTAMPTZ NOT NULL
                 )
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE accounts
+                ADD COLUMN IF NOT EXISTS is_disabled BOOLEAN NOT NULL DEFAULT FALSE
                 """
             )
             cur.execute(
@@ -652,8 +684,8 @@ class PostgresStorage(AbstractContextManager):
             cur.execute(
                 """
                 INSERT INTO accounts (biz, nickname, alias, round_head_img, uin, key, pass_ticket,
-                                      is_default, last_synced_at, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                      is_default, is_disabled, last_synced_at, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (biz) DO UPDATE SET
                     nickname=EXCLUDED.nickname,
                     alias=EXCLUDED.alias,
@@ -672,6 +704,7 @@ class PostgresStorage(AbstractContextManager):
                     account.key or "",
                     account.pass_ticket or "",
                     account.is_default,
+                    account.is_disabled,
                     account.last_synced_at,
                     now,
                     now,
@@ -730,6 +763,18 @@ class PostgresStorage(AbstractContextManager):
                 (now, now, biz),
             )
         self.conn.commit()
+
+    def set_account_disabled(self, biz: str, is_disabled: bool) -> None:
+        now = _utc_now_dt()
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE accounts SET is_disabled = %s, updated_at = %s WHERE biz = %s",
+                (is_disabled, now, biz),
+            )
+            updated = cur.rowcount
+        self.conn.commit()
+        if updated == 0:
+            raise LookupError(f"Account {biz} not found")
 
     # Login session helpers ------------------------------------------------
     def save_login_session(self, session: LoginSession, *, set_default: bool = True) -> LoginSession:
@@ -1055,6 +1100,7 @@ class PostgresStorage(AbstractContextManager):
             key=row["key"] or "",
             pass_ticket=row["pass_ticket"] or "",
             is_default=bool(row["is_default"]),
+            is_disabled=bool(row.get("is_disabled", False)),
             last_synced_at=last_synced_at,
         )
 

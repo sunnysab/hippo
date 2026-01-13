@@ -430,8 +430,9 @@ def add_account(
     round_head_img: Optional[str] = typer.Option(None, help="头像 URL，可选"),
     set_default: bool = typer.Option(False, is_flag=True, help="是否设置为默认账号"),
 ) -> None:
+    target_biz = biz.strip()
     credential = AccountCredential(
-        biz=biz.strip(),
+        biz=target_biz,
         nickname=nickname.strip(),
         alias=(alias.strip() if alias else None),
         round_head_img=(round_head_img.strip() if round_head_img else None),
@@ -507,8 +508,9 @@ def search_accounts(
                 saved = []
                 for idx in indices:
                     item = records[idx]
+                    fakeid_value = (item.get("fakeid") or "").strip()
                     credential = AccountCredential(
-                        biz=item.get("fakeid", "").strip(),
+                        biz=fakeid_value,
                         nickname=(item.get("nickname") or "").strip() or "未知公众号",
                         alias=(item.get("alias") or "").strip() or None,
                         round_head_img=(item.get("round_head_img") or "").strip() or None,
@@ -532,11 +534,19 @@ def list_accounts() -> None:
     if not accounts:
         typer.echo("尚未保存任何账号，使用 `account add` 添加")
         return
-    headers = ["默认", "昵称", "fakeid", "最近同步"]
+    headers = ["默认", "昵称", "fakeid", "Disabled", "最近同步"]
     rows: list[list[str]] = []
     for account in accounts:
         last_synced = account.last_synced_at.isoformat() if account.last_synced_at else "-"
-        rows.append(["✅" if account.is_default else "", account.nickname, account.biz, last_synced])
+        rows.append(
+            [
+                "✅" if account.is_default else "",
+                account.nickname,
+                account.biz,
+                "yes" if account.is_disabled else "",
+                last_synced,
+            ]
+        )
     table_text = _format_table(headers, rows)
     if table_text:
         typer.echo(table_text)
@@ -565,6 +575,36 @@ def set_default_account(
     typer.echo(f"{biz} 已设为默认账号")
 
 
+@accounts_app.command("disable")
+def disable_account(
+    account: str = typer.Argument(..., help="Account name, alias, or fakeid"),
+) -> None:
+    _require_nonempty(account, "Please provide an account name or fakeid.")
+    with open_storage(DB_PATH) as storage:
+        try:
+            target = _resolve_account(storage, account)
+        except LookupError as exc:
+            typer.echo(str(exc))
+            raise typer.Exit(code=1)
+        storage.set_account_disabled(target.biz, True)
+    typer.echo(f"Account {target.nickname} ({target.biz}) disabled.")
+
+
+@accounts_app.command("enable")
+def enable_account(
+    account: str = typer.Argument(..., help="Account name, alias, or fakeid"),
+) -> None:
+    _require_nonempty(account, "Please provide an account name or fakeid.")
+    with open_storage(DB_PATH) as storage:
+        try:
+            target = _resolve_account(storage, account)
+        except LookupError as exc:
+            typer.echo(str(exc))
+            raise typer.Exit(code=1)
+        storage.set_account_disabled(target.biz, False)
+    typer.echo(f"Account {target.nickname} ({target.biz}) enabled.")
+
+
 # ---------------------------------------------------------------------------
 # Article helpers
 @accounts_app.command("sync")
@@ -580,6 +620,9 @@ def sync_account_articles(
     _enforce_exclusive_flags(force, skip_time)
     with open_storage(DB_PATH) as storage:
         account = storage.get_account(biz)
+        if account.is_disabled:
+            typer.echo(f"Account {account.nickname} ({account.biz}) is disabled. Skipping.")
+            return
         if not force and _should_skip_by_time(account.last_synced_at, skip_time):
             typer.echo(
                 f"该账号近期已同步，跳过（上次同步 {_format_last_synced(account.last_synced_at)}）"
@@ -656,6 +699,17 @@ def sync_all_accounts(
                 if reset:
                     storage.delete_meta(resume_key)
                     storage.delete_meta(complete_key)
+                if account.is_disabled:
+                    progress = tqdm(
+                        total=0,
+                        desc=f"同步 {account.nickname} ({account.biz})",
+                        unit="msg",
+                        dynamic_ncols=True,
+                        leave=True,
+                    )
+                    progress.set_postfix_str("skipped (disabled)", refresh=True)
+                    progress.close()
+                    continue
                 elif skip_time is None and not force and storage.get_meta(complete_key) == _today_str():
                     progress = tqdm(
                         total=0,
@@ -1194,6 +1248,7 @@ def export_accounts() -> None:
             "key": account.key,
             "pass_ticket": account.pass_ticket,
             "is_default": account.is_default,
+            "is_disabled": account.is_disabled,
             "last_synced_at": account.last_synced_at.isoformat()
             if account.last_synced_at
             else None,
