@@ -736,6 +736,9 @@ def sync_article_download(
         OutputFormat.html, "--format", "-f", help="导出格式", show_default=True
     ),
     with_images: bool = typer.Option(True, help="是否下载图片", flag_value=True),
+    article_only: bool = typer.Option(
+        False, "--article-only", help="仅下载文章，不下载图片（仍创建图片记录）"
+    ),
     since: Optional[str] = typer.Option(None, help="仅下载某日期后的文章"),
     output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
     worker_prefix: Optional[str] = typer.Option(None, help="文章 HTML worker 前缀或模板，留空使用环境变量"),
@@ -762,6 +765,8 @@ def sync_article_download(
             return
         target_dir = ensure_directory(output or DOWNLOAD_ROOT)
         typer.echo(f"开始下载 {len(articles)} 篇文章 -> {target_dir}")
+        download_images = with_images and not article_only
+        record_images_only = article_only
         fmt_value = (
             output_format.value
             if isinstance(output_format, OutputFormat)
@@ -782,11 +787,13 @@ def sync_article_download(
                 article_worker_proxy=worker_proxy,
                 article_max_connections=worker_max_connections,
                 image_workers=image_workers,
+                enable_image_worker=not article_only,
             ) as downloader:
                 results, skipped = downloader.download_many(
                     articles,
                     fmt=fmt_value,
-                    with_images=with_images,
+                    with_images=download_images,
+                    record_images_only=record_images_only,
                     account_name=account_record.nickname or account_record.biz,
                     progress=progress,
                     skip_if_downloaded=True,
@@ -806,6 +813,9 @@ def sync_all_article_download(
         OutputFormat.html, "--format", "-f", help="导出格式", show_default=True
     ),
     with_images: bool = typer.Option(True, help="是否下载图片", flag_value=True),
+    article_only: bool = typer.Option(
+        False, "--article-only", help="仅下载文章，不下载图片（仍创建图片记录）"
+    ),
     since: Optional[str] = typer.Option(None, help="仅下载某日期后的文章"),
     output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
     worker_prefix: Optional[str] = typer.Option(None, help="文章 HTML worker 前缀或模板，留空使用环境变量"),
@@ -825,6 +835,8 @@ def sync_all_article_download(
             typer.echo("尚未保存任何账号，使用 `account add` 添加")
             return
         target_dir = ensure_directory(output or DOWNLOAD_ROOT)
+        download_images = with_images and not article_only
+        record_images_only = article_only
         fmt_value = (
             output_format.value
             if isinstance(output_format, OutputFormat)
@@ -837,6 +849,7 @@ def sync_all_article_download(
             article_worker_proxy=worker_proxy,
             article_max_connections=worker_max_connections,
             image_workers=image_workers,
+            enable_image_worker=not article_only,
         ) as downloader:
             total_skipped = 0
             for account in accounts:
@@ -856,7 +869,8 @@ def sync_all_article_download(
                     results, skipped = downloader.download_many(
                         articles,
                         fmt=fmt_value,
-                        with_images=with_images,
+                        with_images=download_images,
+                        record_images_only=record_images_only,
                         account_name=account.nickname or account.biz,
                         progress=progress,
                         skip_if_downloaded=True,
@@ -868,7 +882,7 @@ def sync_all_article_download(
                     progress.close()
                 total_downloads += len(results)
                 total_skipped += skipped
-        if with_images:
+        if download_images:
             downloader.wait_for_images_with_progress(label="下载图片")
     typer.echo(f"全部下载完成，生成 {total_downloads} 个目录，跳过 {total_skipped} 篇")
 

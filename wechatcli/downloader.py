@@ -318,6 +318,7 @@ class ArticleDownloader(AbstractContextManager):
         article_worker_proxy: Optional[str] = None,
         article_max_connections: Optional[int] = None,
         image_workers: Optional[int] = None,
+        enable_image_worker: bool = True,
     ) -> None:
         self._managed_client = client is None
         self.client = client or MPClient(
@@ -329,11 +330,13 @@ class ArticleDownloader(AbstractContextManager):
         self.storage = storage
         self._pg_dsn = os.environ.get("WECHATCLI_PG_DSN")
         self._image_worker: Optional[ImageDownloadWorker] = None
+        self._enable_image_worker = enable_image_worker
         self._article_workers = article_max_connections if article_max_connections and article_max_connections > 0 else 1
         self._image_workers = image_workers if image_workers and image_workers > 0 else _IMAGE_WORKERS
 
     def __enter__(self) -> "ArticleDownloader":
-        self._retry_failed_images()
+        if self._enable_image_worker:
+            self._retry_failed_images()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
@@ -348,6 +351,8 @@ class ArticleDownloader(AbstractContextManager):
             self.client.close()
 
     def _ensure_image_worker(self) -> ImageDownloadWorker:
+        if not self._enable_image_worker:
+            raise RuntimeError("Image worker disabled")
         if not self._image_worker:
             self._image_worker = ImageDownloadWorker(
                 log_error=self._log_download_error,
@@ -414,6 +419,7 @@ class ArticleDownloader(AbstractContextManager):
         *,
         fmt: str = "html",
         with_images: bool = True,
+        record_images_only: bool = False,
         account_name: Optional[str] = None,
         progress: Optional[object] = None,
         skip_if_downloaded: bool = True,
@@ -456,6 +462,7 @@ class ArticleDownloader(AbstractContextManager):
                 target,
                 fmt=fmt,
                 with_images=with_images,
+                record_images_only=record_images_only,
                 account_name=account_name,
             )
 
@@ -523,6 +530,7 @@ class ArticleDownloader(AbstractContextManager):
         *,
         fmt: str = "html",
         with_images: bool = True,
+        record_images_only: bool = False,
         title: Optional[str] = None,
     ) -> DownloadResult:
         raw_html = self._fetch_with_retry(url)
@@ -545,6 +553,7 @@ class ArticleDownloader(AbstractContextManager):
             raw_html=raw_html,
             fmt=fmt,
             with_images=with_images,
+            record_images_only=record_images_only,
             account_name=None,
         )
 
@@ -564,6 +573,7 @@ class ArticleDownloader(AbstractContextManager):
         *,
         fmt: str,
         with_images: bool,
+        record_images_only: bool,
         account_name: Optional[str],
     ) -> DownloadResult:
         last_exc: Optional[Exception] = None
@@ -575,6 +585,7 @@ class ArticleDownloader(AbstractContextManager):
                     raw_html=html,
                     fmt=fmt,
                     with_images=with_images,
+                    record_images_only=record_images_only,
                     account_name=account_name,
                 )
             except Exception as exc:
@@ -590,6 +601,7 @@ class ArticleDownloader(AbstractContextManager):
         raw_html: str,
         fmt: str,
         with_images: bool,
+        record_images_only: bool,
         account_name: Optional[str],
     ) -> DownloadResult:
         target_dir = self._article_target_dir(article, account_name, create=True)
@@ -598,10 +610,14 @@ class ArticleDownloader(AbstractContextManager):
         normalized_html = clean_html
         asset_count = 0
         url_map: dict[str, str] = {}
+        referer = article.link or "https://mp.weixin.qq.com/"
         if with_images:
-            referer = article.link or "https://mp.weixin.qq.com/"
             normalized_html, asset_count, url_map = self._download_images(
                 normalized_html, target_dir, referer=referer, article=article
+            )
+        elif record_images_only:
+            asset_count, url_map = self._collect_image_urls(
+                normalized_html, referer=referer
             )
 
         output_path = target_dir / _FORMAT_EXTENSIONS["html"]
@@ -781,6 +797,52 @@ class ArticleDownloader(AbstractContextManager):
                 except Exception:
                     return False
         return self._has_local_files(article, account_name)
+
+    def _collect_image_urls(
+        self, html: str, *, referer: str
+    ) -> tuple[int, dict[str, str]]:
+        soup = BeautifulSoup(html, "html.parser")
+        count = 0
+        url_map: dict[str, str] = {}
+
+        def add_url(url: str, *, prefix: str) -> None:
+            nonlocal count
+            resolved = _resolve_asset_url(url, base=referer)
+            if not resolved:
+                return
+            if url in url_map:
+                return
+            extension = _guess_extension(resolved) or ".bin"
+            count += 1
+            filename = f"{prefix}_{count:03d}{extension}"
+            url_map[url] = f"images/{filename}"
+
+        for img in soup.find_all("img"):
+            src = img.get("src") or img.get("data-src")
+            if not src or src.startswith("data:"):
+                continue
+            add_url(src, prefix="img")
+
+        def extract_from_style(text: str) -> None:
+            for match in _URL_PATTERN.finditer(text):
+                candidate = match.group("url").strip()
+                if not candidate or candidate.startswith("data:"):
+                    continue
+                add_url(candidate, prefix="asset")
+
+        for node in soup.find_all(style=True):
+            style = node.get("style") or ""
+            if "url(" not in style:
+                continue
+            extract_from_style(style)
+
+        for style_tag in soup.find_all("style"):
+            content = style_tag.string
+            if not content or "url(" not in content:
+                continue
+            extract_from_style(content)
+
+        return count, url_map
 
     def _download_images(
         self, html: str, target_dir: Path, *, referer: str, article: ArticleRecord
