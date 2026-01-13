@@ -14,3 +14,5 @@ dist/
 .ruff_cache/
 .idea/
 .vscode/
+AGENTS.md
+mpcli.txt
