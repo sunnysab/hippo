@@ -1,5 +1,5 @@
 # WeChat CLI profiles configuration
-# Copy this file to ~/.local/share/wechatcli/profiles.toml and customize
+# Copy this file to ~/.local/share/hippo/profiles.toml and customize
 
 [profiles.default]
 # Default profile - basic settings

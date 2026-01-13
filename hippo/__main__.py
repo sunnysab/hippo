@@ -1,4 +1,4 @@
-"""Entry point for ``python -m wechatcli``."""
+"""Entry point for ``python -m hippo``."""
 
 from .cli import run
 

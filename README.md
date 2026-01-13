@@ -12,33 +12,33 @@
 python -m venv .venv
 source .venv/bin/activate          # Windows 使用 .venv\Scripts\activate
 pip install -r requirements-cli.txt
-python -m wechatcli --help
+python -m hippo --help
 ```
 
 ### 方式 B：开发模式安装
 
 ```bash
 pip install -e .
-wechatcli --help
+hippo --help
 ```
 
 ### 方式 C：Docker
 
 ```bash
 # Build image
-docker build -t wechatcli .
+docker build -t hippo .
 
 # Run with volume mount for persistent data
-docker run -it --rm -v ~/.local/share/wechatcli:/data wechatcli --help
+docker run -it --rm -v ~/.local/share/hippo:/data hippo --help
 
 # Example: login
-docker run -it --rm -v ~/.local/share/wechatcli:/data wechatcli login
+docker run -it --rm -v ~/.local/share/hippo:/data hippo login
 
 # Example: sync articles with profile
-docker run -it --rm -v ~/.local/share/wechatcli:/data wechatcli articles sync-all --profile production
+docker run -it --rm -v ~/.local/share/hippo:/data hippo articles sync-all --profile production
 ```
 
-Note: Place `profiles.toml` in your local `~/.local/share/wechatcli/` directory so the container can read it.
+Note: Place `profiles.toml` in your local `~/.local/share/hippo/` directory so the container can read it.
 
 ---
 
@@ -47,7 +47,7 @@ Note: Place `profiles.toml` in your local `~/.local/share/wechatcli/` directory 
 ### 登录
 
 ```bash
-python -m wechatcli login
+python -m hippo login
 ```
 
 扫码后会保存登录会话（token + cookies）。
@@ -55,7 +55,7 @@ python -m wechatcli login
 ### 搜索公众号（推荐交互式）
 
 ```bash
-python -m wechatcli account search 关键词 --interactive
+python -m hippo account search 关键词 --interactive
 ```
 
 - 默认每页 10 条
@@ -65,10 +65,10 @@ python -m wechatcli account search 关键词 --interactive
 ### 管理已保存账号
 
 ```bash
-python -m wechatcli account list
-python -m wechatcli account add        # 手动保存 fakeid
-python -m wechatcli account remove <biz>
-python -m wechatcli account set-default <biz>
+python -m hippo account list
+python -m hippo account add        # 手动保存 fakeid
+python -m hippo account remove <biz>
+python -m hippo account set-default <biz>
 ```
 
 ---
@@ -78,8 +78,8 @@ python -m wechatcli account set-default <biz>
 ### 账号同步（文章列表）
 
 ```bash
-python -m wechatcli account sync --biz <fakeid>
-python -m wechatcli account sync-all
+python -m hippo account sync --biz <fakeid>
+python -m hippo account sync-all
 ```
 
 默认按最新 -> 更早 翻页，写入文章列表缓存。
@@ -96,8 +96,8 @@ python -m wechatcli account sync-all
 默认会跳过“今日已完成”的账号。可用以下参数控制：
 
 ```bash
-python -m wechatcli account sync-all --force
-python -m wechatcli account sync-all --skip-time 30
+python -m hippo account sync-all --force
+python -m hippo account sync-all --skip-time 30
 ```
 
 - `--force`：忽略跳过逻辑
@@ -116,9 +116,9 @@ python -m wechatcli account sync-all --skip-time 30
 ### Basic usage
 
 ```bash
-python -m wechatcli articles sync --biz <fakeid>
-python -m wechatcli articles sync-all
-python -m wechatcli articles download "https://mp.weixin.qq.com/..."
+python -m hippo articles sync --biz <fakeid>
+python -m hippo articles sync-all
+python -m hippo articles download "https://mp.weixin.qq.com/..."
 ```
 
 - `articles sync` / `sync-all`: download content based on the synced article list
@@ -126,7 +126,7 @@ python -m wechatcli articles download "https://mp.weixin.qq.com/..."
 
 ### Profile-based configuration
 
-Instead of passing many command-line options, you can define profiles in `~/.local/share/wechatcli/profiles.toml`:
+Instead of passing many command-line options, you can define profiles in `~/.local/share/hippo/profiles.toml`:
 
 ```toml
 [profiles.production]
@@ -142,8 +142,8 @@ worker_proxy = "http://proxy.example.com:1080"
 Then use it with:
 
 ```bash
-python -m wechatcli articles sync-all --profile production
-python -m wechatcli articles sync <account> --profile production
+python -m hippo articles sync-all --profile production
+python -m hippo articles sync <account> --profile production
 ```
 
 See `profiles.toml.example` for more examples.
@@ -151,19 +151,19 @@ See `profiles.toml.example` for more examples.
 ### Worker configuration
 
 - Article HTML can be fetched via a Cloudflare Worker (images are still direct):
-  - `--worker-prefix`: worker prefix or template (`{url}` placeholder), defaults to `WECHATCLI_ARTICLE_WORKER`
-  - `--worker-proxy`: proxy for worker requests (HTTP/SOCKS5), defaults to `WECHATCLI_ARTICLE_WORKER_PROXY`
-  - `--workers`: article download concurrency, defaults to `WECHATCLI_ARTICLE_MAX_CONNECTIONS` (alias: `--worker-max-connections`)
+  - `--worker-prefix`: worker prefix or template (`{url}` placeholder), defaults to `HIPPO_ARTICLE_WORKER`
+  - `--worker-proxy`: proxy for worker requests (HTTP/SOCKS5), defaults to `HIPPO_ARTICLE_WORKER_PROXY`
+  - `--workers`: article download concurrency, defaults to `HIPPO_ARTICLE_MAX_CONNECTIONS` (alias: `--worker-max-connections`)
 
 ### Download behavior
 - Article HTML fetch retries up to 5 times before skipping the article.
 - Image downloads run on 2 background threads and retry up to 3 times.
-- Failed image downloads are logged to `~/.local/share/wechatcli/logs/download_errors.jsonl` and are retried automatically when a download command starts.
+- Failed image downloads are logged to `~/.local/share/hippo/logs/download_errors.jsonl` and are retried automatically when a download command starts.
 - For `sync-all`, each account waits for its image queue to finish before moving to the next account.
 - If interrupted with Ctrl+C, any queued images are recorded to the failure log for retry.
 
 Default output directory:
-`~/.local/share/wechatcli/downloads/` (override with `WECHATCLI_HOME`)
+`~/.local/share/hippo/downloads/` (override with `HIPPO_HOME`)
 
 Directory structure example:
 
@@ -183,12 +183,12 @@ If a directory name already exists, a numeric suffix is appended (e.g. `-2`, `-3
 ### SQLite（默认）
 
 默认数据库路径：
-`~/.local/share/wechatcli/cli.db`
+`~/.local/share/hippo/cli.db`
 
 可通过环境变量覆盖：
 
 ```bash
-export WECHATCLI_HOME=/path/to/custom
+export HIPPO_HOME=/path/to/custom
 ```
 
 ### PostgreSQL（可选）
@@ -196,7 +196,7 @@ export WECHATCLI_HOME=/path/to/custom
 设置环境变量即可切换：
 
 ```bash
-export WECHATCLI_PG_DSN="postgresql://user:pass@host:5432/dbname"
+export HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname"
 ```
 
 程序将使用 PostgreSQL 进行读写。
@@ -205,7 +205,7 @@ export WECHATCLI_PG_DSN="postgresql://user:pass@host:5432/dbname"
 
 ### PostgreSQL 文章内容与图片存储
 
-当设置 `WECHATCLI_PG_DSN` 时，`articles download/sync/sync-all` 会将文章内容与图片写入 PG：
+当设置 `HIPPO_PG_DSN` 时，`articles download/sync/sync-all` 会将文章内容与图片写入 PG：
 
 - `articles` 表保存文章元数据（包含封面 URL）
 - `article_content` 表保存正文内容：
@@ -234,7 +234,7 @@ CLI 集成了 Python 标准库 logging，详细日志自动记录到文件，终
 
 ### 日志文件位置
 
-默认日志文件：`~/.local/share/wechatcli/cli.log`
+默认日志文件：`~/.local/share/hippo/cli.log`
 
 记录内容包括：
 - HTTP 请求详情（URL、参数、响应状态）
@@ -247,8 +247,8 @@ CLI 集成了 Python 标准库 logging，详细日志自动记录到文件，终
 使用 `--verbose` 或 `-v` 选项：
 
 ```bash
-wechatcli --verbose articles sync-all --profile production
-wechatcli -v account sync-all
+hippo --verbose articles sync-all --profile production
+hippo -v account sync-all
 ```
 
 详细模式会将日志同时输出到终端和文件。
@@ -262,7 +262,7 @@ wechatcli -v account sync-all
 ```bash
 python scripts/export_to_pg.py \
   --pg-dsn "postgresql://user:pass@host:5432/dbname" \
-  --sqlite-path "/home/user/.local/share/wechatcli/cli.db"
+  --sqlite-path "/home/user/.local/share/hippo/cli.db"
 ```
 
 可选参数：
@@ -276,7 +276,7 @@ python scripts/export_to_pg.py \
 
 ### Profile-based configuration
 
-Create `~/.local/share/wechatcli/profiles.toml` to define reusable settings:
+Create `~/.local/share/hippo/profiles.toml` to define reusable settings:
 
 ```toml
 [profiles.production]
@@ -292,17 +292,17 @@ worker_proxy = "http://proxy.example.com:1080"
 Use with `--profile` or `-p`:
 
 ```bash
-wechatcli articles sync-all --profile production
+hippo articles sync-all --profile production
 ```
 
 ### Environment variables
 
-核心配置：`wechatcli/config.py`
+核心配置：`hippo/config.py`
 
 | 配置项 | 说明 |
 | --- | --- |
-| `WECHATCLI_HOME` | 覆盖数据目录 |
-| `WECHATCLI_PG_DSN` | 使用 PostgreSQL |
+| `HIPPO_HOME` | 覆盖数据目录 |
+| `HIPPO_PG_DSN` | 使用 PostgreSQL |
 | `DB_PATH` | SQLite DB 路径 |
 | `DOWNLOAD_ROOT` | 下载目录 |
 
@@ -317,7 +317,7 @@ python scripts/fill_pg_images.py --pg-dsn "postgresql://user:pass@host:5432/dbna
 CLI alternative:
 
 ```bash
-python -m wechatcli articles backfill-images --pg-dsn "postgresql://user:pass@host:5432/dbname"
+python -m hippo articles backfill-images --pg-dsn "postgresql://user:pass@host:5432/dbname"
 ```
 
 Optional flags:
@@ -326,20 +326,20 @@ Optional flags:
 - `--retries 3` to control download retries
 - `--dry-run` to list targets without writing
 
-核心配置：`wechatcli/config.py`
+核心配置：`hippo/config.py`
 
 | 配置项 | 说明 |
 | --- | --- |
-| `WECHATCLI_HOME` | 覆盖数据目录 |
-| `WECHATCLI_PG_DSN` | 使用 PostgreSQL |
+| `HIPPO_HOME` | 覆盖数据目录 |
+| `HIPPO_PG_DSN` | 使用 PostgreSQL |
 | `DB_PATH` | SQLite DB 路径 |
 | `DOWNLOAD_ROOT` | 下载目录 |
 
 ### Article HTML proxy (images stay direct)
 
-- `WECHATCLI_ARTICLE_WORKER`: Cloudflare Workers relay for article HTML, e.g. `https://c0c0.sunnysab.workers.dev/?url=` or `https://c0c0.sunnysab.workers.dev/?url={url}`.
-- `WECHATCLI_ARTICLE_WORKER_PROXY`: Optional HTTP/SOCKS5 proxy for reaching the worker (e.g. `http://192.168.133.201:8080/`); omit to access the worker directly.
-- `WECHATCLI_ARTICLE_MAX_CONNECTIONS`: Optional max concurrent connections to the worker client (e.g. `2`) to keep proxy usage under control.
+- `HIPPO_ARTICLE_WORKER`: Cloudflare Workers relay for article HTML, e.g. `https://c0c0.sunnysab.workers.dev/?url=` or `https://c0c0.sunnysab.workers.dev/?url={url}`.
+- `HIPPO_ARTICLE_WORKER_PROXY`: Optional HTTP/SOCKS5 proxy for reaching the worker (e.g. `http://192.168.133.201:8080/`); omit to access the worker directly.
+- `HIPPO_ARTICLE_MAX_CONNECTIONS`: Optional max concurrent connections to the worker client (e.g. `2`) to keep proxy usage under control.
 - When the downloader sees `https://mp.weixin.qq.com/s/...`, it requests the worker URL (with the encoded article URL) using the configured proxy; images are fetched without any proxy using the original URLs.
 
 ---
@@ -354,7 +354,7 @@ Optional flags:
 ├── normalize_html.py
 ├── scripts/
 │   └── export_to_pg.py
-└── wechatcli/
+└── hippo/
     ├── cli.py
     ├── config.py
     ├── downloader.py

@@ -1,1 +1,1 @@
-"""Python utilities for the WeChat article exporter project."""
+"""Python utilities for the Hippo project."""

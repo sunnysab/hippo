@@ -14,8 +14,8 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
-APP_NAME: Final = "wechat-article-exporter"
-CLI_NAME: Final = "wechatcli"
+APP_NAME: Final = "hippo"
+CLI_NAME: Final = "hippo"
 DEFAULT_USER_AGENT: Final = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 WAE/1.0"
@@ -26,7 +26,7 @@ DEFAULT_PAGE_SIZE: Final = 10
 
 
 def _resolve_home() -> Path:
-    override = os.environ.get("WECHATCLI_HOME")
+    override = os.environ.get("HIPPO_HOME")
     if override:
         return Path(override).expanduser().resolve()
     return Path(user_data_dir(appname=CLI_NAME, appauthor=APP_NAME))
@@ -47,9 +47,9 @@ HOME_DIR: Final = _resolve_home()
 DB_PATH: Final = HOME_DIR / "cli.db"
 DOWNLOAD_ROOT: Final = HOME_DIR / "downloads"
 LOG_PATH: Final = HOME_DIR / "cli.log"
-ARTICLE_WORKER_URL: Final = os.environ.get("WECHATCLI_ARTICLE_WORKER")
-ARTICLE_WORKER_PROXY: Final = os.environ.get("WECHATCLI_ARTICLE_WORKER_PROXY")
-ARTICLE_WORKER_MAX_CONNECTIONS: Final = _env_int("WECHATCLI_ARTICLE_MAX_CONNECTIONS")
+ARTICLE_WORKER_URL: Final = os.environ.get("HIPPO_ARTICLE_WORKER")
+ARTICLE_WORKER_PROXY: Final = os.environ.get("HIPPO_ARTICLE_WORKER_PROXY")
+ARTICLE_WORKER_MAX_CONNECTIONS: Final = _env_int("HIPPO_ARTICLE_MAX_CONNECTIONS")
 CONFIG_DIR: Final = HOME_DIR
 PROFILE_PATH: Final = CONFIG_DIR / "profiles.toml"
 

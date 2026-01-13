@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-LABEL maintainer="wechatcli"
+LABEL maintainer="hippo"
 LABEL description="WeChat article exporter CLI"
 
 # Set environment variables
@@ -21,7 +21,7 @@ RUN apt-get update && \
 
 # Copy project files
 COPY pyproject.toml README.md ./
-COPY wechatcli/ ./wechatcli/
+COPY hippo/ ./hippo/
 COPY __init__.py normalize_html.py ./
 
 # Install Python dependencies
@@ -35,8 +35,8 @@ RUN mkdir -p /data
 VOLUME ["/data"]
 
 # Set environment variable for data directory
-ENV WECHATCLI_HOME=/data
+ENV HIPPO_HOME=/data
 
 # Set entrypoint
-ENTRYPOINT ["wechatcli"]
+ENTRYPOINT ["hippo"]
 CMD ["--help"]

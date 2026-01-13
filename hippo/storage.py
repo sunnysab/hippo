@@ -348,7 +348,7 @@ class Storage(AbstractContextManager):
             "SELECT * FROM login_sessions WHERE is_default = 1 ORDER BY id DESC LIMIT 1"
         ).fetchone()
         if not row:
-            raise LookupError("No login session found. Run `wechatcli login` first.")
+            raise LookupError("No login session found. Run `hippo login` first.")
         cookies = json.loads(row["cookies_json"])
         return LoginSession(
             token=row["token"],
@@ -807,7 +807,7 @@ class PostgresStorage(AbstractContextManager):
             )
             row = cur.fetchone()
         if not row:
-            raise LookupError("No login session found. Run `wechatcli login` first.")
+            raise LookupError("No login session found. Run `hippo login` first.")
         cookies = json.loads(row["cookies_json"])
         return LoginSession(
             token=row["token"],
@@ -1122,7 +1122,7 @@ class PostgresStorage(AbstractContextManager):
 
 
 def open_storage(db_path: Path | str = DB_PATH) -> StorageLike:
-    dsn = os.environ.get("WECHATCLI_PG_DSN")
+    dsn = os.environ.get("HIPPO_PG_DSN")
     if dsn:
         return PostgresStorage(dsn)
     return Storage(db_path)

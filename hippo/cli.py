@@ -28,7 +28,7 @@ from .utils import ensure_directory
 logger = setup_logger()
 
 app = typer.Typer(
-    help="WeChat article exporter CLI",
+    help="Hippo WeChat article exporter CLI",
     no_args_is_help=True,
     rich_markup_mode=None,
 )
@@ -38,7 +38,7 @@ app = typer.Typer(
 def main_callback(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="显示详细日志到控制台"),
 ) -> None:
-    """WeChat article exporter CLI"""
+    """Hippo WeChat article exporter CLI"""
     if verbose:
         # Reinitialize logger with verbose console output
         import logging
@@ -46,7 +46,7 @@ def main_callback(
         console_handler.setLevel(logging.DEBUG)
         console_formatter = logging.Formatter("%(levelname)s: %(message)s")
         console_handler.setFormatter(console_formatter)
-        logging.getLogger("wechatcli").addHandler(console_handler)
+        logging.getLogger("hippo").addHandler(console_handler)
 
 
 accounts_app = typer.Typer(
@@ -1047,7 +1047,7 @@ def download_article(
     ),
 ) -> None:
     if not url:
-        typer.echo("请提供文章 URL。示例：python -m wechatcli articles download \"https://mp.weixin.qq.com/...\"")
+        typer.echo("请提供文章 URL。示例：python -m hippo articles download \"https://mp.weixin.qq.com/...\"")
         raise typer.Exit(code=2)
     target_dir = ensure_directory(output or DOWNLOAD_ROOT)
     fmt_value = (
@@ -1079,7 +1079,7 @@ def download_article(
 @articles_app.command("backfill-images")
 def backfill_article_images(
     pg_dsn: Optional[str] = typer.Option(
-        None, help="PostgreSQL DSN (defaults to WECHATCLI_PG_DSN)"
+        None, help="PostgreSQL DSN (defaults to HIPPO_PG_DSN)"
     ),
     limit: Optional[int] = typer.Option(None, min=1, help="Max images to backfill per run"),
     workers: int = typer.Option(8, min=1, help="Concurrent image downloads"),
@@ -1087,9 +1087,9 @@ def backfill_article_images(
     sleep_base: float = typer.Option(0.5, min=0.1, help="Base backoff sleep in seconds"),
     dry_run: bool = typer.Option(False, is_flag=True, help="List targets without writing"),
 ) -> None:
-    resolved_dsn = pg_dsn or os.environ.get("WECHATCLI_PG_DSN")
+    resolved_dsn = pg_dsn or os.environ.get("HIPPO_PG_DSN")
     if not resolved_dsn:
-        typer.echo("Missing PostgreSQL DSN. Set WECHATCLI_PG_DSN or pass --pg-dsn.")
+        typer.echo("Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.")
         raise typer.Exit(code=2)
 
     def normalize_image_url(url: str) -> str:

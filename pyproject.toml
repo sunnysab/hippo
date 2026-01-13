@@ -3,13 +3,13 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "wechatcli"
+name = "hippo"
 version = "0.1.0"
 description = "WeChat article exporter CLI"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
-authors = [{name = "wechatcli"}]
+authors = [{name = "hippo"}]
 keywords = ["wechat", "cli", "exporter"]
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -28,8 +28,8 @@ dependencies = [
 ]
 
 [project.scripts]
-wechatcli = "wechatcli.cli:app"
+hippo = "hippo.cli:app"
 
 [tool.setuptools]
 py-modules = ["normalize_html", "__init__"]
-packages = ["wechatcli"]
+packages = ["hippo"]

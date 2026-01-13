@@ -11,7 +11,7 @@ from .config import HOME_DIR, LOG_PATH
 
 
 def setup_logger(
-    name: str = "wechatcli",
+    name: str = "hippo",
     level: int = logging.INFO,
     log_file: Optional[Path] = None,
     verbose: bool = False,
@@ -63,11 +63,11 @@ def setup_logger(
     return logger
 
 
-def get_logger(name: str = "wechatcli") -> logging.Logger:
+def get_logger(name: str = "hippo") -> logging.Logger:
     """Get or create logger instance.
     
     Args:
-        name: Logger name, can use module path like 'wechatcli.http'
+        name: Logger name, can use module path like 'hippo.http'
         
     Returns:
         Logger instance

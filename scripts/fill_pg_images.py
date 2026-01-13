@@ -10,8 +10,8 @@ import time
 from typing import Iterable, Iterator, Optional
 
 import httpx
-from wechatcli.http import MPClient
-from wechatcli.storage import PostgresStorage
+from hippo.http import MPClient
+from hippo.storage import PostgresStorage
 from tqdm import tqdm
 
 
@@ -83,7 +83,7 @@ def _format_error(exc: Exception) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Backfill missing image data in PostgreSQL")
-    parser.add_argument("--pg-dsn", default=os.environ.get("WECHATCLI_PG_DSN"))
+    parser.add_argument("--pg-dsn", default=os.environ.get("HIPPO_PG_DSN"))
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--retries", type=int, default=3)
@@ -92,7 +92,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if not args.pg_dsn:
-        print("Missing --pg-dsn or WECHATCLI_PG_DSN", file=sys.stderr)
+        print("Missing --pg-dsn or HIPPO_PG_DSN", file=sys.stderr)
         return 2
 
     updated = 0

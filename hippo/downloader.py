@@ -353,7 +353,7 @@ class ArticleDownloader(AbstractContextManager):
         )
         self.output_dir = ensure_directory(output_dir or DOWNLOAD_ROOT)
         self.storage = storage
-        self._pg_dsn = os.environ.get("WECHATCLI_PG_DSN")
+        self._pg_dsn = os.environ.get("HIPPO_PG_DSN")
         self._image_worker: Optional[ImageDownloadWorker] = None
         self._enable_image_worker = enable_image_worker
         self._article_workers = article_max_connections if article_max_connections and article_max_connections > 0 else 1
@@ -467,7 +467,7 @@ class ArticleDownloader(AbstractContextManager):
         pending: List[ArticleRecord] = []
         articles_list = list(articles)
         content_ids: Optional[set[str]] = None
-        if self.storage and os.environ.get("WECHATCLI_PG_DSN"):
+        if self.storage and os.environ.get("HIPPO_PG_DSN"):
             get_content_ids = getattr(self.storage, "get_article_content_ids", None)
             if callable(get_content_ids):
                 try:
@@ -874,7 +874,7 @@ class ArticleDownloader(AbstractContextManager):
         return False
 
     def _is_downloaded(self, article: ArticleRecord, account_name: Optional[str]) -> bool:
-        if self.storage and os.environ.get("WECHATCLI_PG_DSN"):
+        if self.storage and os.environ.get("HIPPO_PG_DSN"):
             has_content = getattr(self.storage, "has_article_content", None)
             if callable(has_content):
                 try:

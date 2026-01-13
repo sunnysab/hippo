@@ -17,9 +17,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from wechatcli.config import DB_PATH
-from wechatcli.storage import ISO_FORMAT
-from wechatcli.storage import PostgresStorage
+from hippo.config import DB_PATH
+from hippo.storage import ISO_FORMAT
+from hippo.storage import PostgresStorage
 
 
 def parse_ts(value: str | None) -> datetime | None:
@@ -118,12 +118,12 @@ def main() -> int:
     parser.add_argument(
         "--sqlite-path",
         default=str(DB_PATH),
-        help="SQLite DB path (default: wechatcli config DB_PATH)",
+        help="SQLite DB path (default: hippo config DB_PATH)",
     )
     parser.add_argument(
         "--pg-dsn",
-        default=os.environ.get("WECHATCLI_PG_DSN", ""),
-        help="PostgreSQL DSN (or set WECHATCLI_PG_DSN)",
+        default=os.environ.get("HIPPO_PG_DSN", ""),
+        help="PostgreSQL DSN (or set HIPPO_PG_DSN)",
     )
     parser.add_argument(
         "--truncate",
@@ -133,7 +133,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if not args.pg_dsn:
-        raise SystemExit("pg dsn is required via --pg-dsn or WECHATCLI_PG_DSN")
+        raise SystemExit("pg dsn is required via --pg-dsn or HIPPO_PG_DSN")
 
     sqlite_conn = sqlite3.connect(args.sqlite_path)
     sqlite_conn.row_factory = sqlite3.Row
