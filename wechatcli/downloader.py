@@ -46,6 +46,7 @@ _IMAGE_WORKERS = 2
 _IMAGE_MAX_RETRIES = 3
 _ERROR_LOG_NAME = "download_errors.jsonl"
 _SUFFIX_PATTERN = re.compile(r"^(?P<base>.+)-(?P<index>\d+)$")
+_RETRY_BACKOFF_MAX = 10  # Maximum backoff time in seconds
 
 
 def _extract_url_token(url: str) -> Optional[str]:
@@ -454,9 +455,15 @@ class ArticleDownloader(AbstractContextManager):
         account_name: Optional[str] = None,
         progress: Optional[object] = None,
         skip_if_downloaded: bool = True,
-    ) -> tuple[List[DownloadResult], int]:
+    ) -> tuple[List[DownloadResult], int, int]:
+        """Download multiple articles.
+        
+        Returns:
+            tuple of (results, skipped_count, failed_count)
+        """
         results: List[DownloadResult] = []
         skipped = 0
+        failed = 0
         pending: List[ArticleRecord] = []
         articles_list = list(articles)
         content_ids: Optional[set[str]] = None
@@ -486,7 +493,7 @@ class ArticleDownloader(AbstractContextManager):
             pending.append(article)
 
         if not pending:
-            return results, skipped
+            return results, skipped, failed
 
         def download_one(target: ArticleRecord) -> DownloadResult:
             return self._download_with_retry(
@@ -504,6 +511,7 @@ class ArticleDownloader(AbstractContextManager):
                         result = download_one(article)
                         results.append(result)
                     except Exception as exc:
+                        failed += 1
                         self._log_download_error(
                             stage="article_download",
                             article=article,
@@ -520,7 +528,7 @@ class ArticleDownloader(AbstractContextManager):
             except KeyboardInterrupt:
                 self.abort_image_queue()
                 raise
-            return results, skipped
+            return results, skipped, failed
 
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=self._article_workers
@@ -534,6 +542,7 @@ class ArticleDownloader(AbstractContextManager):
                     try:
                         result = future.result()
                     except Exception as exc:
+                        failed += 1
                         self._log_download_error(
                             stage="article_download",
                             article=article,
@@ -553,7 +562,7 @@ class ArticleDownloader(AbstractContextManager):
                     future.cancel()
                 executor.shutdown(wait=False, cancel_futures=True)
                 raise
-        return results, skipped
+        return results, skipped, failed
 
     def download_from_url(
         self,
@@ -596,8 +605,23 @@ class ArticleDownloader(AbstractContextManager):
                 return self.client.fetch_article_html(url)
             except Exception as exc:
                 last_exc = exc
-                logger.warning("Fetch failed (attempt %d/%d) for %s: %s", attempt + 1, _ARTICLE_MAX_RETRIES, url, exc)
-                time.sleep(min(2 ** attempt, 5))
+                # Calculate backoff time with jitter
+                backoff = min(2 ** attempt, _RETRY_BACKOFF_MAX)
+                jitter = backoff * 0.1 * (0.5 + 0.5 * (attempt % 2))
+                wait_time = backoff + jitter
+                
+                logger.warning(
+                    "Fetch failed (attempt %d/%d) for %s: %s - retrying in %.1fs",
+                    attempt + 1,
+                    _ARTICLE_MAX_RETRIES,
+                    url,
+                    exc,
+                    wait_time,
+                )
+                
+                if attempt < _ARTICLE_MAX_RETRIES - 1:
+                    time.sleep(wait_time)
+        
         logger.error("Failed to fetch article after %d retries: %s", _ARTICLE_MAX_RETRIES, url)
         raise RuntimeError(f"下载失败：{last_exc}") from last_exc
 
@@ -633,15 +657,25 @@ class ArticleDownloader(AbstractContextManager):
                 return result
             except Exception as exc:
                 last_exc = exc
+                # Calculate backoff time with jitter
+                backoff = min(2 ** attempt, _RETRY_BACKOFF_MAX)
+                # Add small jitter to avoid thundering herd
+                jitter = backoff * 0.1 * (0.5 + 0.5 * (attempt % 2))
+                wait_time = backoff + jitter
+                
                 logger.warning(
-                    "Download failed (attempt %d/%d) for %s: %s",
+                    "Download failed (attempt %d/%d) for %s: %s - retrying in %.1fs",
                     attempt + 1,
                     _ARTICLE_MAX_RETRIES,
                     article.article_id,
                     exc,
+                    wait_time,
                 )
-                time.sleep(min(2 ** attempt, 5))
-        logger.error("Failed to download article after %d retries: %s", _ARTICLE_MAX_RETRIES, article.article_id)
+                
+                if attempt < _ARTICLE_MAX_RETRIES - 1:
+                    time.sleep(wait_time)
+        
+        logger.error("Failed to download article after %d retries: %s - %s", _ARTICLE_MAX_RETRIES, article.article_id, article.title)
         raise RuntimeError(f"下载失败：{last_exc}") from last_exc
 
     # ------------------------------------------------------------------

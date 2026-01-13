@@ -839,7 +839,7 @@ def sync_article_download(
                 image_workers=image_workers,
                 enable_image_worker=not article_only,
             ) as downloader:
-                results, skipped = downloader.download_many(
+                results, skipped, failed = downloader.download_many(
                     articles,
                     fmt=fmt_value,
                     with_images=download_images,
@@ -849,11 +849,15 @@ def sync_article_download(
                     skip_if_downloaded=True,
                 )
         except Exception as exc:
-            typer.echo(f"下载失败：{exc}")
+            typer.echo(f"下载过程出错：{exc}")
             raise typer.Exit(code=1)
         finally:
             progress.close()
-    typer.echo(f"下载完成，生成 {len(results)} 个目录，跳过 {skipped} 篇")
+    
+    if failed > 0:
+        typer.echo(f"下载完成，成功 {len(results)} 篇，跳过 {skipped} 篇，失败 {failed} 篇")
+    else:
+        typer.echo(f"下载完成，生成 {len(results)} 个目录，跳过 {skipped} 篇")
 
 
 @articles_app.command("sync-all")
@@ -927,6 +931,7 @@ def sync_all_article_download(
             enable_image_worker=not article_only,
         ) as downloader:
             total_skipped = 0
+            total_failed = 0
             for account in accounts:
                 articles = storage.list_articles(
                     account.biz, limit=limit, since_timestamp=since_timestamp
@@ -941,7 +946,7 @@ def sync_all_article_download(
                     leave=True,
                 )
                 try:
-                    results, skipped = downloader.download_many(
+                    results, skipped, failed = downloader.download_many(
                         articles,
                         fmt=fmt_value,
                         with_images=download_images,
@@ -951,15 +956,20 @@ def sync_all_article_download(
                         skip_if_downloaded=True,
                     )
                 except Exception as exc:
-                    typer.echo(f"下载失败：{exc}")
+                    typer.echo(f"下载过程出错：{exc}")
                     raise typer.Exit(code=1)
                 finally:
                     progress.close()
                 total_downloads += len(results)
                 total_skipped += skipped
+                total_failed += failed
         if download_images:
             downloader.wait_for_images_with_progress(label="下载图片")
-    typer.echo(f"全部下载完成，生成 {total_downloads} 个目录，跳过 {total_skipped} 篇")
+    
+    if total_failed > 0:
+        typer.echo(f"全部下载完成，成功 {total_downloads} 篇，跳过 {total_skipped} 篇，失败 {total_failed} 篇")
+    else:
+        typer.echo(f"全部下载完成，生成 {total_downloads} 个目录，跳过 {total_skipped} 篇")
 
 
 @articles_app.command("download")
