@@ -28,9 +28,12 @@ except ImportError:  # pragma: no cover - fallback for running inside python/
 
 from .config import DOWNLOAD_ROOT, HOME_DIR
 from .http import MPClient
+from .logger import get_logger
 from .models import ArticleRecord, DownloadResult
 from .storage import StorageLike
 from .utils import ensure_directory, slugify, timestamp_to_datestr
+
+logger = get_logger(__name__)
 
 _FORMAT_EXTENSIONS = {
     "html": "index.html",
@@ -345,6 +348,13 @@ class ArticleDownloader(AbstractContextManager):
         self._enable_image_worker = enable_image_worker
         self._article_workers = article_max_connections if article_max_connections and article_max_connections > 0 else 1
         self._image_workers = image_workers if image_workers and image_workers > 0 else _IMAGE_WORKERS
+        
+        logger.info(
+            "ArticleDownloader initialized: output=%s, article_workers=%d, image_workers=%d",
+            self.output_dir,
+            self._article_workers,
+            self._image_workers,
+        )
 
     def __enter__(self) -> "ArticleDownloader":
         if self._enable_image_worker:
@@ -573,10 +583,13 @@ class ArticleDownloader(AbstractContextManager):
         last_exc: Optional[Exception] = None
         for attempt in range(_ARTICLE_MAX_RETRIES):
             try:
+                logger.debug("Fetching article (attempt %d/%d): %s", attempt + 1, _ARTICLE_MAX_RETRIES, url)
                 return self.client.fetch_article_html(url)
             except Exception as exc:
                 last_exc = exc
+                logger.warning("Fetch failed (attempt %d/%d) for %s: %s", attempt + 1, _ARTICLE_MAX_RETRIES, url, exc)
                 time.sleep(min(2 ** attempt, 5))
+        logger.error("Failed to fetch article after %d retries: %s", _ARTICLE_MAX_RETRIES, url)
         raise RuntimeError(f"下载失败：{last_exc}") from last_exc
 
     def _download_with_retry(
@@ -591,8 +604,15 @@ class ArticleDownloader(AbstractContextManager):
         last_exc: Optional[Exception] = None
         for attempt in range(_ARTICLE_MAX_RETRIES):
             try:
+                logger.debug(
+                    "Downloading article (attempt %d/%d): %s - %s",
+                    attempt + 1,
+                    _ARTICLE_MAX_RETRIES,
+                    article.article_id,
+                    article.title,
+                )
                 html = self.client.fetch_article_html(article.link)
-                return self._persist_article(
+                result = self._persist_article(
                     article,
                     raw_html=html,
                     fmt=fmt,
@@ -600,9 +620,19 @@ class ArticleDownloader(AbstractContextManager):
                     record_images_only=record_images_only,
                     account_name=account_name,
                 )
+                logger.info("Successfully downloaded article: %s - %s", article.article_id, article.title)
+                return result
             except Exception as exc:
                 last_exc = exc
+                logger.warning(
+                    "Download failed (attempt %d/%d) for %s: %s",
+                    attempt + 1,
+                    _ARTICLE_MAX_RETRIES,
+                    article.article_id,
+                    exc,
+                )
                 time.sleep(min(2 ** attempt, 5))
+        logger.error("Failed to download article after %d retries: %s", _ARTICLE_MAX_RETRIES, article.article_id)
         raise RuntimeError(f"下载失败：{last_exc}") from last_exc
 
     # ------------------------------------------------------------------

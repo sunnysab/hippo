@@ -19,11 +19,36 @@ from tqdm import tqdm
 from .config import DB_PATH, DEFAULT_PAGE_SIZE, DOWNLOAD_ROOT, HOME_DIR, load_profile, get_profile_value
 from .downloader import ArticleDownloader
 from .http import MPClient, parse_appmsg_publish
+from .logger import setup_logger, get_logger
 from .models import AccountCredential, LoginSession
 from .storage import StorageLike, PostgresStorage, open_storage
 from .utils import ensure_directory
 
-app = typer.Typer(help="WeChat article exporter CLI", no_args_is_help=True, rich_markup_mode=None)
+# Initialize logger on module import
+logger = setup_logger()
+
+app = typer.Typer(
+    help="WeChat article exporter CLI",
+    no_args_is_help=True,
+    rich_markup_mode=None,
+)
+
+
+@app.callback()
+def main_callback(
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="显示详细日志到控制台"),
+) -> None:
+    """WeChat article exporter CLI"""
+    if verbose:
+        # Reinitialize logger with verbose console output
+        import logging
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.DEBUG)
+        console_formatter = logging.Formatter("%(levelname)s: %(message)s")
+        console_handler.setFormatter(console_formatter)
+        logging.getLogger("wechatcli").addHandler(console_handler)
+
+
 accounts_app = typer.Typer(
     help="Manage stored WeChat accounts",
     no_args_is_help=True,

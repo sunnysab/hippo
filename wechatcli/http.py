@@ -18,7 +18,10 @@ from .config import (
     DEFAULT_USER_AGENT,
     WECHAT_PROFILE_ENDPOINT,
 )
+from .logger import get_logger
 from .models import AccountCredential, ArticleRecord, LoginSession
+
+logger = get_logger(__name__)
 
 HEADERS = {
     "User-Agent": DEFAULT_USER_AGENT,
@@ -58,6 +61,13 @@ class MPClient(AbstractContextManager):
                 proxies=article_worker_proxy,
                 limits=limits,
             )
+        
+        logger.info(
+            "MPClient initialized: worker=%s, proxy=%s, max_conn=%s",
+            self.article_worker or "None",
+            article_worker_proxy or "None",
+            article_max_connections or "None",
+        )
 
     def __enter__(self) -> "MPClient":
         return self
@@ -86,31 +96,47 @@ class MPClient(AbstractContextManager):
             "is_ok": "1",
             "scene": "124",
         }
+        logger.debug("Fetching profile messages: biz=%s, offset=%d, count=%d", account.biz, offset, count)
         resp = self.client.get(WECHAT_PROFILE_ENDPOINT, params=params)
         resp.raise_for_status()
         payload = resp.json()
         if payload.get("ret") != 0:
-            raise RuntimeError(f"WeChat API error: {payload.get('ret')} {payload.get('errmsg')}")
+            error_msg = f"WeChat API error: {payload.get('ret')} {payload.get('errmsg')}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
         raw_list = payload.get("general_msg_list") or ""
         messages = _parse_general_msg_list(raw_list)
         records: List[ArticleRecord] = []
         for message in messages:
             records.extend(_message_to_articles(account.biz, message))
+        logger.info("Fetched %d articles from biz=%s at offset=%d", len(records), account.biz, offset)
         return records
 
     def fetch_article_html(self, url: str) -> str:
         target_url, client = self._prepare_article_request(url)
-        resp = client.get(target_url)
-        resp.raise_for_status()
-        return resp.text
+        logger.debug("Fetching article HTML: %s", target_url)
+        try:
+            resp = client.get(target_url)
+            resp.raise_for_status()
+            logger.info("Successfully fetched article: %s (size=%d bytes)", url, len(resp.text))
+            return resp.text
+        except Exception as exc:
+            logger.error("Failed to fetch article %s: %s", url, exc)
+            raise
 
     def download_binary(self, url: str, *, referer: str | None = None) -> bytes:
         headers = {}
         if referer:
             headers["Referer"] = referer
-        resp = self.client.get(url, headers=headers)
-        resp.raise_for_status()
-        return resp.content
+        logger.debug("Downloading binary: %s", url)
+        try:
+            resp = self.client.get(url, headers=headers)
+            resp.raise_for_status()
+            logger.debug("Downloaded %d bytes from %s", len(resp.content), url)
+            return resp.content
+        except Exception as exc:
+            logger.warning("Failed to download %s: %s", url, exc)
+            raise
 
     def download_binary_with_type(
         self, url: str, *, referer: str | None = None

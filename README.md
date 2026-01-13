@@ -228,6 +228,33 @@ export WECHATCLI_PG_DSN="postgresql://user:pass@host:5432/dbname"
 
 ---
 
+## 日志系统
+
+CLI 集成了 Python 标准库 logging，详细日志自动记录到文件，终端保持简洁输出。
+
+### 日志文件位置
+
+默认日志文件：`~/.local/share/wechatcli/cli.log`
+
+记录内容包括：
+- HTTP 请求详情（URL、参数、响应状态）
+- 文章下载进度与重试记录
+- 图片下载状态
+- 错误堆栈信息
+
+### 启用详细控制台日志
+
+使用 `--verbose` 或 `-v` 选项：
+
+```bash
+wechatcli --verbose articles sync-all --profile production
+wechatcli -v account sync-all
+```
+
+详细模式会将日志同时输出到终端和文件。
+
+---
+
 ## SQLite -> PostgreSQL 导出
 
 脚本路径：`scripts/export_to_pg.py`
