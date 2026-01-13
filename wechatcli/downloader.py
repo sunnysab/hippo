@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Iterable, List, Optional
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse, urljoin, parse_qs
 
 from bs4 import BeautifulSoup
 
@@ -64,6 +64,18 @@ def _resolve_asset_url(url: str, *, base: str) -> Optional[str]:
     lowered = url.strip().lower()
     if lowered.startswith(("data:", "javascript:", "about:")):
         return None
+    
+    # Handle Sogou proxy URLs: extract the actual WeChat URL from url= parameter
+    if "img01.store.sogou.com" in lowered or "img02.store.sogou.com" in lowered or "img03.store.sogou.com" in lowered:
+        parsed = urlparse(url)
+        if parsed.query:
+            params = parse_qs(parsed.query)
+            if "url" in params and params["url"]:
+                actual_url = params["url"][0]
+                # Check if it's a WeChat domain
+                if "mmbiz.qpic.cn" in actual_url.lower() or "wx.qlogo.cn" in actual_url.lower():
+                    url = actual_url
+    
     if url.startswith("//"):
         resolved = f"https:{url}"
     else:
