@@ -1072,40 +1072,57 @@ def backfill_article_images(
     failed = 0
 
     with PostgresStorage(resolved_dsn) as storage, MPClient() as client:
-        query = """
+        count_query = """
+            SELECT COUNT(*)
+            FROM article_images i
+            JOIN articles a ON a.id = i.article_pk
+            WHERE i.data IS NULL AND i.orig_url IS NOT NULL
+        """
+        with storage.conn.cursor() as cur:
+            cur.execute(count_query)
+            total_count = cur.fetchone()[0]
+        
+        if limit is not None:
+            total_count = min(total_count, limit)
+
+        base_query = """
             SELECT a.biz, a.article_id, a.link, i.orig_url
             FROM article_images i
             JOIN articles a ON a.id = i.article_pk
             WHERE i.data IS NULL AND i.orig_url IS NOT NULL
             ORDER BY a.id DESC, i.position ASC
         """
-        params: list = []
-        if limit is not None:
-            query += " LIMIT %s"
-            params.append(limit)
-        with storage.conn.cursor() as cur:
-            cur.execute(query, params)
-            rows = cur.fetchall()
+        
         try:
             if dry_run:
                 progress = tqdm(
-                    total=len(rows),
+                    total=total_count,
                     desc="Backfill images",
                     unit="img",
                     dynamic_ncols=True,
                     leave=True,
                 )
                 try:
-                    for _, _, _, orig_url in rows:
-                        typer.echo(f"DRY-RUN {orig_url}")
-                        skipped += 1
-                        progress.update(1)
+                    offset = 0
+                    fetch_size = 100
+                    while offset < total_count:
+                        with storage.conn.cursor() as cur:
+                            cur.execute(f"{base_query} LIMIT {fetch_size} OFFSET {offset}")
+                            rows = cur.fetchall()
+                        if not rows:
+                            break
+                        for _, _, _, orig_url in rows:
+                            typer.echo(f"DRY-RUN {orig_url}")
+                            skipped += 1
+                            progress.update(1)
+                        offset += len(rows)
                 finally:
                     progress.close()
             else:
                 from concurrent.futures import ThreadPoolExecutor, as_completed
 
                 worker_count = max(1, workers)
+                batch_size = worker_count * 4
 
                 def worker(item: tuple) -> tuple[tuple, bytes, Optional[str]]:
                     biz, article_id, referer, orig_url = item
@@ -1115,33 +1132,43 @@ def backfill_article_images(
                     return item, data, content_type
 
                 progress = tqdm(
-                    total=len(rows),
+                    total=total_count,
                     desc="Backfill images",
                     unit="img",
                     dynamic_ncols=True,
                     leave=True,
                 )
                 try:
+                    offset = 0
                     with ThreadPoolExecutor(max_workers=worker_count) as executor:
-                        future_map = {executor.submit(worker, item): item for item in rows}
-                        for future in as_completed(future_map):
-                            item = future_map[future]
-                            biz, article_id, _, orig_url = item
-                            try:
-                                _, data, content_type = future.result()
-                                storage.update_article_image_data(
-                                    biz,
-                                    article_id,
-                                    str(orig_url),
-                                    content_type,
-                                    data,
-                                )
-                                updated += 1
-                            except Exception as exc:
-                                failed += 1
-                                typer.echo(f"FAILED {orig_url}: {format_error(exc)}")
-                            finally:
-                                progress.update(1)
+                        while offset < total_count:
+                            with storage.conn.cursor() as cur:
+                                cur.execute(f"{base_query} LIMIT {batch_size} OFFSET {offset}")
+                                batch = cur.fetchall()
+                            if not batch:
+                                break
+                            
+                            future_map = {executor.submit(worker, item): item for item in batch}
+                            for future in as_completed(future_map):
+                                item = future_map[future]
+                                biz, article_id, _, orig_url = item
+                                try:
+                                    _, data, content_type = future.result()
+                                    storage.update_article_image_data(
+                                        biz,
+                                        article_id,
+                                        str(orig_url),
+                                        content_type,
+                                        data,
+                                    )
+                                    updated += 1
+                                except Exception as exc:
+                                    failed += 1
+                                    typer.echo(f"FAILED {orig_url}: {format_error(exc)}")
+                                finally:
+                                    progress.update(1)
+                            
+                            offset += len(batch)
                 finally:
                     progress.close()
         except KeyboardInterrupt:
