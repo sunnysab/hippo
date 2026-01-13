@@ -428,7 +428,7 @@ def add_account(
     nickname: str = typer.Option(..., prompt="昵称", help="公众号昵称"),
     alias: Optional[str] = typer.Option(None, prompt=False, help="可选别名"),
     round_head_img: Optional[str] = typer.Option(None, help="头像 URL，可选"),
-    set_default: bool = typer.Option(False, help="是否设置为默认账号", flag_value=True),
+    set_default: bool = typer.Option(False, is_flag=True, help="是否设置为默认账号"),
 ) -> None:
     credential = AccountCredential(
         biz=biz.strip(),
@@ -452,7 +452,7 @@ def search_accounts(
     keyword: str = typer.Argument(..., help="搜索关键词"),
     page: int = typer.Option(1, min=1, help="分页页码，从 1 开始"),
     begin: Optional[int] = typer.Option(None, min=0, help="起始偏移，优先于分页"),
-    interactive: bool = typer.Option(False, help="交互式选择并添加账号", flag_value=True),
+    interactive: bool = typer.Option(False, is_flag=True, help="交互式选择并添加账号"),
 ) -> None:
     _require_nonempty(keyword, "请提供搜索关键词。")
     with open_storage(DB_PATH) as storage:
@@ -572,7 +572,7 @@ def sync_account_articles(
     biz: Optional[str] = typer.Option(None, help="指定账号 fakeid，留空使用默认账号"),
     pages: int = typer.Option(1, min=1, help="抓取的分页数量，每页默认 10 篇"),
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help="每页抓取数量"),
-    force: bool = typer.Option(False, help="忽略跳过条件，强制同步", flag_value=True),
+    force: bool = typer.Option(False, is_flag=True, help="忽略跳过条件，强制同步"),
     skip_time: Optional[int] = typer.Option(
         None, min=1, help="多少分钟内同步过则跳过"
     ),
@@ -629,8 +629,8 @@ def sync_all_accounts(
     sleep_seconds: float = typer.Option(
         0.05, min=0, help="翻页间隔秒数（可为小数）"
     ),
-    reset: bool = typer.Option(False, help="清除断点后从头同步", flag_value=True),
-    force: bool = typer.Option(False, help="忽略跳过条件，强制同步", flag_value=True),
+    reset: bool = typer.Option(False, is_flag=True, help="清除断点后从头同步"),
+    force: bool = typer.Option(False, is_flag=True, help="忽略跳过条件，强制同步"),
     skip_time: Optional[int] = typer.Option(
         None, min=1, help="多少分钟内同步过则跳过"
     ),
@@ -761,7 +761,7 @@ def sync_article_download(
     output_format: OutputFormat = typer.Option(
         OutputFormat.html, "--format", "-f", help="导出格式", show_default=True
     ),
-    with_images: bool = typer.Option(True, help="是否下载图片", flag_value=True),
+    with_images: bool = typer.Option(True, is_flag=True, help="是否下载图片"),
     article_only: bool = typer.Option(
         False, "--article-only", help="仅下载文章，不下载图片（仍创建图片记录）"
     ),
@@ -867,7 +867,7 @@ def sync_all_article_download(
     output_format: OutputFormat = typer.Option(
         OutputFormat.html, "--format", "-f", help="导出格式", show_default=True
     ),
-    with_images: bool = typer.Option(True, help="是否下载图片", flag_value=True),
+    with_images: bool = typer.Option(True, is_flag=True, help="是否下载图片"),
     article_only: bool = typer.Option(
         False, "--article-only", help="仅下载文章，不下载图片（仍创建图片记录）"
     ),
@@ -976,7 +976,7 @@ def sync_all_article_download(
 def download_article(
     url: str = typer.Argument(..., help="文章 URL"),
     output_format: OutputFormat = typer.Option(OutputFormat.html, "--format", "-f", help="导出格式"),
-    with_images: bool = typer.Option(True, help="是否下载图片", flag_value=True),
+    with_images: bool = typer.Option(True, is_flag=True, help="是否下载图片"),
     output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
     title: Optional[str] = typer.Option(None, help="覆盖文章标题"),
     worker_prefix: Optional[str] = typer.Option(None, help="文章 HTML worker 前缀或模板，留空使用环境变量"),
@@ -1031,7 +1031,7 @@ def backfill_article_images(
     workers: int = typer.Option(8, min=1, help="Concurrent image downloads"),
     retries: int = typer.Option(3, min=1, help="Download retries per image"),
     sleep_base: float = typer.Option(0.5, min=0.1, help="Base backoff sleep in seconds"),
-    dry_run: bool = typer.Option(False, help="List targets without writing", flag_value=True),
+    dry_run: bool = typer.Option(False, is_flag=True, help="List targets without writing"),
 ) -> None:
     resolved_dsn = pg_dsn or os.environ.get("WECHATCLI_PG_DSN")
     if not resolved_dsn:
