@@ -6,6 +6,7 @@ import json
 import os
 import random
 import time
+from io import BytesIO
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
@@ -326,7 +327,12 @@ def _sync_account_pages(
                             typer.echo("已暂停同步，断点进度已保留")
                             raise typer.Exit(code=1)
                         try:
-                            login()
+                            _run_login_flow(
+                                timeout=300,
+                                poll_interval=2,
+                                output=None,
+                                show_terminal=True,
+                            )
                         except typer.Exit:
                             typer.echo("登录未完成，断点进度已保留")
                             raise
@@ -1291,12 +1297,56 @@ def login(
     poll_interval: int = typer.Option(2, min=1, help="轮询间隔（秒）"),
     output: Optional[Path] = typer.Option(None, help="二维码输出目录"),
 ) -> None:
+    _run_login_flow(timeout=timeout, poll_interval=poll_interval, output=output, show_terminal=True)
+
+
+def _render_qr_in_terminal(qr_bytes: bytes) -> bool:
+    try:
+        from PIL import Image
+    except Exception:
+        return False
+    try:
+        image = Image.open(BytesIO(qr_bytes))
+        image = image.convert("1")
+    except Exception:
+        return False
+    max_columns = 80
+    max_width = max_columns // 2
+    if image.width > max_width:
+        scale = max_width / image.width
+        new_height = max(1, int(image.height * scale))
+        image = image.resize((max_width, new_height), resample=Image.NEAREST)
+    width, height = image.size
+    pixels = image.load()
+    margin = 2
+    empty_row = "  " * (width + margin * 2)
+    rows = [empty_row for _ in range(margin)]
+    for y in range(height):
+        line = ["  "] * margin
+        for x in range(width):
+            line.append("##" if pixels[x, y] == 0 else "  ")
+        line.extend(["  "] * margin)
+        rows.append("".join(line))
+    rows.extend([empty_row for _ in range(margin)])
+    for line in rows:
+        typer.echo(line)
+    return True
+
+
+def _run_login_flow(
+    *, timeout: int, poll_interval: int, output: Optional[Path], show_terminal: bool
+) -> None:
     target_dir = ensure_directory(output or (HOME_DIR / "login"))
     sid = f"{int(time.time() * 1000)}{random.randint(100, 999)}"
     with MPClient() as client, open_storage(DB_PATH) as storage:
         uuid_cookie = client.start_login_session(sid)
         qrcode_path = target_dir / "qrcode.png"
-        qrcode_path.write_bytes(client.fetch_login_qrcode(uuid_cookie))
+        qrcode_bytes = client.fetch_login_qrcode(uuid_cookie)
+        qrcode_path.write_bytes(qrcode_bytes)
+        if show_terminal:
+            rendered = _render_qr_in_terminal(qrcode_bytes)
+            if not rendered:
+                typer.echo("终端二维码渲染失败，已保存文件。")
         typer.echo(f"请使用微信扫码登录，二维码已保存：{qrcode_path}")
         started = time.time()
         while True:
@@ -1319,7 +1369,10 @@ def login(
                 typer.echo(f"登录成功：{session.nickname or '未知账号'}")
                 return
             if status in (2, 3):
-                qrcode_path.write_bytes(client.fetch_login_qrcode(uuid_cookie))
+                qrcode_bytes = client.fetch_login_qrcode(uuid_cookie)
+                qrcode_path.write_bytes(qrcode_bytes)
+                if show_terminal:
+                    _render_qr_in_terminal(qrcode_bytes)
                 typer.echo("二维码已刷新，请重新扫码")
                 time.sleep(poll_interval)
                 continue
