@@ -1338,10 +1338,19 @@ def _run_login_flow(
 ) -> None:
     target_dir = ensure_directory(output or (HOME_DIR / "login"))
     sid = f"{int(time.time() * 1000)}{random.randint(100, 999)}"
-    with MPClient() as client, open_storage(DB_PATH) as storage:
-        uuid_cookie = client.start_login_session(sid)
+    typer.echo("正在获取二维码...")
+    with MPClient(timeout=15.0) as client, open_storage(DB_PATH) as storage:
+        try:
+            uuid_cookie = client.start_login_session(sid)
+        except Exception as exc:
+            typer.echo(f"获取登录会话失败：{exc}")
+            raise typer.Exit(code=1)
         qrcode_path = target_dir / "qrcode.png"
-        qrcode_bytes = client.fetch_login_qrcode(uuid_cookie)
+        try:
+            qrcode_bytes = client.fetch_login_qrcode(uuid_cookie)
+        except Exception as exc:
+            typer.echo(f"获取二维码失败：{exc}")
+            raise typer.Exit(code=1)
         qrcode_path.write_bytes(qrcode_bytes)
         if show_terminal:
             rendered = _render_qr_in_terminal(qrcode_bytes)
