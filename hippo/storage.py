@@ -788,26 +788,47 @@ class PostgresStorage(AbstractContextManager):
     # Login session helpers ------------------------------------------------
     def save_login_session(self, session: LoginSession, *, set_default: bool = True) -> LoginSession:
         now = _utc_now_dt()
-        with self.conn.cursor() as cur:
-            if set_default:
-                cur.execute("UPDATE login_sessions SET is_default = FALSE")
-            cur.execute(
-                """
-                INSERT INTO login_sessions (token, cookies_json, nickname, avatar, is_default, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    session.token,
-                    json.dumps(session.cookies, ensure_ascii=False),
-                    session.nickname,
-                    session.avatar,
-                    True if set_default else False,
-                    now,
-                    now,
-                ),
-            )
-        self.conn.commit()
-        return self.get_login_session()
+        for attempt in range(2):
+            try:
+                with self.conn.cursor() as cur:
+                    if set_default:
+                        cur.execute("UPDATE login_sessions SET is_default = FALSE")
+                    cur.execute(
+                        """
+                        INSERT INTO login_sessions (token, cookies_json, nickname, avatar, is_default, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            session.token,
+                            json.dumps(session.cookies, ensure_ascii=False),
+                            session.nickname,
+                            session.avatar,
+                            True if set_default else False,
+                            now,
+                            now,
+                        ),
+                    )
+                self.conn.commit()
+                return self.get_login_session()
+            except psycopg2.errors.UniqueViolation:
+                self.conn.rollback()
+                if attempt == 0:
+                    with self.conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT setval(
+                                pg_get_serial_sequence('login_sessions', 'id'),
+                                COALESCE((SELECT MAX(id) FROM login_sessions), 1),
+                                (SELECT COUNT(*) FROM login_sessions) > 0
+                            )
+                            """
+                        )
+                    self.conn.commit()
+                    continue
+                raise
+            except Exception:
+                self.conn.rollback()
+                raise
 
     def get_login_session(self) -> LoginSession:
         with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
