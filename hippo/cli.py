@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 import typer
@@ -1099,6 +1100,13 @@ def backfill_article_images(
         if trimmed.endswith("\""):
             trimmed = trimmed.rstrip("\"")
         return trimmed
+    
+    def is_http_url(url: str) -> bool:
+        try:
+            parsed = urlparse(url)
+        except Exception:
+            return False
+        return parsed.scheme in ("http", "https")
 
     def download_with_retry(url: str, *, referer: Optional[str]) -> tuple[bytes, Optional[str]]:
         last_exc: Optional[Exception] = None
@@ -1107,6 +1115,11 @@ def backfill_article_images(
                 return client.download_binary_with_type(
                     normalize_image_url(url), referer=referer
                 )
+            except httpx.HTTPStatusError as exc:
+                last_exc = exc
+                if exc.response is not None and exc.response.status_code in (400, 404):
+                    raise
+                time.sleep(min(sleep_base * (2**attempt), 5.0))
             except Exception as exc:
                 last_exc = exc
                 time.sleep(min(sleep_base * (2**attempt), 5.0))
@@ -1178,12 +1191,15 @@ def backfill_article_images(
                 worker_count = max(1, workers)
                 batch_size = worker_count * 4
 
-                def worker(item: tuple) -> tuple[tuple, bytes, Optional[str]]:
+                def worker(item: tuple) -> tuple[tuple, Optional[bytes], Optional[str], Optional[str]]:
                     biz, article_id, referer, orig_url = item
+                    normalized = normalize_image_url(str(orig_url))
+                    if not is_http_url(normalized):
+                        return item, None, None, f"Invalid URL scheme (non-http): {normalized}"
                     data, content_type = download_with_retry(
-                        str(orig_url), referer=str(referer) if referer else None
+                        normalized, referer=str(referer) if referer else None
                     )
-                    return item, data, content_type
+                    return item, data, content_type, None
 
                 progress = tqdm(
                     total=total_count,
@@ -1207,7 +1223,9 @@ def backfill_article_images(
                                 item = future_map[future]
                                 biz, article_id, _, orig_url = item
                                 try:
-                                    _, data, content_type = future.result()
+                                    _, data, content_type, error = future.result()
+                                    if error:
+                                        raise RuntimeError(error)
                                     storage.update_article_image_data(
                                         biz,
                                         article_id,
@@ -1218,6 +1236,12 @@ def backfill_article_images(
                                     updated += 1
                                 except Exception as exc:
                                     failed += 1
+                                    storage.mark_article_image_failed(
+                                        biz,
+                                        article_id,
+                                        str(orig_url),
+                                        str(exc),
+                                    )
                                     typer.echo(f"FAILED {orig_url}: {format_error(exc)}")
                                 finally:
                                     progress.update(1)

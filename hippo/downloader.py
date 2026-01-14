@@ -63,6 +63,14 @@ def _extract_url_token(url: str) -> Optional[str]:
     return None
 
 
+def _is_http_url(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    return parsed.scheme in ("http", "https")
+
+
 def _resolve_asset_url(url: str, *, base: str) -> Optional[str]:
     if not url:
         return None
@@ -293,6 +301,29 @@ class ImageDownloadWorker:
                 target_dir = task["target_dir"]
                 local_path = task["local_path"]
                 attempt = int(task.get("attempt", 1))
+                if not _is_http_url(str(resolved_url)):
+                    reason = f"Invalid URL scheme (non-http): {resolved_url}"
+                    self._log_error(
+                        stage="asset_download",
+                        article=article,
+                        error=reason,
+                        asset_url=orig_url or resolved_url,
+                        resolved_url=resolved_url,
+                        referer=referer,
+                        target_dir=target_dir,
+                        local_path=local_path,
+                    )
+                    if storage and orig_url:
+                        storage.mark_article_image_failed(
+                            article.biz,
+                            article.article_id,
+                            str(orig_url),
+                            reason,
+                        )
+                    with self._lock:
+                        self._done += 1
+                    self._queue.task_done()
+                    continue
                 try:
                     data, content_type = client.download_binary_with_type(
                         resolved_url, referer=referer
@@ -311,10 +342,15 @@ class ImageDownloadWorker:
                     with self._lock:
                         self._done += 1
                 except Exception as exc:
-                    is_http_400 = False
+                    is_http_400_or_404 = False
                     if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
-                        is_http_400 = exc.response.status_code == 400
-                    if not is_http_400 and attempt < self._max_retries and not self._stop.is_set():
+                        status = exc.response.status_code
+                        is_http_400_or_404 = status in (400, 404)
+                    if (
+                        not is_http_400_or_404
+                        and attempt < self._max_retries
+                        and not self._stop.is_set()
+                    ):
                         task["attempt"] = attempt + 1
                         self._queue.put(task)
                     else:
