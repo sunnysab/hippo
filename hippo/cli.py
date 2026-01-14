@@ -867,6 +867,9 @@ def sync_article_download(
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
+        if account_record.is_disabled:
+            typer.echo(f"Account {account_record.nickname} ({account_record.biz}) is disabled. Skipping.")
+            return
         articles = storage.list_articles(
             account_record.biz, limit=limit, since_timestamp=since_timestamp
         )
@@ -993,6 +996,9 @@ def sync_all_article_download(
             total_skipped = 0
             total_failed = 0
             for account in accounts:
+                if account.is_disabled:
+                    typer.echo(f"Account {account.nickname} ({account.biz}) is disabled. Skipping.")
+                    continue
                 articles = storage.list_articles(
                     account.biz, limit=limit, since_timestamp=since_timestamp
                 )
