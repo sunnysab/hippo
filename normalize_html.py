@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from pathlib import Path
 from typing import Dict, Tuple
 
 from bs4 import BeautifulSoup
 from markdownify import markdownify
+
+sys.setrecursionlimit(3000)
 
 REMOVE_SELECTORS = [
     '#js_top_ad_area',
