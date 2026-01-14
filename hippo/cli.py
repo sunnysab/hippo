@@ -6,6 +6,7 @@ import json
 import os
 import random
 import time
+from io import BytesIO
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
@@ -1298,6 +1299,28 @@ def login(
     _run_login_flow(timeout=timeout, poll_interval=poll_interval, output=output)
 
 
+def _render_qr_in_terminal(qr_bytes: bytes) -> bool:
+    try:
+        from PIL import Image
+        from pyzbar.pyzbar import decode
+        import qrcode
+    except Exception:
+        return False
+    try:
+        img = Image.open(BytesIO(qr_bytes))
+    except Exception:
+        return False
+    decoded_objects = decode(img)
+    if not decoded_objects:
+        return False
+    qr_data = decoded_objects[0].data.decode("utf-8", errors="ignore")
+    qr = qrcode.QRCode()
+    qr.add_data(qr_data)
+    qr.make(fit=True)
+    qr.print_ascii(tty=True)
+    return True
+
+
 def _run_login_flow(*, timeout: int, poll_interval: int, output: Optional[Path]) -> None:
     target_dir = ensure_directory(output or (HOME_DIR / "login"))
     sid = f"{int(time.time() * 1000)}{random.randint(100, 999)}"
@@ -1315,6 +1338,8 @@ def _run_login_flow(*, timeout: int, poll_interval: int, output: Optional[Path])
             typer.echo(f"获取二维码失败：{exc}")
             raise typer.Exit(code=1)
         qrcode_path.write_bytes(qrcode_bytes)
+        if not _render_qr_in_terminal(qrcode_bytes):
+            typer.echo("Terminal QR rendering failed. Use the saved file instead.")
         typer.echo(f"请使用微信扫码登录，二维码已保存：{qrcode_path}")
         started = time.time()
         while True:
@@ -1339,6 +1364,8 @@ def _run_login_flow(*, timeout: int, poll_interval: int, output: Optional[Path])
             if status in (2, 3):
                 qrcode_bytes = client.fetch_login_qrcode(uuid_cookie)
                 qrcode_path.write_bytes(qrcode_bytes)
+                if not _render_qr_in_terminal(qrcode_bytes):
+                    typer.echo("Terminal QR rendering failed. Use the saved file instead.")
                 typer.echo("二维码已刷新，请重新扫码")
                 time.sleep(poll_interval)
                 continue
