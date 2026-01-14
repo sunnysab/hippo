@@ -1137,6 +1137,7 @@ def backfill_article_images(
     updated = 0
     skipped = 0
     failed = 0
+    interrupted = False
 
     with PostgresStorage(resolved_dsn) as storage, MPClient() as client:
         count_query = """
@@ -1250,10 +1251,12 @@ def backfill_article_images(
                 finally:
                     progress.close()
         except KeyboardInterrupt:
+            interrupted = True
             typer.echo("Interrupted. Exiting.")
-            raise typer.Exit(code=130)
 
     typer.echo(f"Done. updated={updated} skipped={skipped} failed={failed}")
+    if interrupted:
+        raise typer.Exit(code=130)
 
 
 # ---------------------------------------------------------------------------
