@@ -28,6 +28,14 @@ def _utc_now_dt() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _session_identity(cookies: dict[str, str]) -> Optional[str]:
+    for key in ("wxuin", "uin", "fakeuin", "mpuin"):
+        value = cookies.get(key)
+        if value:
+            return f"{key}:{value}"
+    return None
+
+
 class StorageLike(Protocol):
     def close(self) -> None: ...
     def get_meta(self, key: str) -> Optional[str]: ...
@@ -323,6 +331,49 @@ class Storage(AbstractContextManager):
     # Login session helpers ------------------------------------------------
     def save_login_session(self, session: LoginSession, *, set_default: bool = True) -> LoginSession:
         now = _utc_now()
+        cookie_json = json.dumps(session.cookies, ensure_ascii=False)
+        session_identity = _session_identity(session.cookies)
+        rows = self.conn.execute(
+            "SELECT id, cookies_json, nickname FROM login_sessions ORDER BY id DESC"
+        ).fetchall()
+        match_id: Optional[int] = None
+        if session_identity:
+            for row in rows:
+                try:
+                    row_cookies = json.loads(row["cookies_json"])
+                except Exception:
+                    continue
+                if _session_identity(row_cookies) == session_identity:
+                    match_id = row["id"]
+                    break
+        if match_id is None and session.nickname:
+            target_name = session.nickname.strip().lower()
+            for row in rows:
+                nickname = (row["nickname"] or "").strip().lower()
+                if nickname and nickname == target_name:
+                    match_id = row["id"]
+                    break
+        if match_id is not None:
+            with self.conn:
+                if set_default:
+                    self.conn.execute("UPDATE login_sessions SET is_default = 0")
+                self.conn.execute(
+                    """
+                    UPDATE login_sessions
+                    SET token = ?, cookies_json = ?, nickname = ?, avatar = ?, is_default = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        session.token,
+                        cookie_json,
+                        session.nickname,
+                        session.avatar,
+                        1 if set_default else 0,
+                        now,
+                        match_id,
+                    ),
+                )
+            return self.get_login_session()
         if set_default:
             self.conn.execute("UPDATE login_sessions SET is_default = 0")
         self.conn.execute(
@@ -332,7 +383,7 @@ class Storage(AbstractContextManager):
             """,
             (
                 session.token,
-                json.dumps(session.cookies, ensure_ascii=False),
+                cookie_json,
                 session.nickname,
                 session.avatar,
                 1 if set_default else 0,
@@ -788,6 +839,51 @@ class PostgresStorage(AbstractContextManager):
     # Login session helpers ------------------------------------------------
     def save_login_session(self, session: LoginSession, *, set_default: bool = True) -> LoginSession:
         now = _utc_now_dt()
+        cookie_json = json.dumps(session.cookies, ensure_ascii=False)
+        session_identity = _session_identity(session.cookies)
+        with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute("SELECT id, cookies_json, nickname FROM login_sessions ORDER BY id DESC")
+            rows = cur.fetchall()
+        match_id: Optional[int] = None
+        if session_identity:
+            for row in rows:
+                try:
+                    row_cookies = json.loads(row["cookies_json"])
+                except Exception:
+                    continue
+                if _session_identity(row_cookies) == session_identity:
+                    match_id = row["id"]
+                    break
+        if match_id is None and session.nickname:
+            target_name = session.nickname.strip().lower()
+            for row in rows:
+                nickname = (row["nickname"] or "").strip().lower()
+                if nickname and nickname == target_name:
+                    match_id = row["id"]
+                    break
+        if match_id is not None:
+            with self.conn.cursor() as cur:
+                if set_default:
+                    cur.execute("UPDATE login_sessions SET is_default = FALSE")
+                cur.execute(
+                    """
+                    UPDATE login_sessions
+                    SET token = %s, cookies_json = %s, nickname = %s, avatar = %s,
+                        is_default = %s, updated_at = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        session.token,
+                        cookie_json,
+                        session.nickname,
+                        session.avatar,
+                        True if set_default else False,
+                        now,
+                        match_id,
+                    ),
+                )
+            self.conn.commit()
+            return self.get_login_session()
         for attempt in range(2):
             try:
                 with self.conn.cursor() as cur:
@@ -800,7 +896,7 @@ class PostgresStorage(AbstractContextManager):
                         """,
                         (
                             session.token,
-                            json.dumps(session.cookies, ensure_ascii=False),
+                            cookie_json,
                             session.nickname,
                             session.avatar,
                             True if set_default else False,
