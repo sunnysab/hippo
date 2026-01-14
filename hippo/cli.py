@@ -1091,6 +1091,7 @@ def backfill_article_images(
     workers: int = typer.Option(8, min=1, help="Concurrent image downloads"),
     retries: int = typer.Option(3, min=1, help="Download retries per image"),
     sleep_base: float = typer.Option(0.5, min=0.1, help="Base backoff sleep in seconds"),
+    retry_failed: bool = typer.Option(False, is_flag=True, help="Include previously failed images"),
     dry_run: bool = typer.Option(False, is_flag=True, help="List targets without writing"),
 ) -> None:
     resolved_dsn = pg_dsn or os.environ.get("HIPPO_PG_DSN")
@@ -1145,11 +1146,12 @@ def backfill_article_images(
     interrupted = False
 
     with PostgresStorage(resolved_dsn) as storage, MPClient() as client:
-        count_query = """
+        failed_clause = "" if retry_failed else " AND i.failed_at IS NULL"
+        count_query = f"""
             SELECT COUNT(*)
             FROM article_images i
             JOIN articles a ON a.id = i.article_pk
-            WHERE i.data IS NULL AND i.orig_url IS NOT NULL
+            WHERE i.data IS NULL AND i.orig_url IS NOT NULL{failed_clause}
         """
         with storage.conn.cursor() as cur:
             cur.execute(count_query)
@@ -1158,11 +1160,11 @@ def backfill_article_images(
         if limit is not None:
             total_count = min(total_count, limit)
 
-        base_query = """
+        base_query = f"""
             SELECT a.biz, a.article_id, a.link, i.orig_url
             FROM article_images i
             JOIN articles a ON a.id = i.article_pk
-            WHERE i.data IS NULL AND i.orig_url IS NOT NULL
+            WHERE i.data IS NULL AND i.orig_url IS NOT NULL{failed_clause}
             ORDER BY a.id DESC, i.position ASC
         """
         
