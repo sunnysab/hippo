@@ -19,6 +19,7 @@ from typing import Iterable, List, Optional
 from urllib.parse import urlparse, urljoin, parse_qs
 
 from bs4 import BeautifulSoup
+import httpx
 
 try:
     # Running from repo root: python/ is a package.
@@ -310,7 +311,10 @@ class ImageDownloadWorker:
                     with self._lock:
                         self._done += 1
                 except Exception as exc:
-                    if attempt < self._max_retries and not self._stop.is_set():
+                    is_http_400 = False
+                    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+                        is_http_400 = exc.response.status_code == 400
+                    if not is_http_400 and attempt < self._max_retries and not self._stop.is_set():
                         task["attempt"] = attempt + 1
                         self._queue.put(task)
                     else:
@@ -324,6 +328,13 @@ class ImageDownloadWorker:
                             target_dir=target_dir,
                             local_path=local_path,
                         )
+                        if storage and orig_url:
+                            storage.mark_article_image_failed(
+                                article.biz,
+                                article.article_id,
+                                str(orig_url),
+                                str(exc),
+                            )
                         with self._lock:
                             self._done += 1
                 finally:

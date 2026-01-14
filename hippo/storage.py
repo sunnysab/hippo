@@ -628,9 +628,18 @@ class PostgresStorage(AbstractContextManager):
                     orig_url TEXT,
                     content_type TEXT,
                     data BYTEA,
+                    failed_at TIMESTAMPTZ,
+                    failed_reason TEXT,
                     updated_at TIMESTAMPTZ NOT NULL,
                     UNIQUE (article_pk, orig_url)
                 )
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE article_images
+                ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS failed_reason TEXT
                 """
             )
             cur.execute(
@@ -1034,12 +1043,57 @@ class PostgresStorage(AbstractContextManager):
                 cur.execute(
                     """
                     UPDATE article_images
-                    SET content_type = %s, data = %s, updated_at = %s
+                    SET content_type = %s,
+                        data = %s,
+                        failed_at = NULL,
+                        failed_reason = NULL,
+                        updated_at = %s
                     WHERE article_pk = %s AND orig_url = %s
                     """,
                     (
                         content_type,
                         psycopg2.Binary(data) if data else None,
+                        _utc_now_dt(),
+                        article_pk,
+                        orig_url,
+                    ),
+                )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def mark_article_image_failed(
+        self,
+        biz: str,
+        article_id: str,
+        orig_url: str,
+        reason: str,
+    ) -> None:
+        trimmed = reason.strip()
+        if len(trimmed) > 5000:
+            trimmed = trimmed[:5000]
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM articles WHERE biz = %s AND article_id = %s",
+                    (biz, article_id),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return
+                article_pk = row[0]
+                cur.execute(
+                    """
+                    UPDATE article_images
+                    SET failed_at = %s,
+                        failed_reason = %s,
+                        updated_at = %s
+                    WHERE article_pk = %s AND orig_url = %s
+                    """,
+                    (
+                        _utc_now_dt(),
+                        trimmed,
                         _utc_now_dt(),
                         article_pk,
                         orig_url,
