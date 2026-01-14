@@ -776,9 +776,25 @@ class ArticleDownloader(AbstractContextManager):
 
         output_path = target_dir / _FORMAT_EXTENSIONS["html"]
         markdown_path = target_dir / _FORMAT_EXTENSIONS["markdown"]
-        markdown_content = normalize_html(
-            raw_html, fmt="markdown", markdown_image_map=url_map
-        )
+        try:
+            markdown_content = normalize_html(
+                raw_html, fmt="markdown", markdown_image_map=url_map
+            )
+        except RecursionError as exc:
+            logger.warning(
+                "Markdown conversion hit recursion limit: %s - %s",
+                article.article_id,
+                exc,
+            )
+            try:
+                markdown_content = normalize_html(raw_html, fmt="text")
+            except Exception as text_exc:
+                logger.warning(
+                    "Markdown fallback failed: %s - %s",
+                    article.article_id,
+                    text_exc,
+                )
+                markdown_content = ""
         text_path = None
         local_error: Optional[Exception] = None
         try:
