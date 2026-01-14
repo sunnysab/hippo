@@ -555,15 +555,19 @@ def list_accounts() -> None:
 
 @accounts_app.command("remove")
 def remove_account(
-    biz: str = typer.Argument(..., help="要移除的账号 fakeid")
+    account: str = typer.Argument(..., help="Account name, alias, or fakeid")
 ) -> None:
-    _require_nonempty(biz, "请提供要移除的账号 fakeid。")
     with open_storage(DB_PATH) as storage:
-        removed = storage.remove_account(biz)
+        try:
+            target = _resolve_account(storage, account)
+        except LookupError as exc:
+            typer.echo(str(exc))
+            raise typer.Exit(code=1)
+        removed = storage.remove_account(target.biz)
     if removed:
-        typer.echo(f"账号 {biz} 已删除")
+        typer.echo(f"Account {target.nickname} ({target.biz}) removed.")
     else:
-        typer.echo(f"未找到账号 {biz}")
+        typer.echo(f"Account {target.biz} not found.")
 
 
 @accounts_app.command("set-default")
