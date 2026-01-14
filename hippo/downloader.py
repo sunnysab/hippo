@@ -10,6 +10,7 @@ import queue
 import re
 import threading
 import time
+import errno
 from queue import Empty
 from typing import Callable, Dict, Tuple
 from datetime import datetime, timezone
@@ -187,7 +188,28 @@ def _safe_title_segment(title: Optional[str]) -> str:
     sanitized = sanitized.replace(":", "-")
     sanitized = re.sub(r"\s+", " ", sanitized)
     sanitized = sanitized.strip(" .")
+    sanitized = _truncate_utf8(sanitized, 120)
     return sanitized or "article"
+
+
+def _truncate_utf8(value: str, max_bytes: int) -> str:
+    raw = value.encode("utf-8")
+    if len(raw) <= max_bytes:
+        return value
+    chunk = raw[:max_bytes]
+    while chunk:
+        try:
+            return chunk.decode("utf-8").rstrip(" .-")
+        except UnicodeDecodeError:
+            chunk = chunk[:-1]
+    return ""
+
+
+def _article_base_segment(article: ArticleRecord) -> str:
+    title_segment = _safe_title_segment(article.title) or article.article_id or "article"
+    base_segment = f"{timestamp_to_datestr(article.publish_at)}-{title_segment}"
+    trimmed = _truncate_utf8(base_segment, 180)
+    return trimmed or "article"
 
 
 class ImageDownloadWorker:
@@ -753,44 +775,58 @@ class ArticleDownloader(AbstractContextManager):
             )
 
         output_path = target_dir / _FORMAT_EXTENSIONS["html"]
-        output_path.write_text(normalized_html, encoding="utf-8")
-
         markdown_path = target_dir / _FORMAT_EXTENSIONS["markdown"]
         markdown_content = normalize_html(
             raw_html, fmt="markdown", markdown_image_map=url_map
         )
-        markdown_path.write_text(markdown_content, encoding="utf-8")
-
         text_path = None
-        if fmt == "text":
-            text_path = target_dir / _FORMAT_EXTENSIONS["text"]
-            text_content = normalize_html(raw_html, fmt="text")
-            text_path.write_text(text_content, encoding="utf-8")
-        elif fmt not in ("html", "markdown"):
-            raise ValueError(f"Unsupported format: {fmt}")
+        local_error: Optional[Exception] = None
+        try:
+            output_path.write_text(normalized_html, encoding="utf-8")
+            markdown_path.write_text(markdown_content, encoding="utf-8")
 
-        metadata = {
-            "title": article.title,
-            "link": article.link,
-            "source_url": article.source_url,
-            "author": article.author,
-            "digest": article.digest,
-            "publish_at": article.publish_at,
-            "html_path": _FORMAT_EXTENSIONS["html"],
-            "markdown_path": _FORMAT_EXTENSIONS["markdown"],
-            "text_path": _FORMAT_EXTENSIONS["text"] if text_path else None,
-            "assets": asset_count,
-        }
-        (target_dir / "metadata.json").write_text(
-            json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        self._store_article_pg(
-            article=article,
-            clean_html=clean_html,
-            markdown_content=markdown_content,
-            target_dir=target_dir,
-            url_map=url_map,
-        )
+            if fmt == "text":
+                text_path = target_dir / _FORMAT_EXTENSIONS["text"]
+                text_content = normalize_html(raw_html, fmt="text")
+                text_path.write_text(text_content, encoding="utf-8")
+            elif fmt not in ("html", "markdown"):
+                raise ValueError(f"Unsupported format: {fmt}")
+
+            metadata = {
+                "title": article.title,
+                "link": article.link,
+                "source_url": article.source_url,
+                "author": article.author,
+                "digest": article.digest,
+                "publish_at": article.publish_at,
+                "html_path": _FORMAT_EXTENSIONS["html"],
+                "markdown_path": _FORMAT_EXTENSIONS["markdown"],
+                "text_path": _FORMAT_EXTENSIONS["text"] if text_path else None,
+                "assets": asset_count,
+            }
+            (target_dir / "metadata.json").write_text(
+                json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except Exception as exc:
+            local_error = exc
+
+        pg_error: Optional[Exception] = None
+        try:
+            self._store_article_pg(
+                article=article,
+                clean_html=clean_html,
+                markdown_content=markdown_content,
+                target_dir=target_dir,
+                url_map=url_map,
+            )
+        except Exception as exc:
+            pg_error = exc
+
+        if local_error:
+            raise RuntimeError(f"Local write failed: {local_error}") from local_error
+        if pg_error:
+            raise pg_error
+
         return DownloadResult(article=article, output_path=str(output_path), asset_count=asset_count)
 
     def _store_article_pg(
@@ -870,28 +906,36 @@ class ArticleDownloader(AbstractContextManager):
     def _article_target_dir(
         self, article: ArticleRecord, account_name: Optional[str], *, create: bool
     ) -> Path:
-        title_segment = _safe_title_segment(article.title) or article.article_id or "article"
-        base_segment = f"{timestamp_to_datestr(article.publish_at)}-{title_segment}"
+        base_segment = _article_base_segment(article)
         if account_name:
             base_dir = self.output_dir / slugify(account_name)
         else:
             base_dir = self.output_dir
         if not create:
             return base_dir / base_segment
-        target = base_dir / base_segment
-        if not target.exists():
-            return ensure_directory(target)
-        index = 2
-        while True:
-            candidate = base_dir / f"{base_segment}-{index}"
-            if not candidate.exists():
-                return ensure_directory(candidate)
-            index += 1
+        def allocate_path(segment: str) -> Path:
+            target = base_dir / segment
+            if not target.exists():
+                return ensure_directory(target)
+            index = 2
+            while True:
+                candidate = base_dir / f"{segment}-{index}"
+                if not candidate.exists():
+                    return ensure_directory(candidate)
+                index += 1
+
+        try:
+            return allocate_path(base_segment)
+        except OSError as exc:
+            if exc.errno != errno.ENAMETOOLONG:
+                raise
+            fallback_segment = f"{timestamp_to_datestr(article.publish_at)}-{article.article_id or 'article'}"
+            fallback_segment = _truncate_utf8(fallback_segment, 120) or "article"
+            return allocate_path(fallback_segment)
 
     def _has_local_files(self, article: ArticleRecord, account_name: Optional[str]) -> bool:
         account_segment = slugify(account_name) if account_name else ""
-        title_segment = _safe_title_segment(article.title) or article.article_id or "article"
-        base_segment = f"{timestamp_to_datestr(article.publish_at)}-{title_segment}"
+        base_segment = _article_base_segment(article)
         base_dir = self.output_dir / account_segment if account_segment else self.output_dir
         if not base_dir.exists():
             return False
