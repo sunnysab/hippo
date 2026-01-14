@@ -94,7 +94,7 @@ def run() -> None:
     _fix_click_option_flags(command)
     command()
 app.add_typer(accounts_app, name="account")
-app.add_typer(articles_app, name="articles")
+app.add_typer(articles_app, name="article")
 
 
 
@@ -1048,7 +1048,7 @@ def download_article(
     ),
 ) -> None:
     if not url:
-        typer.echo("请提供文章 URL。示例：python -m hippo articles download \"https://mp.weixin.qq.com/...\"")
+        typer.echo("请提供文章 URL。示例：python -m hippo article download \"https://mp.weixin.qq.com/...\"")
         raise typer.Exit(code=2)
     target_dir = ensure_directory(output or DOWNLOAD_ROOT)
     fmt_value = (

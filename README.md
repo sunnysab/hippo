@@ -35,7 +35,7 @@ docker run -it --rm -v ~/.local/share/hippo:/data hippo --help
 docker run -it --rm -v ~/.local/share/hippo:/data hippo login
 
 # Example: sync articles with profile
-docker run -it --rm -v ~/.local/share/hippo:/data hippo articles sync-all --profile production
+docker run -it --rm -v ~/.local/share/hippo:/data hippo article sync-all --profile production
 ```
 
 Note: Place `profiles.toml` in your local `~/.local/share/hippo/` directory so the container can read it.
@@ -116,13 +116,13 @@ python -m hippo account sync-all --skip-time 30
 ### Basic usage
 
 ```bash
-python -m hippo articles sync --biz <fakeid>
-python -m hippo articles sync-all
-python -m hippo articles download "https://mp.weixin.qq.com/..."
+python -m hippo article sync --biz <fakeid>
+python -m hippo article sync-all
+python -m hippo article download "https://mp.weixin.qq.com/..."
 ```
 
-- `articles sync` / `sync-all`: download content based on the synced article list
-- `articles download`: download a single article URL
+- `article sync` / `sync-all`: download content based on the synced article list
+- `article download`: download a single article URL
 
 ### Profile-based configuration
 
@@ -142,8 +142,8 @@ worker_proxy = "http://proxy.example.com:1080"
 Then use it with:
 
 ```bash
-python -m hippo articles sync-all --profile production
-python -m hippo articles sync <account> --profile production
+python -m hippo article sync-all --profile production
+python -m hippo article sync <account> --profile production
 ```
 
 See `profiles.toml.example` for more examples.
@@ -205,7 +205,7 @@ export HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname"
 
 ### PostgreSQL 文章内容与图片存储
 
-当设置 `HIPPO_PG_DSN` 时，`articles download/sync/sync-all` 会将文章内容与图片写入 PG：
+当设置 `HIPPO_PG_DSN` 时，`article download/sync/sync-all` 会将文章内容与图片写入 PG：
 
 - `articles` 表保存文章元数据（包含封面 URL）
 - `article_content` 表保存正文内容：
@@ -247,7 +247,7 @@ CLI 集成了 Python 标准库 logging，详细日志自动记录到文件，终
 使用 `--verbose` 或 `-v` 选项：
 
 ```bash
-hippo --verbose articles sync-all --profile production
+hippo --verbose article sync-all --profile production
 hippo -v account sync-all
 ```
 
@@ -292,7 +292,7 @@ worker_proxy = "http://proxy.example.com:1080"
 Use with `--profile` or `-p`:
 
 ```bash
-hippo articles sync-all --profile production
+hippo article sync-all --profile production
 ```
 
 ### Environment variables
@@ -317,7 +317,7 @@ python scripts/fill_pg_images.py --pg-dsn "postgresql://user:pass@host:5432/dbna
 CLI alternative:
 
 ```bash
-python -m hippo articles backfill-images --pg-dsn "postgresql://user:pass@host:5432/dbname"
+python -m hippo article backfill-images --pg-dsn "postgresql://user:pass@host:5432/dbname"
 ```
 
 Optional flags:
