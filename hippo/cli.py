@@ -1167,12 +1167,12 @@ def backfill_article_images(
             total_count = min(total_count, limit)
 
         base_query = f"""
-            SELECT a.biz, a.article_id, a.link, i.orig_url
+            SELECT i.id, a.biz, a.article_id, a.link, i.orig_url
             FROM article_images i
             JOIN articles a ON a.id = i.article_pk
             WHERE i.data IS NULL AND i.orig_url IS NOT NULL{failed_clause}
-            ORDER BY a.id DESC, i.position ASC
         """
+        order_clause = "ORDER BY i.id DESC"
         
         try:
             if dry_run:
@@ -1184,19 +1184,28 @@ def backfill_article_images(
                     leave=True,
                 )
                 try:
-                    offset = 0
+                    last_id: Optional[int] = None
+                    remaining = total_count
                     fetch_size = 100
-                    while offset < total_count:
+                    while remaining > 0:
                         with storage.conn.cursor() as cur:
-                            cur.execute(f"{base_query} LIMIT {fetch_size} OFFSET {offset}")
+                            current_limit = min(fetch_size, remaining)
+                            if last_id is None:
+                                query = f"{base_query} {order_clause} LIMIT %s"
+                                params = (current_limit,)
+                            else:
+                                query = f"{base_query} AND i.id < %s {order_clause} LIMIT %s"
+                                params = (last_id, current_limit)
+                            cur.execute(query, params)
                             rows = cur.fetchall()
                         if not rows:
                             break
-                        for _, _, _, orig_url in rows:
+                        for _, _, _, _, orig_url in rows:
                             typer.echo(f"DRY-RUN {orig_url}")
                             skipped += 1
                             progress.update(1)
-                        offset += len(rows)
+                        remaining -= len(rows)
+                        last_id = rows[-1][0]
                 finally:
                     progress.close()
             else:
@@ -1206,7 +1215,7 @@ def backfill_article_images(
                 batch_size = worker_count * 4
 
                 def worker(item: tuple) -> tuple[tuple, Optional[bytes], Optional[str], Optional[str]]:
-                    biz, article_id, referer, orig_url = item
+                    _, biz, article_id, referer, orig_url = item
                     normalized = normalize_image_url(str(orig_url))
                     if not is_http_url(normalized):
                         return item, None, None, f"Invalid URL scheme (non-http): {normalized}"
@@ -1223,11 +1232,19 @@ def backfill_article_images(
                     leave=True,
                 )
                 try:
-                    offset = 0
+                    last_id: Optional[int] = None
+                    remaining = total_count
                     with ThreadPoolExecutor(max_workers=worker_count) as executor:
-                        while offset < total_count:
+                        while remaining > 0:
                             with storage.conn.cursor() as cur:
-                                cur.execute(f"{base_query} LIMIT {batch_size} OFFSET {offset}")
+                                current_limit = min(batch_size, remaining)
+                                if last_id is None:
+                                    query = f"{base_query} {order_clause} LIMIT %s"
+                                    params = (current_limit,)
+                                else:
+                                    query = f"{base_query} AND i.id < %s {order_clause} LIMIT %s"
+                                    params = (last_id, current_limit)
+                                cur.execute(query, params)
                                 batch = cur.fetchall()
                             if not batch:
                                 break
@@ -1235,7 +1252,7 @@ def backfill_article_images(
                             future_map = {executor.submit(worker, item): item for item in batch}
                             for future in as_completed(future_map):
                                 item = future_map[future]
-                                biz, article_id, _, orig_url = item
+                                _, biz, article_id, _, orig_url = item
                                 try:
                                     _, data, content_type, error = future.result()
                                     if error:
@@ -1259,8 +1276,8 @@ def backfill_article_images(
                                     typer.echo(f"FAILED {orig_url}: {format_error(exc)}")
                                 finally:
                                     progress.update(1)
-                            
-                            offset += len(batch)
+                            remaining -= len(batch)
+                            last_id = batch[-1][0]
                 finally:
                     progress.close()
         except KeyboardInterrupt:
