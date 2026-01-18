@@ -20,6 +20,10 @@ ISO_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 SCHEMA_VERSION = "4"
 
 
+class StorageInitError(RuntimeError):
+    pass
+
+
 def _utc_now() -> str:
     return datetime.utcnow().strftime(ISO_FORMAT)
 
@@ -64,12 +68,19 @@ class StorageLike(Protocol):
 class Storage(AbstractContextManager):
     """Simple wrapper around sqlite3 with a fixed schema."""
 
-    def __init__(self, db_path: Path | str = DB_PATH) -> None:
+    def __init__(self, db_path: Path | str = DB_PATH, *, auto_init: bool = False) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.db_path)
         self.conn.row_factory = sqlite3.Row
-        self._init_db()
+        if auto_init:
+            self._init_db()
+        else:
+            try:
+                self._ensure_initialized()
+            except Exception:
+                self.conn.close()
+                raise
 
     def __enter__(self) -> "Storage":
         return self
@@ -162,6 +173,23 @@ class Storage(AbstractContextManager):
             (SCHEMA_VERSION,)
         )
         self.conn.commit()
+
+    def _ensure_initialized(self) -> None:
+        row = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'meta'"
+        ).fetchone()
+        if not row:
+            raise StorageInitError("Database not initialized. Run `python -m hippo db init`.")
+        row = self.conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+        if not row:
+            raise StorageInitError("Database not initialized. Run `python -m hippo db init`.")
+        current_version = row["value"]
+        if current_version != SCHEMA_VERSION:
+            raise StorageInitError(
+                "Database schema out of date. Run `python -m hippo db init` to migrate."
+            )
 
     def _migrate_schema(self, cur: sqlite3.Cursor, current_version: Optional[str]) -> None:
         if current_version == SCHEMA_VERSION:
@@ -523,11 +551,18 @@ class Storage(AbstractContextManager):
 
 
 class PostgresStorage(AbstractContextManager):
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, *, auto_init: bool = False) -> None:
         self.dsn = dsn
         self.conn = psycopg2.connect(dsn)
         self.conn.autocommit = False
-        self._init_db()
+        if auto_init:
+            self._init_db()
+        else:
+            try:
+                self._ensure_initialized()
+            except Exception:
+                self.conn.close()
+                raise
 
     def __enter__(self) -> "PostgresStorage":
         return self
@@ -717,6 +752,30 @@ class PostgresStorage(AbstractContextManager):
             )
         self.conn.commit()
 
+    def _ensure_initialized(self) -> None:
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT to_regclass('public.meta')")
+                table_name = cur.fetchone()[0]
+                if not table_name:
+                    raise StorageInitError(
+                        "Database not initialized. Run `python -m hippo db init`."
+                    )
+                cur.execute("SELECT value FROM meta WHERE key = %s", ("schema_version",))
+                row = cur.fetchone()
+                if not row:
+                    raise StorageInitError(
+                        "Database not initialized. Run `python -m hippo db init`."
+                    )
+                current_version = row[0]
+                if current_version != SCHEMA_VERSION:
+                    raise StorageInitError(
+                        "Database schema out of date. Run `python -m hippo db init` to migrate."
+                    )
+            self.conn.rollback()
+        except Exception:
+            self.conn.rollback()
+            raise
     # Meta helpers --------------------------------------------------------
     def get_meta(self, key: str) -> Optional[str]:
         with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
@@ -1292,8 +1351,8 @@ class PostgresStorage(AbstractContextManager):
         )
 
 
-def open_storage(db_path: Path | str = DB_PATH) -> StorageLike:
+def open_storage(db_path: Path | str = DB_PATH, *, auto_init: bool = False) -> StorageLike:
     dsn = os.environ.get("HIPPO_PG_DSN")
     if dsn:
-        return PostgresStorage(dsn)
-    return Storage(db_path)
+        return PostgresStorage(dsn, auto_init=auto_init)
+    return Storage(db_path, auto_init=auto_init)

@@ -23,7 +23,7 @@ from .downloader import ArticleDownloader
 from .http import MPClient, parse_appmsg_publish
 from .logger import setup_logger, get_logger
 from .models import AccountCredential, LoginSession
-from .storage import StorageLike, PostgresStorage, open_storage
+from .storage import Storage, StorageInitError, StorageLike, PostgresStorage, open_storage
 from .utils import ensure_directory
 
 # Initialize logger on module import
@@ -61,6 +61,11 @@ articles_app = typer.Typer(
     no_args_is_help=True,
     rich_markup_mode=None,
 )
+db_app = typer.Typer(
+    help="Database maintenance",
+    no_args_is_help=True,
+    rich_markup_mode=None,
+)
 
 
 def _fix_click_option_flags(command: click.Command) -> None:
@@ -93,9 +98,33 @@ def run() -> None:
     _patch_click_for_typer()
     command = typer.main.get_command(app)
     _fix_click_option_flags(command)
-    command()
+    try:
+        command()
+    except StorageInitError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=2) from exc
+
+
+@db_app.command("init")
+def init_db(
+    pg_dsn: Optional[str] = typer.Option(
+        None, help="PostgreSQL DSN (defaults to HIPPO_PG_DSN)"
+    ),
+) -> None:
+    resolved_dsn = pg_dsn or os.environ.get("HIPPO_PG_DSN")
+    if resolved_dsn:
+        with PostgresStorage(resolved_dsn, auto_init=True):
+            pass
+        typer.echo("PostgreSQL schema initialized.")
+        return
+    with Storage(DB_PATH, auto_init=True):
+        pass
+    typer.echo(f"SQLite schema initialized at {DB_PATH}.")
+
+
 app.add_typer(accounts_app, name="account")
 app.add_typer(articles_app, name="article")
+app.add_typer(db_app, name="db")
 
 
 
