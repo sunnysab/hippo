@@ -294,6 +294,19 @@ def _to_utc_timestamp(value: Optional[datetime]) -> Optional[int]:
     return int(value.timestamp())
 
 
+def _resolve_write_local(pg_only: bool, write_local: bool) -> bool:
+    if pg_only and write_local:
+        raise typer.BadParameter("--pg-only and --write-local cannot be used together.")
+    pg_dsn = os.environ.get("HIPPO_PG_DSN")
+    if pg_only and not pg_dsn:
+        raise typer.BadParameter("--pg-only requires HIPPO_PG_DSN.")
+    if write_local:
+        return True
+    if pg_dsn:
+        return False
+    return True
+
+
 def _resolve_account(storage: StorageLike, name: Optional[str]) -> AccountCredential:
     if name is None:
         raise LookupError("请输入公众号名称或 fakeid")
@@ -1000,6 +1013,12 @@ def sync_article_download(
     ),
     since: Optional[str] = typer.Option(None, help="仅下载某日期后的文章"),
     output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
+    pg_only: bool = typer.Option(
+        False, "--pg-only", help="Write to PostgreSQL only (requires HIPPO_PG_DSN)"
+    ),
+    write_local: bool = typer.Option(
+        False, "--write-local", help="Write local files even when HIPPO_PG_DSN is set"
+    ),
     worker_prefix: Optional[str] = typer.Option(None, help="文章 HTML worker 前缀或模板，留空使用环境变量"),
     worker_proxy: Optional[str] = typer.Option(None, help="访问 worker 时使用的代理（HTTP/SOCKS5），留空直连"),
     workers: Optional[int] = typer.Option(
@@ -1032,7 +1051,9 @@ def sync_article_download(
         except (FileNotFoundError, ValueError) as exc:
             typer.echo(f"加载 profile 失败：{exc}")
             raise typer.Exit(code=1)
-    
+
+    effective_write_local = _resolve_write_local(pg_only, write_local)
+
     since_timestamp = _parse_since(since)
     with open_storage(DB_PATH) as storage:
         try:
@@ -1049,7 +1070,11 @@ def sync_article_download(
         if not articles:
             typer.echo("没有可下载的文章，先执行 `account sync`")
             return
-        target_dir = ensure_directory(output or DOWNLOAD_ROOT)
+        target_dir = (
+            ensure_directory(output or DOWNLOAD_ROOT)
+            if effective_write_local
+            else Path(output or DOWNLOAD_ROOT)
+        )
         typer.echo(f"开始下载 {len(articles)} 篇文章 -> {target_dir}")
         download_images = with_images and not article_only
         record_images_only = article_only
@@ -1074,6 +1099,7 @@ def sync_article_download(
                 article_max_connections=workers,
                 image_workers=image_workers,
                 enable_image_worker=not article_only,
+                write_local=effective_write_local,
             ) as downloader:
                 results, skipped, failed = downloader.download_many(
                     articles,
@@ -1109,6 +1135,12 @@ def sync_all_article_download(
     ),
     since: Optional[str] = typer.Option(None, help="仅下载某日期后的文章"),
     output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
+    pg_only: bool = typer.Option(
+        False, "--pg-only", help="Write to PostgreSQL only (requires HIPPO_PG_DSN)"
+    ),
+    write_local: bool = typer.Option(
+        False, "--write-local", help="Write local files even when HIPPO_PG_DSN is set"
+    ),
     worker_prefix: Optional[str] = typer.Option(None, help="文章 HTML worker 前缀或模板，留空使用环境变量"),
     worker_proxy: Optional[str] = typer.Option(None, help="访问 worker 时使用的代理（HTTP/SOCKS5），留空直连"),
     workers: Optional[int] = typer.Option(
@@ -1141,7 +1173,9 @@ def sync_all_article_download(
         except (FileNotFoundError, ValueError) as exc:
             typer.echo(f"加载 profile 失败：{exc}")
             raise typer.Exit(code=1)
-    
+
+    effective_write_local = _resolve_write_local(pg_only, write_local)
+
     since_timestamp = _parse_since(since)
     total_downloads = 0
     with open_storage(DB_PATH) as storage:
@@ -1149,7 +1183,11 @@ def sync_all_article_download(
         if not accounts:
             typer.echo("尚未保存任何账号，使用 `account add` 添加")
             return
-        target_dir = ensure_directory(output or DOWNLOAD_ROOT)
+        target_dir = (
+            ensure_directory(output or DOWNLOAD_ROOT)
+            if effective_write_local
+            else Path(output or DOWNLOAD_ROOT)
+        )
         download_images = with_images and not article_only
         record_images_only = article_only
         fmt_value = (
@@ -1165,6 +1203,7 @@ def sync_all_article_download(
             article_max_connections=workers,
             image_workers=image_workers,
             enable_image_worker=not article_only,
+            write_local=effective_write_local,
         ) as downloader:
             total_skipped = 0
             total_failed = 0
@@ -1218,6 +1257,12 @@ def download_article(
     with_images: bool = typer.Option(True, is_flag=True, help="是否下载图片"),
     output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
     title: Optional[str] = typer.Option(None, help="覆盖文章标题"),
+    pg_only: bool = typer.Option(
+        False, "--pg-only", help="Write to PostgreSQL only (requires HIPPO_PG_DSN)"
+    ),
+    write_local: bool = typer.Option(
+        False, "--write-local", help="Write local files even when HIPPO_PG_DSN is set"
+    ),
     worker_prefix: Optional[str] = typer.Option(None, help="文章 HTML worker 前缀或模板，留空使用环境变量"),
     worker_proxy: Optional[str] = typer.Option(None, help="访问 worker 时使用的代理（HTTP/SOCKS5），留空直连"),
     workers: Optional[int] = typer.Option(
@@ -1234,7 +1279,12 @@ def download_article(
     if not url:
         typer.echo("请提供文章 URL。示例：python -m hippo article download \"https://mp.weixin.qq.com/...\"")
         raise typer.Exit(code=2)
-    target_dir = ensure_directory(output or DOWNLOAD_ROOT)
+    effective_write_local = _resolve_write_local(pg_only, write_local)
+    target_dir = (
+        ensure_directory(output or DOWNLOAD_ROOT)
+        if effective_write_local
+        else Path(output or DOWNLOAD_ROOT)
+    )
     fmt_value = (
         output_format.value
         if isinstance(output_format, OutputFormat)
@@ -1247,6 +1297,7 @@ def download_article(
         article_worker_proxy=worker_proxy,
         article_max_connections=workers,
         image_workers=image_workers,
+        write_local=effective_write_local,
     ) as downloader:
         try:
             result = downloader.download_from_url(
@@ -1258,7 +1309,10 @@ def download_article(
         except Exception as exc:
             typer.echo(f"下载失败：{exc}")
             raise typer.Exit(code=1)
-    typer.echo(f"单篇文章已保存至 {result.output_path}")
+    if result.output_path:
+        typer.echo(f"单篇文章已保存至 {result.output_path}")
+    else:
+        typer.echo("Article saved to PostgreSQL.")
 
 
 @articles_app.command("backfill-images")

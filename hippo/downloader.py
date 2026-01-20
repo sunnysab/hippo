@@ -218,11 +218,13 @@ class ImageDownloadWorker:
         *,
         log_error: Callable[..., None],
         pg_dsn: Optional[str],
+        write_local: bool,
         workers: int = _IMAGE_WORKERS,
         max_retries: int = _IMAGE_MAX_RETRIES,
     ) -> None:
         self._log_error = log_error
         self._pg_dsn = pg_dsn
+        self._write_local = write_local
         self._max_retries = max_retries
         self._queue: "queue.Queue[Optional[dict]]" = queue.Queue()
         self._stop = threading.Event()
@@ -350,9 +352,10 @@ class ImageDownloadWorker:
                     data, content_type = client.download_binary_with_type(
                         resolved_url, referer=referer
                     )
-                    file_path = target_dir / local_path
-                    ensure_directory(file_path.parent)
-                    file_path.write_bytes(data)
+                    if self._write_local:
+                        file_path = target_dir / local_path
+                        ensure_directory(file_path.parent)
+                        file_path.write_bytes(data)
                     if storage and orig_url:
                         storage.update_article_image_data(
                             article.biz,
@@ -413,6 +416,7 @@ class ArticleDownloader(AbstractContextManager):
         article_max_connections: Optional[int] = None,
         image_workers: Optional[int] = None,
         enable_image_worker: bool = True,
+        write_local: bool = True,
     ) -> None:
         self._managed_client = client is None
         self.client = client or MPClient(
@@ -420,7 +424,12 @@ class ArticleDownloader(AbstractContextManager):
             article_worker_proxy=article_worker_proxy,
             article_max_connections=article_max_connections,
         )
-        self.output_dir = ensure_directory(output_dir or DOWNLOAD_ROOT)
+        self._write_local = write_local
+        self.output_dir = (
+            ensure_directory(output_dir or DOWNLOAD_ROOT)
+            if self._write_local
+            else Path(output_dir or DOWNLOAD_ROOT)
+        )
         self.storage = storage
         self._pg_dsn = os.environ.get("HIPPO_PG_DSN")
         self._image_worker: Optional[ImageDownloadWorker] = None
@@ -458,6 +467,7 @@ class ArticleDownloader(AbstractContextManager):
             self._image_worker = ImageDownloadWorker(
                 log_error=self._log_download_error,
                 pg_dsn=self._pg_dsn,
+                write_local=self._write_local,
                 workers=self._image_workers,
             )
         return self._image_worker
@@ -758,7 +768,11 @@ class ArticleDownloader(AbstractContextManager):
         record_images_only: bool,
         account_name: Optional[str],
     ) -> DownloadResult:
-        target_dir = self._article_target_dir(article, account_name, create=True)
+        if fmt not in ("html", "markdown", "text"):
+            raise ValueError(f"Unsupported format: {fmt}")
+        target_dir = self._article_target_dir(
+            article, account_name, create=self._write_local
+        )
 
         clean_html = normalize_html(raw_html, fmt="html")
         normalized_html = clean_html
@@ -774,6 +788,7 @@ class ArticleDownloader(AbstractContextManager):
                 normalized_html, referer=referer
             )
 
+        output_path_value = ""
         output_path = target_dir / _FORMAT_EXTENSIONS["html"]
         markdown_path = target_dir / _FORMAT_EXTENSIONS["markdown"]
         try:
@@ -797,34 +812,34 @@ class ArticleDownloader(AbstractContextManager):
                 markdown_content = ""
         text_path = None
         local_error: Optional[Exception] = None
-        try:
-            output_path.write_text(normalized_html, encoding="utf-8")
-            markdown_path.write_text(markdown_content, encoding="utf-8")
+        if self._write_local:
+            try:
+                output_path.write_text(normalized_html, encoding="utf-8")
+                markdown_path.write_text(markdown_content, encoding="utf-8")
 
-            if fmt == "text":
-                text_path = target_dir / _FORMAT_EXTENSIONS["text"]
-                text_content = normalize_html(raw_html, fmt="text")
-                text_path.write_text(text_content, encoding="utf-8")
-            elif fmt not in ("html", "markdown"):
-                raise ValueError(f"Unsupported format: {fmt}")
+                if fmt == "text":
+                    text_path = target_dir / _FORMAT_EXTENSIONS["text"]
+                    text_content = normalize_html(raw_html, fmt="text")
+                    text_path.write_text(text_content, encoding="utf-8")
 
-            metadata = {
-                "title": article.title,
-                "link": article.link,
-                "source_url": article.source_url,
-                "author": article.author,
-                "digest": article.digest,
-                "publish_at": article.publish_at,
-                "html_path": _FORMAT_EXTENSIONS["html"],
-                "markdown_path": _FORMAT_EXTENSIONS["markdown"],
-                "text_path": _FORMAT_EXTENSIONS["text"] if text_path else None,
-                "assets": asset_count,
-            }
-            (target_dir / "metadata.json").write_text(
-                json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-        except Exception as exc:
-            local_error = exc
+                metadata = {
+                    "title": article.title,
+                    "link": article.link,
+                    "source_url": article.source_url,
+                    "author": article.author,
+                    "digest": article.digest,
+                    "publish_at": article.publish_at,
+                    "html_path": _FORMAT_EXTENSIONS["html"],
+                    "markdown_path": _FORMAT_EXTENSIONS["markdown"],
+                    "text_path": _FORMAT_EXTENSIONS["text"] if text_path else None,
+                    "assets": asset_count,
+                }
+                (target_dir / "metadata.json").write_text(
+                    json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                output_path_value = str(output_path)
+            except Exception as exc:
+                local_error = exc
 
         pg_error: Optional[Exception] = None
         try:
@@ -843,7 +858,9 @@ class ArticleDownloader(AbstractContextManager):
         if pg_error:
             raise pg_error
 
-        return DownloadResult(article=article, output_path=str(output_path), asset_count=asset_count)
+        return DownloadResult(
+            article=article, output_path=output_path_value, asset_count=asset_count
+        )
 
     def _store_article_pg(
         self,
