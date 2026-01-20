@@ -19,6 +19,15 @@ class AccountCredential:
     is_default: bool = False
     is_disabled: bool = False
     last_synced_at: Optional[datetime] = None
+    group_id: Optional[int] = None
+    group_name: Optional[str] = None
+
+
+@dataclass(slots=True)
+class AccountGroup:
+    id: int
+    name: str
+    account_count: int = 0
 
 
 @dataclass(slots=True)
@@ -50,4 +59,10 @@ class LoginSession:
     avatar: Optional[str] = None
 
 
-__all__ = ["AccountCredential", "ArticleRecord", "DownloadResult", "LoginSession"]
+__all__ = [
+    "AccountCredential",
+    "AccountGroup",
+    "ArticleRecord",
+    "DownloadResult",
+    "LoginSession",
+]

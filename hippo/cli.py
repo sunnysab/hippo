@@ -56,6 +56,11 @@ accounts_app = typer.Typer(
     no_args_is_help=True,
     rich_markup_mode=None,
 )
+groups_app = typer.Typer(
+    help="Manage account groups",
+    no_args_is_help=True,
+    rich_markup_mode=None,
+)
 articles_app = typer.Typer(
     help="Inspect and download articles",
     no_args_is_help=True,
@@ -123,6 +128,7 @@ def init_db(
 
 
 app.add_typer(accounts_app, name="account")
+accounts_app.add_typer(groups_app, name="group")
 app.add_typer(articles_app, name="article")
 app.add_typer(db_app, name="db")
 
@@ -559,13 +565,15 @@ def search_accounts(
 
 
 @accounts_app.command("list")
-def list_accounts() -> None:
+def list_accounts(
+    group: Optional[str] = typer.Option(None, help="Filter by group name"),
+) -> None:
     with open_storage(DB_PATH) as storage:
-        accounts = storage.list_accounts()
+        accounts = storage.list_accounts(group=group)
     if not accounts:
         typer.echo("尚未保存任何账号，使用 `account add` 添加")
         return
-    headers = ["默认", "昵称", "fakeid", "Disabled", "最近同步"]
+    headers = ["默认", "昵称", "fakeid", "Group", "Disabled", "最近同步"]
     rows: list[list[str]] = []
     for account in accounts:
         last_synced = account.last_synced_at.isoformat() if account.last_synced_at else "-"
@@ -574,6 +582,7 @@ def list_accounts() -> None:
                 "✅" if account.is_default else "",
                 account.nickname,
                 account.biz,
+                account.group_name or "-",
                 "yes" if account.is_disabled else "",
                 last_synced,
             ]
@@ -581,6 +590,64 @@ def list_accounts() -> None:
     table_text = _format_table(headers, rows)
     if table_text:
         typer.echo(table_text)
+
+
+@groups_app.command("add")
+def add_group(
+    name: str = typer.Argument(..., help="Group name"),
+) -> None:
+    if not name.strip():
+        typer.echo("Please provide a group name.")
+        raise typer.Exit(code=2)
+    with open_storage(DB_PATH) as storage:
+        group = storage.upsert_group(name)
+    typer.echo(f"Group {group.name} saved.")
+
+
+@groups_app.command("list")
+def list_groups() -> None:
+    with open_storage(DB_PATH) as storage:
+        groups = storage.list_groups()
+    if not groups:
+        typer.echo("No groups found.")
+        return
+    headers = ["Group", "Accounts"]
+    rows = [[group.name, str(group.account_count)] for group in groups]
+    table_text = _format_table(headers, rows)
+    if table_text:
+        typer.echo(table_text)
+
+
+@groups_app.command("set")
+def set_account_group(
+    account: str = typer.Argument(..., help="Account name, alias, or fakeid"),
+    group: str = typer.Argument(..., help="Group name"),
+) -> None:
+    _require_nonempty(account, "Please provide an account name or fakeid.")
+    _require_nonempty(group, "Please provide a group name.")
+    with open_storage(DB_PATH) as storage:
+        try:
+            target = _resolve_account(storage, account)
+        except LookupError as exc:
+            typer.echo(str(exc))
+            raise typer.Exit(code=1)
+        storage.set_account_group(target.biz, group)
+    typer.echo(f"Account {target.nickname} ({target.biz}) assigned to group {group}.")
+
+
+@groups_app.command("clear")
+def clear_account_group(
+    account: str = typer.Argument(..., help="Account name, alias, or fakeid"),
+) -> None:
+    _require_nonempty(account, "Please provide an account name or fakeid.")
+    with open_storage(DB_PATH) as storage:
+        try:
+            target = _resolve_account(storage, account)
+        except LookupError as exc:
+            typer.echo(str(exc))
+            raise typer.Exit(code=1)
+        storage.set_account_group(target.biz, None)
+    typer.echo(f"Account {target.nickname} ({target.biz}) group cleared.")
 
 
 @accounts_app.command("remove")

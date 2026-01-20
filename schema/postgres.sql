@@ -24,6 +24,38 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: account_groups; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_groups (
+    id integer NOT NULL,
+    name text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: account_groups_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.account_groups_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: account_groups_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.account_groups_id_seq OWNED BY public.account_groups.id;
+
+
+--
 -- Name: accounts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -35,6 +67,7 @@ CREATE TABLE public.accounts (
     uin text NOT NULL,
     key text NOT NULL,
     pass_ticket text NOT NULL,
+    group_id integer,
     is_default boolean DEFAULT false NOT NULL,
     last_synced_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
@@ -202,6 +235,13 @@ CREATE TABLE public.meta (
 
 
 --
+-- Name: account_groups id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_groups ALTER COLUMN id SET DEFAULT nextval('public.account_groups_id_seq'::regclass);
+
+
+--
 -- Name: article_content id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -227,6 +267,22 @@ ALTER TABLE ONLY public.articles ALTER COLUMN id SET DEFAULT nextval('public.art
 --
 
 ALTER TABLE ONLY public.login_sessions ALTER COLUMN id SET DEFAULT nextval('public.login_sessions_id_seq'::regclass);
+
+
+--
+-- Name: account_groups account_groups_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_groups
+    ADD CONSTRAINT account_groups_name_key UNIQUE (name);
+
+
+--
+-- Name: account_groups account_groups_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_groups
+    ADD CONSTRAINT account_groups_pkey PRIMARY KEY (id);
 
 
 --
@@ -302,6 +358,13 @@ ALTER TABLE ONLY public.meta
 
 
 --
+-- Name: idx_accounts_group; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_accounts_group ON public.accounts USING btree (group_id);
+
+
+--
 -- Name: idx_articles_biz_publish; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -322,6 +385,14 @@ ALTER TABLE ONLY public.article_content
 
 ALTER TABLE ONLY public.article_images
     ADD CONSTRAINT article_images_article_pk_fkey FOREIGN KEY (article_pk) REFERENCES public.articles(id) ON DELETE CASCADE;
+
+
+--
+-- Name: accounts accounts_group_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.accounts
+    ADD CONSTRAINT accounts_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.account_groups(id) ON DELETE SET NULL;
 
 
 --

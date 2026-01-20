@@ -14,10 +14,10 @@ import psycopg2
 import psycopg2.extras
 
 from .config import DB_PATH
-from .models import AccountCredential, ArticleRecord, LoginSession
+from .models import AccountCredential, AccountGroup, ArticleRecord, LoginSession
 
 ISO_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 
 
 class StorageInitError(RuntimeError):
@@ -46,12 +46,15 @@ class StorageLike(Protocol):
     def set_meta(self, key: str, value: str) -> None: ...
     def delete_meta(self, key: str) -> None: ...
     def upsert_account(self, account: AccountCredential) -> AccountCredential: ...
-    def list_accounts(self) -> List[AccountCredential]: ...
+    def list_accounts(self, group: Optional[str] = None) -> List[AccountCredential]: ...
     def get_account(
         self, biz: Optional[str] = None, *, fallback_to_default: bool = True
     ) -> AccountCredential: ...
     def remove_account(self, biz: str) -> int: ...
     def set_default_account(self, biz: str) -> None: ...
+    def upsert_group(self, name: str) -> AccountGroup: ...
+    def list_groups(self) -> List[AccountGroup]: ...
+    def set_account_group(self, biz: str, group_name: Optional[str]) -> None: ...
     def update_last_synced(self, biz: str) -> None: ...
     def set_account_disabled(self, biz: str, is_disabled: bool) -> None: ...
     def save_login_session(
@@ -104,6 +107,16 @@ class Storage(AbstractContextManager):
         )
         cur.execute(
             """
+            CREATE TABLE IF NOT EXISTS account_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS accounts (
                 biz TEXT PRIMARY KEY,
                 nickname TEXT NOT NULL,
@@ -112,12 +125,19 @@ class Storage(AbstractContextManager):
                 uin TEXT NOT NULL,
                 key TEXT NOT NULL,
                 pass_ticket TEXT NOT NULL,
+                group_id INTEGER REFERENCES account_groups(id) ON DELETE SET NULL,
                 is_default INTEGER NOT NULL DEFAULT 0,
                 is_disabled INTEGER NOT NULL DEFAULT 0,
                 last_synced_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_accounts_group
+            ON accounts (group_id)
             """
         )
         cur.execute(
@@ -236,6 +256,15 @@ class Storage(AbstractContextManager):
             )
         if current_version in (None, "2", "3"):
             self._ensure_account_disabled_column(cur)
+        if current_version in (None, "2", "3", "4"):
+            self._ensure_account_groups_table(cur)
+            self._ensure_group_id_column(cur)
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_accounts_group
+                ON accounts (group_id)
+                """
+            )
 
     @staticmethod
     def _ensure_account_disabled_column(cur: sqlite3.Cursor) -> None:
@@ -246,6 +275,27 @@ class Storage(AbstractContextManager):
             cur.execute(
                 "ALTER TABLE accounts ADD COLUMN is_disabled INTEGER NOT NULL DEFAULT 0"
             )
+
+    @staticmethod
+    def _ensure_account_groups_table(cur: sqlite3.Cursor) -> None:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS account_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+
+    @staticmethod
+    def _ensure_group_id_column(cur: sqlite3.Cursor) -> None:
+        columns = {
+            row[1] for row in cur.execute("PRAGMA table_info(accounts)").fetchall()
+        }
+        if "group_id" not in columns:
+            cur.execute("ALTER TABLE accounts ADD COLUMN group_id INTEGER")
 
     # Meta helpers --------------------------------------------------------
     def get_meta(self, key: str) -> Optional[str]:
@@ -268,9 +318,9 @@ class Storage(AbstractContextManager):
         self.conn.execute(
             """
             INSERT INTO accounts (biz, nickname, alias, round_head_img, uin, key, pass_ticket,
-                                  is_default, is_disabled, last_synced_at, created_at, updated_at)
+                                  group_id, is_default, is_disabled, last_synced_at, created_at, updated_at)
             VALUES (:biz, :nickname, :alias, :round_head_img, :uin, :key, :pass_ticket,
-                    :is_default, :is_disabled, :last_synced_at, :created_at, :updated_at)
+                    :group_id, :is_default, :is_disabled, :last_synced_at, :created_at, :updated_at)
             ON CONFLICT(biz) DO UPDATE SET
                 nickname=excluded.nickname,
                 alias=excluded.alias,
@@ -288,6 +338,7 @@ class Storage(AbstractContextManager):
                 "uin": account.uin or "",
                 "key": account.key or "",
                 "pass_ticket": account.pass_ticket or "",
+                "group_id": account.group_id,
                 "is_default": 1 if account.is_default else 0,
                 "is_disabled": 1 if account.is_disabled else 0,
                 "last_synced_at": account.last_synced_at.strftime(ISO_FORMAT)
@@ -302,10 +353,18 @@ class Storage(AbstractContextManager):
             self.set_default_account(account.biz)
         return self.get_account(account.biz, fallback_to_default=False)
 
-    def list_accounts(self) -> List[AccountCredential]:
-        rows = self.conn.execute(
-            "SELECT * FROM accounts ORDER BY is_default DESC, nickname ASC"
-        ).fetchall()
+    def list_accounts(self, group: Optional[str] = None) -> List[AccountCredential]:
+        query = """
+            SELECT a.*, g.name AS group_name
+            FROM accounts a
+            LEFT JOIN account_groups g ON g.id = a.group_id
+        """
+        params: list = []
+        if group:
+            query += " WHERE g.name = ?"
+            params.append(group)
+        query += " ORDER BY a.is_default DESC, a.nickname ASC"
+        rows = self.conn.execute(query, params).fetchall()
         return [self._row_to_account(row) for row in rows]
 
     def get_account(
@@ -313,12 +372,34 @@ class Storage(AbstractContextManager):
     ) -> AccountCredential:
         row = None
         if biz:
-            row = self.conn.execute("SELECT * FROM accounts WHERE biz = ?", (biz,)).fetchone()
+            row = self.conn.execute(
+                """
+                SELECT a.*, g.name AS group_name
+                FROM accounts a
+                LEFT JOIN account_groups g ON g.id = a.group_id
+                WHERE a.biz = ?
+                """,
+                (biz,),
+            ).fetchone()
         if not row and fallback_to_default:
-            row = self.conn.execute("SELECT * FROM accounts WHERE is_default = 1 LIMIT 1").fetchone()
+            row = self.conn.execute(
+                """
+                SELECT a.*, g.name AS group_name
+                FROM accounts a
+                LEFT JOIN account_groups g ON g.id = a.group_id
+                WHERE a.is_default = 1
+                LIMIT 1
+                """
+            ).fetchone()
         if not row and fallback_to_default and not biz:
             row = self.conn.execute(
-                "SELECT * FROM accounts ORDER BY updated_at DESC LIMIT 1"
+                """
+                SELECT a.*, g.name AS group_name
+                FROM accounts a
+                LEFT JOIN account_groups g ON g.id = a.group_id
+                ORDER BY a.updated_at DESC
+                LIMIT 1
+                """
             ).fetchone()
         if not row:
             raise LookupError(
@@ -336,6 +417,61 @@ class Storage(AbstractContextManager):
             self.conn.execute("UPDATE accounts SET is_default = 0")
             updated = self.conn.execute(
                 "UPDATE accounts SET is_default = 1 WHERE biz = ?", (biz,)
+            ).rowcount
+            if updated == 0:
+                raise LookupError(f"Account {biz} not found")
+
+    def upsert_group(self, name: str) -> AccountGroup:
+        trimmed = name.strip()
+        if not trimmed:
+            raise ValueError("Group name cannot be empty.")
+        now = _utc_now()
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO account_groups (name, created_at, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET updated_at = excluded.updated_at
+                """,
+                (trimmed, now, now),
+            )
+            row = self.conn.execute(
+                "SELECT id, name FROM account_groups WHERE name = ?", (trimmed,)
+            ).fetchone()
+        if not row:
+            raise RuntimeError(f"Failed to create group {trimmed}.")
+        return AccountGroup(id=row["id"], name=row["name"])
+
+    def list_groups(self) -> List[AccountGroup]:
+        rows = self.conn.execute(
+            """
+            SELECT g.id, g.name, COUNT(a.biz) AS account_count
+            FROM account_groups g
+            LEFT JOIN accounts a ON a.group_id = g.id
+            GROUP BY g.id, g.name
+            ORDER BY g.name ASC
+            """
+        ).fetchall()
+        return [
+            AccountGroup(id=row["id"], name=row["name"], account_count=row["account_count"])
+            for row in rows
+        ]
+
+    def set_account_group(self, biz: str, group_name: Optional[str]) -> None:
+        target_name = group_name.strip() if group_name else ""
+        with self.conn:
+            if not target_name:
+                updated = self.conn.execute(
+                    "UPDATE accounts SET group_id = NULL, updated_at = ? WHERE biz = ?",
+                    (_utc_now(), biz),
+                ).rowcount
+                if updated == 0:
+                    raise LookupError(f"Account {biz} not found")
+                return
+            group = self.upsert_group(target_name)
+            updated = self.conn.execute(
+                "UPDATE accounts SET group_id = ?, updated_at = ? WHERE biz = ?",
+                (group.id, _utc_now(), biz),
             ).rowcount
             if updated == 0:
                 raise LookupError(f"Account {biz} not found")
@@ -531,6 +667,8 @@ class Storage(AbstractContextManager):
             is_default=bool(row["is_default"]),
             is_disabled=bool(row["is_disabled"]) if "is_disabled" in row.keys() else False,
             last_synced_at=last_synced_at,
+            group_id=row["group_id"] if "group_id" in row.keys() else None,
+            group_name=row["group_name"] if "group_name" in row.keys() else None,
         )
 
     @staticmethod
@@ -585,6 +723,16 @@ class PostgresStorage(AbstractContextManager):
             )
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS account_groups (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL
+                )
+                """
+            )
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS accounts (
                     biz TEXT PRIMARY KEY,
                     nickname TEXT NOT NULL,
@@ -593,6 +741,7 @@ class PostgresStorage(AbstractContextManager):
                     uin TEXT NOT NULL,
                     key TEXT NOT NULL,
                     pass_ticket TEXT NOT NULL,
+                    group_id INTEGER REFERENCES account_groups(id) ON DELETE SET NULL,
                     is_default BOOLEAN NOT NULL DEFAULT FALSE,
                     is_disabled BOOLEAN NOT NULL DEFAULT FALSE,
                     last_synced_at TIMESTAMPTZ,
@@ -605,6 +754,18 @@ class PostgresStorage(AbstractContextManager):
                 """
                 ALTER TABLE accounts
                 ADD COLUMN IF NOT EXISTS is_disabled BOOLEAN NOT NULL DEFAULT FALSE
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE accounts
+                ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES account_groups(id) ON DELETE SET NULL
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_accounts_group
+                ON accounts (group_id)
                 """
             )
             cur.execute(
@@ -803,8 +964,8 @@ class PostgresStorage(AbstractContextManager):
             cur.execute(
                 """
                 INSERT INTO accounts (biz, nickname, alias, round_head_img, uin, key, pass_ticket,
-                                      is_default, is_disabled, last_synced_at, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                      group_id, is_default, is_disabled, last_synced_at, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (biz) DO UPDATE SET
                     nickname=EXCLUDED.nickname,
                     alias=EXCLUDED.alias,
@@ -822,6 +983,7 @@ class PostgresStorage(AbstractContextManager):
                     account.uin or "",
                     account.key or "",
                     account.pass_ticket or "",
+                    account.group_id,
                     account.is_default,
                     account.is_disabled,
                     account.last_synced_at,
@@ -834,9 +996,19 @@ class PostgresStorage(AbstractContextManager):
             self.set_default_account(account.biz)
         return self.get_account(account.biz, fallback_to_default=False)
 
-    def list_accounts(self) -> List[AccountCredential]:
+    def list_accounts(self, group: Optional[str] = None) -> List[AccountCredential]:
+        query = """
+            SELECT a.*, g.name AS group_name
+            FROM accounts a
+            LEFT JOIN account_groups g ON g.id = a.group_id
+        """
+        params: list = []
+        if group:
+            query += " WHERE g.name = %s"
+            params.append(group)
+        query += " ORDER BY a.is_default DESC, a.nickname ASC"
         with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            cur.execute("SELECT * FROM accounts ORDER BY is_default DESC, nickname ASC")
+            cur.execute(query, params)
             rows = cur.fetchall()
         return [self._row_to_account(row) for row in rows]
 
@@ -846,13 +1018,37 @@ class PostgresStorage(AbstractContextManager):
         row = None
         with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             if biz:
-                cur.execute("SELECT * FROM accounts WHERE biz = %s", (biz,))
+                cur.execute(
+                    """
+                    SELECT a.*, g.name AS group_name
+                    FROM accounts a
+                    LEFT JOIN account_groups g ON g.id = a.group_id
+                    WHERE a.biz = %s
+                    """,
+                    (biz,),
+                )
                 row = cur.fetchone()
             if not row and fallback_to_default:
-                cur.execute("SELECT * FROM accounts WHERE is_default = TRUE LIMIT 1")
+                cur.execute(
+                    """
+                    SELECT a.*, g.name AS group_name
+                    FROM accounts a
+                    LEFT JOIN account_groups g ON g.id = a.group_id
+                    WHERE a.is_default = TRUE
+                    LIMIT 1
+                    """
+                )
                 row = cur.fetchone()
             if not row and fallback_to_default and not biz:
-                cur.execute("SELECT * FROM accounts ORDER BY updated_at DESC LIMIT 1")
+                cur.execute(
+                    """
+                    SELECT a.*, g.name AS group_name
+                    FROM accounts a
+                    LEFT JOIN account_groups g ON g.id = a.group_id
+                    ORDER BY a.updated_at DESC
+                    LIMIT 1
+                    """
+                )
                 row = cur.fetchone()
         if not row:
             raise LookupError("No account found. Create one with `accounts add` or `accounts search --interactive`.")
@@ -869,6 +1065,69 @@ class PostgresStorage(AbstractContextManager):
         with self.conn.cursor() as cur:
             cur.execute("UPDATE accounts SET is_default = FALSE")
             cur.execute("UPDATE accounts SET is_default = TRUE WHERE biz = %s", (biz,))
+            updated = cur.rowcount
+        self.conn.commit()
+        if updated == 0:
+            raise LookupError(f"Account {biz} not found")
+
+    def upsert_group(self, name: str) -> AccountGroup:
+        trimmed = name.strip()
+        if not trimmed:
+            raise ValueError("Group name cannot be empty.")
+        now = _utc_now_dt()
+        with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO account_groups (name, created_at, updated_at)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (name) DO UPDATE SET updated_at = EXCLUDED.updated_at
+                RETURNING id, name
+                """,
+                (trimmed, now, now),
+            )
+            row = cur.fetchone()
+        self.conn.commit()
+        if not row:
+            raise RuntimeError(f"Failed to create group {trimmed}.")
+        return AccountGroup(id=row["id"], name=row["name"])
+
+    def list_groups(self) -> List[AccountGroup]:
+        with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                """
+                SELECT g.id, g.name, COUNT(a.biz) AS account_count
+                FROM account_groups g
+                LEFT JOIN accounts a ON a.group_id = g.id
+                GROUP BY g.id, g.name
+                ORDER BY g.name ASC
+                """
+            )
+            rows = cur.fetchall()
+        return [
+            AccountGroup(id=row["id"], name=row["name"], account_count=row["account_count"])
+            for row in rows
+        ]
+
+    def set_account_group(self, biz: str, group_name: Optional[str]) -> None:
+        target_name = group_name.strip() if group_name else ""
+        now = _utc_now_dt()
+        with self.conn.cursor() as cur:
+            if not target_name:
+                cur.execute(
+                    "UPDATE accounts SET group_id = NULL, updated_at = %s WHERE biz = %s",
+                    (now, biz),
+                )
+                updated = cur.rowcount
+                self.conn.commit()
+                if updated == 0:
+                    raise LookupError(f"Account {biz} not found")
+                return
+        group = self.upsert_group(target_name)
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE accounts SET group_id = %s, updated_at = %s WHERE biz = %s",
+                (group.id, now, biz),
+            )
             updated = cur.rowcount
         self.conn.commit()
         if updated == 0:
@@ -1332,6 +1591,8 @@ class PostgresStorage(AbstractContextManager):
             is_default=bool(row["is_default"]),
             is_disabled=bool(row.get("is_disabled", False)),
             last_synced_at=last_synced_at,
+            group_id=row.get("group_id"),
+            group_name=row.get("group_name"),
         )
 
     @staticmethod

@@ -2,6 +2,12 @@ CREATE TABLE meta (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+CREATE TABLE account_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
 CREATE TABLE accounts (
                 biz TEXT PRIMARY KEY,
                 nickname TEXT NOT NULL,
@@ -10,11 +16,15 @@ CREATE TABLE accounts (
                 uin TEXT NOT NULL,
                 key TEXT NOT NULL,
                 pass_ticket TEXT NOT NULL,
+                group_id INTEGER REFERENCES account_groups(id) ON DELETE SET NULL,
                 is_default INTEGER NOT NULL DEFAULT 0,
                 last_synced_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+CREATE INDEX idx_accounts_group
+                ON accounts (group_id)
+                ;
 CREATE TABLE sqlite_sequence(name,seq);
 CREATE TABLE login_sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
