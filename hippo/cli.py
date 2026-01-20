@@ -22,7 +22,7 @@ from .config import DB_PATH, DEFAULT_PAGE_SIZE, DOWNLOAD_ROOT, HOME_DIR, load_pr
 from .downloader import ArticleDownloader
 from .http import MPClient, parse_appmsg_publish
 from .logger import setup_logger, get_logger
-from .models import AccountCredential, LoginSession
+from .models import AccountCredential, ArticleRecord, LoginSession
 from .storage import Storage, StorageInitError, StorageLike, PostgresStorage, open_storage
 from .utils import ensure_directory
 
@@ -138,6 +138,14 @@ class OutputFormat(str, Enum):
     html = "html"
     markdown = "markdown"
     text = "text"
+
+    def __str__(self) -> str:  # pragma: no cover - click displays value
+        return self.value
+
+
+class SyncMode(str, Enum):
+    full = "full"
+    incremental = "incremental"
 
     def __str__(self) -> str:  # pragma: no cover - click displays value
         return self.value
@@ -276,6 +284,16 @@ def _format_last_synced(last_synced_at: Optional[datetime]) -> str:
     return last_synced_at.isoformat(timespec="seconds") if last_synced_at else "-"
 
 
+def _to_utc_timestamp(value: Optional[datetime]) -> Optional[int]:
+    if not value:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return int(value.timestamp())
+
+
 def _resolve_account(storage: StorageLike, name: Optional[str]) -> AccountCredential:
     if name is None:
         raise LookupError("请输入公众号名称或 fakeid")
@@ -328,6 +346,8 @@ def _sync_account_pages(
     sleep_seconds: float,
     resume_key: Optional[str] = None,
     full_synced_hint: bool = False,
+    since_timestamp: Optional[int] = None,
+    stop_on_existing: bool = False,
     progress: Optional[tqdm] = None,
 ) -> tuple[int, int, bool]:
     session = _get_login_session(storage)
@@ -404,16 +424,32 @@ def _sync_account_pages(
                 completed = True
                 break
             records = parse_appmsg_publish(account.biz, payload)
-            if full_synced_hint:
+            stop_due_to_since = False
+            if since_timestamp is not None and records:
+                filtered: list[ArticleRecord] = []
+                for record in records:
+                    publish_at = record.publish_at
+                    if publish_at is None or publish_at >= since_timestamp:
+                        filtered.append(record)
+                        continue
+                    stop_due_to_since = True
+                    break
+                records = filtered
+                if stop_due_to_since and not records:
+                    completed = True
+                    break
+            if (full_synced_hint or stop_on_existing) and records:
                 existing_ids = storage.get_existing_article_ids(
                     account.biz, [record.article_id for record in records]
                 )
-                if records and len(existing_ids) == len(records):
+                if len(existing_ids) == len(records):
                     completed = True
                     break
-            saved = storage.save_articles(records)
-            storage.update_last_synced(account.biz)
-            total_saved += saved
+            saved = 0
+            if records:
+                saved = storage.save_articles(records)
+                storage.update_last_synced(account.biz)
+                total_saved += saved
             page_count += 1
             current_completed = offset + publish_list_len
             if total_count is not None and current_completed > total_count:
@@ -425,6 +461,9 @@ def _sync_account_pages(
                 delta = current_completed - progress.n
                 if delta:
                     progress.update(delta)
+            if stop_due_to_since:
+                completed = True
+                break
             if pages is not None and page_count >= pages:
                 completed = False
                 break
@@ -714,6 +753,9 @@ def sync_account_articles(
     biz: Optional[str] = typer.Option(None, help="指定账号 fakeid，留空使用默认账号"),
     pages: int = typer.Option(1, min=1, help="抓取的分页数量，每页默认 10 篇"),
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help="每页抓取数量"),
+    mode: SyncMode = typer.Option(
+        SyncMode.incremental, "--mode", "-m", help="Sync mode: full or incremental"
+    ),
     force: bool = typer.Option(False, is_flag=True, help="忽略跳过条件，强制同步"),
     skip_time: Optional[int] = typer.Option(
         None, min=1, help="多少分钟内同步过则跳过"
@@ -730,6 +772,17 @@ def sync_account_articles(
                 f"该账号近期已同步，跳过（上次同步 {_format_last_synced(account.last_synced_at)}）"
             )
             return
+        full_synced_hint = storage.get_meta(f"sync_complete:{account.biz}") is not None
+        since_timestamp = None
+        stop_on_existing = False
+        page_limit: Optional[int] = pages
+        if mode == SyncMode.full:
+            page_limit = None
+        elif mode == SyncMode.incremental:
+            full_synced_hint = False
+            since_timestamp = _to_utc_timestamp(account.last_synced_at)
+            if since_timestamp is None:
+                stop_on_existing = True
         typer.echo(f"开始同步 {account.nickname} 的文章")
         total_saved = 0
         with MPClient() as client:
@@ -746,9 +799,11 @@ def sync_account_articles(
                     client=client,
                     account=account,
                     page_size=page_size,
-                    pages=pages,
+                    pages=page_limit,
                     sleep_seconds=0,
-                    full_synced_hint=storage.get_meta(f"sync_complete:{account.biz}") is not None,
+                    full_synced_hint=full_synced_hint,
+                    since_timestamp=since_timestamp,
+                    stop_on_existing=stop_on_existing,
                     progress=progress,
                 )
                 status = "成功" if completed else "未完成"
@@ -775,6 +830,9 @@ def sync_all_accounts(
         0.05, min=0, help="翻页间隔秒数（可为小数）"
     ),
     reset: bool = typer.Option(False, is_flag=True, help="清除断点后从头同步"),
+    mode: SyncMode = typer.Option(
+        SyncMode.full, "--mode", "-m", help="Sync mode: full or incremental"
+    ),
     force: bool = typer.Option(False, is_flag=True, help="忽略跳过条件，强制同步"),
     skip_time: Optional[int] = typer.Option(
         None, min=1, help="多少分钟内同步过则跳过"
@@ -798,7 +856,7 @@ def sync_all_accounts(
             for account in accounts:
                 resume_key = f"sync_progress:{account.biz}"
                 complete_key = f"sync_complete:{account.biz}"
-                if reset:
+                if mode == SyncMode.full and reset:
                     storage.delete_meta(resume_key)
                     storage.delete_meta(complete_key)
                 if account.is_disabled:
@@ -812,7 +870,12 @@ def sync_all_accounts(
                     progress.set_postfix_str("skipped (disabled)", refresh=True)
                     progress.close()
                     continue
-                elif skip_time is None and not force and storage.get_meta(complete_key) == _today_str():
+                elif (
+                    mode == SyncMode.full
+                    and skip_time is None
+                    and not force
+                    and storage.get_meta(complete_key) == _today_str()
+                ):
                     progress = tqdm(
                         total=0,
                         desc=f"同步 {account.nickname} ({account.biz})",
@@ -836,6 +899,18 @@ def sync_all_accounts(
                     progress.close()
                     continue
 
+                since_timestamp = None
+                stop_on_existing = False
+                full_synced_hint = False
+                resume_key_value: Optional[str] = None
+                if mode == SyncMode.incremental:
+                    since_timestamp = _to_utc_timestamp(account.last_synced_at)
+                    if since_timestamp is None:
+                        stop_on_existing = True
+                else:
+                    full_synced_hint = storage.get_meta(complete_key) is not None
+                    resume_key_value = resume_key
+
                 progress = tqdm(
                     total=None,
                     desc=f"同步 {account.nickname} ({account.biz})",
@@ -851,15 +926,17 @@ def sync_all_accounts(
                         page_size=page_size,
                         pages=None,
                         sleep_seconds=sleep_seconds,
-                        resume_key=resume_key,
-                        full_synced_hint=storage.get_meta(complete_key) is not None,
+                        resume_key=resume_key_value,
+                        full_synced_hint=full_synced_hint,
+                        since_timestamp=since_timestamp,
+                        stop_on_existing=stop_on_existing,
                         progress=progress,
                     )
                     status = "成功" if completed else "未完成"
                     if completed and saved == 0:
                         status = "已是最新"
                     progress.set_postfix_str(status, refresh=True)
-                    if completed:
+                    if completed and mode == SyncMode.full:
                         storage.set_meta(complete_key, _today_str())
                 except SyncInterrupted:
                     progress.set_postfix_str("未完成", refresh=True)
