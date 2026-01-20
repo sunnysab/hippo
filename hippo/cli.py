@@ -146,6 +146,8 @@ class OutputFormat(str, Enum):
 class SyncMode(str, Enum):
     full = "full"
     incremental = "incremental"
+    recent = "recent"
+    range = "range"
 
     def __str__(self) -> str:  # pragma: no cover - click displays value
         return self.value
@@ -162,6 +164,21 @@ def _parse_since(value: Optional[str]) -> Optional[int]:
         return int(datetime.fromisoformat(value).timestamp())
     except ValueError as exc:
         raise typer.BadParameter("时间格式应为 YYYY-MM-DD") from exc
+
+
+def _parse_sync_date(
+    value: Optional[str], *, label: str, end_of_day: bool = False
+) -> Optional[int]:
+    if not value:
+        return None
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError as exc:
+        raise typer.BadParameter(f"{label} must be YYYY-MM-DD") from exc
+    dt = datetime(parsed.year, parsed.month, parsed.day)
+    if end_of_day:
+        dt = dt + timedelta(days=1) - timedelta(seconds=1)
+    return int(dt.timestamp())
 
 
 def _parse_selection_indices(selection: str, total: int) -> list[int]:
@@ -360,6 +377,7 @@ def _sync_account_pages(
     resume_key: Optional[str] = None,
     full_synced_hint: bool = False,
     since_timestamp: Optional[int] = None,
+    until_timestamp: Optional[int] = None,
     stop_on_existing: bool = False,
     progress: Optional[tqdm] = None,
 ) -> tuple[int, int, bool]:
@@ -438,15 +456,23 @@ def _sync_account_pages(
                 break
             records = parse_appmsg_publish(account.biz, payload)
             stop_due_to_since = False
-            if since_timestamp is not None and records:
+            if records and (since_timestamp is not None or until_timestamp is not None):
                 filtered: list[ArticleRecord] = []
                 for record in records:
                     publish_at = record.publish_at
-                    if publish_at is None or publish_at >= since_timestamp:
-                        filtered.append(record)
+                    if (
+                        until_timestamp is not None
+                        and publish_at is not None
+                        and publish_at > until_timestamp
+                    ):
                         continue
-                    stop_due_to_since = True
-                    break
+                    if since_timestamp is not None:
+                        if publish_at is None or publish_at >= since_timestamp:
+                            filtered.append(record)
+                            continue
+                        stop_due_to_since = True
+                        break
+                    filtered.append(record)
                 records = filtered
                 if stop_due_to_since and not records:
                     completed = True
@@ -767,7 +793,19 @@ def sync_account_articles(
     pages: int = typer.Option(1, min=1, help="抓取的分页数量，每页默认 10 篇"),
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help="每页抓取数量"),
     mode: SyncMode = typer.Option(
-        SyncMode.incremental, "--mode", "-m", help="Sync mode: full or incremental"
+        SyncMode.incremental,
+        "--mode",
+        "-m",
+        help="Sync mode: full, incremental, recent, range",
+    ),
+    recent_days: Optional[int] = typer.Option(
+        None, "--recent-days", min=1, help="Sync the last N days (requires --mode recent)"
+    ),
+    since_date: Optional[str] = typer.Option(
+        None, "--since", help="Start date (YYYY-MM-DD, for range mode)"
+    ),
+    until_date: Optional[str] = typer.Option(
+        None, "--until", help="End date (YYYY-MM-DD, for range mode)"
     ),
     force: bool = typer.Option(False, is_flag=True, help="忽略跳过条件，强制同步"),
     skip_time: Optional[int] = typer.Option(
@@ -787,6 +825,7 @@ def sync_account_articles(
             return
         full_synced_hint = storage.get_meta(f"sync_complete:{account.biz}") is not None
         since_timestamp = None
+        until_timestamp = None
         stop_on_existing = False
         page_limit: Optional[int] = pages
         if mode == SyncMode.full:
@@ -796,6 +835,27 @@ def sync_account_articles(
             since_timestamp = _to_utc_timestamp(account.last_synced_at)
             if since_timestamp is None:
                 stop_on_existing = True
+        elif mode == SyncMode.recent:
+            if recent_days is None:
+                raise typer.BadParameter("--recent-days is required for --mode recent.")
+            full_synced_hint = False
+            since_timestamp = int(
+                (datetime.now(timezone.utc) - timedelta(days=recent_days)).timestamp()
+            )
+        elif mode == SyncMode.range:
+            if not since_date:
+                raise typer.BadParameter("--since is required for --mode range.")
+            full_synced_hint = False
+            since_timestamp = _parse_sync_date(since_date, label="--since")
+            until_timestamp = _parse_sync_date(
+                until_date, label="--until", end_of_day=True
+            )
+            if (
+                until_timestamp is not None
+                and since_timestamp is not None
+                and until_timestamp < since_timestamp
+            ):
+                raise typer.BadParameter("--until must be on or after --since.")
         typer.echo(f"开始同步 {account.nickname} 的文章")
         total_saved = 0
         with MPClient() as client:
@@ -816,6 +876,7 @@ def sync_account_articles(
                     sleep_seconds=0,
                     full_synced_hint=full_synced_hint,
                     since_timestamp=since_timestamp,
+                    until_timestamp=until_timestamp,
                     stop_on_existing=stop_on_existing,
                     progress=progress,
                 )
@@ -844,7 +905,16 @@ def sync_all_accounts(
     ),
     reset: bool = typer.Option(False, is_flag=True, help="清除断点后从头同步"),
     mode: SyncMode = typer.Option(
-        SyncMode.full, "--mode", "-m", help="Sync mode: full or incremental"
+        SyncMode.full, "--mode", "-m", help="Sync mode: full, incremental, recent, range"
+    ),
+    recent_days: Optional[int] = typer.Option(
+        None, "--recent-days", min=1, help="Sync the last N days (requires --mode recent)"
+    ),
+    since_date: Optional[str] = typer.Option(
+        None, "--since", help="Start date (YYYY-MM-DD, for range mode)"
+    ),
+    until_date: Optional[str] = typer.Option(
+        None, "--until", help="End date (YYYY-MM-DD, for range mode)"
     ),
     force: bool = typer.Option(False, is_flag=True, help="忽略跳过条件，强制同步"),
     skip_time: Optional[int] = typer.Option(
@@ -857,6 +927,25 @@ def sync_all_accounts(
         if not accounts:
             typer.echo("尚未保存任何账号，使用 `account add` 添加")
             return
+        shared_since: Optional[int] = None
+        shared_until: Optional[int] = None
+        if mode == SyncMode.recent:
+            if recent_days is None:
+                raise typer.BadParameter("--recent-days is required for --mode recent.")
+            shared_since = int(
+                (datetime.now(timezone.utc) - timedelta(days=recent_days)).timestamp()
+            )
+        elif mode == SyncMode.range:
+            if not since_date:
+                raise typer.BadParameter("--since is required for --mode range.")
+            shared_since = _parse_sync_date(since_date, label="--since")
+            shared_until = _parse_sync_date(until_date, label="--until", end_of_day=True)
+            if (
+                shared_until is not None
+                and shared_since is not None
+                and shared_until < shared_since
+            ):
+                raise typer.BadParameter("--until must be on or after --since.")
         header = "开始同步全部账号（从最新文章往更早翻页）"
         if reset:
             header = "开始同步全部账号（重置断点，从最新文章往更早翻页）"
@@ -913,6 +1002,7 @@ def sync_all_accounts(
                     continue
 
                 since_timestamp = None
+                until_timestamp = None
                 stop_on_existing = False
                 full_synced_hint = False
                 resume_key_value: Optional[str] = None
@@ -920,6 +1010,9 @@ def sync_all_accounts(
                     since_timestamp = _to_utc_timestamp(account.last_synced_at)
                     if since_timestamp is None:
                         stop_on_existing = True
+                elif mode in (SyncMode.recent, SyncMode.range):
+                    since_timestamp = shared_since
+                    until_timestamp = shared_until
                 else:
                     full_synced_hint = storage.get_meta(complete_key) is not None
                     resume_key_value = resume_key
@@ -942,6 +1035,7 @@ def sync_all_accounts(
                         resume_key=resume_key_value,
                         full_synced_hint=full_synced_hint,
                         since_timestamp=since_timestamp,
+                        until_timestamp=until_timestamp,
                         stop_on_existing=stop_on_existing,
                         progress=progress,
                     )
