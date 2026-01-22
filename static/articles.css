@@ -184,6 +184,8 @@
   letter-spacing: var(--reader-letter);
   font-family: var(--reader-family);
   color: var(--text);
+  text-align: justify;
+  text-align-last: left;
 }
 
 .reader h2,
