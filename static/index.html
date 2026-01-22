@@ -236,7 +236,49 @@
                 <input type="checkbox" id="sync-download-images" />
                 <span data-i18n="sync.downloadImages">Download Images</span>
               </label>
+              <label class="switch">
+                <input type="checkbox" id="sync-alert-enabled" />
+                <span data-i18n="sync.alertEnabled">Email Alert on Failure</span>
+              </label>
+              <label>
+                <span data-i18n="sync.alertEmail">Alert Email</span>
+                <input type="email" id="sync-alert-email" placeholder="admin@example.com" />
+              </label>
             </div>
+          </div>
+        </div>
+        <div class="panel" style="margin-top:24px;">
+          <div class="panel-header">
+            <div>
+              <h2 data-i18n="email.title">Email Settings</h2>
+              <p class="muted" data-i18n="email.subtitle">SMTP settings for alerts.</p>
+            </div>
+          </div>
+          <div class="form-grid">
+            <label>
+              <span data-i18n="email.smtpHost">SMTP Host</span>
+              <input type="text" id="email-host" placeholder="smtp.example.com" />
+            </label>
+            <label>
+              <span data-i18n="email.smtpPort">SMTP Port</span>
+              <input type="number" id="email-port" min="1" value="587" />
+            </label>
+            <label>
+              <span data-i18n="email.smtpUser">SMTP User</span>
+              <input type="text" id="email-user" />
+            </label>
+            <label>
+              <span data-i18n="email.smtpPassword">SMTP Password</span>
+              <input type="password" id="email-password" />
+            </label>
+            <label>
+              <span data-i18n="email.fromEmail">From Email</span>
+              <input type="email" id="email-from" placeholder="noreply@example.com" />
+            </label>
+            <label class="switch">
+              <input type="checkbox" id="email-tls" />
+              <span data-i18n="email.tls">Use TLS</span>
+            </label>
           </div>
         </div>
         <div class="panel" style="margin-top:24px;">

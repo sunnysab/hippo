@@ -72,6 +72,8 @@
   "sync.skipMinutes": "跳过间隔（分钟）",
   "sync.downloadContent": "同步正文内容",
   "sync.downloadImages": "同步图片",
+  "sync.alertEnabled": "失败邮件告警",
+  "sync.alertEmail": "告警邮箱",
   "sync.historyTitle": "同步记录",
   "sync.historySubtitle": "最近的同步状态。",
   "sync.historyEmpty": "暂无同步记录。",
@@ -81,5 +83,13 @@
   "sync.status.failed": "失败",
   "sync.status.login_required": "需要登录",
   "sync.status.running": "同步中",
-  "sync.status.idle": "未开始"
+  "sync.status.idle": "未开始",
+  "email.title": "邮件配置",
+  "email.subtitle": "用于失败告警的 SMTP 配置。",
+  "email.smtpHost": "SMTP 主机",
+  "email.smtpPort": "SMTP 端口",
+  "email.smtpUser": "SMTP 用户",
+  "email.smtpPassword": "SMTP 密码",
+  "email.fromEmail": "发件人邮箱",
+  "email.tls": "启用 TLS"
 }

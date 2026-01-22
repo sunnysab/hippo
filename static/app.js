@@ -465,6 +465,15 @@ const renderSyncSettings = (settings) => {
   $('#sync-skip-minutes').value = settings.skip_minutes ?? 30;
   $('#sync-download-content').checked = Boolean(settings.download_content);
   $('#sync-download-images').checked = Boolean(settings.download_images);
+  $('#sync-alert-enabled').checked = Boolean(settings.alert_enabled);
+  $('#sync-alert-email').value = settings.alert_email || '';
+  const email = settings.email || {};
+  $('#email-host').value = email.smtp_host || '';
+  $('#email-port').value = email.smtp_port ?? 587;
+  $('#email-user').value = email.smtp_user || '';
+  $('#email-password').value = email.smtp_password || '';
+  $('#email-from').value = email.from_email || '';
+  $('#email-tls').checked = email.smtp_tls !== false;
 };
 
 const loadSyncSettings = async () => {
@@ -486,6 +495,16 @@ const saveSyncSettings = async () => {
     skip_minutes: Number($('#sync-skip-minutes').value),
     download_content: $('#sync-download-content').checked,
     download_images: $('#sync-download-images').checked,
+    alert_enabled: $('#sync-alert-enabled').checked,
+    alert_email: $('#sync-alert-email').value.trim(),
+    email: {
+      smtp_host: $('#email-host').value.trim(),
+      smtp_port: Number($('#email-port').value),
+      smtp_user: $('#email-user').value.trim(),
+      smtp_password: $('#email-password').value,
+      smtp_tls: $('#email-tls').checked,
+      from_email: $('#email-from').value.trim(),
+    },
   };
   const payload = await apiSend('/api/sync/settings', 'PATCH', body);
   state.syncSettings = payload;

@@ -7,6 +7,7 @@ import logging
 import mimetypes
 import random
 import re
+import smtplib
 import threading
 import time as time_module
 from datetime import date, datetime, time, timezone
@@ -15,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
+from email.message import EmailMessage
 
 import psycopg2
 import psycopg2.extras
@@ -39,6 +41,7 @@ SYNC_STARTED_KEY = "sync:last_started_at"
 SYNC_FINISHED_KEY = "sync:last_finished_at"
 SYNC_HISTORY_KEY = "sync:history"
 SYNC_SETTINGS_KEY = "sync:settings"
+ALERT_SENT_KEY = "sync:alert_sent"
 
 logger = logging.getLogger("hippo.serve")
 
@@ -114,7 +117,61 @@ def _default_sync_settings() -> dict[str, Any]:
         "download_images": True,
         "content_limit": 20,
         "skip_minutes": 30,
+        "alert_enabled": False,
+        "alert_email": "",
     }
+
+
+def _default_email_settings() -> dict[str, Any]:
+    return {
+        "smtp_host": "",
+        "smtp_port": 587,
+        "smtp_user": "",
+        "smtp_password": "",
+        "smtp_tls": True,
+        "from_email": "",
+    }
+
+
+def _get_email_settings(storage: StorageLike) -> dict[str, Any]:
+    settings = _load_meta_json(storage, "email:settings", _default_email_settings())
+    defaults = _default_email_settings()
+    return {**defaults, **(settings or {})}
+
+
+def _set_email_settings(storage: StorageLike, updates: dict[str, Any]) -> dict[str, Any]:
+    current = _get_email_settings(storage)
+    current.update(updates)
+    _save_meta_json(storage, "email:settings", current)
+    return current
+
+
+def _send_alert_email(storage: StorageLike, subject: str, body: str) -> None:
+    settings = _get_email_settings(storage)
+    sync_settings = _get_sync_settings(storage)
+    if not sync_settings.get("alert_enabled"):
+        return
+    to_email = sync_settings.get("alert_email") or ""
+    if not to_email:
+        return
+    if not settings.get("smtp_host"):
+        return
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = settings.get("from_email") or settings.get("smtp_user") or to_email
+    message["To"] = to_email
+    message.set_content(body)
+    smtp_host = settings.get("smtp_host")
+    smtp_port = int(settings.get("smtp_port") or 587)
+    smtp_user = settings.get("smtp_user")
+    smtp_password = settings.get("smtp_password")
+    use_tls = bool(settings.get("smtp_tls"))
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as smtp:
+        if use_tls:
+            smtp.starttls()
+        if smtp_user:
+            smtp.login(smtp_user, smtp_password or "")
+        smtp.send_message(message)
 
 
 def _get_sync_settings(storage: StorageLike) -> dict[str, Any]:
@@ -417,6 +474,7 @@ class SyncScheduler:
                 _set_sync_state(storage, status=status, error=error, finished_at=finished_at)
             else:
                 _set_sync_state(storage, status="success", error="", finished_at=finished_at)
+                storage.delete_meta(ALERT_SENT_KEY)
             _append_sync_history(
                 storage,
                 {
@@ -429,6 +487,14 @@ class SyncScheduler:
                     "skipped_accounts": skipped_accounts,
                 },
             )
+            if error and not storage.get_meta(ALERT_SENT_KEY):
+                subject = "Hippo sync failed"
+                body = f"Status: {status}\\nError: {error}\\nStarted: {started_at}\\nFinished: {finished_at}"
+                try:
+                    _send_alert_email(storage, subject, body)
+                    storage.set_meta(ALERT_SENT_KEY, "1")
+                except Exception as exc:
+                    logger.warning("Failed to send alert email: %s", exc)
             return _get_sync_status(storage)
 
 
@@ -1531,7 +1597,9 @@ class HippoHandler(BaseHTTPRequestHandler):
             action = segments[2]
             if action == "settings":
                 if method == "GET":
-                    self._send_json(HTTPStatus.OK, _get_sync_settings(storage))
+                    payload = _get_sync_settings(storage)
+                    payload["email"] = _get_email_settings(storage)
+                    self._send_json(HTTPStatus.OK, payload)
                     return
                 if method == "PATCH":
                     body = self._read_json()
@@ -1566,7 +1634,28 @@ class HippoHandler(BaseHTTPRequestHandler):
                         updates["since"] = body["since"]
                     if "until" in body:
                         updates["until"] = body["until"]
+                    if "alert_enabled" in body:
+                        updates["alert_enabled"] = bool(body["alert_enabled"])
+                    if "alert_email" in body:
+                        updates["alert_email"] = str(body["alert_email"]).strip()
                     settings = _set_sync_settings(storage, updates)
+                    email_updates: dict[str, Any] = {}
+                    email_body = body.get("email")
+                    if isinstance(email_body, dict):
+                        for key in (
+                            "smtp_host",
+                            "smtp_port",
+                            "smtp_user",
+                            "smtp_password",
+                            "smtp_tls",
+                            "from_email",
+                        ):
+                            if key in email_body:
+                                email_updates[key] = email_body[key]
+                    if email_updates:
+                        settings["email"] = _set_email_settings(storage, email_updates)
+                    else:
+                        settings["email"] = _get_email_settings(storage)
                     if settings.get("enabled"):
                         scheduler.trigger()
                     self._send_json(HTTPStatus.OK, settings)
