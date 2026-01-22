@@ -388,6 +388,14 @@ body {
   gap: 24px;
 }
 
+.article-layout.is-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.article-layout.is-collapsed .article-list {
+  display: none;
+}
+
 .article-list-scroll {
   display: flex;
   flex-direction: column;
@@ -445,14 +453,46 @@ body {
 }
 
 .reader-controls {
-  display: grid;
+  position: fixed;
+  right: 28px;
+  bottom: 92px;
+  width: min(360px, calc(100vw - 40px));
+  display: none;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
-  padding: 12px;
+  padding: 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: #fff;
-  margin-bottom: 16px;
+  box-shadow: var(--shadow);
+  z-index: 10;
+}
+
+.reader-controls.is-open {
+  display: grid;
+}
+
+.reader-fab {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  width: 54px;
+  height: 54px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fff;
+  box-shadow: var(--shadow);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  z-index: 10;
+}
+
+.reader-fab:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
 }
 
 .reader-controls label {

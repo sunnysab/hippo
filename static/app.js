@@ -609,6 +609,35 @@ const initReaderControls = () => {
   apply();
 };
 
+const initArticleLayout = () => {
+  const layout = $('.article-layout');
+  const toggle = $('#btn-article-toggle');
+  const toggleLabel = toggle?.querySelector('[data-i18n]');
+  const updateLabel = () => {
+    if (!layout || !toggle || !toggleLabel) return;
+    const collapsed = layout.classList.contains('is-collapsed');
+    toggleLabel.textContent = t(
+      collapsed ? 'articles.showList' : 'articles.hideList',
+      collapsed ? 'Show List' : 'Hide List',
+    );
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+  };
+  if (layout && toggle) {
+    toggle.addEventListener('click', () => {
+      layout.classList.toggle('is-collapsed');
+      updateLabel();
+    });
+    updateLabel();
+  }
+  const readerToggle = $('#reader-toggle');
+  const readerControls = $('#reader-controls');
+  if (readerToggle && readerControls) {
+    readerToggle.addEventListener('click', () => {
+      readerControls.classList.toggle('is-open');
+    });
+  }
+};
+
 const bindEvents = () => {
   $('#btn-refresh').addEventListener('click', async () => {
     await loadGroups();
@@ -702,6 +731,7 @@ const init = async () => {
   initTabs();
   initReaderControls();
   await loadI18n();
+  initArticleLayout();
   await loadGroups();
   await populateArticleAccountFilter();
   await loadArticles(true);
