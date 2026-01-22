@@ -110,6 +110,23 @@
     });
   };
 
+  const parseWechatUrl = (urlStr) => {
+    try {
+        const url = new URL(urlStr);
+        if (url.hostname === 'mp.weixin.qq.com') {
+             const biz = url.searchParams.get('__biz');
+             const mid = url.searchParams.get('mid');
+             const idx = url.searchParams.get('idx');
+             if (biz && mid && idx) {
+                 return { biz, mid, idx };
+             }
+        }
+    } catch (e) {
+        // ignore
+    }
+    return null;
+  };
+
   const renderInline = (text) => {
     const escaped = String(text || '')
       .replace(/&/g, '&amp;')
@@ -117,9 +134,24 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+      
+    // Custom replacer for links
+    // First, restore temporary link tokens if we used them, but here we process raw markdown-like links [text](url)
+    // We want to intercept the link rendering.
+    
     return escaped
       .replace(/\\\|/g, '|')
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
+          const meta = parseWechatUrl(url);
+          if (meta) {
+              return `<a href="${url}" target="_blank" rel="noopener noreferrer" 
+                data-hippo-biz="${meta.biz}" 
+                data-hippo-mid="${meta.mid}" 
+                data-hippo-idx="${meta.idx}"
+                class="js-article-link">${text}</a>`;
+          }
+          return `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+      })
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.+?)\*/g, '<em>$1</em>')
       .replace(/\n/g, '<br>');
@@ -222,6 +254,69 @@
     });
     reader.appendChild(fragment);
     container.appendChild(reader);
+    
+    // Bind click events for internal article links
+    container.querySelectorAll('.js-article-link').forEach(link => {
+        link.addEventListener('click', async (e) => {
+            const biz = link.dataset.hippoBiz;
+            const mid = link.dataset.hippoMid;
+            const idx = link.dataset.hippoIdx;
+            
+            // We need a backend API to find article by (biz, mid, idx) or (mid, idx) globally?
+            // Usually mid is unique per biz.
+            // Let's call an API to resolve this. 
+            // Since we don't have a direct "find by mid" endpoint exposed yet in previous context,
+            // we might need to search or add one.
+            // BUT, the instruction says "去后端查询是否缓存了这篇文章". 
+            // So we likely need a new endpoint or use search?
+            // Search might be fuzzy. 
+            // Let's assume we can use the /api/article endpoint with a specific filter if we implement it, 
+            // or we add a small resolve endpoint.
+            // For now, I will assume we might need to add logic to server.py or use existing search `q`.
+            // But `q` searches text. 
+            
+            // Let's try to fetch via a new dedicated way or use search.
+            // The most robust way is asking the backend "Do you have this article?".
+            // I'll implement a client-side check via a new API param or endpoint in next step if needed.
+            // Wait, I can modify the click handler to call an API.
+            
+            e.preventDefault();
+            // Try to find the article in our DB
+            // We can add a specialized search param to /api/article or just search by title? No, title is not reliable.
+            // We need to look up by `mid`.
+            // Let's verify if `server.py` supports filtering by `mid` or source url.
+            // It filters by `q` (text tokens).
+            
+            // I will implement the backend support for this in the same task step if possible, 
+            // or just log it for now? "这个功能要好好设计一下".
+            // Implementation:
+            // 1. Frontend sends request to `GET /api/article?mid=...&idx=...&biz=...`
+            // 2. Backend checks DB.
+            // 3. If found, return article ID.
+            // 4. Frontend calls `selectArticle(id)`.
+            // 5. If not found, open original link in new tab.
+            
+            try {
+                const searchUrl = new URL('/api/article', window.location.origin);
+                searchUrl.searchParams.set('mid', mid);
+                searchUrl.searchParams.set('idx', idx);
+                searchUrl.searchParams.set('biz', biz);
+                // We need to update server.py to handle these params!
+                
+                const res = await apiGet(searchUrl.pathname + searchUrl.search);
+                if (res.articles && res.articles.length > 0) {
+                     // Found it!
+                     // Prefer exact match. The API should return it.
+                     selectArticle(res.articles[0].id);
+                } else {
+                     window.open(link.href, '_blank');
+                }
+            } catch (err) {
+                console.warn('Failed to resolve internal link', err);
+                window.open(link.href, '_blank');
+            }
+        });
+    });
   };
 
   const selectArticle = async (id) => {
