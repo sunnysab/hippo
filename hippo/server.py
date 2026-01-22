@@ -987,6 +987,7 @@ def _build_article_query(
     query: Optional[str],
     since_ts: Optional[int],
     until_ts: Optional[int],
+    content_only: bool,
     limit: int,
     offset: int,
 ) -> tuple[str, list[Any]]:
@@ -1037,6 +1038,7 @@ def _build_article_query(
         " LIMIT 1) AS image_id"
     )
 
+    content_join = " JOIN article_content ac ON ac.article_pk = a.id" if content_only else ""
     query_sql = (
         "SELECT a.id, a.biz, a.article_id, a.title, a.author, a.digest, a.cover, a.link,"
         " a.source_url, a.publish_at,"
@@ -1046,6 +1048,7 @@ def _build_article_query(
         f" {image_select}"
         " FROM articles a"
         " JOIN accounts acc ON acc.biz = a.biz"
+        f"{content_join}"
         " LEFT JOIN account_groups g ON g.id = acc.group_id"
         f" {image_sql}"
         f" {where_sql}"
@@ -1064,6 +1067,7 @@ def _list_articles(
     query: Optional[str],
     since_ts: Optional[int],
     until_ts: Optional[int],
+    content_only: bool,
     page: int,
     page_size: int,
 ) -> dict[str, Any]:
@@ -1075,10 +1079,13 @@ def _list_articles(
         query=query,
         since_ts=since_ts,
         until_ts=until_ts,
+        content_only=content_only,
         limit=page_size,
         offset=offset,
     )
     rows = _fetchall(storage, query_sql, params)
+    for row in rows:
+        row["account_avatar_url"] = f"/api/account/{row['biz']}/avatar"
 
     is_pg = _is_postgres(storage)
     where = []
@@ -1111,7 +1118,8 @@ def _list_articles(
         "SELECT COUNT(*) AS total"
         " FROM articles a"
         " JOIN accounts acc ON acc.biz = a.biz"
-        f" {where_sql}"
+        + (" JOIN article_content ac ON ac.article_pk = a.id" if content_only else "")
+        + f" {where_sql}"
     )
     total_row = _fetchone(storage, count_sql, count_params)
     total = int(total_row["total"]) if total_row else 0
@@ -1146,6 +1154,7 @@ def _get_article(storage: StorageLike, article_id: int) -> dict[str, Any]:
     )
     if not article:
         raise ApiError("Article not found", status=404)
+    article["account_avatar_url"] = f"/api/account/{article['biz']}/avatar"
 
     content_row = _fetchone(
         storage,
@@ -1294,6 +1303,7 @@ def _list_feed(
         query=query,
         since_ts=since_ts,
         until_ts=until_ts,
+        content_only=False,
         limit=limit,
         offset=0,
     )
@@ -1628,6 +1638,8 @@ class HippoHandler(BaseHTTPRequestHandler):
                 search = query.get("q", [""])[0] or None
                 page = _parse_int(query.get("page", ["1"])[0]) or 1
                 page_size = _parse_int(query.get("page_size", ["20"])[0]) or 20
+                content_flag = (query.get("content", [""])[0] or "").lower()
+                content_only = content_flag in {"1", "true", "yes"}
                 since_ts = _parse_date(query.get("since", [None])[0])
                 until_ts = _parse_date(query.get("until", [None])[0], end_of_day=True)
                 payload = _list_articles(
@@ -1637,6 +1649,7 @@ class HippoHandler(BaseHTTPRequestHandler):
                     query=search,
                     since_ts=since_ts,
                     until_ts=until_ts,
+                    content_only=content_only,
                     page=max(page, 1),
                     page_size=min(max(page_size, 1), 200),
                 )

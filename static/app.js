@@ -298,12 +298,17 @@ const renderArticleList = () => {
     const card = document.createElement('div');
     card.className = 'article-card' + (state.selectedArticleId === article.id ? ' is-active' : '');
     const thumb = article.image_id ? `/api/image/${article.image_id}` : '';
+    const avatar = article.account_avatar_url || '';
     card.innerHTML = `
       ${thumb ? `<img class="article-thumb" src="${thumb}" alt="" onerror="this.style.display='none'">` : '<div class="article-thumb placeholder"></div>'}
-      <div>
+      <div class="article-info">
         <div class="article-title">${article.title}</div>
-        <div class="article-meta">${article.account_nickname || ''}</div>
-        <div class="article-meta">${formatDate(article.publish_at)}</div>
+        <div class="article-meta">
+          ${avatar ? `<img class="article-avatar" src="${avatar}" alt="" onerror="this.style.display='none'">` : ''}
+          <span>${article.account_nickname || ''}</span>
+          <span>${formatDate(article.publish_at)}</span>
+        </div>
+        <div class="article-digest">${article.digest || ''}</div>
       </div>
     `;
     card.addEventListener('click', () => selectArticle(article.id));
@@ -333,6 +338,7 @@ const loadArticles = async (reset = true) => {
   if (groupId) url.searchParams.set('group_id', groupId);
   if (accountBiz) url.searchParams.set('biz', accountBiz);
   if (search) url.searchParams.set('q', search);
+  url.searchParams.set('content', '1');
   url.searchParams.set('page', state.articlePage.toString());
   url.searchParams.set('page_size', state.articlePageSize.toString());
   const payload = await apiGet(url.pathname + url.search);
@@ -401,12 +407,13 @@ const renderArticleContent = (payload) => {
       return;
     }
     if (block.type === 'image') {
+      if (!block.image_id) {
+        return;
+      }
       const figure = document.createElement('figure');
       const img = document.createElement('img');
       if (block.image_id) {
         img.src = `/api/image/${block.image_id}`;
-      } else if (block.orig_url) {
-        img.src = block.orig_url;
       }
       img.alt = block.alt || '';
       img.loading = 'lazy';
@@ -662,14 +669,15 @@ const initReaderControls = () => {
 const initArticleLayout = () => {
   const layout = $('.article-layout');
   const toggle = $('#btn-article-toggle');
-  const toggleLabel = toggle?.querySelector('[data-i18n]');
   const updateLabel = () => {
-    if (!layout || !toggle || !toggleLabel) return;
+    if (!layout || !toggle) return;
     const collapsed = layout.classList.contains('is-collapsed');
-    toggleLabel.textContent = t(
+    const label = t(
       collapsed ? 'articles.showList' : 'articles.hideList',
       collapsed ? 'Show List' : 'Hide List',
     );
+    toggle.setAttribute('title', label);
+    toggle.setAttribute('aria-label', label);
     toggle.setAttribute('aria-expanded', String(!collapsed));
   };
   if (layout && toggle) {
@@ -678,6 +686,49 @@ const initArticleLayout = () => {
       updateLabel();
     });
     updateLabel();
+  }
+  const resizer = $('#article-resizer');
+  if (layout && resizer) {
+    const root = document.documentElement;
+    const saved = localStorage.getItem('hippo-article-width');
+    if (saved) {
+      root.style.setProperty('--article-list-width', `${saved}px`);
+    }
+    let startX = 0;
+    let startWidth = 0;
+    const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+    const onMove = (event) => {
+      const clientX = event.touches ? event.touches[0].clientX : event.clientX;
+      const delta = clientX - startX;
+      const width = clamp(startWidth + delta, 220, 420);
+      root.style.setProperty('--article-list-width', `${width}px`);
+    };
+    const onUp = (event) => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('touchmove', onMove);
+      document.removeEventListener('touchend', onUp);
+      const current = getComputedStyle(root).getPropertyValue('--article-list-width').trim();
+      if (current.endsWith('px')) {
+        localStorage.setItem('hippo-article-width', current.replace('px', ''));
+      }
+    };
+    resizer.addEventListener('mousedown', (event) => {
+      startX = event.clientX;
+      startWidth = parseFloat(
+        getComputedStyle(root).getPropertyValue('--article-list-width'),
+      );
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    resizer.addEventListener('touchstart', (event) => {
+      startX = event.touches[0].clientX;
+      startWidth = parseFloat(
+        getComputedStyle(root).getPropertyValue('--article-list-width'),
+      );
+      document.addEventListener('touchmove', onMove);
+      document.addEventListener('touchend', onUp);
+    });
   }
   const readerToggle = $('#reader-toggle');
   const readerControls = $('#reader-controls');
