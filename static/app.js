@@ -546,10 +546,21 @@ const renderSyncHistory = () => {
 const renderSyncStatus = () => {
   const banner = $('#status-banner');
   const text = $('#banner-text');
+  const syncMeta = $('#last-sync-info');
   if (!banner || !text) return;
   if (!state.syncStatus) {
     banner.classList.add('is-hidden');
+    if (syncMeta) syncMeta.textContent = '';
     return;
+  }
+  if (syncMeta) {
+    const finished = state.syncStatus.last_finished_at;
+    if (finished) {
+      const relative = formatRelativeTime(finished);
+      syncMeta.textContent = t('sync.lastSyncAt', 'Last sync {time}').replace('{time}', relative);
+    } else {
+      syncMeta.textContent = '';
+    }
   }
   const status = state.syncStatus.status;
   if (status === 'login_required') {
