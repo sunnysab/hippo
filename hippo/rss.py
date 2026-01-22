@@ -88,24 +88,53 @@ def _resolve_group_ids(storage: StorageLike, names: Iterable[str]) -> list[int]:
     return [found[name] for name in cleaned]
 
 
-def _extract_description(raw: Optional[str]) -> str:
+def _text_to_html(text: str) -> str:
+    return escape(text).replace("\n", "<br/>")
+
+
+def _build_image_src(
+    image_base: Optional[str],
+    image_id: Optional[int],
+    orig_url: Optional[str],
+) -> str:
+    if image_id and image_base:
+        return f"{image_base.rstrip('/')}/api/image/{image_id}"
+    if image_id:
+        return f"/api/image/{image_id}"
+    return orig_url or ""
+
+
+def _extract_description(raw: Any, image_base: Optional[str]) -> str:
     if not raw:
         return ""
-    try:
-        blocks = json.loads(raw)
-    except Exception:
-        return raw
+    blocks = raw
+    if isinstance(raw, str):
+        try:
+            blocks = json.loads(raw)
+        except Exception:
+            return raw
     if not isinstance(blocks, list):
-        return raw
+        return str(blocks)
     parts: list[str] = []
     for block in blocks:
         if not isinstance(block, dict):
             continue
-        if block.get("type") == "paragraph" and block.get("text"):
-            parts.append(str(block.get("text")))
-        if len(parts) >= 3:
+        block_type = block.get("type")
+        if block_type == "paragraph" and block.get("text"):
+            parts.append(f"<p>{_text_to_html(str(block.get('text')))}</p>")
+        elif block_type == "heading" and block.get("text"):
+            level = min(max(int(block.get("level") or 2), 2), 4)
+            parts.append(
+                f"<h{level}>{_text_to_html(str(block.get('text')))}</h{level}>"
+            )
+        elif block_type == "image":
+            src = _build_image_src(image_base, block.get("image_id"), block.get("orig_url"))
+            if src:
+                alt = _text_to_html(str(block.get("alt") or ""))
+                parts.append(f"<img src=\"{src}\" alt=\"{alt}\" />")
+        if len(parts) >= 8:
             break
-    return "\n".join(parts)
+    return "".join(parts)
 
 
 def query_rss_items(
@@ -115,6 +144,7 @@ def query_rss_items(
     days: Optional[int],
     since: Optional[str],
     until: Optional[str],
+    image_base_url: Optional[str],
 ) -> list[RssItem]:
     with open_storage() as storage:
         _ensure_default_group(storage)
@@ -164,7 +194,9 @@ def query_rss_items(
 
     items: list[RssItem] = []
     for row in rows:
-        description = row.get("digest") or _extract_description(row.get("content_json"))
+        description = row.get("digest") or _extract_description(
+            row.get("content_json"), image_base_url
+        )
         items.append(
             RssItem(
                 title=row.get("title") or "",
@@ -196,6 +228,7 @@ def build_rss_xml(
     ]
     for item in items:
         pub_date = formatdate(item.pub_date, usegmt=True) if item.pub_date else now
+        description = item.description.replace("]]>", "]]]]><![CDATA[>")
         lines.extend(
             [
                 '<item>',
@@ -203,7 +236,7 @@ def build_rss_xml(
                 f'<link>{escape(item.link)}</link>',
                 f'<guid isPermaLink="false">{escape(item.guid)}</guid>',
                 f'<pubDate>{pub_date}</pubDate>',
-                f'<description>{escape(item.description)}</description>',
+                f'<description><![CDATA[{description}]]></description>',
                 '</item>',
             ]
         )

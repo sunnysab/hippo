@@ -1708,6 +1708,7 @@ def rss(
             days=days,
             since=since,
             until=until,
+            image_base_url=link or "http://localhost:8000/",
         )
     except ValueError as exc:
         typer.echo(str(exc))
