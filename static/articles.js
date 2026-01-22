@@ -258,9 +258,17 @@
     const readerToggle = $('#reader-toggle');
     const readerControls = $('#reader-controls');
     if (readerToggle && readerControls) {
-      readerToggle.addEventListener('click', () => {
+      readerToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
         readerControls.classList.remove('is-hidden');
         readerControls.classList.toggle('is-open');
+      });
+      readerControls.addEventListener('click', (e) => {
+        e.stopPropagation();
+      });
+      document.addEventListener('click', () => {
+        readerControls.classList.add('is-hidden');
+        readerControls.classList.remove('is-open');
       });
     }
   };
