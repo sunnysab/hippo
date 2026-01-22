@@ -11,6 +11,8 @@
   "groups.currentSubtitle": "请选择一个分组。",
   "groups.currentEmpty": "请选择一个分组。",
   "groups.currentMeta": "{n} 个公众号",
+  "groups.currentId": "ID: {id}",
+  "groups.currentIdEmpty": "ID",
   "groups.accounts": "个公众号",
   "groups.accountsPreview": "分组内公众号",
   "groups.rename": "重命名",

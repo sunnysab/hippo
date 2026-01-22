@@ -45,11 +45,10 @@
                 <h2 data-i18n="groups.title">Groups</h2>
                 <p class="muted" data-i18n="groups.subtitle">Organize accounts into focused collections.</p>
               </div>
-              <button class="btn" id="btn-group-create" type="button">
+              <button class="btn" id="btn-group-create" type="button" aria-label="Create group" title="Create group">
                 <span class="icon">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v14h-2zM5 11h14v2H5z"/></svg>
                 </span>
-                <span data-i18n="groups.create">New Group</span>
               </button>
             </div>
             <div class="list" id="group-list"></div>
@@ -57,27 +56,32 @@
           <div class="panel">
             <div class="panel-header">
               <div>
-                <h2 id="group-current-name" data-i18n="groups.currentTitle">Group</h2>
+                <div class="group-headline">
+                  <button class="group-name" id="group-current-name" type="button" data-i18n="groups.currentTitle">Group</button>
+                  <button class="group-id" id="group-current-id" type="button" data-i18n="groups.currentId">ID</button>
+                </div>
                 <p class="muted" id="group-current-meta" data-i18n="groups.currentSubtitle">Select a group.</p>
               </div>
-              <div class="toolbar">
+              <div class="toolbar group-actions">
+                <div class="input">
+                  <input type="search" id="account-search" placeholder="Search" data-i18n-placeholder="filters.search">
+                  <span class="icon">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6 6 0 1 0 14 15.5l.27.28v.79L20 21.5 21.5 20l-6-6zm-5.5 0a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>
+                  </span>
+                </div>
                 <button class="btn ghost" id="btn-group-rename" type="button" data-i18n="groups.rename">Rename</button>
                 <button class="btn ghost" id="btn-group-delete" type="button" data-i18n="groups.delete">Delete</button>
               </div>
             </div>
             <div class="toolbar accounts-toolbar">
-              <div class="input">
-                <input type="search" id="account-search" placeholder="Search" data-i18n-placeholder="filters.search">
-                <span class="icon">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6 6 0 1 0 14 15.5l.27.28v.79L20 21.5 21.5 20l-6-6zm-5.5 0a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>
-                </span>
-              </div>
               <label class="switch inline">
                 <input type="checkbox" id="account-select-all" />
                 <span data-i18n="accounts.selectAll">Select All</span>
               </label>
-              <select id="batch-group-select"></select>
-              <button class="btn ghost" id="btn-batch-move" type="button" data-i18n="accounts.move">Move</button>
+              <div class="batch-actions is-hidden" id="batch-actions">
+                <select id="batch-group-select"></select>
+                <button class="btn ghost" id="btn-batch-move" type="button" data-i18n="accounts.move">Move</button>
+              </div>
               <span class="badge" id="batch-count">0</span>
               <button class="btn ghost" id="btn-account-refresh" type="button">
                 <span data-i18n="actions.refresh">Refresh</span>

@@ -48,6 +48,22 @@ const apiSend = async (path, method, body) => {
 
 const t = (key, fallback) => i18n[key] || fallback || key;
 
+const copyToClipboard = async (text) => {
+  if (!text) return;
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  textarea.remove();
+};
+
 const applyI18n = () => {
   $$('[data-i18n]').forEach((node) => {
     const key = node.dataset.i18n;
@@ -116,16 +132,36 @@ const renderGroupHeader = () => {
   const group = state.groups.find((item) => item.id === state.selectedGroupId);
   const nameEl = $('#group-current-name');
   const metaEl = $('#group-current-meta');
+  const idEl = $('#group-current-id');
   const renameBtn = $('#btn-group-rename');
   const deleteBtn = $('#btn-group-delete');
   if (!group) {
-    if (nameEl) nameEl.textContent = t('groups.currentTitle', 'Group');
+    if (nameEl) {
+      nameEl.textContent = t('groups.currentTitle', 'Group');
+      nameEl.disabled = true;
+    }
+    if (idEl) {
+      idEl.textContent = t('groups.currentIdEmpty', 'ID');
+      idEl.dataset.id = '';
+      idEl.disabled = true;
+    }
     if (metaEl) metaEl.textContent = t('groups.currentEmpty', 'Select a group.');
     if (renameBtn) renameBtn.disabled = true;
     if (deleteBtn) deleteBtn.disabled = true;
     return;
   }
-  if (nameEl) nameEl.textContent = group.name;
+  if (nameEl) {
+    nameEl.textContent = group.name;
+    nameEl.title = group.name;
+    nameEl.disabled = false;
+  }
+  if (idEl) {
+    const idText = t('groups.currentId', 'ID: {id}').replace('{id}', group.id);
+    idEl.textContent = idText;
+    idEl.title = idText;
+    idEl.dataset.id = String(group.id);
+    idEl.disabled = false;
+  }
   if (metaEl) {
     metaEl.textContent = t('groups.currentMeta', '{n} accounts').replace(
       '{n}',
@@ -219,8 +255,12 @@ const renderAccounts = () => {
 
 const updateBatchCount = () => {
   const badge = $('#batch-count');
+  const batchActions = $('#batch-actions');
   if (!badge) return;
   badge.textContent = state.selectedAccounts.size.toString();
+  if (batchActions) {
+    batchActions.classList.toggle('is-hidden', state.selectedAccounts.size === 0);
+  }
 };
 
 const refreshSelectAll = () => {
@@ -239,7 +279,8 @@ const refreshSelectAll = () => {
 
 const loadAccounts = async () => {
   const groupId = state.selectedGroupId;
-  const search = $('#account-search')?.value.trim();
+  const searchInput = $('#account-search');
+  const search = searchInput ? searchInput.value.trim() : '';
   const url = new URL('/api/account', window.location.origin);
   if (groupId) url.searchParams.set('group_id', groupId);
   if (search) url.searchParams.set('q', search);
@@ -661,6 +702,25 @@ const bindEvents = () => {
     if (!name) return;
     await apiSend('/api/group', 'POST', { name });
     await loadGroups();
+  });
+  $('#group-current-name').addEventListener('click', async () => {
+    if (!state.selectedGroupId) return;
+    activateTab('articles');
+    const groupSelect = $('#article-group-filter');
+    if (groupSelect) {
+      groupSelect.value = String(state.selectedGroupId);
+    }
+    await populateArticleAccountFilter();
+    await loadArticles(true);
+  });
+  $('#group-current-id').addEventListener('click', async () => {
+    const id = $('#group-current-id').dataset.id;
+    if (!id) return;
+    try {
+      await copyToClipboard(id);
+    } catch (err) {
+      console.warn('Failed to copy', err);
+    }
   });
   $('#btn-group-rename').addEventListener('click', async () => {
     const group = state.groups.find((item) => item.id === state.selectedGroupId);
