@@ -232,7 +232,6 @@ const renderAccounts = () => {
           <div class="account-sub">${account.alias || account.biz}</div>
         </div>
       </div>
-      <div class="account-sub">${account.group_name || ''}</div>
     `;
     const checkbox = card.querySelector('.account-check');
     checkbox.addEventListener('change', (event) => {
