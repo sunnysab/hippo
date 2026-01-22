@@ -71,6 +71,12 @@
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6 6 0 1 0 14 15.5l.27.28v.79L20 21.5 21.5 20l-6-6zm-5.5 0a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>
                   </span>
                 </div>
+                <button class="btn ghost" id="btn-account-add" type="button">
+                  <span class="icon">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v14h-2zM5 11h14v2H5z"/></svg>
+                  </span>
+                  <span data-i18n="accounts.add">Add Account</span>
+                </button>
                 <button class="btn ghost" id="btn-group-rename" type="button" data-i18n="groups.rename">Rename</button>
                 <button class="btn ghost" id="btn-group-delete" type="button" data-i18n="groups.delete">Delete</button>
               </div>
@@ -89,7 +95,6 @@
                 <span data-i18n="actions.refresh">Refresh</span>
               </button>
             </div>
-            <div class="search-results is-hidden" id="account-search-results"></div>
             <div class="card-grid" id="account-list"></div>
           </div>
         </div>
@@ -301,6 +306,26 @@
         </div>
       </section>
     </main>
+
+    <div class="modal-overlay is-hidden" id="account-search-modal">
+      <div class="modal search-modal">
+        <div class="modal-header">
+          <div class="modal-title" data-i18n="accounts.searchTitle">Add Account</div>
+          <button class="icon-btn" id="btn-account-search-close" type="button" aria-label="Close">
+            <span class="icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3z"/></svg>
+            </span>
+          </button>
+        </div>
+        <div class="input modal-search">
+          <input type="search" id="account-search-input" placeholder="Search accounts" data-i18n-placeholder="accounts.searchPlaceholder">
+          <span class="icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6 6 0 1 0 14 15.5l.27.28v.79L20 21.5 21.5 20l-6-6zm-5.5 0a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>
+          </span>
+        </div>
+        <div class="search-results is-hidden" id="account-search-results"></div>
+      </div>
+    </div>
     <div class="context-menu is-hidden" id="group-context-menu">
       <button class="context-item" id="group-menu-rss" type="button">RSS</button>
     </div>

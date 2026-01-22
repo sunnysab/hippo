@@ -14,6 +14,7 @@ const state = {
   loginStatus: null,
   loginPollTimer: null,
   accountTimer: null,
+  searchTimer: null,
   articleTimer: null,
 };
 
@@ -120,6 +121,24 @@ const hideGroupContextMenu = () => {
   if (!menu) return;
   menu.classList.add('is-hidden');
   menu.dataset.groupId = '';
+};
+
+const openAccountSearchModal = async () => {
+  const modal = $('#account-search-modal');
+  if (!modal) return;
+  modal.classList.remove('is-hidden');
+  const input = $('#account-search-input');
+  if (input) {
+    input.focus();
+    input.select();
+  }
+  await loadAccountSearchResults();
+};
+
+const closeAccountSearchModal = () => {
+  const modal = $('#account-search-modal');
+  if (!modal) return;
+  modal.classList.add('is-hidden');
 };
 
 const renderGroupList = () => {
@@ -322,7 +341,7 @@ const renderAccountSearchResults = () => {
 };
 
 const loadAccountSearchResults = async () => {
-  const searchInput = $('#account-search');
+  const searchInput = $('#account-search-input');
   const keyword = searchInput ? searchInput.value.trim() : '';
   if (!keyword) {
     state.searchResults = [];
@@ -928,12 +947,23 @@ const bindEvents = () => {
 
   $('#btn-account-refresh').addEventListener('click', async () => {
     await loadAccounts();
-    await loadAccountSearchResults();
   });
   $('#account-search').addEventListener('input', () => {
     clearTimeout(state.accountTimer);
     state.accountTimer = setTimeout(async () => {
       await loadAccounts();
+    }, 300);
+  });
+  $('#btn-account-add').addEventListener('click', openAccountSearchModal);
+  $('#btn-account-search-close').addEventListener('click', closeAccountSearchModal);
+  $('#account-search-modal').addEventListener('click', (event) => {
+    if (event.target.id === 'account-search-modal') {
+      closeAccountSearchModal();
+    }
+  });
+  $('#account-search-input').addEventListener('input', () => {
+    clearTimeout(state.searchTimer);
+    state.searchTimer = setTimeout(async () => {
       await loadAccountSearchResults();
     }, 300);
   });
