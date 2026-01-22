@@ -50,6 +50,7 @@
   "login.relogin": "重新登录",
   "login.refresh": "刷新登录",
   "login.lastLogin": "最近登录",
+  "login.lastLoginAt": "上次登录于 {time}",
   "login.status.idle": "未登录",
   "login.status.starting": "正在获取二维码",
   "login.status.waiting": "请使用微信扫码",

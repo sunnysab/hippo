@@ -519,6 +519,15 @@ const renderLoginStatus = (payload) => {
   } else {
     $('#login-meta').textContent = '';
   }
+  const topMeta = $('#last-login-info');
+  if (topMeta) {
+    if (info && info.updated_at) {
+      const relative = formatRelativeTime(info.updated_at);
+      topMeta.textContent = t('login.lastLoginAt', 'Last login {time}').replace('{time}', relative);
+    } else {
+      topMeta.textContent = '';
+    }
+  }
 };
 
 const formatRelativeTime = (isoString) => {
