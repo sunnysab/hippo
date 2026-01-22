@@ -374,6 +374,7 @@ const renderArticleList = () => {
     card.className = 'article-card' + (state.selectedArticleId === article.id ? ' is-active' : '');
     const thumb = article.image_id ? `/api/image/${article.image_id}` : '';
     const avatar = article.account_avatar_url || '';
+    const digest = article.digest || '';
     card.innerHTML = `
       ${thumb ? `<img class="article-thumb" src="${thumb}" alt="" onerror="this.style.display='none'">` : '<div class="article-thumb placeholder"></div>'}
       <div class="article-info">
@@ -383,9 +384,14 @@ const renderArticleList = () => {
           <span>${article.account_nickname || ''}</span>
           <span>${formatDate(article.publish_at)}</span>
         </div>
-        <div class="article-digest">${article.digest || ''}</div>
+        <div class="article-digest"></div>
       </div>
     `;
+    const digestEl = card.querySelector('.article-digest');
+    if (digestEl) {
+      digestEl.textContent = digest;
+      digestEl.title = digest;
+    }
     card.addEventListener('click', () => selectArticle(article.id));
     list.appendChild(card);
   });
