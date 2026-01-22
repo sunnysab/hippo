@@ -1506,7 +1506,11 @@ class HippoHandler(BaseHTTPRequestHandler):
                     if "page_size" in body:
                         updates["page_size"] = max(int(body["page_size"]), 1)
                     if "page_limit" in body:
-                        updates["page_limit"] = body["page_limit"]
+                        value = body["page_limit"]
+                        if value in ("", None):
+                            updates["page_limit"] = None
+                        else:
+                            updates["page_limit"] = max(int(value), 1)
                     if "sleep_seconds" in body:
                         updates["sleep_seconds"] = float(body["sleep_seconds"])
                     if "download_content" in body:
