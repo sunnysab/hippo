@@ -691,7 +691,7 @@ class Storage(AbstractContextManager):
 class PostgresStorage(AbstractContextManager):
     def __init__(self, dsn: str, *, auto_init: bool = False) -> None:
         self.dsn = dsn
-        self.conn = psycopg2.connect(dsn)
+        self.conn = psycopg2.connect(dsn, options="-c timezone=Asia/Shanghai")
         self.conn.autocommit = False
         if auto_init:
             self._init_db()
