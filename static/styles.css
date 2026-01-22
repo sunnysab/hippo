@@ -482,10 +482,12 @@ body {
 
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 16px;
   align-content: start;
   grid-auto-rows: max-content;
+  width: 100%;
+  max-width: calc(4 * 260px + 3 * 16px);
 }
 
 .card-header {
