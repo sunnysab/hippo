@@ -198,12 +198,13 @@ const renderAccounts = () => {
     const card = document.createElement('div');
     card.className = 'card';
     const checked = state.selectedAccounts.has(account.biz) ? 'checked' : '';
+    const avatar = account.avatar_url || '';
     card.innerHTML = `
       <div class="card-header">
         <input class="account-check" type="checkbox" data-biz="${account.biz}" ${checked} />
       </div>
       <div class="account-meta">
-        <img class="account-avatar" src="${account.round_head_img || ''}" alt="" onerror="this.style.display='none'">
+        <img class="account-avatar" src="${avatar}" alt="" onerror="this.style.display='none'">
         <div>
           <div class="account-name">${account.nickname}</div>
           <div class="account-sub">${account.alias || account.biz}</div>
@@ -271,9 +272,9 @@ const renderArticleList = () => {
   state.articles.forEach((article) => {
     const card = document.createElement('div');
     card.className = 'article-card' + (state.selectedArticleId === article.id ? ' is-active' : '');
-    const thumb = article.image_id ? `/api/image/${article.image_id}` : (article.cover || '');
+    const thumb = article.image_id ? `/api/image/${article.image_id}` : '';
     card.innerHTML = `
-      <img class="article-thumb" src="${thumb}" alt="" onerror="this.style.display='none'">
+      ${thumb ? `<img class="article-thumb" src="${thumb}" alt="" onerror="this.style.display='none'">` : '<div class="article-thumb placeholder"></div>'}
       <div>
         <div class="article-title">${article.title}</div>
         <div class="article-meta">${article.account_nickname || ''}</div>

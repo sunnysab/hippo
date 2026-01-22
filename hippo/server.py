@@ -21,6 +21,8 @@ from email.message import EmailMessage
 import psycopg2
 import psycopg2.extras
 
+import httpx
+
 try:
     import jieba
 except Exception:  # pragma: no cover - optional fallback
@@ -541,6 +543,34 @@ def _ensure_default_group(storage: StorageLike) -> dict[str, Any]:
     return {"id": default_id, "name": default_group.name}
 
 
+def _ensure_account_images_table(storage: StorageLike) -> None:
+    if _is_postgres(storage):
+        with storage.conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS account_images (
+                    biz TEXT PRIMARY KEY REFERENCES accounts(biz) ON DELETE CASCADE,
+                    content_type TEXT,
+                    data BYTEA,
+                    updated_at TIMESTAMPTZ NOT NULL
+                )
+                """
+            )
+        storage.conn.commit()
+    else:
+        storage.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS account_images (
+                biz TEXT PRIMARY KEY REFERENCES accounts(biz) ON DELETE CASCADE,
+                content_type TEXT,
+                data BLOB,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        storage.conn.commit()
+
+
 def _should_skip_by_time(last_synced_at: Optional[datetime], skip_minutes: Optional[int]) -> bool:
     if not skip_minutes or skip_minutes <= 0:
         return False
@@ -844,14 +874,18 @@ def _list_accounts(
     query_sql = (
         ""
         "SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id, a.is_default,"
-        " a.is_disabled, a.last_synced_at, g.name AS group_name"
+        " a.is_disabled, a.last_synced_at, g.name AS group_name,"
+        " (ai.data IS NOT NULL) AS avatar_ready"
         " FROM accounts a"
         " LEFT JOIN account_groups g ON g.id = a.group_id"
+        " LEFT JOIN account_images ai ON ai.biz = a.biz"
         f" {where_sql}"
         " ORDER BY a.is_default DESC, a.nickname ASC"
         f" {limit_sql}"
     )
     rows = _fetchall(storage, query_sql, params + [page_size, offset])
+    for row in rows:
+        row["avatar_url"] = f"/api/account/{row['biz']}/avatar"
     count_sql = (
         "SELECT COUNT(*) AS total FROM accounts a"
         " LEFT JOIN account_groups g ON g.id = a.group_id"
@@ -868,24 +902,29 @@ def _get_account(storage: StorageLike, biz: str) -> dict[str, Any]:
         (
             ""
             "SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id, a.is_default,"
-            " a.is_disabled, a.last_synced_at, g.name AS group_name"
+            " a.is_disabled, a.last_synced_at, g.name AS group_name,"
+            " (ai.data IS NOT NULL) AS avatar_ready"
             " FROM accounts a"
             " LEFT JOIN account_groups g ON g.id = a.group_id"
+            " LEFT JOIN account_images ai ON ai.biz = a.biz"
             " WHERE a.biz = %s"
         )
         if _is_postgres(storage)
         else (
             ""
             "SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id, a.is_default,"
-            " a.is_disabled, a.last_synced_at, g.name AS group_name"
+            " a.is_disabled, a.last_synced_at, g.name AS group_name,"
+            " (ai.data IS NOT NULL) AS avatar_ready"
             " FROM accounts a"
             " LEFT JOIN account_groups g ON g.id = a.group_id"
+            " LEFT JOIN account_images ai ON ai.biz = a.biz"
             " WHERE a.biz = ?"
         ),
         [biz],
     )
     if not row:
         raise ApiError("Account not found", status=404)
+    row["avatar_url"] = f"/api/account/{row['biz']}/avatar"
     return row
 
 
@@ -985,7 +1024,7 @@ def _build_article_query(
         "LEFT JOIN LATERAL ("
         "  SELECT id FROM article_images i"
         "  WHERE i.article_pk = a.id AND i.data IS NOT NULL"
-        "  ORDER BY i.position ASC"
+        "  ORDER BY (i.kind = 'cover') DESC, i.position ASC"
         "  LIMIT 1"
         ") img ON TRUE"
         if is_pg
@@ -994,7 +1033,7 @@ def _build_article_query(
     image_select = "img.id AS image_id" if is_pg else (
         "(SELECT id FROM article_images i"
         " WHERE i.article_pk = a.id AND i.data IS NOT NULL"
-        " ORDER BY i.position ASC"
+        " ORDER BY CASE WHEN i.kind = 'cover' THEN 0 ELSE 1 END, i.position ASC"
         " LIMIT 1) AS image_id"
     )
 
@@ -1172,6 +1211,72 @@ def _fetch_image(storage: StorageLike, image_id: int) -> tuple[bytes, str]:
     return payload, content_type
 
 
+def _get_account_avatar_row(storage: StorageLike, biz: str) -> Optional[dict[str, Any]]:
+    return _fetchone(
+        storage,
+        "SELECT content_type, data FROM account_images WHERE biz = %s"
+        if _is_postgres(storage)
+        else "SELECT content_type, data FROM account_images WHERE biz = ?",
+        [biz],
+    )
+
+
+def _store_account_avatar(
+    storage: StorageLike,
+    biz: str,
+    *,
+    content_type: str,
+    data: bytes,
+) -> None:
+    if _is_postgres(storage):
+        with storage.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO account_images (biz, content_type, data, updated_at)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (biz) DO UPDATE SET
+                    content_type=EXCLUDED.content_type,
+                    data=EXCLUDED.data,
+                    updated_at=EXCLUDED.updated_at
+                """,
+                (biz, content_type, psycopg2.Binary(data), _utc_now_iso()),
+            )
+        storage.conn.commit()
+    else:
+        storage.conn.execute(
+            """
+            INSERT INTO account_images (biz, content_type, data, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(biz) DO UPDATE SET
+                content_type=excluded.content_type,
+                data=excluded.data,
+                updated_at=excluded.updated_at
+            """,
+            (biz, content_type, data, _utc_now_iso()),
+        )
+        storage.conn.commit()
+
+
+def _fetch_and_cache_avatar(storage: StorageLike, biz: str, url: str) -> Optional[tuple[bytes, str]]:
+    headers = {
+        "Referer": "https://mp.weixin.qq.com/",
+        "Origin": "https://mp.weixin.qq.com",
+        "User-Agent": "Mozilla/5.0",
+    }
+    try:
+        resp = httpx.get(url, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return None
+        content_type = resp.headers.get("Content-Type") or "application/octet-stream"
+        data = resp.content
+        if data:
+            _store_account_avatar(storage, biz, content_type=content_type, data=data)
+        return data, content_type
+    except Exception as exc:
+        logger.warning("Failed to fetch avatar for %s: %s", biz, exc)
+        return None
+
+
 def _list_feed(
     storage: StorageLike,
     *,
@@ -1290,6 +1395,7 @@ class HippoHandler(BaseHTTPRequestHandler):
         try:
             with open_storage(DB_PATH) as storage:
                 _ensure_default_group(storage)
+                _ensure_account_images_table(storage)
                 if len(segments) < 2:
                     raise ApiError("Invalid API path", status=404)
                 resource = segments[1]
@@ -1467,6 +1573,45 @@ class HippoHandler(BaseHTTPRequestHandler):
                     raise ApiError("Account not found", status=404)
                 self._send_json(HTTPStatus.NO_CONTENT, {})
                 return
+        if len(segments) == 4 and segments[3] == "avatar":
+            if method != "GET":
+                raise ApiError("Method not allowed", status=405)
+            biz = segments[2]
+            avatar = _get_account_avatar_row(storage, biz)
+            if not avatar or not avatar.get("data"):
+                row = _fetchone(
+                    storage,
+                    "SELECT round_head_img FROM accounts WHERE biz = %s"
+                    if _is_postgres(storage)
+                    else "SELECT round_head_img FROM accounts WHERE biz = ?",
+                    [biz],
+                )
+                if not row:
+                    raise ApiError("Account not found", status=404)
+                url = row.get("round_head_img")
+                if url:
+                    cached = _fetch_and_cache_avatar(storage, biz, url)
+                    if cached:
+                        data, content_type = cached
+                        self.send_response(HTTPStatus.OK)
+                        self.send_header("Content-Type", content_type)
+                        self.send_header("Content-Length", str(len(data)))
+                        self.end_headers()
+                        self.wfile.write(data)
+                        return
+                raise ApiError("Avatar not found", status=404)
+            data = avatar.get("data")
+            if isinstance(data, memoryview):
+                payload = data.tobytes()
+            else:
+                payload = bytes(data)
+            content_type = avatar.get("content_type") or "application/octet-stream"
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         raise ApiError("Not found", status=404)
 
     def _handle_article(

@@ -413,6 +413,11 @@ body {
   background: var(--accent-soft);
 }
 
+.article-thumb.placeholder {
+  display: block;
+  border: 1px dashed var(--border);
+}
+
 .article-title {
   font-weight: 600;
   margin-bottom: 4px;
