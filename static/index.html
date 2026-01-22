@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hippo</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">H</span>
+        <div class="brand-text">
+          <div class="brand-title">Hippo</div>
+          <div class="brand-subtitle" data-i18n="brand.subtitle">WeChat Article Studio</div>
+        </div>
+      </div>
+      <nav class="tabs" role="tablist">
+        <button class="tab is-active" data-tab="groups" data-i18n="nav.groups">Groups</button>
+        <button class="tab" data-tab="accounts" data-i18n="nav.accounts">Accounts</button>
+        <button class="tab" data-tab="articles" data-i18n="nav.articles">Articles</button>
+      </nav>
+      <div class="top-actions">
+        <button class="btn ghost" id="btn-refresh" type="button">
+          <span class="icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.66-5.66L20 4v6h-6l2.44-2.44A6 6 0 1 0 18 12h2a8 8 0 0 1-16 0z"/></svg>
+          </span>
+          <span data-i18n="actions.refresh">Refresh</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="content">
+      <section id="view-groups" class="view is-active">
+        <div class="panel-grid">
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <h2 data-i18n="groups.title">Groups</h2>
+                <p class="muted" data-i18n="groups.subtitle">Organize accounts into focused collections.</p>
+              </div>
+              <button class="btn" id="btn-group-create" type="button">
+                <span class="icon">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v14h-2zM5 11h14v2H5z"/></svg>
+                </span>
+                <span data-i18n="groups.create">New Group</span>
+              </button>
+            </div>
+            <div class="list" id="group-list"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <h2 data-i18n="groups.detailTitle">Group Detail</h2>
+                <p class="muted" data-i18n="groups.detailSubtitle">Manage name and membership.</p>
+              </div>
+            </div>
+            <div id="group-detail" class="empty-state" data-i18n="groups.empty">Select a group to view details.</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-accounts" class="view">
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <h2 data-i18n="accounts.title">Accounts</h2>
+              <p class="muted" data-i18n="accounts.subtitle">Browse and organize public accounts.</p>
+            </div>
+            <div class="toolbar">
+              <select id="account-group-filter"></select>
+              <div class="input">
+                <input type="search" id="account-search" placeholder="Search" data-i18n-placeholder="filters.search">
+                <span class="icon">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6 6 0 1 0 14 15.5l.27.28v.79L20 21.5 21.5 20l-6-6zm-5.5 0a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>
+                </span>
+              </div>
+              <button class="btn ghost" id="btn-account-refresh" type="button">
+                <span data-i18n="actions.refresh">Refresh</span>
+              </button>
+            </div>
+          </div>
+          <div class="card-grid" id="account-list"></div>
+        </div>
+      </section>
+
+      <section id="view-articles" class="view">
+        <div class="article-layout">
+          <div class="panel article-list">
+            <div class="panel-header">
+              <div>
+                <h2 data-i18n="articles.title">Articles</h2>
+                <p class="muted" data-i18n="articles.subtitle">Preview content rendered from content_json.</p>
+              </div>
+              <div class="toolbar">
+                <select id="article-group-filter"></select>
+                <select id="article-account-filter"></select>
+                <div class="input">
+                  <input type="search" id="article-search" placeholder="Search" data-i18n-placeholder="filters.search">
+                  <span class="icon">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6 6 0 1 0 14 15.5l.27.28v.79L20 21.5 21.5 20l-6-6zm-5.5 0a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>
+                  </span>
+                </div>
+                <button class="btn ghost" id="btn-article-refresh" type="button">
+                  <span data-i18n="actions.refresh">Refresh</span>
+                </button>
+              </div>
+            </div>
+            <div class="article-list-scroll" id="article-list"></div>
+            <div class="panel-footer">
+              <button class="btn ghost" id="btn-article-more" type="button" data-i18n="articles.loadMore">Load More</button>
+            </div>
+          </div>
+
+          <div class="panel article-preview">
+            <div class="panel-header">
+              <div>
+                <h2 data-i18n="articles.previewTitle">Preview</h2>
+                <p class="muted" data-i18n="articles.previewSubtitle">Adjust typography to match your reading style.</p>
+              </div>
+            </div>
+            <div class="reader-controls">
+              <label>
+                <span data-i18n="reader.width">Width</span>
+                <input id="reader-width" type="range" min="640" max="980" step="10" value="860">
+              </label>
+              <label>
+                <span data-i18n="reader.font">Font Size</span>
+                <input id="reader-font" type="range" min="14" max="22" step="1" value="17">
+              </label>
+              <label>
+                <span data-i18n="reader.lineHeight">Line Height</span>
+                <input id="reader-line" type="range" min="1.4" max="2.4" step="0.05" value="1.8">
+              </label>
+              <label>
+                <span data-i18n="reader.letter">Letter Spacing</span>
+                <input id="reader-letter" type="range" min="0" max="2" step="0.1" value="0.2">
+              </label>
+            </div>
+            <div class="article-preview-body" id="article-preview">
+              <div class="empty-state" data-i18n="articles.empty">Select an article to preview.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
