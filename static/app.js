@@ -529,10 +529,25 @@ const renderLoginStatus = (payload) => {
   }
   const info = payload.last_login;
   if (info && info.nickname) {
-    $('#login-meta').textContent = `${t('login.lastLogin', 'Last login')}: ${info.nickname}`;
+    const relative = formatRelativeTime(info.updated_at);
+    $('#login-meta').textContent = `${t('login.lastLogin', 'Last login')}: ${info.nickname} · ${relative}`;
   } else {
     $('#login-meta').textContent = '';
   }
+};
+
+const formatRelativeTime = (isoString) => {
+  if (!isoString) return '';
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return '';
+  const diff = Date.now() - date.getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return t('time.justNow', 'just now');
+  if (minutes < 60) return t('time.minutesAgo', '{n} minutes ago').replace('{n}', minutes);
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return t('time.hoursAgo', '{n} hours ago').replace('{n}', hours);
+  const days = Math.floor(hours / 24);
+  return t('time.daysAgo', '{n} days ago').replace('{n}', days);
 };
 
 const loadLoginStatus = async () => {
@@ -674,6 +689,7 @@ const bindEvents = () => {
 
   $('#btn-login-start').addEventListener('click', startLogin);
   $('#btn-login-cancel').addEventListener('click', cancelLogin);
+  $('#btn-login-refresh').addEventListener('click', startLogin);
   $('#btn-sync-save').addEventListener('click', saveSyncSettings);
   $('#btn-sync-run').addEventListener('click', triggerSyncRun);
   $('#btn-banner-login').addEventListener('click', async () => {
