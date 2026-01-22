@@ -18,7 +18,6 @@
       </div>
       <nav class="tabs" role="tablist">
         <button class="tab is-active" data-tab="groups" data-i18n="nav.groups">Groups</button>
-        <button class="tab" data-tab="accounts" data-i18n="nav.accounts">Accounts</button>
         <button class="tab" data-tab="articles" data-i18n="nav.articles">Articles</button>
         <button class="tab" data-tab="sync" data-i18n="nav.sync">Sync</button>
       </nav>
@@ -38,7 +37,7 @@
         <button class="btn ghost" id="btn-banner-login" type="button" data-i18n="login.relogin">Re-login</button>
       </div>
       <section id="view-groups" class="view is-active">
-        <div class="panel-grid">
+        <div class="groups-layout">
           <div class="panel">
             <div class="panel-header">
               <div>
@@ -57,24 +56,15 @@
           <div class="panel">
             <div class="panel-header">
               <div>
-                <h2 data-i18n="groups.detailTitle">Group Detail</h2>
-                <p class="muted" data-i18n="groups.detailSubtitle">Manage name and membership.</p>
+                <h2 id="group-current-name" data-i18n="groups.currentTitle">Group</h2>
+                <p class="muted" id="group-current-meta" data-i18n="groups.currentSubtitle">Select a group.</p>
+              </div>
+              <div class="toolbar">
+                <button class="btn ghost" id="btn-group-rename" type="button" data-i18n="groups.rename">Rename</button>
+                <button class="btn ghost" id="btn-group-delete" type="button" data-i18n="groups.delete">Delete</button>
               </div>
             </div>
-            <div id="group-detail" class="empty-state" data-i18n="groups.empty">Select a group to view details.</div>
-          </div>
-        </div>
-      </section>
-
-      <section id="view-accounts" class="view">
-        <div class="panel">
-          <div class="panel-header">
-            <div>
-              <h2 data-i18n="accounts.title">Accounts</h2>
-              <p class="muted" data-i18n="accounts.subtitle">Browse and organize public accounts.</p>
-            </div>
-            <div class="toolbar">
-              <select id="account-group-filter"></select>
+            <div class="toolbar accounts-toolbar">
               <div class="input">
                 <input type="search" id="account-search" placeholder="Search" data-i18n-placeholder="filters.search">
                 <span class="icon">
@@ -92,8 +82,8 @@
                 <span data-i18n="actions.refresh">Refresh</span>
               </button>
             </div>
+            <div class="card-grid" id="account-list"></div>
           </div>
-          <div class="card-grid" id="account-list"></div>
         </div>
       </section>
 

@@ -191,6 +191,12 @@ body {
   gap: 24px;
 }
 
+.groups-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.3fr) minmax(0, 1fr);
+  gap: 24px;
+}
+
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -267,6 +273,10 @@ body {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.accounts-toolbar {
+  margin-bottom: 16px;
 }
 
 .switch {
@@ -546,6 +556,7 @@ body {
 
 @media (max-width: 1100px) {
   .panel-grid,
+  .groups-layout,
   .article-layout {
     grid-template-columns: 1fr;
   }

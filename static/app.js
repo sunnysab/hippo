@@ -105,52 +105,35 @@ const renderGroupList = () => {
     item.addEventListener('click', () => {
       state.selectedGroupId = group.id;
       renderGroupList();
-      renderGroupDetail(group);
+      renderGroupHeader();
+      void loadAccounts();
     });
     list.appendChild(item);
   });
 };
 
-const renderGroupDetail = async (group) => {
-  const detail = $('#group-detail');
+const renderGroupHeader = () => {
+  const group = state.groups.find((item) => item.id === state.selectedGroupId);
+  const nameEl = $('#group-current-name');
+  const metaEl = $('#group-current-meta');
+  const renameBtn = $('#btn-group-rename');
+  const deleteBtn = $('#btn-group-delete');
   if (!group) {
-    detail.className = 'empty-state';
-    detail.textContent = t('groups.empty', 'Select a group to view details.');
+    if (nameEl) nameEl.textContent = t('groups.currentTitle', 'Group');
+    if (metaEl) metaEl.textContent = t('groups.currentEmpty', 'Select a group.');
+    if (renameBtn) renameBtn.disabled = true;
+    if (deleteBtn) deleteBtn.disabled = true;
     return;
   }
-  detail.className = '';
-  const accounts = await apiGet(`/api/account?group_id=${group.id}&page_size=6`).catch(() => ({ accounts: [] }));
-  const accountItems = accounts.accounts
-    .map((account) => `<li>${account.nickname}</li>`)
-    .join('');
-  detail.innerHTML = `
-    <div class="card">
-      <div class="account-name">${group.name}</div>
-      <div class="account-sub">${group.account_count || 0} ${t('groups.accounts', 'accounts')}</div>
-      <div class="toolbar" style="margin-top:12px;">
-        <button class="btn ghost" id="btn-group-rename">${t('groups.rename', 'Rename')}</button>
-        <button class="btn ghost" id="btn-group-delete">${t('groups.delete', 'Delete')}</button>
-      </div>
-      <div style="margin-top:16px;">
-        <div class="account-sub">${t('groups.accountsPreview', 'Accounts')}</div>
-        <ul>${accountItems || `<li>${t('groups.none', 'No accounts')}</li>`}</ul>
-      </div>
-    </div>
-  `;
-  $('#btn-group-rename').addEventListener('click', async () => {
-    const name = prompt(t('groups.renamePrompt', 'New group name'), group.name);
-    if (!name) return;
-    await apiSend(`/api/group/${group.id}`, 'PATCH', { name });
-    await loadGroups();
-  });
-  $('#btn-group-delete').addEventListener('click', async () => {
-    const confirmed = confirm(t('groups.deleteConfirm', 'Delete this group?'));
-    if (!confirmed) return;
-    await apiSend(`/api/group/${group.id}`, 'DELETE');
-    state.selectedGroupId = null;
-    await loadGroups();
-    renderGroupDetail(null);
-  });
+  if (nameEl) nameEl.textContent = group.name;
+  if (metaEl) {
+    metaEl.textContent = t('groups.currentMeta', '{n} accounts').replace(
+      '{n}',
+      group.account_count || 0,
+    );
+  }
+  if (renameBtn) renameBtn.disabled = false;
+  if (deleteBtn) deleteBtn.disabled = false;
 };
 
 const loadGroups = async () => {
@@ -161,12 +144,13 @@ const loadGroups = async () => {
     state.selectedGroupId = state.defaultGroupId;
   }
   renderGroupList();
-  renderGroupDetail(state.groups.find((g) => g.id === state.selectedGroupId));
+  renderGroupHeader();
   renderGroupSelects();
+  await loadAccounts();
 };
 
 const renderGroupSelects = () => {
-  const selects = ['#account-group-filter', '#article-group-filter', '#batch-group-select'];
+  const selects = ['#article-group-filter', '#batch-group-select'];
   selects.forEach((selector) => {
     const select = $(selector);
     if (!select) return;
@@ -254,7 +238,7 @@ const refreshSelectAll = () => {
 };
 
 const loadAccounts = async () => {
-  const groupId = $('#account-group-filter')?.value;
+  const groupId = state.selectedGroupId;
   const search = $('#account-search')?.value.trim();
   const url = new URL('/api/account', window.location.origin);
   if (groupId) url.searchParams.set('group_id', groupId);
@@ -628,7 +612,6 @@ const initReaderControls = () => {
 const bindEvents = () => {
   $('#btn-refresh').addEventListener('click', async () => {
     await loadGroups();
-    await loadAccounts();
     await populateArticleAccountFilter();
     await loadArticles(true);
     await loadSyncStatus();
@@ -641,9 +624,25 @@ const bindEvents = () => {
     await apiSend('/api/group', 'POST', { name });
     await loadGroups();
   });
+  $('#btn-group-rename').addEventListener('click', async () => {
+    const group = state.groups.find((item) => item.id === state.selectedGroupId);
+    if (!group) return;
+    const name = prompt(t('groups.renamePrompt', 'New group name'), group.name);
+    if (!name) return;
+    await apiSend(`/api/group/${group.id}`, 'PATCH', { name });
+    await loadGroups();
+  });
+  $('#btn-group-delete').addEventListener('click', async () => {
+    const group = state.groups.find((item) => item.id === state.selectedGroupId);
+    if (!group) return;
+    const confirmed = confirm(t('groups.deleteConfirm', 'Delete this group?'));
+    if (!confirmed) return;
+    await apiSend(`/api/group/${group.id}`, 'DELETE');
+    state.selectedGroupId = null;
+    await loadGroups();
+  });
 
   $('#btn-account-refresh').addEventListener('click', loadAccounts);
-  $('#account-group-filter').addEventListener('change', loadAccounts);
   $('#account-search').addEventListener('input', () => {
     clearTimeout(state.accountTimer);
     state.accountTimer = setTimeout(loadAccounts, 300);
@@ -704,7 +703,6 @@ const init = async () => {
   initReaderControls();
   await loadI18n();
   await loadGroups();
-  await loadAccounts();
   await populateArticleAccountFilter();
   await loadArticles(true);
   await loadSyncStatus();
