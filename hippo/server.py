@@ -1239,7 +1239,6 @@ def _get_article(storage: StorageLike, article_id: int) -> dict[str, Any]:
     return {
         "article": article,
         "content": content_json,
-        "clean_html": clean_html,
         "images": images,
     }
 

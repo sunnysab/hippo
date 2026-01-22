@@ -31,6 +31,8 @@ body {
   font-family: "Source Sans 3", sans-serif;
   font-size: 15px;
   line-height: 1.6;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .app {
@@ -40,6 +42,9 @@ body {
 }
 
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   position: sticky;
   top: 0;
   z-index: 10;
@@ -348,7 +353,8 @@ body {
 .toast {
   position: fixed;
   top: 24px;
-  right: 24px;
+  left: 50%;
+  transform: translateX(-50%);
   background: #111827;
   color: #fff;
   padding: 10px 14px;

@@ -2,8 +2,9 @@
   display: grid;
   grid-template-columns: var(--article-list-width, 300px) 8px minmax(0, 1fr);
   gap: 16px;
-  min-height: calc(100vh - 160px);
+  height: calc(100vh - 140px);
   align-items: stretch;
+  overflow: hidden;
 }
 
 .article-layout.is-collapsed {
@@ -41,6 +42,7 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  position: relative;
 }
 
 .article-card {
@@ -110,7 +112,7 @@
 }
 
 .reader-controls {
-  position: fixed;
+  position: absolute;
   right: 28px;
   bottom: 92px;
   width: min(360px, calc(100vw - 40px));
@@ -130,7 +132,7 @@
 }
 
 .reader-fab {
-  position: fixed;
+  position: absolute;
   right: 28px;
   bottom: 28px;
   width: 54px;
@@ -170,6 +172,8 @@
   flex: 1;
   display: flex;
   justify-content: center;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .article-preview-body .reader {
@@ -191,6 +195,8 @@
 .reader p {
   margin: 0 0 16px;
   white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .reader figure {

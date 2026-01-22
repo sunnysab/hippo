@@ -96,6 +96,7 @@
       .replace(/'/g, '&#39;');
     return escaped
       .replace(/\\\|/g, '|')
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.+?)\*/g, '<em>$1</em>')
       .replace(/\n/g, '<br>');
@@ -225,7 +226,7 @@
       const onMove = (event) => {
         const clientX = event.touches ? event.touches[0].clientX : event.clientX;
         const delta = clientX - startX;
-        const width = clamp(startWidth + delta, 220, 420);
+        const width = clamp(startWidth + delta, 220, 800);
         root.style.setProperty('--article-list-width', `${width}px`);
       };
       const onUp = () => {
@@ -258,6 +259,7 @@
     const readerControls = $('#reader-controls');
     if (readerToggle && readerControls) {
       readerToggle.addEventListener('click', () => {
+        readerControls.classList.remove('is-hidden');
         readerControls.classList.toggle('is-open');
       });
     }

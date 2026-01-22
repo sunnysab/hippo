@@ -11,6 +11,12 @@
     activateTab,
   } = window.Hippo;
 
+  const searchState = {
+    page: 1,
+    loading: false,
+    hasMore: true,
+  };
+
   const showGroupContextMenu = (group, x, y) => {
     const menu = $('#group-context-menu');
     if (!menu) return;
@@ -182,17 +188,23 @@
     refreshSelectAll();
   };
 
-  const renderAccountSearchResults = () => {
+  const renderAccountSearchResults = (items, append = false) => {
     const container = $('#account-search-results');
     if (!container) return;
-    if (!state.searchResults.length) {
+    
+    if (!append) {
       container.innerHTML = '';
-      container.classList.add('is-hidden');
+      if (!items || !items.length) {
+        container.classList.add('is-hidden');
+        return;
+      }
+    } else if (!items || !items.length) {
       return;
     }
+
     container.classList.remove('is-hidden');
-    container.innerHTML = '';
-    state.searchResults.forEach((item) => {
+    
+    items.forEach((item) => {
       const row = document.createElement('div');
       row.className = 'search-item';
       const avatar = item.avatar_url || '';
@@ -220,39 +232,80 @@
             round_head_img: item.round_head_img || null,
             group_id: state.selectedGroupId,
           });
+          
+          // Optimistic update
+          item.is_added = true;
+          const parent = addBtn.parentElement;
+          if (parent) {
+            parent.innerHTML = `<span class="search-tag">${t('accounts.searchAdded', 'Added')}</span>`;
+          }
+
           await loadGroups();
           await loadAccounts();
-          await loadAccountSearchResults();
         });
       }
       container.appendChild(row);
     });
   };
 
-  const loadAccountSearchResults = async () => {
+  const loadAccountSearchResults = async (append = false) => {
+    if (searchState.loading) return;
+    
     const searchInput = $('#account-search-input');
     const keyword = searchInput ? searchInput.value.trim() : '';
-    if (!keyword) {
+    
+    if (!keyword || keyword.length < 2) {
       state.searchResults = [];
-      renderAccountSearchResults();
+      searchState.page = 1;
+      searchState.hasMore = true;
+      renderAccountSearchResults([]);
       return;
     }
-    if (keyword.length < 2) {
+
+    if (!append) {
+      searchState.page = 1;
+      searchState.hasMore = true;
       state.searchResults = [];
-      renderAccountSearchResults();
-      return;
+      // Scroll to top
+      const container = $('#account-search-results');
+      if (container) container.scrollTop = 0;
     }
+
+    if (!searchState.hasMore) return;
+
+    searchState.loading = true;
+    const pageSize = 10;
     const url = new URL('/api/account/search', window.location.origin);
     url.searchParams.set('q', keyword);
-    url.searchParams.set('page_size', '8');
+    url.searchParams.set('page', searchState.page);
+    url.searchParams.set('page_size', pageSize);
+    
     try {
       const payload = await apiGet(url.pathname + url.search);
-      state.searchResults = payload.results || [];
+      const results = payload.results || [];
+      
+      if (results.length < pageSize) {
+        searchState.hasMore = false;
+      } else {
+        searchState.page += 1;
+      }
+
+      if (append) {
+        state.searchResults = [...state.searchResults, ...results];
+      } else {
+        state.searchResults = results;
+      }
+      
+      renderAccountSearchResults(results, append);
     } catch (err) {
       console.warn('Account search failed', err);
-      state.searchResults = [];
+      if (!append) {
+        state.searchResults = [];
+        renderAccountSearchResults([]);
+      }
+    } finally {
+      searchState.loading = false;
     }
-    renderAccountSearchResults();
   };
 
   const updateBatchCount = () => {
@@ -423,6 +476,15 @@
       }, 300);
     });
 
+    $('#account-search-results').addEventListener('scroll', (event) => {
+      const el = event.target;
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 50) {
+        if (!searchState.loading && searchState.hasMore) {
+          loadAccountSearchResults(true);
+        }
+      }
+    });
+
     document.addEventListener('click', (event) => {
       const menu = $('#group-context-menu');
       if (!menu || menu.classList.contains('is-hidden')) return;
@@ -451,7 +513,6 @@
   const init = async () => {
     bindEvents();
     await refresh();
-    await loadAccountSearchResults();
   };
 
   window.HippoGroups = {
