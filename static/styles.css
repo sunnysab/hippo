@@ -362,6 +362,21 @@ body {
   border-radius: 14px;
 }
 
+.toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  background: #111827;
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  max-width: min(420px, 80vw);
+  word-break: break-all;
+  z-index: 240;
+}
+
 .search-tag {
   font-size: 11px;
   color: var(--muted);

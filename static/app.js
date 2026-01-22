@@ -19,6 +19,7 @@ const state = {
 };
 
 let i18n = {};
+let toastTimer = null;
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -64,6 +65,17 @@ const copyToClipboard = async (text) => {
   textarea.select();
   document.execCommand('copy');
   textarea.remove();
+};
+
+const showToast = (message) => {
+  const toast = $('#app-toast');
+  if (!toast) return;
+  toast.textContent = message;
+  toast.classList.remove('is-hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toast.classList.add('is-hidden');
+  }, 2400);
 };
 
 const applyI18n = () => {
@@ -937,9 +949,9 @@ const bindEvents = () => {
       url.searchParams.set('format', 'rss');
       try {
         await copyToClipboard(url.toString());
-        alert(t('groups.rssCopied', 'RSS address copied.'));
+        showToast(t('groups.rssCopied', 'RSS address copied.'));
       } catch (err) {
-        prompt(t('groups.rssPrompt', 'RSS address'), url.toString());
+        showToast(`${t('groups.rssPrompt', 'RSS address')}: ${url.toString()}`);
       }
       hideGroupContextMenu();
     });
