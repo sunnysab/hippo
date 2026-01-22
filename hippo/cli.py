@@ -23,6 +23,7 @@ from .downloader import ArticleDownloader
 from .http import MPClient, parse_appmsg_publish
 from .logger import setup_logger, get_logger
 from .models import AccountCredential, ArticleRecord, LoginSession
+from .server import serve as run_server
 from .storage import Storage, StorageInitError, StorageLike, PostgresStorage, open_storage
 from .utils import ensure_directory
 
@@ -1661,6 +1662,20 @@ def login(
     output: Optional[Path] = typer.Option(None, help="二维码输出目录"),
 ) -> None:
     _run_login_flow(timeout=timeout, poll_interval=poll_interval, output=output)
+
+
+@app.command("serve")
+def serve(
+    host: str = typer.Option("127.0.0.1", help="HTTP 监听地址"),
+    port: int = typer.Option(8000, min=1, max=65535, help="HTTP 监听端口"),
+    static_dir: Path = typer.Option(Path("static"), help="静态资源目录"),
+) -> None:
+    """Start HTTP server for API + UI."""
+    try:
+        run_server(host=host, port=port, static_dir=static_dir)
+    except RuntimeError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
 
 
 def _render_qr_in_terminal(qr_bytes: bytes) -> bool:
