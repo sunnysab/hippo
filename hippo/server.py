@@ -544,40 +544,12 @@ def _ensure_default_group(storage: StorageLike) -> dict[str, Any]:
     return {"id": default_id, "name": default_group.name}
 
 
-def _ensure_account_images_table(storage: StorageLike) -> None:
+def _ensure_avatar_images_table(storage: StorageLike) -> None:
     if _is_postgres(storage):
         with storage.conn.cursor() as cur:
             cur.execute(
                 """
-                CREATE TABLE IF NOT EXISTS account_images (
-                    biz TEXT PRIMARY KEY REFERENCES accounts(biz) ON DELETE CASCADE,
-                    content_type TEXT,
-                    data BYTEA,
-                    updated_at TIMESTAMPTZ NOT NULL
-                )
-                """
-            )
-        storage.conn.commit()
-    else:
-        storage.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS account_images (
-                biz TEXT PRIMARY KEY REFERENCES accounts(biz) ON DELETE CASCADE,
-                content_type TEXT,
-                data BLOB,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        storage.conn.commit()
-
-
-def _ensure_account_search_images_table(storage: StorageLike) -> None:
-    if _is_postgres(storage):
-        with storage.conn.cursor() as cur:
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS account_search_images (
+                CREATE TABLE IF NOT EXISTS avatar_images (
                     biz TEXT PRIMARY KEY,
                     avatar_url TEXT,
                     content_type TEXT,
@@ -590,7 +562,7 @@ def _ensure_account_search_images_table(storage: StorageLike) -> None:
     else:
         storage.conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS account_search_images (
+            CREATE TABLE IF NOT EXISTS avatar_images (
                 biz TEXT PRIMARY KEY,
                 avatar_url TEXT,
                 content_type TEXT,
@@ -600,6 +572,58 @@ def _ensure_account_search_images_table(storage: StorageLike) -> None:
             """
         )
         storage.conn.commit()
+    _migrate_legacy_avatar_tables(storage)
+
+
+def _migrate_legacy_avatar_tables(storage: StorageLike) -> None:
+    if _is_postgres(storage):
+        with storage.conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.account_images')")
+            has_account_images = cur.fetchone()[0] is not None
+            if has_account_images:
+                cur.execute(
+                    """
+                    INSERT INTO avatar_images (biz, content_type, data, updated_at)
+                    SELECT biz, content_type, data, updated_at FROM account_images
+                    ON CONFLICT (biz) DO NOTHING
+                    """
+                )
+            cur.execute("SELECT to_regclass('public.account_search_images')")
+            has_search_images = cur.fetchone()[0] is not None
+            if has_search_images:
+                cur.execute(
+                    """
+                    INSERT INTO avatar_images (biz, avatar_url, content_type, data, updated_at)
+                    SELECT biz, avatar_url, content_type, data, updated_at FROM account_search_images
+                    ON CONFLICT (biz) DO NOTHING
+                    """
+                )
+        storage.conn.commit()
+        return
+
+    table = storage.conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        ("account_images",),
+    ).fetchone()
+    if table:
+        storage.conn.execute(
+            """
+            INSERT OR IGNORE INTO avatar_images (biz, content_type, data, updated_at)
+            SELECT biz, content_type, data, updated_at FROM account_images
+            """
+        )
+    table = storage.conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        ("account_search_images",),
+    ).fetchone()
+    if table:
+        storage.conn.execute(
+            """
+            INSERT OR IGNORE INTO avatar_images (biz, avatar_url, content_type, data, updated_at)
+            SELECT biz, avatar_url, content_type, data, updated_at FROM account_search_images
+            """
+        )
+    storage.conn.commit()
 
 
 def _should_skip_by_time(last_synced_at: Optional[datetime], skip_minutes: Optional[int]) -> bool:
@@ -909,7 +933,7 @@ def _list_accounts(
         " (ai.data IS NOT NULL) AS avatar_ready"
         " FROM accounts a"
         " LEFT JOIN account_groups g ON g.id = a.group_id"
-        " LEFT JOIN account_images ai ON ai.biz = a.biz"
+        " LEFT JOIN avatar_images ai ON ai.biz = a.biz"
         f" {where_sql}"
         " ORDER BY a.is_default DESC, a.nickname ASC"
         f" {limit_sql}"
@@ -937,7 +961,7 @@ def _get_account(storage: StorageLike, biz: str) -> dict[str, Any]:
             " (ai.data IS NOT NULL) AS avatar_ready"
             " FROM accounts a"
             " LEFT JOIN account_groups g ON g.id = a.group_id"
-            " LEFT JOIN account_images ai ON ai.biz = a.biz"
+            " LEFT JOIN avatar_images ai ON ai.biz = a.biz"
             " WHERE a.biz = %s"
         )
         if _is_postgres(storage)
@@ -948,7 +972,7 @@ def _get_account(storage: StorageLike, biz: str) -> dict[str, Any]:
             " (ai.data IS NOT NULL) AS avatar_ready"
             " FROM accounts a"
             " LEFT JOIN account_groups g ON g.id = a.group_id"
-            " LEFT JOIN account_images ai ON ai.biz = a.biz"
+            " LEFT JOIN avatar_images ai ON ai.biz = a.biz"
             " WHERE a.biz = ?"
         ),
         [biz],
@@ -1251,50 +1275,81 @@ def _fetch_image(storage: StorageLike, image_id: int) -> tuple[bytes, str]:
     return payload, content_type
 
 
-def _get_account_avatar_row(storage: StorageLike, biz: str) -> Optional[dict[str, Any]]:
+def _get_avatar_row(storage: StorageLike, biz: str) -> Optional[dict[str, Any]]:
     return _fetchone(
         storage,
-        "SELECT content_type, data FROM account_images WHERE biz = %s"
+        "SELECT avatar_url, content_type, data FROM avatar_images WHERE biz = %s"
         if _is_postgres(storage)
-        else "SELECT content_type, data FROM account_images WHERE biz = ?",
+        else "SELECT avatar_url, content_type, data FROM avatar_images WHERE biz = ?",
         [biz],
     )
 
 
-def _store_account_avatar(
+def _upsert_avatar_url(storage: StorageLike, biz: str, url: str) -> None:
+    if _is_postgres(storage):
+        with storage.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO avatar_images (biz, avatar_url, updated_at)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (biz) DO UPDATE SET
+                    avatar_url=EXCLUDED.avatar_url,
+                    updated_at=EXCLUDED.updated_at
+                """,
+                (biz, url, _utc_now_iso()),
+            )
+        storage.conn.commit()
+        return
+    storage.conn.execute(
+        """
+        INSERT INTO avatar_images (biz, avatar_url, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(biz) DO UPDATE SET
+            avatar_url=excluded.avatar_url,
+            updated_at=excluded.updated_at
+        """,
+        (biz, url, _utc_now_iso()),
+    )
+    storage.conn.commit()
+
+
+def _store_avatar(
     storage: StorageLike,
     biz: str,
     *,
     content_type: str,
     data: bytes,
+    avatar_url: Optional[str] = None,
 ) -> None:
     if _is_postgres(storage):
         with storage.conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO account_images (biz, content_type, data, updated_at)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO avatar_images (biz, avatar_url, content_type, data, updated_at)
+                VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (biz) DO UPDATE SET
+                    avatar_url=COALESCE(EXCLUDED.avatar_url, avatar_images.avatar_url),
                     content_type=EXCLUDED.content_type,
                     data=EXCLUDED.data,
                     updated_at=EXCLUDED.updated_at
                 """,
-                (biz, content_type, psycopg2.Binary(data), _utc_now_iso()),
+                (biz, avatar_url, content_type, psycopg2.Binary(data), _utc_now_iso()),
             )
         storage.conn.commit()
-    else:
-        storage.conn.execute(
-            """
-            INSERT INTO account_images (biz, content_type, data, updated_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(biz) DO UPDATE SET
-                content_type=excluded.content_type,
-                data=excluded.data,
-                updated_at=excluded.updated_at
-            """,
-            (biz, content_type, data, _utc_now_iso()),
-        )
-        storage.conn.commit()
+        return
+    storage.conn.execute(
+        """
+        INSERT INTO avatar_images (biz, avatar_url, content_type, data, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(biz) DO UPDATE SET
+            avatar_url=COALESCE(excluded.avatar_url, avatar_images.avatar_url),
+            content_type=excluded.content_type,
+            data=excluded.data,
+            updated_at=excluded.updated_at
+        """,
+        (biz, avatar_url, content_type, data, _utc_now_iso()),
+    )
+    storage.conn.commit()
 
 
 def _fetch_and_cache_avatar(storage: StorageLike, biz: str, url: str) -> Optional[tuple[bytes, str]]:
@@ -1310,111 +1365,10 @@ def _fetch_and_cache_avatar(storage: StorageLike, biz: str, url: str) -> Optiona
         content_type = resp.headers.get("Content-Type") or "application/octet-stream"
         data = resp.content
         if data:
-            _store_account_avatar(storage, biz, content_type=content_type, data=data)
+            _store_avatar(storage, biz, content_type=content_type, data=data, avatar_url=url)
         return data, content_type
     except Exception as exc:
         logger.warning("Failed to fetch avatar for %s: %s", biz, exc)
-        return None
-
-
-def _get_search_avatar_row(storage: StorageLike, biz: str) -> Optional[dict[str, Any]]:
-    return _fetchone(
-        storage,
-        "SELECT avatar_url, content_type, data FROM account_search_images WHERE biz = %s"
-        if _is_postgres(storage)
-        else "SELECT avatar_url, content_type, data FROM account_search_images WHERE biz = ?",
-        [biz],
-    )
-
-
-def _upsert_search_avatar_url(storage: StorageLike, biz: str, url: str) -> None:
-    if _is_postgres(storage):
-        with storage.conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO account_search_images (biz, avatar_url, updated_at)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (biz) DO UPDATE SET
-                    avatar_url=EXCLUDED.avatar_url,
-                    updated_at=EXCLUDED.updated_at
-                """,
-                (biz, url, _utc_now_iso()),
-            )
-        storage.conn.commit()
-    else:
-        storage.conn.execute(
-            """
-            INSERT INTO account_search_images (biz, avatar_url, updated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(biz) DO UPDATE SET
-                avatar_url=excluded.avatar_url,
-                updated_at=excluded.updated_at
-            """,
-            (biz, url, _utc_now_iso()),
-        )
-        storage.conn.commit()
-
-
-def _store_search_avatar(
-    storage: StorageLike,
-    biz: str,
-    *,
-    content_type: str,
-    data: bytes,
-    url: Optional[str],
-) -> None:
-    if _is_postgres(storage):
-        with storage.conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO account_search_images (biz, avatar_url, content_type, data, updated_at)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (biz) DO UPDATE SET
-                    avatar_url=EXCLUDED.avatar_url,
-                    content_type=EXCLUDED.content_type,
-                    data=EXCLUDED.data,
-                    updated_at=EXCLUDED.updated_at
-                """,
-                (biz, url, content_type, psycopg2.Binary(data), _utc_now_iso()),
-            )
-        storage.conn.commit()
-    else:
-        storage.conn.execute(
-            """
-            INSERT INTO account_search_images (biz, avatar_url, content_type, data, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(biz) DO UPDATE SET
-                avatar_url=excluded.avatar_url,
-                content_type=excluded.content_type,
-                data=excluded.data,
-                updated_at=excluded.updated_at
-            """,
-            (biz, url, content_type, data, _utc_now_iso()),
-        )
-        storage.conn.commit()
-
-
-def _fetch_and_cache_search_avatar(
-    storage: StorageLike,
-    biz: str,
-    url: str,
-) -> Optional[tuple[bytes, str]]:
-    headers = {
-        "Referer": "https://mp.weixin.qq.com/",
-        "Origin": "https://mp.weixin.qq.com",
-        "User-Agent": "Mozilla/5.0",
-    }
-    try:
-        resp = httpx.get(url, headers=headers, timeout=10)
-        if resp.status_code != 200:
-            return None
-        content_type = resp.headers.get("Content-Type") or "application/octet-stream"
-        data = resp.content
-        if data:
-            _store_search_avatar(storage, biz, content_type=content_type, data=data, url=url)
-        return data, content_type
-    except Exception as exc:
-        logger.warning("Failed to fetch search avatar for %s: %s", biz, exc)
         return None
 
 
@@ -1537,7 +1491,7 @@ class HippoHandler(BaseHTTPRequestHandler):
         try:
             with open_storage(DB_PATH) as storage:
                 _ensure_default_group(storage)
-                _ensure_account_images_table(storage)
+                _ensure_avatar_images_table(storage)
                 if len(segments) < 2:
                     raise ApiError("Invalid API path", status=404)
                 resource = segments[1]
@@ -1629,7 +1583,7 @@ class HippoHandler(BaseHTTPRequestHandler):
                 page_size = _parse_int(query.get("page_size", ["10"])[0]) or 10
                 begin = _parse_int(query.get("begin", [None])[0])
                 offset = begin if begin is not None else (max(page, 1) - 1) * page_size
-                _ensure_account_search_images_table(storage)
+                _ensure_avatar_images_table(storage)
                 existing = {account.biz for account in storage.list_accounts()}
                 session = storage.get_login_session()
                 with MPClient() as client:
@@ -1647,7 +1601,7 @@ class HippoHandler(BaseHTTPRequestHandler):
                         continue
                     avatar_url = (item.get("round_head_img") or item.get("headimg") or "").strip()
                     if avatar_url:
-                        _upsert_search_avatar_url(storage, biz, avatar_url)
+                        _upsert_avatar_url(storage, biz, avatar_url)
                     is_added = biz in existing
                     results.append(
                         {
@@ -1677,15 +1631,15 @@ class HippoHandler(BaseHTTPRequestHandler):
                 if method != "GET":
                     raise ApiError("Method not allowed", status=405)
                 biz = segments[3]
-                _ensure_account_search_images_table(storage)
-                avatar = _get_search_avatar_row(storage, biz)
+                _ensure_avatar_images_table(storage)
+                avatar = _get_avatar_row(storage, biz)
                 if not avatar:
                     raise ApiError("Avatar not found", status=404)
                 data = avatar.get("data")
                 if not data:
                     url = avatar.get("avatar_url")
                     if url:
-                        cached = _fetch_and_cache_search_avatar(storage, biz, url)
+                        cached = _fetch_and_cache_avatar(storage, biz, url)
                         if cached:
                             data, content_type = cached
                             self.send_response(HTTPStatus.OK)
@@ -1807,29 +1761,34 @@ class HippoHandler(BaseHTTPRequestHandler):
             if method != "GET":
                 raise ApiError("Method not allowed", status=405)
             biz = segments[2]
-            avatar = _get_account_avatar_row(storage, biz)
-            if not avatar or not avatar.get("data"):
-                row = _fetchone(
-                    storage,
-                    "SELECT round_head_img FROM accounts WHERE biz = %s"
-                    if _is_postgres(storage)
-                    else "SELECT round_head_img FROM accounts WHERE biz = ?",
-                    [biz],
-                )
-                if not row:
-                    raise ApiError("Account not found", status=404)
-                url = row.get("round_head_img")
+            avatar = _get_avatar_row(storage, biz)
+            data = avatar.get("data") if avatar else None
+            if not data:
+                url = avatar.get("avatar_url") if avatar else None
+                if not url:
+                    row = _fetchone(
+                        storage,
+                        "SELECT round_head_img FROM accounts WHERE biz = %s"
+                        if _is_postgres(storage)
+                        else "SELECT round_head_img FROM accounts WHERE biz = ?",
+                        [biz],
+                    )
+                    if not row:
+                        raise ApiError("Account not found", status=404)
+                    url = row.get("round_head_img")
+                    if url:
+                        _upsert_avatar_url(storage, biz, url)
                 if url:
                     cached = _fetch_and_cache_avatar(storage, biz, url)
                     if cached:
-                            data, content_type = cached
-                            self.send_response(HTTPStatus.OK)
-                            self.send_header("Content-Type", content_type)
-                            self.send_header("Cache-Control", "public, max-age=259200")
-                            self.send_header("Content-Length", str(len(data)))
-                            self.end_headers()
-                            self.wfile.write(data)
-                            return
+                        data, content_type = cached
+                        self.send_response(HTTPStatus.OK)
+                        self.send_header("Content-Type", content_type)
+                        self.send_header("Cache-Control", "public, max-age=259200")
+                        self.send_header("Content-Length", str(len(data)))
+                        self.end_headers()
+                        self.wfile.write(data)
+                        return
                 raise ApiError("Avatar not found", status=404)
             data = avatar.get("data")
             if isinstance(data, memoryview):
