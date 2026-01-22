@@ -161,15 +161,18 @@
       const font = $('#reader-font')?.value || '17';
       const lineHeight = $('#reader-line')?.value || '1.8';
       const letter = $('#reader-letter')?.value || '0.2';
+      const serif = $('#reader-serif')?.checked || false;
       root.style.setProperty('--reader-width', `${width}px`);
       root.style.setProperty('--reader-font', `${font}px`);
       root.style.setProperty('--reader-line', lineHeight);
       root.style.setProperty('--reader-letter', `${letter}px`);
+      root.style.setProperty('--reader-family', serif ? '"Source Serif 4", Georgia, serif' : '"Source Sans 3", sans-serif');
       const snapshot = {
         width,
         font,
         lineHeight,
         letter,
+        serif,
       };
       localStorage.setItem('hippo-reader', JSON.stringify(snapshot));
     };
@@ -182,11 +185,12 @@
         if (config.font) $('#reader-font').value = config.font;
         if (config.lineHeight) $('#reader-line').value = config.lineHeight;
         if (config.letter) $('#reader-letter').value = config.letter;
+        if (config.serif !== undefined) $('#reader-serif').checked = config.serif;
       } catch (err) {
         console.warn('Failed to parse reader config', err);
       }
     }
-    ['#reader-width', '#reader-font', '#reader-line', '#reader-letter'].forEach((selector) => {
+    ['#reader-width', '#reader-font', '#reader-line', '#reader-letter', '#reader-serif'].forEach((selector) => {
       const input = $(selector);
       if (input) input.addEventListener('input', apply);
     });

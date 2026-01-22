@@ -35,19 +35,23 @@
       <div class="reader-controls is-hidden" id="reader-controls">
         <label>
           <span data-i18n="reader.width">Width</span>
-          <input id="reader-width" type="range" min="640" max="980" step="10" value="860">
+          <input id="reader-width" type="range" min="400" max="1200" step="10" value="860">
         </label>
         <label>
           <span data-i18n="reader.font">Font Size</span>
-          <input id="reader-font" type="range" min="14" max="22" step="1" value="17">
+          <input id="reader-font" type="range" min="12" max="32" step="1" value="17">
         </label>
         <label>
           <span data-i18n="reader.lineHeight">Line Height</span>
-          <input id="reader-line" type="range" min="1.4" max="2.4" step="0.05" value="1.8">
+          <input id="reader-line" type="range" min="1.2" max="3.0" step="0.05" value="1.8">
         </label>
         <label>
           <span data-i18n="reader.letter">Letter Spacing</span>
-          <input id="reader-letter" type="range" min="0" max="2" step="0.1" value="0.2">
+          <input id="reader-letter" type="range" min="0" max="4" step="0.1" value="0.2">
+        </label>
+        <label class="switch">
+          <input id="reader-serif" type="checkbox">
+          <span data-i18n="reader.serif">Serif Font</span>
         </label>
       </div>
       <button class="reader-fab" id="reader-toggle" type="button" aria-label="排版设置" title="排版设置">

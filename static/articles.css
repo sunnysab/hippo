@@ -182,6 +182,7 @@
   font-size: var(--reader-font);
   line-height: var(--reader-line);
   letter-spacing: var(--reader-letter);
+  font-family: var(--reader-family);
   color: var(--text);
 }
 

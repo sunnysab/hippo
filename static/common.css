@@ -17,6 +17,7 @@
   --reader-font: 17px;
   --reader-line: 1.8;
   --reader-letter: 0.2px;
+  --reader-family: "Source Sans 3", sans-serif;
   --article-list-width: 300px;
 }
 
