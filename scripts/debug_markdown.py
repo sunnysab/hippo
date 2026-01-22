@@ -8,10 +8,7 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
-try:
-    from normalize_html import normalize_html
-except Exception:
-    from ..normalize_html import normalize_html  # type: ignore
+from hippo.normalize_html import normalize_html
 
 
 # import sys

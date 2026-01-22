@@ -351,7 +351,7 @@ Optional flags:
 ├── README.md
 ├── requirements-cli.txt
 ├── pyproject.toml
-├── normalize_html.py
+├── hippo/normalize_html.py
 ├── scripts/
 │   └── export_to_pg.py
 └── hippo/

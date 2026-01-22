@@ -34,5 +34,5 @@ dependencies = [
 hippo = "hippo.cli:app"
 
 [tool.setuptools]
-py-modules = ["normalize_html", "__init__"]
+py-modules = ["__init__"]
 packages = ["hippo"]

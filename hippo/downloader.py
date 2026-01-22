@@ -22,11 +22,7 @@ from urllib.parse import urlparse, urljoin, parse_qs
 from bs4 import BeautifulSoup
 import httpx
 
-try:
-    # Running from repo root: python/ is a package.
-    from ..normalize_html import normalize_html
-except ImportError:  # pragma: no cover - fallback for running inside python/
-    from normalize_html import normalize_html
+from .normalize_html import normalize_html
 
 from .config import DOWNLOAD_ROOT, HOME_DIR
 from .http import MPClient

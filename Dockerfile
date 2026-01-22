@@ -22,7 +22,7 @@ RUN apt-get update && \
 # Copy project files
 COPY pyproject.toml README.md ./
 COPY hippo/ ./hippo/
-COPY __init__.py normalize_html.py ./
+COPY __init__.py ./
 
 # Install Python dependencies
 RUN pip install --upgrade pip setuptools wheel && \
