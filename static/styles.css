@@ -487,7 +487,6 @@ body {
   align-content: start;
   grid-auto-rows: max-content;
   width: 100%;
-  max-width: calc(4 * 260px + 3 * 16px);
 }
 
 .card-header {
