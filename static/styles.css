@@ -404,6 +404,32 @@ body {
   flex-wrap: wrap;
 }
 
+.context-menu {
+  position: fixed;
+  min-width: 120px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 6px;
+  z-index: 100;
+}
+
+.context-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: 10px;
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.context-item:hover {
+  background: var(--accent-soft);
+}
+
 .accounts-toolbar {
   margin-bottom: 16px;
 }

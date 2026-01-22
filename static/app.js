@@ -106,6 +106,22 @@ const initTabs = () => {
   });
 };
 
+const showGroupContextMenu = (group, x, y) => {
+  const menu = $('#group-context-menu');
+  if (!menu) return;
+  menu.dataset.groupId = String(group.id);
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+  menu.classList.remove('is-hidden');
+};
+
+const hideGroupContextMenu = () => {
+  const menu = $('#group-context-menu');
+  if (!menu) return;
+  menu.classList.add('is-hidden');
+  menu.dataset.groupId = '';
+};
+
 const renderGroupList = () => {
   const list = $('#group-list');
   list.innerHTML = '';
@@ -124,6 +140,10 @@ const renderGroupList = () => {
       renderGroupList();
       renderGroupHeader();
       void loadAccounts();
+    });
+    item.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      showGroupContextMenu(group, event.clientX, event.clientY);
     });
     list.appendChild(item);
   });
@@ -886,6 +906,25 @@ const bindEvents = () => {
     state.selectedGroupId = null;
     await loadGroups();
   });
+  const groupRssBtn = $('#group-menu-rss');
+  if (groupRssBtn) {
+    groupRssBtn.addEventListener('click', async () => {
+      const menu = $('#group-context-menu');
+      const groupId = menu?.dataset.groupId;
+      if (!groupId) return;
+      const url = new URL('/api/feed/mixed', window.location.origin);
+      url.searchParams.set('group_id', groupId);
+      url.searchParams.set('limit', '50');
+      url.searchParams.set('format', 'rss');
+      try {
+        await copyToClipboard(url.toString());
+        alert(t('groups.rssCopied', 'RSS address copied.'));
+      } catch (err) {
+        prompt(t('groups.rssPrompt', 'RSS address'), url.toString());
+      }
+      hideGroupContextMenu();
+    });
+  }
 
   $('#btn-account-refresh').addEventListener('click', async () => {
     await loadAccounts();
@@ -947,6 +986,20 @@ const bindEvents = () => {
     activateTab('sync');
     await startLogin();
   });
+  document.addEventListener('click', (event) => {
+    const menu = $('#group-context-menu');
+    if (!menu || menu.classList.contains('is-hidden')) return;
+    if (menu.contains(event.target)) return;
+    hideGroupContextMenu();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      hideGroupContextMenu();
+    }
+  });
+  window.addEventListener('scroll', () => {
+    hideGroupContextMenu();
+  }, true);
 };
 
 const init = async () => {

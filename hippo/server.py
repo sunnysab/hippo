@@ -32,6 +32,7 @@ from .config import DB_PATH
 from .downloader import ArticleDownloader
 from .http import MPClient, parse_appmsg_publish
 from .models import AccountCredential, ArticleRecord
+from .rss import build_rss_xml, query_rss_items
 from .storage import PostgresStorage, StorageLike, open_storage
 
 DEFAULT_HOST = "127.0.0.1"
@@ -2061,12 +2062,55 @@ class HippoHandler(BaseHTTPRequestHandler):
         biz = query.get("biz", [""])[0] or None
         search = query.get("q", [""])[0] or None
         limit = _parse_int(query.get("limit", ["50"])[0]) or 50
+        output_format = (query.get("format", [""])[0] or "").lower()
         since_ts = _parse_date(query.get("since", [None])[0])
         until_ts = _parse_date(query.get("until", [None])[0], end_of_day=True)
         days = _parse_int(query.get("days", [None])[0])
         if days:
             now = datetime.utcnow()
             since_ts = int((now.timestamp() - days * 86400))
+        if output_format == "rss":
+            group_names: list[str] = []
+            if group_id is not None:
+                row = _fetchone(
+                    storage,
+                    "SELECT name FROM account_groups WHERE id = %s"
+                    if _is_postgres(storage)
+                    else "SELECT name FROM account_groups WHERE id = ?",
+                    [group_id],
+                )
+                if not row:
+                    raise ApiError("Group not found", status=404)
+                group_names = [row.get("name") or ""]
+            host = self.headers.get("Host") or f"{DEFAULT_HOST}:{DEFAULT_PORT}"
+            image_base = f"http://{host}"
+            items = query_rss_items(
+                group_names=group_names,
+                limit=min(max(limit, 1), 500),
+                days=days,
+                since=query.get("since", [None])[0],
+                until=query.get("until", [None])[0],
+                image_base_url=image_base,
+            )
+            title = "Hippo RSS"
+            description = "Hippo RSS feed"
+            if group_names:
+                title = f"{group_names[0]} - Hippo RSS"
+                description = f"RSS feed for {group_names[0]}"
+            xml = build_rss_xml(
+                title=title,
+                link=image_base,
+                description=description,
+                items=items,
+            )
+            payload = xml.encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/rss+xml; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self._set_cors_headers()
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         payload = _list_feed(
             storage,
             group_id=group_id,

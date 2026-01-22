@@ -21,6 +21,8 @@
   "groups.renamePrompt": "请输入新分组名称",
   "groups.deleteConfirm": "确定删除该分组吗？",
   "groups.createPrompt": "请输入分组名称",
+  "groups.rssCopied": "RSS 地址已复制",
+  "groups.rssPrompt": "RSS 地址",
   "accounts.title": "公众号管理",
   "accounts.subtitle": "浏览、检索并调整公众号分组。",
   "accounts.empty": "暂无公众号。",
