@@ -29,6 +29,8 @@
   "accounts.movePlaceholder": "移动到分组",
   "accounts.moveSelectGroup": "请选择目标分组。",
   "accounts.moveSelectAccounts": "请选择要移动的公众号。",
+  "accounts.searchAdd": "添加",
+  "accounts.searchAdded": "已添加",
   "articles.title": "文章预览",
   "articles.subtitle": "筛选并阅读文章。",
   "articles.hideList": "隐藏列表",

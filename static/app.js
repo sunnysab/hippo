@@ -4,6 +4,7 @@ const state = {
   selectedGroupId: null,
   accounts: [],
   selectedAccounts: new Set(),
+  searchResults: [],
   articles: [],
   articlePage: 1,
   articlePageSize: 20,
@@ -183,6 +184,7 @@ const loadGroups = async () => {
   renderGroupHeader();
   renderGroupSelects();
   await loadAccounts();
+  await loadAccountSearchResults();
 };
 
 const renderGroupSelects = () => {
@@ -251,6 +253,79 @@ const renderAccounts = () => {
   }
   updateBatchCount();
   refreshSelectAll();
+};
+
+const renderAccountSearchResults = () => {
+  const container = $('#account-search-results');
+  if (!container) return;
+  if (!state.searchResults.length) {
+    container.innerHTML = '';
+    container.classList.add('is-hidden');
+    return;
+  }
+  container.classList.remove('is-hidden');
+  container.innerHTML = '';
+  state.searchResults.forEach((item) => {
+    const row = document.createElement('div');
+    row.className = 'search-item';
+    const avatar = item.avatar_url || '';
+    row.innerHTML = `
+      ${avatar ? `<img class="account-avatar" src="${avatar}" alt="" onerror="this.style.display='none'">` : '<div class="account-avatar"></div>'}
+      <div class="search-meta">
+        <div class="account-name">${item.nickname || ''}</div>
+        <div class="account-sub">${item.alias || item.biz || ''}</div>
+      </div>
+      <div class="search-actions">
+        ${
+          item.is_added
+            ? `<span class="search-tag">${t('accounts.searchAdded', 'Added')}</span>`
+            : `<button class="btn ghost search-add" type="button" data-biz="${item.biz}">${t('accounts.searchAdd', 'Add')}</button>`
+        }
+      </div>
+    `;
+    const addBtn = row.querySelector('.search-add');
+    if (addBtn) {
+      addBtn.addEventListener('click', async () => {
+        await apiSend('/api/account', 'POST', {
+          biz: item.biz,
+          nickname: item.nickname,
+          alias: item.alias || null,
+          round_head_img: item.round_head_img || null,
+          group_id: state.selectedGroupId,
+        });
+        await loadGroups();
+        await loadAccounts();
+        await loadAccountSearchResults();
+      });
+    }
+    container.appendChild(row);
+  });
+};
+
+const loadAccountSearchResults = async () => {
+  const searchInput = $('#account-search');
+  const keyword = searchInput ? searchInput.value.trim() : '';
+  if (!keyword) {
+    state.searchResults = [];
+    renderAccountSearchResults();
+    return;
+  }
+  if (keyword.length < 2) {
+    state.searchResults = [];
+    renderAccountSearchResults();
+    return;
+  }
+  const url = new URL('/api/account/search', window.location.origin);
+  url.searchParams.set('q', keyword);
+  url.searchParams.set('page_size', '8');
+  try {
+    const payload = await apiGet(url.pathname + url.search);
+    state.searchResults = payload.results || [];
+  } catch (err) {
+    console.warn('Account search failed', err);
+    state.searchResults = [];
+  }
+  renderAccountSearchResults();
 };
 
 const updateBatchCount = () => {
@@ -791,10 +866,16 @@ const bindEvents = () => {
     await loadGroups();
   });
 
-  $('#btn-account-refresh').addEventListener('click', loadAccounts);
+  $('#btn-account-refresh').addEventListener('click', async () => {
+    await loadAccounts();
+    await loadAccountSearchResults();
+  });
   $('#account-search').addEventListener('input', () => {
     clearTimeout(state.accountTimer);
-    state.accountTimer = setTimeout(loadAccounts, 300);
+    state.accountTimer = setTimeout(async () => {
+      await loadAccounts();
+      await loadAccountSearchResults();
+    }, 300);
   });
   $('#account-select-all').addEventListener('change', (event) => {
     const checked = event.target.checked;

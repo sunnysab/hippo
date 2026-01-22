@@ -571,6 +571,36 @@ def _ensure_account_images_table(storage: StorageLike) -> None:
         storage.conn.commit()
 
 
+def _ensure_account_search_images_table(storage: StorageLike) -> None:
+    if _is_postgres(storage):
+        with storage.conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS account_search_images (
+                    biz TEXT PRIMARY KEY,
+                    avatar_url TEXT,
+                    content_type TEXT,
+                    data BYTEA,
+                    updated_at TIMESTAMPTZ NOT NULL
+                )
+                """
+            )
+        storage.conn.commit()
+    else:
+        storage.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS account_search_images (
+                biz TEXT PRIMARY KEY,
+                avatar_url TEXT,
+                content_type TEXT,
+                data BLOB,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        storage.conn.commit()
+
+
 def _should_skip_by_time(last_synced_at: Optional[datetime], skip_minutes: Optional[int]) -> bool:
     if not skip_minutes or skip_minutes <= 0:
         return False
@@ -1286,6 +1316,107 @@ def _fetch_and_cache_avatar(storage: StorageLike, biz: str, url: str) -> Optiona
         return None
 
 
+def _get_search_avatar_row(storage: StorageLike, biz: str) -> Optional[dict[str, Any]]:
+    return _fetchone(
+        storage,
+        "SELECT avatar_url, content_type, data FROM account_search_images WHERE biz = %s"
+        if _is_postgres(storage)
+        else "SELECT avatar_url, content_type, data FROM account_search_images WHERE biz = ?",
+        [biz],
+    )
+
+
+def _upsert_search_avatar_url(storage: StorageLike, biz: str, url: str) -> None:
+    if _is_postgres(storage):
+        with storage.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO account_search_images (biz, avatar_url, updated_at)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (biz) DO UPDATE SET
+                    avatar_url=EXCLUDED.avatar_url,
+                    updated_at=EXCLUDED.updated_at
+                """,
+                (biz, url, _utc_now_iso()),
+            )
+        storage.conn.commit()
+    else:
+        storage.conn.execute(
+            """
+            INSERT INTO account_search_images (biz, avatar_url, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(biz) DO UPDATE SET
+                avatar_url=excluded.avatar_url,
+                updated_at=excluded.updated_at
+            """,
+            (biz, url, _utc_now_iso()),
+        )
+        storage.conn.commit()
+
+
+def _store_search_avatar(
+    storage: StorageLike,
+    biz: str,
+    *,
+    content_type: str,
+    data: bytes,
+    url: Optional[str],
+) -> None:
+    if _is_postgres(storage):
+        with storage.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO account_search_images (biz, avatar_url, content_type, data, updated_at)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (biz) DO UPDATE SET
+                    avatar_url=EXCLUDED.avatar_url,
+                    content_type=EXCLUDED.content_type,
+                    data=EXCLUDED.data,
+                    updated_at=EXCLUDED.updated_at
+                """,
+                (biz, url, content_type, psycopg2.Binary(data), _utc_now_iso()),
+            )
+        storage.conn.commit()
+    else:
+        storage.conn.execute(
+            """
+            INSERT INTO account_search_images (biz, avatar_url, content_type, data, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(biz) DO UPDATE SET
+                avatar_url=excluded.avatar_url,
+                content_type=excluded.content_type,
+                data=excluded.data,
+                updated_at=excluded.updated_at
+            """,
+            (biz, url, content_type, data, _utc_now_iso()),
+        )
+        storage.conn.commit()
+
+
+def _fetch_and_cache_search_avatar(
+    storage: StorageLike,
+    biz: str,
+    url: str,
+) -> Optional[tuple[bytes, str]]:
+    headers = {
+        "Referer": "https://mp.weixin.qq.com/",
+        "Origin": "https://mp.weixin.qq.com",
+        "User-Agent": "Mozilla/5.0",
+    }
+    try:
+        resp = httpx.get(url, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return None
+        content_type = resp.headers.get("Content-Type") or "application/octet-stream"
+        data = resp.content
+        if data:
+            _store_search_avatar(storage, biz, content_type=content_type, data=data, url=url)
+        return data, content_type
+    except Exception as exc:
+        logger.warning("Failed to fetch search avatar for %s: %s", biz, exc)
+        return None
+
+
 def _list_feed(
     storage: StorageLike,
     *,
@@ -1486,6 +1617,92 @@ class HippoHandler(BaseHTTPRequestHandler):
         segments: list[str],
         query: dict[str, list[str]],
     ) -> None:
+        if len(segments) >= 3 and segments[2] == "search":
+            if len(segments) == 3:
+                if method != "GET":
+                    raise ApiError("Method not allowed", status=405)
+                keyword = (query.get("q", [""])[0] or "").strip()
+                if not keyword:
+                    raise ApiError("q is required")
+                page = _parse_int(query.get("page", ["1"])[0]) or 1
+                page_size = _parse_int(query.get("page_size", ["10"])[0]) or 10
+                begin = _parse_int(query.get("begin", [None])[0])
+                offset = begin if begin is not None else (max(page, 1) - 1) * page_size
+                _ensure_account_search_images_table(storage)
+                existing = {account.biz for account in storage.list_accounts()}
+                session = storage.get_login_session()
+                with MPClient() as client:
+                    payload = client.search_biz(
+                        session,
+                        keyword=keyword,
+                        begin=offset,
+                        count=min(max(page_size, 1), 20),
+                    )
+                records = payload.get("list") or []
+                results: list[dict[str, Any]] = []
+                for item in records:
+                    biz = (item.get("fakeid") or "").strip()
+                    if not biz:
+                        continue
+                    avatar_url = (item.get("round_head_img") or item.get("headimg") or "").strip()
+                    if avatar_url:
+                        _upsert_search_avatar_url(storage, biz, avatar_url)
+                    is_added = biz in existing
+                    results.append(
+                        {
+                            "biz": biz,
+                            "nickname": item.get("nickname") or "",
+                            "alias": item.get("alias") or "",
+                            "round_head_img": avatar_url,
+                            "is_added": is_added,
+                            "avatar_url": (
+                                f"/api/account/{biz}/avatar"
+                                if is_added
+                                else f"/api/account/search/{biz}/avatar"
+                            ),
+                        }
+                    )
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "results": results,
+                        "page": max(page, 1),
+                        "page_size": min(max(page_size, 1), 20),
+                        "total": payload.get("total") or len(results),
+                    },
+                )
+                return
+            if len(segments) == 5 and segments[4] == "avatar":
+                if method != "GET":
+                    raise ApiError("Method not allowed", status=405)
+                biz = segments[3]
+                _ensure_account_search_images_table(storage)
+                avatar = _get_search_avatar_row(storage, biz)
+                if not avatar:
+                    raise ApiError("Avatar not found", status=404)
+                data = avatar.get("data")
+                if not data:
+                    url = avatar.get("avatar_url")
+                    if url:
+                        cached = _fetch_and_cache_search_avatar(storage, biz, url)
+                        if cached:
+                            data, content_type = cached
+                            self.send_response(HTTPStatus.OK)
+                            self.send_header("Content-Type", content_type)
+                            self.send_header("Content-Length", str(len(data)))
+                            self.end_headers()
+                            self.wfile.write(data)
+                            return
+                    raise ApiError("Avatar not found", status=404)
+                payload = data.tobytes() if isinstance(data, memoryview) else bytes(data)
+                content_type = avatar.get("content_type") or "application/octet-stream"
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            raise ApiError("Not found", status=404)
         if len(segments) == 2:
             if method == "GET":
                 group_id = _parse_int(query.get("group_id", [None])[0])
