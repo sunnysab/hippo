@@ -1071,7 +1071,7 @@ def _build_article_query(
     content_join = " JOIN article_content ac ON ac.article_pk = a.id" if content_only else ""
     query_sql = (
         "SELECT a.id, a.biz, a.article_id, a.title, a.author, a.digest, a.cover, a.link,"
-        " a.source_url, a.publish_at,"
+        " a.source_url, a.publish_at, a.created_at,"
         " acc.nickname AS account_nickname, acc.alias AS account_alias,"
         " acc.round_head_img AS account_avatar,"
         " acc.group_id, g.name AS group_name,"
@@ -1161,7 +1161,7 @@ def _get_article(storage: StorageLike, article_id: int) -> dict[str, Any]:
         storage,
         (
             "SELECT a.id, a.biz, a.article_id, a.title, a.author, a.digest, a.cover, a.link,"
-            " a.source_url, a.publish_at,"
+            " a.source_url, a.publish_at, a.created_at,"
             " acc.nickname AS account_nickname, acc.alias AS account_alias,"
             " acc.round_head_img AS account_avatar, acc.group_id, g.name AS group_name"
             " FROM articles a"
@@ -1172,7 +1172,7 @@ def _get_article(storage: StorageLike, article_id: int) -> dict[str, Any]:
         if _is_postgres(storage)
         else (
             "SELECT a.id, a.biz, a.article_id, a.title, a.author, a.digest, a.cover, a.link,"
-            " a.source_url, a.publish_at,"
+            " a.source_url, a.publish_at, a.created_at,"
             " acc.nickname AS account_nickname, acc.alias AS account_alias,"
             " acc.round_head_img AS account_avatar, acc.group_id, g.name AS group_name"
             " FROM articles a"

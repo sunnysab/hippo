@@ -381,7 +381,7 @@ const renderArticleList = () => {
         <div class="article-meta">
           ${avatar ? `<img class="article-avatar" src="${avatar}" alt="" onerror="this.style.display='none'">` : ''}
           <span>${article.account_nickname || ''}</span>
-          <span>${formatDate(article.publish_at)}</span>
+          <span>${formatDate(article.created_at)}</span>
         </div>
         <div class="article-digest"></div>
       </div>
@@ -401,7 +401,12 @@ const renderArticleList = () => {
 
 const formatDate = (value) => {
   if (!value) return '';
-  const date = new Date(value * 1000);
+  let date;
+  if (typeof value === 'number') {
+    date = new Date(value * 1000);
+  } else {
+    date = new Date(value);
+  }
   if (Number.isNaN(date.getTime())) return '';
   return date.toLocaleDateString('zh-CN');
 };
