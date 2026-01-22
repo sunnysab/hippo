@@ -98,6 +98,24 @@ def _patch_click_for_typer() -> None:
 
     Parameter.make_metavar = _make_metavar  # type: ignore[assignment]
 
+    try:
+        from typer.core import TyperOption
+    except Exception:
+        return
+
+    if getattr(TyperOption.__init__, "_hippo_click_flag_patch", None):
+        return
+
+    original_option_init = TyperOption.__init__
+
+    def _option_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if kwargs.get("is_flag") and kwargs.get("flag_value") is None:
+            kwargs["flag_value"] = click.core.UNSET
+        return original_option_init(self, *args, **kwargs)
+
+    _option_init._hippo_click_flag_patch = True  # type: ignore[attr-defined]
+    TyperOption.__init__ = _option_init  # type: ignore[assignment]
+
 
 def run() -> None:
     _patch_click_for_typer()
