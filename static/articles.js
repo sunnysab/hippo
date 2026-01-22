@@ -274,7 +274,7 @@
   };
 
   const bindEvents = () => {
-    $('#btn-article-refresh').addEventListener('click', () => loadArticles(true));
+    // $('#btn-article-refresh').addEventListener('click', () => loadArticles(true));
     $('#btn-article-more').addEventListener('click', () => {
       state.articlePage += 1;
       loadArticles(false);
