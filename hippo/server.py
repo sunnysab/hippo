@@ -1045,19 +1045,15 @@ def _build_article_query(
     content_only: bool,
     limit: int,
     offset: int,
-    mid: Optional[str] = None,
-    idx: Optional[str] = None,
+    article_id: Optional[str] = None,
 ) -> tuple[str, list[Any]]:
     is_pg = _is_postgres(storage)
     where: list[str] = []
     params: list[Any] = []
-    
-    if mid:
-        where.append("a.source_url LIKE %s" if is_pg else "a.source_url LIKE ?")
-        params.append(f"%mid={mid}%")
-    if idx:
-        where.append("a.source_url LIKE %s" if is_pg else "a.source_url LIKE ?")
-        params.append(f"%idx={idx}%")
+
+    if article_id:
+        where.append("a.article_id = %s" if is_pg else "a.article_id = ?")
+        params.append(article_id)
 
     if group_id is not None:
         where.append("acc.group_id = %s" if is_pg else "acc.group_id = ?")
@@ -1134,8 +1130,7 @@ def _list_articles(
     content_only: bool,
     page: int,
     page_size: int,
-    mid: Optional[str] = None,
-    idx: Optional[str] = None,
+    article_id: Optional[str] = None,
 ) -> dict[str, Any]:
     offset = max(page - 1, 0) * page_size
     query_sql, params = _build_article_query(
@@ -1148,8 +1143,7 @@ def _list_articles(
         content_only=content_only,
         limit=page_size,
         offset=offset,
-        mid=mid,
-        idx=idx,
+        article_id=article_id,
     )
     rows = _fetchall(storage, query_sql, params)
     for row in rows:
@@ -1157,21 +1151,12 @@ def _list_articles(
 
     is_pg = _is_postgres(storage)
     
-    # Simple count logic embedded or separate helper needed
-    # Since we don't have _build_article_count_query in original file (my assumption was wrong or I missed it),
-    # I should check if I need to modify count logic below.
-    # The original file has count logic inline usually?
-    # Wait, let's see lines 1146+ in view output above.
-    
     where: list[str] = []
     count_params: list[Any] = []
-    
-    if mid:
-        where.append("a.source_url LIKE %s" if is_pg else "a.source_url LIKE ?")
-        count_params.append(f"%mid={mid}%")
-    if idx:
-        where.append("a.source_url LIKE %s" if is_pg else "a.source_url LIKE ?")
-        count_params.append(f"%idx={idx}%")
+
+    if article_id:
+        where.append("a.article_id = %s" if is_pg else "a.article_id = ?")
+        count_params.append(article_id)
         
     if group_id is not None:
         where.append("acc.group_id = %s" if is_pg else "acc.group_id = ?")
@@ -1843,6 +1828,7 @@ class HippoHandler(BaseHTTPRequestHandler):
             if method == "GET":
                 group_id = _parse_int(query.get("group_id", [None])[0])
                 biz = query.get("biz", [""])[0] or None
+                article_id = query.get("article_id", [""])[0] or None
                 search = query.get("q", [""])[0] or None
                 page = _parse_int(query.get("page", ["1"])[0]) or 1
                 page_size = _parse_int(query.get("page_size", ["20"])[0]) or 20
@@ -1851,8 +1837,6 @@ class HippoHandler(BaseHTTPRequestHandler):
                 since_ts = _parse_date(query.get("since", [None])[0])
                 until_ts = _parse_date(query.get("until", [None])[0], end_of_day=True)
                 
-                mid = query.get("mid", [""])[0] or None
-                idx = query.get("idx", [""])[0] or None
 
                 payload = _list_articles(
                     storage,
@@ -1864,8 +1848,7 @@ class HippoHandler(BaseHTTPRequestHandler):
                     content_only=content_only,
                     page=max(page, 1),
                     page_size=min(max(page_size, 1), 200),
-                    mid=mid,
-                    idx=idx,
+                    article_id=article_id,
                 )
                 self._send_json(HTTPStatus.OK, payload)
                 return
