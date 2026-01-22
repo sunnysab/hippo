@@ -45,12 +45,18 @@
     if (!state.articles.length) {
       list.innerHTML = `<div class="empty-state">${t('articles.emptyList', 'No articles found.')}</div>`;
     }
+    // Remove manual load more button logic from UI if present, as it is now infinite scroll
+    $('#btn-article-more').parentElement.style.display = 'none';
   };
 
   const loadArticles = async (reset = true) => {
+    if (state.isArticleLoading) return;
+    state.isArticleLoading = true;
+    
     if (reset) {
       state.articlePage = 1;
       state.articles = [];
+      state.hasMoreArticles = true;
     }
     const groupId = $('#article-group-filter')?.value;
     const accountBiz = $('#article-account-filter')?.value;
@@ -62,9 +68,26 @@
     url.searchParams.set('content', '1');
     url.searchParams.set('page', state.articlePage.toString());
     url.searchParams.set('page_size', state.articlePageSize.toString());
-    const payload = await apiGet(url.pathname + url.search);
-    state.articles = state.articles.concat(payload.articles || []);
-    renderArticleList();
+    
+    try {
+        const payload = await apiGet(url.pathname + url.search);
+        const newArticles = payload.articles || [];
+        
+        if (newArticles.length < state.articlePageSize) {
+            state.hasMoreArticles = false;
+        } else {
+            state.hasMoreArticles = true;
+        }
+
+        if (reset) {
+             state.articles = newArticles;
+        } else {
+             state.articles = state.articles.concat(newArticles);
+        }
+        renderArticleList();
+    } finally {
+        state.isArticleLoading = false;
+    }
   };
 
   const populateArticleAccountFilter = async () => {
@@ -292,6 +315,22 @@
       });
     }
     updateLabel();
+
+    // Infinite Scroll for Article List
+    const listScroll = $('#article-list');
+    if (listScroll) {
+      listScroll.addEventListener('scroll', () => {
+        if (listScroll.scrollTop + listScroll.clientHeight >= listScroll.scrollHeight - 50) {
+          // Check if already loading or no more data (implementation dependent)
+          // For now, simple throttle or check state could work.
+          // Ideally we should track 'isLoading' and 'hasMore'.
+          if (!state.isArticleLoading && state.hasMoreArticles) {
+             state.articlePage += 1;
+             loadArticles(false);
+          }
+        }
+      });
+    }
 
     const resizer = $('#article-resizer');
     if (resizer) {
