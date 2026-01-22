@@ -24,6 +24,7 @@ from .http import MPClient, parse_appmsg_publish
 from .logger import setup_logger, get_logger
 from .models import AccountCredential, ArticleRecord, LoginSession
 from .server import serve as run_server
+from .rss import build_rss_xml, ensure_xml_path, query_rss_items
 from .storage import Storage, StorageInitError, StorageLike, PostgresStorage, open_storage
 from .utils import ensure_directory
 
@@ -1676,6 +1677,53 @@ def serve(
     except RuntimeError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
+
+
+@app.command("rss")
+def rss(
+    group: Optional[list[str]] = typer.Option(
+        None, "--group", help="分组名称，可多次传入"
+    ),
+    groups: Optional[str] = typer.Option(
+        None, "--groups", help="多个分组名称，逗号分隔"
+    ),
+    limit: Optional[int] = typer.Option(50, min=1, help="最多生成的条目数"),
+    days: Optional[int] = typer.Option(None, min=1, help="最近 N 天的文章"),
+    since: Optional[str] = typer.Option(None, help="开始日期 (YYYY-MM-DD)"),
+    until: Optional[str] = typer.Option(None, help="结束日期 (YYYY-MM-DD)"),
+    output: Path = typer.Option(Path("feed.xml"), help="RSS 输出路径"),
+    title: Optional[str] = typer.Option(None, help="RSS 标题"),
+    link: Optional[str] = typer.Option(None, help="RSS 站点链接"),
+    description: Optional[str] = typer.Option(None, help="RSS 描述"),
+) -> None:
+    names: list[str] = []
+    if group:
+        names.extend(group)
+    if groups:
+        names.extend([item.strip() for item in groups.split(",") if item.strip()])
+    try:
+        items = query_rss_items(
+            group_names=names,
+            limit=limit,
+            days=days,
+            since=since,
+            until=until,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=2) from exc
+    title_value = title or ("Hippo RSS" + (f" - {', '.join(names)}" if names else ""))
+    link_value = link or "http://localhost:8000/"
+    description_value = description or "Hippo RSS feed"
+    xml = build_rss_xml(
+        title=title_value,
+        link=link_value,
+        description=description_value,
+        items=items,
+    )
+    output_path = ensure_xml_path(output)
+    output_path.write_text(xml, encoding="utf-8")
+    typer.echo(f"RSS saved to {output_path}")
 
 
 def _render_qr_in_terminal(qr_bytes: bytes) -> bool:
