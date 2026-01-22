@@ -6,6 +6,7 @@ import json
 import logging
 import mimetypes
 import random
+import re
 import threading
 import time as time_module
 from datetime import date, datetime, time, timezone
@@ -17,6 +18,11 @@ from urllib.parse import parse_qs, urlparse
 
 import psycopg2
 import psycopg2.extras
+
+try:
+    import jieba
+except Exception:  # pragma: no cover - optional fallback
+    jieba = None
 
 from .config import DB_PATH
 from .downloader import ArticleDownloader
@@ -702,15 +708,44 @@ def _delete_group(storage: StorageLike, group_id: int) -> None:
 def _build_search_clause(
     *,
     is_postgres: bool,
-    term: str,
+    terms: list[str],
     fields: list[str],
 ) -> tuple[str, list[Any]]:
-    like = f"%{term}%"
-    if is_postgres:
-        clause = " OR ".join([f"{field} ILIKE %s" for field in fields])
-    else:
-        clause = " OR ".join([f"{field} LIKE ? COLLATE NOCASE" for field in fields])
-    return f"({clause})", [like for _ in fields]
+    clauses: list[str] = []
+    params: list[Any] = []
+    for term in terms:
+        like = f"%{term}%"
+        if is_postgres:
+            clause = " OR ".join([f"{field} ILIKE %s" for field in fields])
+        else:
+            clause = " OR ".join([f"{field} LIKE ? COLLATE NOCASE" for field in fields])
+        clauses.append(f"({clause})")
+        params.extend([like for _ in fields])
+    return " AND ".join(clauses), params
+
+
+def _tokenize_query(text: str) -> list[str]:
+    trimmed = text.strip()
+    if not trimmed:
+        return []
+    if jieba:
+        tokens = [token.strip() for token in jieba.lcut(trimmed) if token.strip()]
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for token in tokens:
+            if token in seen:
+                continue
+            seen.add(token)
+            ordered.append(token)
+        return ordered[:12]
+    chunks = re.findall(r"[\u4e00-\u9fff]+|[A-Za-z0-9_]+", trimmed)
+    tokens: list[str] = []
+    for chunk in chunks:
+        if re.fullmatch(r"[\u4e00-\u9fff]+", chunk):
+            tokens.extend(list(chunk))
+        else:
+            tokens.append(chunk)
+    return tokens[:12]
 
 
 def _list_accounts(
@@ -728,13 +763,15 @@ def _list_accounts(
         where.append("a.group_id = %s" if is_pg else "a.group_id = ?")
         params.append(group_id)
     if query:
-        clause, values = _build_search_clause(
-            is_postgres=is_pg,
-            term=query,
-            fields=["a.nickname", "a.alias", "a.biz"],
-        )
-        where.append(clause)
-        params.extend(values)
+        tokens = _tokenize_query(query)
+        if tokens:
+            clause, values = _build_search_clause(
+                is_postgres=is_pg,
+                terms=tokens,
+                fields=["a.nickname", "a.alias", "a.biz"],
+            )
+            where.append(clause)
+            params.extend(values)
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     limit_sql = "LIMIT %s OFFSET %s" if is_pg else "LIMIT ? OFFSET ?"
     offset = max(page - 1, 0) * page_size
@@ -859,13 +896,15 @@ def _build_article_query(
         where.append("a.biz = %s" if is_pg else "a.biz = ?")
         params.append(biz)
     if query:
-        clause, values = _build_search_clause(
-            is_postgres=is_pg,
-            term=query,
-            fields=["a.title", "a.author", "a.digest"],
-        )
-        where.append(clause)
-        params.extend(values)
+        tokens = _tokenize_query(query)
+        if tokens:
+            clause, values = _build_search_clause(
+                is_postgres=is_pg,
+                terms=tokens,
+                fields=["a.title", "a.author", "a.digest"],
+            )
+            where.append(clause)
+            params.extend(values)
     if since_ts is not None:
         where.append("a.publish_at >= %s" if is_pg else "a.publish_at >= ?")
         params.append(since_ts)
@@ -946,13 +985,15 @@ def _list_articles(
         where.append("a.biz = %s" if is_pg else "a.biz = ?")
         count_params.append(biz)
     if query:
-        clause, values = _build_search_clause(
-            is_postgres=is_pg,
-            term=query,
-            fields=["a.title", "a.author", "a.digest"],
-        )
-        where.append(clause)
-        count_params.extend(values)
+        tokens = _tokenize_query(query)
+        if tokens:
+            clause, values = _build_search_clause(
+                is_postgres=is_pg,
+                terms=tokens,
+                fields=["a.title", "a.author", "a.digest"],
+            )
+            where.append(clause)
+            count_params.extend(values)
     if since_ts is not None:
         where.append("a.publish_at >= %s" if is_pg else "a.publish_at >= ?")
         count_params.append(since_ts)
