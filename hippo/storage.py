@@ -168,6 +168,12 @@ class Storage(AbstractContextManager):
         )
         cur.execute(
             """
+            CREATE INDEX IF NOT EXISTS idx_articles_publish
+            ON articles (publish_at DESC)
+            """
+        )
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS login_sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 token TEXT NOT NULL,
@@ -178,6 +184,12 @@ class Storage(AbstractContextManager):
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_article_content_article_pk
+            ON article_content (article_pk)
             """
         )
         row = cur.execute(
@@ -248,12 +260,18 @@ class Storage(AbstractContextManager):
             )
             cur.execute("DROP TABLE articles")
             cur.execute("ALTER TABLE articles_new RENAME TO articles")
-            cur.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_articles_biz_publish
-                ON articles (biz, publish_at DESC)
-                """
-            )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_articles_biz_publish
+            ON articles (biz, publish_at DESC)
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_articles_publish
+            ON articles (publish_at DESC)
+            """
+        )
         if current_version in (None, "2", "3"):
             self._ensure_account_disabled_column(cur)
         if current_version in (None, "2", "3", "4"):
@@ -801,6 +819,12 @@ class PostgresStorage(AbstractContextManager):
                     updated_at TIMESTAMPTZ NOT NULL,
                     UNIQUE (article_pk)
                 )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_article_content_article_pk
+                ON article_content (article_pk)
                 """
             )
             cur.execute(
