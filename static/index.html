@@ -20,6 +20,7 @@
         <button class="tab is-active" data-tab="groups" data-i18n="nav.groups">Groups</button>
         <button class="tab" data-tab="accounts" data-i18n="nav.accounts">Accounts</button>
         <button class="tab" data-tab="articles" data-i18n="nav.articles">Articles</button>
+        <button class="tab" data-tab="sync" data-i18n="nav.sync">Sync</button>
       </nav>
       <div class="top-actions">
         <button class="btn ghost" id="btn-refresh" type="button">
@@ -32,6 +33,10 @@
     </header>
 
     <main class="content">
+      <div id="status-banner" class="banner is-hidden">
+        <div class="banner-text" id="banner-text"></div>
+        <button class="btn ghost" id="btn-banner-login" type="button" data-i18n="login.relogin">Re-login</button>
+      </div>
       <section id="view-groups" class="view is-active">
         <div class="panel-grid">
           <div class="panel">
@@ -76,6 +81,13 @@
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6 6 0 1 0 14 15.5l.27.28v.79L20 21.5 21.5 20l-6-6zm-5.5 0a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>
                 </span>
               </div>
+              <label class="switch inline">
+                <input type="checkbox" id="account-select-all" />
+                <span data-i18n="accounts.selectAll">Select All</span>
+              </label>
+              <select id="batch-group-select"></select>
+              <button class="btn ghost" id="btn-batch-move" type="button" data-i18n="accounts.move">Move</button>
+              <span class="badge" id="batch-count">0</span>
               <button class="btn ghost" id="btn-account-refresh" type="button">
                 <span data-i18n="actions.refresh">Refresh</span>
               </button>
@@ -142,6 +154,99 @@
               <div class="empty-state" data-i18n="articles.empty">Select an article to preview.</div>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section id="view-sync" class="view">
+        <div class="panel-grid">
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <h2 data-i18n="login.title">Login</h2>
+                <p class="muted" data-i18n="login.subtitle">Scan QR code to refresh login session.</p>
+              </div>
+              <div class="toolbar">
+                <button class="btn" id="btn-login-start" type="button" data-i18n="login.start">Start Login</button>
+                <button class="btn ghost" id="btn-login-cancel" type="button" data-i18n="login.cancel">Cancel</button>
+              </div>
+            </div>
+            <div class="login-card">
+              <div class="login-status" id="login-status"></div>
+              <img id="login-qr" class="login-qr" alt="QR" />
+              <div class="login-meta" id="login-meta"></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <h2 data-i18n="sync.title">Sync Settings</h2>
+                <p class="muted" data-i18n="sync.subtitle">Schedule periodic sync for accounts and articles.</p>
+              </div>
+              <div class="toolbar">
+                <button class="btn" id="btn-sync-save" type="button" data-i18n="sync.save">Save</button>
+                <button class="btn ghost" id="btn-sync-run" type="button" data-i18n="sync.run">Run Now</button>
+              </div>
+            </div>
+            <div class="form-grid">
+              <label class="switch">
+                <input type="checkbox" id="sync-enabled" />
+                <span data-i18n="sync.enabled">Enable Auto Sync</span>
+              </label>
+              <label>
+                <span data-i18n="sync.interval">Interval (minutes)</span>
+                <input type="number" id="sync-interval" min="1" value="60" />
+              </label>
+              <label>
+                <span data-i18n="sync.mode">Mode</span>
+                <select id="sync-mode">
+                  <option value="incremental" data-i18n="sync.modeIncremental">Incremental</option>
+                  <option value="recent" data-i18n="sync.modeRecent">Recent</option>
+                  <option value="full" data-i18n="sync.modeFull">Full</option>
+                </select>
+              </label>
+              <label>
+                <span data-i18n="sync.recentDays">Recent Days</span>
+                <input type="number" id="sync-recent-days" min="1" value="7" />
+              </label>
+              <label>
+                <span data-i18n="sync.pageSize">Page Size</span>
+                <input type="number" id="sync-page-size" min="1" value="10" />
+              </label>
+              <label>
+                <span data-i18n="sync.pageLimit">Page Limit</span>
+                <input type="number" id="sync-page-limit" min="1" value="2" />
+              </label>
+              <label>
+                <span data-i18n="sync.sleepSeconds">Sleep Seconds</span>
+                <input type="number" id="sync-sleep" min="0" step="0.01" value="0.05" />
+              </label>
+              <label>
+                <span data-i18n="sync.contentLimit">Content Limit</span>
+                <input type="number" id="sync-content-limit" min="0" value="20" />
+              </label>
+              <label>
+                <span data-i18n="sync.skipMinutes">Skip Minutes</span>
+                <input type="number" id="sync-skip-minutes" min="0" value="30" />
+              </label>
+              <label class="switch">
+                <input type="checkbox" id="sync-download-content" />
+                <span data-i18n="sync.downloadContent">Download Content</span>
+              </label>
+              <label class="switch">
+                <input type="checkbox" id="sync-download-images" />
+                <span data-i18n="sync.downloadImages">Download Images</span>
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="panel" style="margin-top:24px;">
+          <div class="panel-header">
+            <div>
+              <h2 data-i18n="sync.historyTitle">Sync History</h2>
+              <p class="muted" data-i18n="sync.historySubtitle">Recent runs and status.</p>
+            </div>
+          </div>
+          <div class="list" id="sync-history"></div>
         </div>
       </section>
     </main>
