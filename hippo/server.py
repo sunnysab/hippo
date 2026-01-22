@@ -1689,6 +1689,7 @@ class HippoHandler(BaseHTTPRequestHandler):
                             data, content_type = cached
                             self.send_response(HTTPStatus.OK)
                             self.send_header("Content-Type", content_type)
+                            self.send_header("Cache-Control", "public, max-age=259200")
                             self.send_header("Content-Length", str(len(data)))
                             self.end_headers()
                             self.wfile.write(data)
@@ -1698,6 +1699,7 @@ class HippoHandler(BaseHTTPRequestHandler):
                 content_type = avatar.get("content_type") or "application/octet-stream"
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", content_type)
+                self.send_header("Cache-Control", "public, max-age=259200")
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
@@ -1819,13 +1821,14 @@ class HippoHandler(BaseHTTPRequestHandler):
                 if url:
                     cached = _fetch_and_cache_avatar(storage, biz, url)
                     if cached:
-                        data, content_type = cached
-                        self.send_response(HTTPStatus.OK)
-                        self.send_header("Content-Type", content_type)
-                        self.send_header("Content-Length", str(len(data)))
-                        self.end_headers()
-                        self.wfile.write(data)
-                        return
+                            data, content_type = cached
+                            self.send_response(HTTPStatus.OK)
+                            self.send_header("Content-Type", content_type)
+                            self.send_header("Cache-Control", "public, max-age=259200")
+                            self.send_header("Content-Length", str(len(data)))
+                            self.end_headers()
+                            self.wfile.write(data)
+                            return
                 raise ApiError("Avatar not found", status=404)
             data = avatar.get("data")
             if isinstance(data, memoryview):
@@ -1835,6 +1838,7 @@ class HippoHandler(BaseHTTPRequestHandler):
             content_type = avatar.get("content_type") or "application/octet-stream"
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "public, max-age=259200")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
@@ -1903,6 +1907,7 @@ class HippoHandler(BaseHTTPRequestHandler):
         payload, content_type = _fetch_image(storage, image_id)
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "public, max-age=259200")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
