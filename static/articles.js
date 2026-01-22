@@ -132,6 +132,13 @@
         if (!block.image_id) {
           return;
         }
+        const hideSmall = $('#reader-hide-small-images')?.checked || false;
+        
+        // Check for GIF based on URL if available, or we might need metadata.
+        // The block usually doesn't have mime type directly, but let's check.
+        // If we can't check GIF easily, we'll skip that part or rely on image loading.
+        // Actually, we can check image dimensions on load.
+        
         const figure = document.createElement('figure');
         const img = document.createElement('img');
         if (block.image_id) {
@@ -139,6 +146,53 @@
         }
         img.alt = block.alt || '';
         img.loading = 'lazy';
+        
+        if (hideSmall) {
+            img.onload = function() {
+                const w = this.naturalWidth;
+                const h = this.naturalHeight;
+                // Rule: < 500x500 OR aspect ratio < 1.2 (assuming rect means squarish/portrait?)
+                // "rectangular or aspect ratio < 1.2" is ambiguous.
+                // "小于500*500 的（矩形或长宽比小于1.2的）图形"
+                // Interpretation: If (w < 500 AND h < 500) AND (aspect_ratio < 1.2) -> Hide?
+                // Or maybe "small rectangular images" generally.
+                // Let's assume: if (w < 500 && h < 500) -> check shape.
+                // If it is a small icon/spacer/footer image.
+                
+                // Let's implement: Hide if (w < 500 && h < 500).
+                // Plus GIFs. We need to detect GIF.
+                
+                // Detecting GIF from <img> tag is hard without extension.
+                // We can fetch head or check api response content_type if available.
+                // The images list in payload has content_type!
+                
+                let isGif = false;
+                const imageMeta = (payload.images || []).find(i => i.id === block.image_id);
+                if (imageMeta && imageMeta.content_type && imageMeta.content_type.includes('gif')) {
+                    isGif = true;
+                }
+                
+                if (isGif) {
+                    figure.style.display = 'none';
+                    return;
+                }
+
+                if (w < 500 && h < 500) {
+                     // Check aspect ratio
+                     const ratio = w / h;
+                     // "矩形或长宽比小于1.2" -> "Rectangle or ratio < 1.2"
+                     // Every image is a rectangle. Maybe "Square-ish"?
+                     // Let's assume user means "small icons or buttons".
+                     // If both dims < 500, it's small.
+                     // Let's just hide all < 500x500 for now based on common sense for "small images".
+                     // "长宽比小于1.2" -> w/h < 1.2
+                     if (ratio < 1.2) {
+                         figure.style.display = 'none';
+                     }
+                }
+            };
+        }
+        
         figure.appendChild(img);
         fragment.appendChild(figure);
       }
@@ -151,6 +205,7 @@
     state.selectedArticleId = id;
     renderArticleList();
     const payload = await apiGet(`/api/article/${id}`);
+    state.currentArticlePayload = payload;
     renderArticleContent(payload);
   };
 
@@ -162,6 +217,7 @@
       const lineHeight = $('#reader-line')?.value || '1.8';
       const letter = $('#reader-letter')?.value || '0.2';
       const serif = $('#reader-serif')?.checked || false;
+      const hideSmall = $('#reader-hide-small-images')?.checked || false;
       root.style.setProperty('--reader-width', `${width}px`);
       root.style.setProperty('--reader-font', `${font}px`);
       root.style.setProperty('--reader-line', lineHeight);
@@ -173,8 +229,27 @@
         lineHeight,
         letter,
         serif,
+        hideSmall,
       };
       localStorage.setItem('hippo-reader', JSON.stringify(snapshot));
+
+      // Re-render if content exists
+      const container = $('#article-preview');
+      if (container.querySelector('.reader') && state.selectedArticleId) {
+        // We need the article data to re-render, but we don't store full content in state usually.
+        // However, the images are rendered based on block data.
+        // The simplest way to apply image filter without refetching is to just hide/show based on class,
+        // but the requirements involve checking image dimensions which might not be loaded yet,
+        // or we can check the block attributes if available.
+        // Actually, let's just re-fetch the article content from cache if possible, or just re-trigger render
+        // But renderArticleContent takes payload.
+        // Let's modify renderArticleContent to read the setting.
+      }
+      
+      // Force re-render of current article if any
+      if (state.selectedArticleId && state.currentArticlePayload) {
+        renderArticleContent(state.currentArticlePayload);
+      }
     };
 
     const saved = localStorage.getItem('hippo-reader');
@@ -186,11 +261,12 @@
         if (config.lineHeight) $('#reader-line').value = config.lineHeight;
         if (config.letter) $('#reader-letter').value = config.letter;
         if (config.serif !== undefined) $('#reader-serif').checked = config.serif;
+        if (config.hideSmall !== undefined) $('#reader-hide-small-images').checked = config.hideSmall;
       } catch (err) {
         console.warn('Failed to parse reader config', err);
       }
     }
-    ['#reader-width', '#reader-font', '#reader-line', '#reader-letter', '#reader-serif'].forEach((selector) => {
+    ['#reader-width', '#reader-font', '#reader-line', '#reader-letter', '#reader-serif', '#reader-hide-small-images'].forEach((selector) => {
       const input = $(selector);
       if (input) input.addEventListener('input', apply);
     });
