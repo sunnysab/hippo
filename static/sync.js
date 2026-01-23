@@ -41,6 +41,18 @@
     return t('time.daysAgo', '{n} days ago').replace('{n}', days);
   };
 
+  const formatRelativeHours = (isoString) => {
+    if (!isoString) return '';
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) return '';
+    const diff = Date.now() - date.getTime();
+    const minutes = Math.floor(diff / 60000);
+    if (minutes < 1) return t('time.justNow', 'just now');
+    if (minutes < 60) return t('time.minutesAgo', '{n} minutes ago').replace('{n}', minutes);
+    const hours = Math.floor(minutes / 60);
+    return t('time.hoursAgo', '{n} hours ago').replace('{n}', hours);
+  };
+
   const renderSyncStatus = () => {
     const banner = $('#status-banner');
     const text = $('#banner-text');
@@ -164,7 +176,7 @@
     const topMeta = $('#last-login-info');
     if (topMeta) {
       if (info && info.updated_at) {
-        const relative = formatRelativeTime(info.updated_at);
+        const relative = formatRelativeHours(info.updated_at);
         topMeta.textContent = t('login.lastLoginAt', 'Last login {time}').replace('{time}', relative);
       } else {
         topMeta.textContent = '';
