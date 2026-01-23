@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import threading
+from queue import Queue
 from datetime import datetime, timezone
 from typing import Iterable
 
@@ -97,6 +99,8 @@ def main() -> int:
     parser.add_argument('--timeout', type=float, default=5.0)
     parser.add_argument('--log-every', type=int, default=1)
     parser.add_argument('--chunk-size', type=int, default=200)
+    parser.add_argument('--workers', type=int, default=10)
+    parser.add_argument('--queue-size', type=int, default=None)
     args = parser.parse_args()
 
     if not args.pg_dsn:
@@ -120,62 +124,116 @@ def main() -> int:
     from botocore.config import Config as BotoConfig
 
     chunk_size = max(1, args.chunk_size)
+    workers = max(1, args.workers)
+    if args.queue_size is None:
+        queue_size = chunk_size
+    else:
+        queue_size = max(1, args.queue_size)
+    queue_size = max(workers, queue_size)
     _log(
         'S3 config loaded '
         f'endpoint={config.endpoint} bucket={config.bucket} prefix={config.prefix} '
-        f'timeout={args.timeout}s chunk_size={chunk_size}'
+        f'timeout={args.timeout}s chunk_size={chunk_size} workers={workers} '
+        f'queue_size={queue_size}'
     )
-    session = boto3.session.Session()
-    _log('Creating S3 client...')
-    client = session.client(
-        's3',
-        endpoint_url=config.endpoint,
-        aws_access_key_id=config.access_key,
-        aws_secret_access_key=config.secret_key,
-        region_name=config.region,
-        config=BotoConfig(
-            s3={'addressing_style': 'path'},
-            connect_timeout=args.timeout,
-            read_timeout=args.timeout,
-        ),
-    )
-    _log('S3 client ready.')
 
-    with PostgresStorage(args.pg_dsn) as read_storage, PostgresStorage(args.pg_dsn) as write_storage:
+    client_config = BotoConfig(
+        s3={'addressing_style': 'path'},
+        connect_timeout=args.timeout,
+        read_timeout=args.timeout,
+    )
+
+    def _build_client():
+        session = boto3.session.Session()
+        return session.client(
+            's3',
+            endpoint_url=config.endpoint,
+            aws_access_key_id=config.access_key,
+            aws_secret_access_key=config.secret_key,
+            region_name=config.region,
+            config=client_config,
+        )
+
+    _log('S3 client factory ready.')
+
+    stats_lock = threading.Lock()
+    progress_lock = threading.Lock()
+
+    def _bump(counter: str) -> None:
+        nonlocal updated, skipped, failed
+        with stats_lock:
+            if counter == 'updated':
+                updated += 1
+            elif counter == 'skipped':
+                skipped += 1
+            elif counter == 'failed':
+                failed += 1
+
+    def _worker_loop(worker_id: int, q: Queue, total: int, progress) -> None:
+        client = _build_client()
+        storage = PostgresStorage(args.pg_dsn)
+        try:
+            while True:
+                item = q.get()
+                if item is None:
+                    break
+                idx, image_id, content_type, payload = item
+                s3_key = build_image_key(config.prefix, image_id, content_type)
+                if args.log_every > 0 and idx % args.log_every == 0:
+                    _log(
+                        f'[{idx}/{total}] worker={worker_id} uploading id={image_id} '
+                        f'key={s3_key} bytes={len(payload)} type={content_type or ""}'
+                    )
+                if args.dry_run:
+                    _log(f'DRY-RUN {image_id} -> {s3_key}')
+                    _bump('skipped')
+                    with progress_lock:
+                        progress.update(1)
+                    continue
+                try:
+                    upload_object_bytes(
+                        client,
+                        bucket=config.bucket,
+                        key=s3_key,
+                        payload=payload,
+                        content_type=content_type,
+                    )
+                    _update_s3_key(storage, image_id=image_id, s3_key=s3_key, prune_db=args.prune_db)
+                    _bump('updated')
+                except Exception as exc:
+                    _bump('failed')
+                    print(f'FAILED {image_id} -> {s3_key}: {exc}', file=sys.stderr)
+                finally:
+                    with progress_lock:
+                        progress.update(1)
+        finally:
+            storage.close()
+
+    with PostgresStorage(args.pg_dsn) as read_storage:
         _log('Counting images...')
-        total = _count_images(write_storage)
+        total = _count_images(read_storage)
         if args.limit is not None:
             total = min(total, args.limit)
         _log(f'Images to migrate: {total}')
         _log('Opening server-side cursor...')
         items = _iter_images(read_storage, limit=args.limit, chunk_size=chunk_size)
-        for idx, (image_id, content_type, payload) in enumerate(
-            tqdm(items, total=total, desc='Migrate images', unit='img'),
-            start=1,
-        ):
-            s3_key = build_image_key(config.prefix, image_id, content_type)
-            if args.log_every > 0 and idx % args.log_every == 0:
-                _log(
-                    f'[{idx}/{total}] uploading id={image_id} key={s3_key} '
-                    f'bytes={len(payload)} type={content_type or ""}'
+        q: Queue = Queue(maxsize=queue_size)
+        workers_list: list[threading.Thread] = []
+        with tqdm(total=total, desc='Migrate images', unit='img') as bar:
+            for worker_id in range(1, workers + 1):
+                t = threading.Thread(
+                    target=_worker_loop, args=(worker_id, q, total, bar), daemon=True
                 )
-            if args.dry_run:
-                _log(f'DRY-RUN {image_id} -> {s3_key}')
-                skipped += 1
-                continue
-            try:
-                upload_object_bytes(
-                    client,
-                    bucket=config.bucket,
-                    key=s3_key,
-                    payload=payload,
-                    content_type=content_type,
-                )
-                _update_s3_key(write_storage, image_id=image_id, s3_key=s3_key, prune_db=args.prune_db)
-                updated += 1
-            except Exception as exc:
-                failed += 1
-                print(f'FAILED {image_id} -> {s3_key}: {exc}', file=sys.stderr)
+                t.start()
+                workers_list.append(t)
+
+            for idx, (image_id, content_type, payload) in enumerate(items, start=1):
+                q.put((idx, image_id, content_type, payload))
+
+            for _ in workers_list:
+                q.put(None)
+            for t in workers_list:
+                t.join()
 
     print(f'Done. updated={updated} skipped={skipped} failed={failed}')
     return 0 if failed == 0 else 1
