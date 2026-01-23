@@ -187,6 +187,7 @@ CREATE TABLE IF NOT EXISTS article_images (
     kind TEXT NOT NULL,
     orig_url TEXT,
     content_type TEXT,
+    s3_key TEXT,
     data BYTEA,
     failed_at TIMESTAMPTZ,
     failed_reason TEXT,
@@ -195,6 +196,7 @@ CREATE TABLE IF NOT EXISTS article_images (
 );
 
 ALTER TABLE article_images
+ADD COLUMN IF NOT EXISTS s3_key TEXT,
 ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ,
 ADD COLUMN IF NOT EXISTS failed_reason TEXT;
 

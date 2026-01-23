@@ -16,7 +16,7 @@ from psycopg_pool import ConnectionPool
 
 from .models import AccountCredential, AccountGroup, ArticleRecord, LoginSession
 
-SCHEMA_VERSION = '10'
+SCHEMA_VERSION = '11'
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'schema' / 'postgres.sql'
 
