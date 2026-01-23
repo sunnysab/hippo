@@ -3,19 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import Awaitable, Callable, Optional
 
-import httpx
 import typer
 from tqdm import tqdm
 
-from ..http import MPClient, parse_appmsg_publish
-from ..models import AccountCredential, ArticleRecord, LoginSession
+from ..http import MPClient
+from ..models import AccountCredential, LoginSession
 from ..storage import StorageLike, open_storage
+from ..sync_core import SyncInterrupted, sync_account_core
 
 
 class SyncMode(str, Enum):
@@ -27,9 +26,6 @@ class SyncMode(str, Enum):
     def __str__(self) -> str:  # pragma: no cover - click displays value
         return self.value
 
-
-class SyncInterrupted(Exception):
-    pass
 
 
 @dataclass(frozen=True)
@@ -132,50 +128,6 @@ def _pbar_write(progress: Optional[tqdm], message: str) -> None:
         typer.echo(message)
 
 
-def _extract_publish_total(payload: dict) -> Optional[int]:
-    raw_page = payload.get('publish_page')
-    if isinstance(raw_page, str) and raw_page:
-        try:
-            parsed = json.loads(raw_page)
-        except json.JSONDecodeError:
-            parsed = {}
-        total = parsed.get('total_count')
-        if isinstance(total, int):
-            return total
-        if isinstance(total, str) and total.isdigit():
-            return int(total)
-    total = payload.get('total_count')
-    if isinstance(total, int):
-        return total
-    if isinstance(total, str) and total.isdigit():
-        return int(total)
-    return None
-
-
-def _extract_publish_page(payload: dict) -> dict:
-    raw_page = payload.get('publish_page')
-    if isinstance(raw_page, str) and raw_page:
-        try:
-            parsed = json.loads(raw_page)
-        except json.JSONDecodeError:
-            return {}
-        if isinstance(parsed, dict):
-            return parsed
-    return {}
-
-
-def _is_login_error(message: str) -> bool:
-    lowered = message.lower()
-    hints = ('login', 'token', 'session', 'invalid', 'expire', 'expired', 'timeout')
-    return any(hint in lowered for hint in hints)
-
-
-def _is_freq_control(message: str) -> bool:
-    lowered = message.lower()
-    hints = ('freq', 'frequency', 'control', 'too fast', 'too frequent')
-    return any(hint in lowered for hint in hints)
-
-
 def _handle_login_expired() -> bool:
     typer.echo('登录状态可能已失效，请先运行 `hippo login` 后重试同步。')
     return False
@@ -274,144 +226,46 @@ async def _sync_account_pages(
     progress: Optional[tqdm] = None,
     login_flow: Optional[Callable[..., Awaitable[None]]] = None,
 ) -> tuple[int, int, bool]:
-    session = _get_login_session(storage)
-    offset = 0
-    if resume_key:
-        saved_offset = storage.get_meta(resume_key)
-        if saved_offset and saved_offset.isdigit():
-            offset = int(saved_offset)
-            message = f'检测到断点进度，继续 {account.nickname} offset={offset}'
-            _pbar_write(progress, message)
-    if progress is not None and offset > 0:
-        progress.n = offset
-        progress.refresh()
     total_saved = 0
     page_count = 0
-    total_count: Optional[int] = None
     completed = False
-    request_count = 0
-    while True:
-        try:
-            attempt = 0
-            freq_attempt = 0
-            while True:
-                try:
-                    payload = await client.fetch_appmsg_publish(
-                        session, fakeid=account.biz, begin=offset, count=page_size
-                    )
-                    break
-                except RuntimeError as exc:
-                    if _is_login_error(str(exc)):
-                        if not _handle_login_expired():
-                            typer.echo('已暂停同步，断点进度已保留')
-                            raise typer.Exit(code=1)
-                        if login_flow is None:
-                            raise typer.Exit(code=1)
-                        try:
-                            await login_flow(timeout=300, poll_interval=2)
-                        except typer.Exit:
-                            typer.echo('登录未完成，断点进度已保留')
-                            raise
-                        session = _get_login_session(storage)
-                        continue
-                    if _is_freq_control(str(exc)):
-                        freq_attempt += 1
-                        if freq_attempt == 1:
-                            wait_seconds = 15
-                        else:
-                            wait_seconds = min(15 + 5 * (freq_attempt - 1), 60)
-                        message = f'触发频率控制，等待 {wait_seconds} 秒后重试'
-                        _pbar_write(progress, message)
-                        await asyncio.sleep(wait_seconds)
-                        continue
-                    raise
-                except (httpx.ReadTimeout, httpx.TimeoutException, httpx.TransportError) as exc:
-                    attempt += 1
-                    if attempt >= 3:
-                        raise RuntimeError(f'网络请求超时或失败：{exc}') from exc
-                    await asyncio.sleep(min(2**attempt, 5))
-            request_count += 1
-            if request_count % 60 == 0:
-                message = '达到 60 次请求，等待 15 秒'
-                _pbar_write(progress, message)
-                await asyncio.sleep(15)
-            publish_page = _extract_publish_page(payload)
-            publish_list = publish_page.get('publish_list') or []
-            publish_list_len = len(publish_list)
-            total_count = _extract_publish_total(payload) or total_count
-            if progress is not None and total_count and total_count > 0:
-                completed_offset = offset if offset <= total_count else total_count
-                if progress.total != total_count:
-                    progress.total = total_count
-                if progress.n != completed_offset:
-                    progress.n = completed_offset
-                progress.refresh()
-            if publish_list_len == 0:
-                completed = True
-                break
-            records = parse_appmsg_publish(account.biz, payload)
-            stop_due_to_since = False
-            if records and (since_timestamp is not None or until_timestamp is not None):
-                filtered: list[ArticleRecord] = []
-                for record in records:
-                    publish_at = record.publish_at
-                    if (
-                        until_timestamp is not None
-                        and publish_at is not None
-                        and publish_at > until_timestamp
-                    ):
-                        continue
-                    if since_timestamp is not None:
-                        if publish_at is None or publish_at >= since_timestamp:
-                            filtered.append(record)
-                            continue
-                        stop_due_to_since = True
-                        break
-                    filtered.append(record)
-                records = filtered
-                if stop_due_to_since and not records:
-                    completed = True
-                    break
-            if (full_synced_hint or stop_on_existing) and records:
-                existing_ids = storage.get_existing_article_ids(
-                    account.biz, [record.article_id for record in records]
-                )
-                if len(existing_ids) == len(records):
-                    completed = True
-                    break
-            saved = 0
-            if records:
-                saved = storage.save_articles(records)
-                storage.update_last_synced(account.biz)
-                total_saved += saved
-            page_count += 1
-            current_completed = offset + publish_list_len
-            if total_count is not None and current_completed > total_count:
-                current_completed = total_count
-            offset += page_size
-            if resume_key:
-                storage.set_meta(resume_key, str(offset))
-            if progress is not None:
-                delta = current_completed - progress.n
+    try:
+        async for event, payload in sync_account_core(
+            storage=storage,
+            client=client,
+            account=account,
+            page_size=page_size,
+            pages=pages,
+            sleep_seconds=sleep_seconds,
+            resume_key=resume_key,
+            full_synced_hint=full_synced_hint,
+            since_timestamp=since_timestamp,
+            until_timestamp=until_timestamp,
+            stop_on_existing=stop_on_existing,
+            login_flow=login_flow,
+            on_login_required=_handle_login_expired,
+        ):
+            if event == "log":
+                _pbar_write(progress, str(payload))
+            elif event == "progress" and progress is not None:
+                total = payload.get("total")
+                current = payload.get("current")
+                delta = payload.get("delta", 0)
+                if total and total > 0 and progress.total != total:
+                    progress.total = total
                 if delta:
                     progress.update(delta)
-            if stop_due_to_since:
-                completed = True
-                break
-            if pages is not None and page_count >= pages:
-                completed = False
-                break
-            if sleep_seconds > 0:
-                await asyncio.sleep(sleep_seconds)
-        except KeyboardInterrupt as exc:
-            message = f'检测到中断，已保存断点：{account.nickname}'
-            _pbar_write(progress, message)
-            raise SyncInterrupted() from exc
-    if resume_key and completed:
-        storage.delete_meta(resume_key)
-    if progress is not None and total_count and completed:
-        progress.n = total_count
-        progress.refresh()
+                elif current is not None:
+                    progress.n = current
+                    progress.refresh()
+            elif event == "complete":
+                total_saved = int(payload.get("total_saved", 0))
+                page_count = int(payload.get("page_count", 0))
+                completed = bool(payload.get("completed"))
+    except SyncInterrupted:
+        message = f'检测到中断，已保存断点：{account.nickname}'
+        _pbar_write(progress, message)
+        raise
     return total_saved, page_count, completed
 
 

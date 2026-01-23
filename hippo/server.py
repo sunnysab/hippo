@@ -29,10 +29,11 @@ except Exception:  # pragma: no cover - optional fallback
     jieba = None
 
 from .downloader import ArticleDownloader
-from .http import MPClient, parse_appmsg_publish
+from .http import MPClient
 from .models import AccountCredential, ArticleRecord
 from .rss import build_rss_xml, query_rss_items
 from .storage import StorageLike, open_storage
+from .sync_core import is_freq_control, is_login_error, sync_account_core
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
@@ -258,18 +259,6 @@ def _get_login_info(storage: StorageLike) -> Optional[dict[str, Any]]:
         [],
     )
     return row
-
-
-def _is_login_error(message: str) -> bool:
-    lowered = message.lower()
-    hints = ("login", "token", "session", "invalid", "expire", "expired", "timeout")
-    return any(hint in lowered for hint in hints)
-
-
-def _is_freq_control(message: str) -> bool:
-    lowered = message.lower()
-    hints = ("freq", "frequency", "control", "too fast", "too frequent")
-    return any(hint in lowered for hint in hints)
 
 
 class LoginManager:
@@ -499,10 +488,10 @@ class SyncScheduler:
                             )
                         except Exception as exc:
                             message = str(exc)
-                            if _is_login_error(message):
+                            if is_login_error(message):
                                 error = message
                                 break
-                            if _is_freq_control(message):
+                            if is_freq_control(message):
                                 await asyncio.sleep(15)
                                 continue
                             error = message
@@ -514,7 +503,7 @@ class SyncScheduler:
 
             finished_at = _utc_now_iso()
             if error:
-                status = "login_required" if _is_login_error(error) else "failed"
+                status = "login_required" if is_login_error(error) else "failed"
                 _set_sync_state(storage, status=status, error=error, finished_at=finished_at)
             else:
                 _set_sync_state(storage, status="success", error="", finished_at=finished_at)
@@ -524,7 +513,7 @@ class SyncScheduler:
                 {
                     "started_at": started_at,
                     "finished_at": finished_at,
-                    "status": "login_required" if error and _is_login_error(error) else ("failed" if error else "success"),
+                    "status": "login_required" if error and is_login_error(error) else ("failed" if error else "success"),
                     "error": error or "",
                     "saved": total_saved,
                     "downloaded": total_downloaded,
@@ -626,14 +615,6 @@ def _should_skip_by_time(last_synced_at: Optional[datetime], skip_minutes: Optio
     return delta.total_seconds() < skip_minutes * 60
 
 
-def _extract_publish_page(payload: dict[str, Any]) -> dict[str, Any]:
-    raw_page = payload.get("publish_page") or "{}"
-    try:
-        return json.loads(raw_page)
-    except json.JSONDecodeError:
-        return {}
-
-
 def _select_missing_content(
     storage: StorageLike,
     biz: str,
@@ -695,67 +676,28 @@ async def _sync_account_articles(
         since_ts = _parse_date(settings.get('since'))
         until_ts = _parse_date(settings.get('until'), end_of_day=True)
 
-    session = storage.get_login_session()
-    offset = 0
-    page_count = 0
     total_saved = 0
     to_download: list[ArticleRecord] = []
-
-    while True:
-        payload = await client.fetch_appmsg_publish(
-            session, fakeid=account.biz, begin=offset, count=page_size
-        )
-        publish_page = _extract_publish_page(payload)
-        publish_list = publish_page.get("publish_list") or []
-        if not publish_list:
-            break
-        records = parse_appmsg_publish(account.biz, payload)
-        stop_due_to_since = False
-        if records and (since_ts is not None or until_ts is not None):
-            filtered: list[ArticleRecord] = []
-            for record in records:
-                publish_at = record.publish_at
-                if (
-                    until_ts is not None
-                    and publish_at is not None
-                    and publish_at > until_ts
-                ):
-                    continue
-                if since_ts is not None:
-                    if publish_at is None or publish_at >= since_ts:
-                        filtered.append(record)
-                        continue
-                    stop_due_to_since = True
-                    break
-                filtered.append(record)
-            records = filtered
-            if stop_due_to_since and not records:
-                break
-        existing_ids: set[str] = set()
-        get_existing = getattr(storage, "get_existing_article_ids", None)
-        if callable(get_existing) and records:
-            try:
-                existing_ids = set(get_existing(account.biz, [r.article_id for r in records]))
-            except Exception:
-                existing_ids = set()
-        if stop_on_existing and records and existing_ids and len(existing_ids) == len(records):
-            break
-        if records:
-            new_records = [r for r in records if r.article_id not in existing_ids]
-            to_download.extend(new_records)
-            saved = storage.save_articles(records)
-            if saved:
-                storage.update_last_synced(account.biz)
-                total_saved += saved
-        page_count += 1
-        offset += page_size
-        if stop_due_to_since:
-            break
-        if page_limit is not None and page_count >= page_limit:
-            break
-        sleep_seconds = float(settings.get("sleep_seconds") or 0)
-        if sleep_seconds > 0:
-            await asyncio.sleep(sleep_seconds)
+    async for event, payload in sync_account_core(
+        storage=storage,
+        client=client,
+        account=account,
+        page_size=page_size,
+        pages=page_limit,
+        sleep_seconds=float(settings.get("sleep_seconds") or 0),
+        since_timestamp=since_ts,
+        until_timestamp=until_ts,
+        stop_on_existing=stop_on_existing,
+        collect_existing_ids=True,
+    ):
+        if event == "page":
+            records = payload.get("records") or []
+            existing_ids = payload.get("existing_ids") or set()
+            if records:
+                new_records = [r for r in records if r.article_id not in existing_ids]
+                to_download.extend(new_records)
+        elif event == "complete":
+            total_saved = int(payload.get("total_saved", 0))
 
     downloaded = 0
     if settings.get("download_content"):
