@@ -15,7 +15,7 @@ from psycopg2 import pool as pg_pool
 from .models import AccountCredential, AccountGroup, ArticleRecord, LoginSession
 from . import queries
 
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = '6'
 
 _PG_POOL: Optional[pg_pool.ThreadedConnectionPool] = None
 _PG_POOL_DSN: Optional[str] = None
@@ -194,8 +194,9 @@ class PostgresStorage(AbstractContextManager):
             cur.execute(
                 """
                 INSERT INTO accounts (biz, nickname, alias, round_head_img, uin, key, pass_ticket,
-                                      group_id, is_default, is_disabled, last_synced_at, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                      group_id, is_default, is_disabled, sync_mode, sync_recent_days,
+                                      last_synced_at, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (biz) DO UPDATE SET
                     nickname=EXCLUDED.nickname,
                     alias=EXCLUDED.alias,
@@ -216,6 +217,8 @@ class PostgresStorage(AbstractContextManager):
                     account.group_id,
                     account.is_default,
                     account.is_disabled,
+                    account.sync_mode,
+                    account.sync_recent_days,
                     account.last_synced_at,
                     now,
                     now,
@@ -821,6 +824,8 @@ class PostgresStorage(AbstractContextManager):
             is_default=bool(row["is_default"]),
             is_disabled=bool(row.get("is_disabled", False)),
             last_synced_at=last_synced_at,
+            sync_mode=row.get('sync_mode'),
+            sync_recent_days=row.get('sync_recent_days'),
             group_id=row.get("group_id"),
             group_name=row.get("group_name"),
         )

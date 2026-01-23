@@ -27,6 +27,8 @@ SCHEMA_INIT_STATEMENTS = [
         group_id INTEGER REFERENCES account_groups(id) ON DELETE SET NULL,
         is_default BOOLEAN NOT NULL DEFAULT FALSE,
         is_disabled BOOLEAN NOT NULL DEFAULT FALSE,
+        sync_mode TEXT,
+        sync_recent_days INTEGER,
         last_synced_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL
@@ -39,6 +41,14 @@ SCHEMA_INIT_STATEMENTS = [
     """
     ALTER TABLE accounts
     ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES account_groups(id) ON DELETE SET NULL
+    """,
+    """
+    ALTER TABLE accounts
+    ADD COLUMN IF NOT EXISTS sync_mode TEXT
+    """,
+    """
+    ALTER TABLE accounts
+    ADD COLUMN IF NOT EXISTS sync_recent_days INTEGER
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_accounts_group

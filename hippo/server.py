@@ -65,6 +65,32 @@ def _parse_int(value: Optional[str]) -> Optional[int]:
         raise ApiError(f"Invalid integer: {value}") from exc
 
 
+_SYNC_MODES = {'incremental', 'recent', 'full', 'range'}
+
+
+def _normalize_sync_mode(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    mode = str(value).strip().lower()
+    if not mode:
+        return None
+    if mode not in _SYNC_MODES:
+        raise ApiError('Invalid sync mode', status=400)
+    return mode
+
+
+def _normalize_recent_days(value: Any) -> Optional[int]:
+    if value in (None, ""):
+        return None
+    try:
+        days = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ApiError('Invalid recent days') from exc
+    if days < 1:
+        raise ApiError('Invalid recent days', status=400)
+    return days
+
+
 def _parse_date(value: Optional[str], *, end_of_day: bool = False) -> Optional[int]:
     if not value:
         return None
@@ -620,21 +646,26 @@ async def _sync_account_articles(
     page_limit = settings.get("page_limit")
     if page_limit is not None:
         page_limit = max(int(page_limit), 1)
-    mode = settings.get("mode") or "incremental"
+    mode = (account.sync_mode or settings.get('mode') or 'incremental').strip().lower()
+    if mode not in _SYNC_MODES:
+        mode = 'incremental'
+    recent_days = account.sync_recent_days
+    if recent_days is None:
+        recent_days = settings.get('recent_days')
     now = datetime.now(timezone.utc)
     since_ts: Optional[int] = None
     until_ts: Optional[int] = None
     stop_on_existing = False
-    if mode == "incremental":
+    if mode == 'incremental':
         stop_on_existing = True
         if account.last_synced_at:
             since_ts = int(account.last_synced_at.timestamp())
-    elif mode == "recent":
-        recent_days = max(int(settings.get("recent_days") or 1), 1)
+    elif mode == 'recent':
+        recent_days = max(int(recent_days or 1), 1)
         since_ts = int((now.timestamp() - recent_days * 86400))
-    elif mode == "range":
-        since_ts = _parse_date(settings.get("since"))
-        until_ts = _parse_date(settings.get("until"), end_of_day=True)
+    elif mode == 'range':
+        since_ts = _parse_date(settings.get('since'))
+        until_ts = _parse_date(settings.get('until'), end_of_day=True)
 
     session = storage.get_login_session()
     offset = 0
@@ -844,7 +875,7 @@ def _list_accounts(
     query_sql = (
         ""
         "SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id, a.is_default,"
-        " a.is_disabled, a.last_synced_at, g.name AS group_name,"
+        " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,"
         " COALESCE(ac.article_count, 0) AS article_count,"
         " (ai.data IS NOT NULL) AS avatar_ready"
         " FROM accounts a"
@@ -875,7 +906,7 @@ def _get_account(storage: StorageLike, biz: str) -> dict[str, Any]:
         (
             ""
             "SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id, a.is_default,"
-            " a.is_disabled, a.last_synced_at, g.name AS group_name,"
+            " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,"
             " COALESCE(ac.article_count, 0) AS article_count,"
             " (ai.data IS NOT NULL) AS avatar_ready"
             " FROM accounts a"
@@ -897,19 +928,25 @@ def _update_account(storage: StorageLike, biz: str, payload: dict[str, Any]) -> 
     fields: list[str] = []
     params: list[Any] = []
     mapping = {
-        "nickname": "nickname",
-        "alias": "alias",
-        "round_head_img": "round_head_img",
-        "group_id": "group_id",
-        "is_default": "is_default",
-        "is_disabled": "is_disabled",
+        'nickname': 'nickname',
+        'alias': 'alias',
+        'round_head_img': 'round_head_img',
+        'group_id': 'group_id',
+        'is_default': 'is_default',
+        'is_disabled': 'is_disabled',
+        'sync_mode': 'sync_mode',
+        'sync_recent_days': 'sync_recent_days',
     }
 
     for key, column in mapping.items():
         if key in payload:
             value = payload[key]
-            if key in ("is_default", "is_disabled"):
+            if key in ('is_default', 'is_disabled'):
                 value = bool(value)
+            if key == 'sync_mode':
+                value = _normalize_sync_mode(value)
+            if key == 'sync_recent_days':
+                value = _normalize_recent_days(value)
             fields.append(f"{column} = %s")
             params.append(value)
 
@@ -1433,6 +1470,8 @@ def create_account(
     if group_id is None:
         default_group = _ensure_default_group(storage)
         group_id = default_group["id"]
+    sync_mode = _normalize_sync_mode(body.get('sync_mode'))
+    sync_recent_days = _normalize_recent_days(body.get('sync_recent_days'))
     account = storage.upsert_account(
         AccountCredential(
             biz=str(body["biz"]),
@@ -1443,6 +1482,8 @@ def create_account(
             key=str(body.get("key") or ""),
             pass_ticket=str(body.get("pass_ticket") or ""),
             group_id=int(group_id) if group_id is not None else None,
+            sync_mode=sync_mode,
+            sync_recent_days=sync_recent_days,
         )
     )
     return {

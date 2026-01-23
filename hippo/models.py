@@ -19,6 +19,8 @@ class AccountCredential:
     is_default: bool = False
     is_disabled: bool = False
     last_synced_at: Optional[datetime] = None
+    sync_mode: Optional[str] = None
+    sync_recent_days: Optional[int] = None
     group_id: Optional[int] = None
     group_name: Optional[str] = None
 

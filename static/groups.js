@@ -31,6 +31,31 @@
     return t('time.daysAgo', '{n} days ago').replace('{n}', days);
   };
 
+  const syncDefaults = {
+    mode: 'incremental',
+    recent_days: 7,
+  };
+
+  const ensureSyncSettings = async () => {
+    if (state.syncSettings) return state.syncSettings;
+    try {
+      const payload = await apiGet('/api/sync/settings');
+      state.syncSettings = payload;
+      return payload;
+    } catch (err) {
+      console.warn('Failed to load sync settings', err);
+      state.syncSettings = syncDefaults;
+      return syncDefaults;
+    }
+  };
+
+  const getSyncModeLabel = (mode) => {
+    if (mode === 'incremental') return t('sync.modeIncremental', 'Incremental');
+    if (mode === 'recent') return t('sync.modeRecent', 'Recent');
+    if (mode === 'full') return t('sync.modeFull', 'Full');
+    return mode || '';
+  };
+
   const showGroupContextMenu = (group, x, y) => {
     const menu = $('#group-context-menu');
     if (!menu) return;
@@ -175,6 +200,17 @@
         : t('accounts.lastUpdatedEmpty', 'No updates yet');
       const articleCount = Number(account.article_count || 0);
       const articleCountText = t('accounts.articleCount', '{n} articles').replace('{n}', articleCount);
+      const storedMode = account.sync_mode || '';
+      const defaultMode = state.syncSettings?.mode || syncDefaults.mode;
+      const inheritLabel = t('accounts.syncModeInherit', 'Follow global ({mode})').replace(
+        '{mode}',
+        getSyncModeLabel(defaultMode),
+      );
+      const defaultRecentDays = state.syncSettings?.recent_days ?? syncDefaults.recent_days;
+      const initialRecentDays = account.sync_recent_days ?? defaultRecentDays;
+      const isRecentEditable = storedMode === 'recent';
+      const syncModeLabel = t('accounts.syncMode', 'Update strategy');
+      const syncRecentLabel = t('accounts.syncRecentDays', 'Recent days');
       card.innerHTML = `
         <div class="card-header">
           <input class="account-check" type="checkbox" data-biz="${account.biz}" ${checked} />
@@ -190,6 +226,33 @@
             </div>
           </div>
         </div>
+        <div class="account-sync">
+          <div class="account-sync-row">
+            <span class="account-sync-label">${syncModeLabel}</span>
+            <select class="account-sync-mode" data-biz="${account.biz}">
+              <option value="" ${storedMode === '' ? 'selected' : ''}>${inheritLabel}</option>
+              <option value="incremental" ${storedMode === 'incremental' ? 'selected' : ''}>
+                ${t('sync.modeIncremental', 'Incremental')}
+              </option>
+              <option value="recent" ${storedMode === 'recent' ? 'selected' : ''}>
+                ${t('sync.modeRecent', 'Recent')}
+              </option>
+              <option value="full" ${storedMode === 'full' ? 'selected' : ''}>
+                ${t('sync.modeFull', 'Full')}
+              </option>
+            </select>
+          </div>
+          <div class="account-sync-row">
+            <span class="account-sync-label">${syncRecentLabel}</span>
+            <input
+              class="account-sync-days"
+              type="number"
+              min="1"
+              value="${initialRecentDays}"
+              ${isRecentEditable ? '' : 'disabled'}
+            />
+          </div>
+        </div>
       `;
       const checkbox = card.querySelector('.account-check');
       checkbox.addEventListener('change', (event) => {
@@ -202,6 +265,68 @@
         }
         updateBatchCount();
         refreshSelectAll();
+      });
+      const modeSelect = card.querySelector('.account-sync-mode');
+      const daysInput = card.querySelector('.account-sync-days');
+      const resolveRecentDays = (value) => {
+        const parsed = Number.parseInt(value, 10);
+        if (!Number.isFinite(parsed) || parsed < 1) {
+          return defaultRecentDays;
+        }
+        return parsed;
+      };
+      const updateDaysState = (mode) => {
+        const editable = mode === 'recent';
+        daysInput.disabled = !editable;
+      };
+      const saveSyncSettings = async (nextMode, nextDays) => {
+        const previousMode = account.sync_mode || '';
+        const previousDays = account.sync_recent_days;
+        const payload = {};
+        payload.sync_mode = nextMode ? nextMode : null;
+        if (nextMode === 'recent') {
+          payload.sync_recent_days = nextDays;
+        }
+        try {
+          await apiSend(`/api/account/${account.biz}`, 'PATCH', payload);
+          account.sync_mode = payload.sync_mode || null;
+          if ('sync_recent_days' in payload) {
+            account.sync_recent_days = payload.sync_recent_days;
+          }
+          showToast(t('accounts.syncSaved', 'Sync strategy updated.'));
+        } catch (err) {
+          console.warn('Failed to update sync settings', err);
+          account.sync_mode = previousMode || null;
+          account.sync_recent_days = previousDays;
+          modeSelect.value = previousMode;
+          const fallbackDays = previousDays ?? defaultRecentDays;
+          daysInput.value = String(fallbackDays);
+          updateDaysState(previousMode);
+          showToast(t('accounts.syncFailed', 'Failed to update sync strategy.'));
+        }
+      };
+      modeSelect.addEventListener('change', async (event) => {
+        const nextMode = event.target.value;
+        updateDaysState(nextMode);
+        if (nextMode === 'recent') {
+          const normalized = resolveRecentDays(daysInput.value);
+          daysInput.value = String(normalized);
+          await saveSyncSettings(nextMode, normalized);
+        } else {
+          await saveSyncSettings(nextMode, undefined);
+        }
+      });
+      daysInput.addEventListener('change', async () => {
+        if (modeSelect.value !== 'recent') return;
+        const normalized = resolveRecentDays(daysInput.value);
+        daysInput.value = String(normalized);
+        await saveSyncSettings('recent', normalized);
+      });
+      daysInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          daysInput.blur();
+        }
       });
       list.appendChild(card);
     });
@@ -357,6 +482,7 @@
   };
 
   const loadAccounts = async () => {
+    await ensureSyncSettings();
     const groupId = state.selectedGroupId;
     const searchInput = $('#account-search');
     const search = searchInput ? searchInput.value.trim() : '';
