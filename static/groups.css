@@ -192,6 +192,7 @@
   position: absolute;
   top: 16px;
   left: 16px;
+  right: 16px;
 }
 
 .account-check {
@@ -214,6 +215,10 @@
 .card:hover {
   transform: translateY(-2px);
   box-shadow: var(--shadow);
+}
+
+.card.is-disabled {
+  opacity: 0.72;
 }
 
 .account-avatar {
@@ -249,6 +254,46 @@
 
 .account-stat {
   line-height: 1.2;
+}
+
+.account-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px dashed var(--border);
+  width: fit-content;
+}
+
+.account-toggle {
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 10px;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.card:hover .account-toggle,
+.card:focus-within .account-toggle {
+  opacity: 1;
+}
+
+.account-toggle:hover {
+  transform: translateY(-1px);
+}
+
+.account-toggle svg {
+  width: 16px;
+  height: 16px;
 }
 
 .account-sync {

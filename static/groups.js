@@ -275,7 +275,7 @@
     const activeGroup = state.groups.find((item) => item.id === state.selectedGroupId);
     state.accounts.forEach((account) => {
       const card = document.createElement('div');
-      card.className = 'card';
+      card.className = `card${account.is_disabled ? ' is-disabled' : ''}`;
       const checked = state.selectedAccounts.has(account.biz) ? 'checked' : '';
       const avatar = account.avatar_url || '';
       const lastSynced = formatRelativeTime(account.last_synced_at);
@@ -303,9 +303,21 @@
       const isRecentEditable = storedMode === 'recent';
       const syncModeLabel = t('accounts.syncMode', 'Update strategy');
       const syncRecentLabel = t('accounts.syncRecentDays', 'Recent days');
+      const disabledTag = account.is_disabled
+        ? `<span class="account-tag">${t('accounts.syncDisabled', 'Sync disabled')}</span>`
+        : '';
+      const toggleTitle = account.is_disabled
+        ? t('accounts.enableSync', 'Enable sync')
+        : t('accounts.disableSync', 'Disable sync');
+      const toggleIcon = account.is_disabled
+        ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>'
+        : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
       card.innerHTML = `
         <div class="card-header">
           <input class="account-check" type="checkbox" data-biz="${account.biz}" ${checked} />
+          <button class="account-toggle" type="button" data-biz="${account.biz}" title="${toggleTitle}" aria-label="${toggleTitle}">
+            ${toggleIcon}
+          </button>
         </div>
         <div class="account-meta">
           <img class="account-avatar" src="${avatar}" alt="" onerror="this.style.display='none'">
@@ -315,6 +327,7 @@
             <div class="account-sub account-stats">
               <span class="account-stat">${lastUpdatedText}</span>
               <span class="account-stat">${articleCountText}</span>
+              ${disabledTag}
             </div>
           </div>
         </div>
@@ -360,6 +373,7 @@
       });
       const modeSelect = card.querySelector('.account-sync-mode');
       const daysInput = card.querySelector('.account-sync-days');
+      const toggleBtn = card.querySelector('.account-toggle');
       const resolveRecentDays = (value) => {
         const parsed = Number.parseInt(value, 10);
         if (!Number.isFinite(parsed) || parsed < 1) {
@@ -420,6 +434,24 @@
           daysInput.blur();
         }
       });
+      if (toggleBtn) {
+        toggleBtn.addEventListener('click', async () => {
+          const nextDisabled = !account.is_disabled;
+          try {
+            await apiSend(`/api/account/${account.biz}`, 'PATCH', { is_disabled: nextDisabled });
+            account.is_disabled = nextDisabled;
+            renderAccounts();
+            showToast(
+              nextDisabled
+                ? t('accounts.syncDisabledToast', 'Sync disabled.')
+                : t('accounts.syncEnabledToast', 'Sync enabled.'),
+            );
+          } catch (err) {
+            console.warn('Failed to update sync status', err);
+            showToast(t('accounts.syncToggleFailed', 'Failed to update sync status.'));
+          }
+        });
+      }
       list.appendChild(card);
     });
     if (!state.accounts.length) {
