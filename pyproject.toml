@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hippo"
 version = "0.1.0"
-description = "WeChat article exporter CLI"
+description = "WeChat articles manager and exporter"
 readme = "README.md"
 requires-python = ">=3.14"
 license = {text = "MIT"}
-authors = [{name = "hippo"}]
-keywords = ["wechat", "cli", "exporter"]
+authors = [{name = "sunnysab <i@sunnysab.cn>"}]
+keywords = ["wechat", "cli", "exporter", "api"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "License :: OSI Approved :: MIT License",
