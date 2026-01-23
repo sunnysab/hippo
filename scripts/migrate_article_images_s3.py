@@ -39,19 +39,16 @@ def _iter_images(
     if limit is not None:
         query += ' LIMIT %s'
         params.append(limit)
-    with storage.conn.cursor() as cur:
+    with storage.conn.cursor(name='article_images_cursor') as cur:
+        cur.itersize = chunk_size
         cur.execute(query, params)
-        while True:
-            rows = cur.fetchmany(chunk_size)
-            if not rows:
-                break
-            for row in rows:
-                image_id, content_type, data = row
-                if isinstance(data, memoryview):
-                    payload = data.tobytes()
-                else:
-                    payload = bytes(data)
-                yield image_id, content_type, payload
+        for row in cur:
+            image_id, content_type, data = row
+            if isinstance(data, memoryview):
+                payload = data.tobytes()
+            else:
+                payload = bytes(data)
+            yield image_id, content_type, payload
 
 
 def _count_images(storage: PostgresStorage) -> int:
@@ -144,13 +141,14 @@ def main() -> int:
     )
     _log('S3 client ready.')
 
-    with PostgresStorage(args.pg_dsn) as storage:
+    with PostgresStorage(args.pg_dsn) as read_storage, PostgresStorage(args.pg_dsn) as write_storage:
         _log('Counting images...')
-        total = _count_images(storage)
+        total = _count_images(write_storage)
         if args.limit is not None:
             total = min(total, args.limit)
         _log(f'Images to migrate: {total}')
-        items = _iter_images(storage, limit=args.limit, chunk_size=chunk_size)
+        _log('Opening server-side cursor...')
+        items = _iter_images(read_storage, limit=args.limit, chunk_size=chunk_size)
         for idx, (image_id, content_type, payload) in enumerate(
             tqdm(items, total=total, desc='Migrate images', unit='img'),
             start=1,
@@ -173,7 +171,7 @@ def main() -> int:
                     payload=payload,
                     content_type=content_type,
                 )
-                _update_s3_key(storage, image_id=image_id, s3_key=s3_key, prune_db=args.prune_db)
+                _update_s3_key(write_storage, image_id=image_id, s3_key=s3_key, prune_db=args.prune_db)
                 updated += 1
             except Exception as exc:
                 failed += 1
