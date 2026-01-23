@@ -1,5 +1,29 @@
 (() => {
-  const { state, $, apiGet, t } = window.Hippo;
+  const { state, $, apiGet, t, copyToClipboard, showToast } = window.Hippo;
+
+  const showArticleContextMenu = (article, x, y) => {
+    const menu = $('#article-context-menu');
+    if (!menu) return;
+    const link = article?.source_url || article?.link || '';
+    menu.dataset.link = link;
+    menu.dataset.articleId = String(article?.id || '');
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+    menu.classList.remove('is-hidden');
+    const openBtn = $('#article-menu-open');
+    const copyBtn = $('#article-menu-copy');
+    const disabled = !link;
+    if (openBtn) openBtn.disabled = disabled;
+    if (copyBtn) copyBtn.disabled = disabled;
+  };
+
+  const hideArticleContextMenu = () => {
+    const menu = $('#article-context-menu');
+    if (!menu) return;
+    menu.classList.add('is-hidden');
+    menu.dataset.link = '';
+    menu.dataset.articleId = '';
+  };
 
   const formatDate = (value) => {
     if (!value) return '';
@@ -40,6 +64,10 @@
         digestEl.title = digest;
       }
       card.addEventListener('click', () => selectArticle(article.id));
+      card.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        showArticleContextMenu(article, event.clientX, event.clientY);
+      });
       list.appendChild(card);
     });
     if (!state.articles.length) {
@@ -467,6 +495,51 @@
       clearTimeout(state.articleTimer);
       state.articleTimer = setTimeout(() => loadArticles(true), 300);
     });
+
+    const openBtn = $('#article-menu-open');
+    if (openBtn) {
+      openBtn.addEventListener('click', () => {
+        const menu = $('#article-context-menu');
+        const link = menu?.dataset.link;
+        if (!link) return;
+        window.open(link, '_blank', 'noopener,noreferrer');
+        hideArticleContextMenu();
+      });
+    }
+    const copyBtn = $('#article-menu-copy');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', async () => {
+        const menu = $('#article-context-menu');
+        const link = menu?.dataset.link;
+        if (!link) return;
+        try {
+          await copyToClipboard(link);
+          showToast(t('articles.linkCopied', 'Link copied.'));
+        } catch (err) {
+          showToast(link);
+        }
+        hideArticleContextMenu();
+      });
+    }
+
+    document.addEventListener('click', (event) => {
+      const menu = $('#article-context-menu');
+      if (!menu || menu.classList.contains('is-hidden')) return;
+      if (menu.contains(event.target)) return;
+      hideArticleContextMenu();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        hideArticleContextMenu();
+      }
+    });
+    window.addEventListener(
+      'scroll',
+      () => {
+        hideArticleContextMenu();
+      },
+      true,
+    );
   };
 
   const refresh = async () => {
