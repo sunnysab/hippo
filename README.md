@@ -177,6 +177,21 @@ export HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname"
 
 ---
 
+## 全文检索（pg_jieba）
+
+系统使用 PostgreSQL 的 `pg_jieba` 扩展实现分词全文检索。首次启用或升级后，需要重新执行：
+
+```bash
+python -m hippo db init
+```
+
+实现细节：
+- 使用 `jiebaqry` 配置生成 `tsvector`，标题权重 A、摘要/正文权重 B、作者权重 C。
+- 为避免超大文档导致 `tsvector` 过大，正文仅取前 50,000 字符参与索引。
+- 查询入口为 HTTP API：`/api/article?q=关键词`（按相关度排序）。
+
+---
+
 ## 日志系统
 
 CLI 集成了 Python 标准库 logging，默认仅输出必要信息。

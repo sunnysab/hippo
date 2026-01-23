@@ -1027,6 +1027,9 @@ def _build_article_query(
 ) -> tuple[str, list[Any]]:
     where: list[str] = []
     params: list[Any] = []
+    select_params: list[Any] = []
+    rank_select = ""
+    order_sql = "ORDER BY a.publish_at IS NULL, a.publish_at DESC, a.id DESC"
 
     if article_id:
         where.append("a.article_id = %s")
@@ -1039,15 +1042,13 @@ def _build_article_query(
         where.append("a.biz = %s")
         params.append(biz)
     if query:
-        tokens = _tokenize_query(query)
-        if tokens:
-            clause, values = _build_search_clause(
-                is_postgres=True,
-                terms=tokens,
-                fields=["a.title", "a.author", "a.digest"],
-            )
-            where.append(clause)
-            params.extend(values)
+        query_text = query.strip()
+        if query_text:
+            where.append("a.search_vector @@ plainto_tsquery('jiebaqry', %s)")
+            params.append(query_text)
+            rank_select = ", ts_rank(a.search_vector, plainto_tsquery('jiebaqry', %s)) AS rank"
+            select_params.append(query_text)
+            order_sql = "ORDER BY rank DESC, a.publish_at IS NULL, a.publish_at DESC, a.id DESC"
     if since_ts is not None:
         where.append("a.publish_at >= %s")
         params.append(since_ts)
@@ -1076,16 +1077,17 @@ def _build_article_query(
         " acc.round_head_img AS account_avatar,"
         " acc.group_id, g.name AS group_name,"
         f" {image_select}"
+        f"{rank_select}"
         " FROM articles a"
         " JOIN accounts acc ON acc.biz = a.biz"
         f"{content_join}"
         " LEFT JOIN account_groups g ON g.id = acc.group_id"
         f" {image_sql}"
         f" {where_sql}"
-        " ORDER BY a.publish_at IS NULL, a.publish_at DESC, a.id DESC"
+        f" {order_sql}"
         f" {limit_sql}"
     )
-    params = params + [limit, offset]
+    params = select_params + params + [limit, offset]
     return query_sql, params
 
 
@@ -1133,15 +1135,10 @@ def _list_articles(
         where.append("a.biz = %s")
         count_params.append(biz)
     if query:
-        tokens = _tokenize_query(query)
-        if tokens:
-            clause, values = _build_search_clause(
-                is_postgres=True,
-                terms=tokens,
-                fields=["a.title", "a.author", "a.digest"],
-            )
-            where.append(clause)
-            count_params.extend(values)
+        query_text = query.strip()
+        if query_text:
+            where.append("a.search_vector @@ plainto_tsquery('jiebaqry', %s)")
+            count_params.append(query_text)
     if since_ts is not None:
         where.append("a.publish_at >= %s")
         count_params.append(since_ts)

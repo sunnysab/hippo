@@ -2,6 +2,9 @@
 
 SCHEMA_INIT_STATEMENTS = [
     """
+    CREATE EXTENSION IF NOT EXISTS pg_jieba
+    """,
+    """
     CREATE TABLE IF NOT EXISTS meta (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -104,6 +107,105 @@ SCHEMA_INIT_STATEMENTS = [
     """
     CREATE INDEX IF NOT EXISTS idx_article_content_article_pk
     ON article_content (article_pk)
+    """,
+    """
+    ALTER TABLE articles
+    ADD COLUMN IF NOT EXISTS search_vector tsvector
+    """,
+    """
+    CREATE OR REPLACE FUNCTION build_article_search_vector(
+        title TEXT,
+        author TEXT,
+        digest TEXT,
+        content TEXT
+    ) RETURNS tsvector AS $$
+    SELECT
+        setweight(to_tsvector('jiebaqry', COALESCE(title, '')), 'A') ||
+        setweight(to_tsvector('jiebaqry', COALESCE(author, '')), 'C') ||
+        setweight(to_tsvector('jiebaqry', COALESCE(digest, '')), 'B') ||
+        setweight(
+            to_tsvector('jiebaqry', COALESCE(SUBSTRING(content FROM 1 FOR 50000), '')),
+            'B'
+        );
+    $$ LANGUAGE sql STABLE
+    """,
+    """
+    CREATE OR REPLACE FUNCTION articles_search_vector_trigger()
+    RETURNS trigger AS $$
+    DECLARE
+        content_text TEXT;
+    BEGIN
+        IF TG_OP = 'INSERT' AND NEW.id IS NULL THEN
+            content_text := '';
+        ELSE
+            SELECT COALESCE(c.content_markdown, c.clean_html, '')
+            INTO content_text
+            FROM article_content c
+            WHERE c.article_pk = NEW.id;
+        END IF;
+        NEW.search_vector = build_article_search_vector(
+            NEW.title,
+            NEW.author,
+            NEW.digest,
+            content_text
+        );
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """,
+    """
+    DROP TRIGGER IF EXISTS trg_articles_search_vector ON articles
+    """,
+    """
+    CREATE TRIGGER trg_articles_search_vector
+    BEFORE INSERT OR UPDATE OF title, author, digest
+    ON articles
+    FOR EACH ROW EXECUTE FUNCTION articles_search_vector_trigger()
+    """,
+    """
+    CREATE OR REPLACE FUNCTION article_content_search_vector_trigger()
+    RETURNS trigger AS $$
+    BEGIN
+        UPDATE articles
+        SET search_vector = build_article_search_vector(
+            title,
+            author,
+            digest,
+            COALESCE(NEW.content_markdown, NEW.clean_html, '')
+        )
+        WHERE id = NEW.article_pk;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """,
+    """
+    DROP TRIGGER IF EXISTS trg_article_content_search_vector ON article_content
+    """,
+    """
+    CREATE TRIGGER trg_article_content_search_vector
+    AFTER INSERT OR UPDATE OF content_markdown, clean_html
+    ON article_content
+    FOR EACH ROW EXECUTE FUNCTION article_content_search_vector_trigger()
+    """,
+    """
+    UPDATE articles a
+    SET search_vector = build_article_search_vector(
+        a.title,
+        a.author,
+        a.digest,
+        COALESCE(c.content_markdown, c.clean_html, '')
+    )
+    FROM article_content c
+    WHERE c.article_pk = a.id
+    """,
+    """
+    UPDATE articles
+    SET search_vector = build_article_search_vector(title, author, digest, '')
+    WHERE search_vector IS NULL
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_articles_search_vector
+    ON articles USING GIN (search_vector)
     """,
 ]
 

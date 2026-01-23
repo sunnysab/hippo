@@ -15,7 +15,7 @@ from psycopg2 import pool as pg_pool
 from .models import AccountCredential, AccountGroup, ArticleRecord, LoginSession
 from . import queries
 
-SCHEMA_VERSION = '9'
+SCHEMA_VERSION = '10'
 
 _PG_POOL: Optional[pg_pool.ThreadedConnectionPool] = None
 _PG_POOL_DSN: Optional[str] = None
