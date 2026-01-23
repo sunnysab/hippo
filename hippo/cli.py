@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import base64
 import random
 import time
 from io import BytesIO
@@ -18,15 +19,14 @@ import typer
 import click
 from tqdm import tqdm
 
-from .config import DB_PATH, DEFAULT_PAGE_SIZE, DOWNLOAD_ROOT, HOME_DIR, load_profile, get_profile_value
+from .config import DEFAULT_PAGE_SIZE
 from .downloader import ArticleDownloader
 from .http import MPClient, parse_appmsg_publish
 from .logger import setup_logger, get_logger
 from .models import AccountCredential, ArticleRecord, LoginSession
 from .server import serve as run_server
-from .rss import build_rss_xml, ensure_xml_path, query_rss_items
-from .storage import Storage, StorageInitError, StorageLike, PostgresStorage, open_storage
-from .utils import ensure_directory
+from .rss import build_rss_xml, query_rss_items
+from .storage import StorageInitError, StorageLike, PostgresStorage, open_storage
 
 # Initialize logger on module import
 logger = setup_logger()
@@ -137,14 +137,12 @@ def init_db(
     ),
 ) -> None:
     resolved_dsn = pg_dsn or os.environ.get("HIPPO_PG_DSN")
-    if resolved_dsn:
-        with PostgresStorage(resolved_dsn, auto_init=True):
-            pass
-        typer.echo("PostgreSQL schema initialized.")
-        return
-    with Storage(DB_PATH, auto_init=True):
+    if not resolved_dsn:
+        typer.echo("Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.")
+        raise typer.Exit(code=2)
+    with PostgresStorage(resolved_dsn, auto_init=True):
         pass
-    typer.echo(f"SQLite schema initialized at {DB_PATH}.")
+    typer.echo("PostgreSQL schema initialized.")
 
 
 app.add_typer(accounts_app, name="account")
@@ -152,15 +150,6 @@ accounts_app.add_typer(groups_app, name="group")
 app.add_typer(articles_app, name="article")
 app.add_typer(db_app, name="db")
 
-
-
-class OutputFormat(str, Enum):
-    html = "html"
-    markdown = "markdown"
-    text = "text"
-
-    def __str__(self) -> str:  # pragma: no cover - click displays value
-        return self.value
 
 
 class SyncMode(str, Enum):
@@ -331,17 +320,11 @@ def _to_utc_timestamp(value: Optional[datetime]) -> Optional[int]:
     return int(value.timestamp())
 
 
-def _resolve_write_local(pg_only: bool, write_local: bool) -> bool:
-    if pg_only and write_local:
-        raise typer.BadParameter("--pg-only and --write-local cannot be used together.")
+def _resolve_pg_dsn() -> str:
     pg_dsn = os.environ.get("HIPPO_PG_DSN")
-    if pg_only and not pg_dsn:
-        raise typer.BadParameter("--pg-only requires HIPPO_PG_DSN.")
-    if write_local:
-        return True
-    if pg_dsn:
-        return False
-    return True
+    if not pg_dsn:
+        raise typer.BadParameter("Missing HIPPO_PG_DSN.")
+    return pg_dsn
 
 
 def _resolve_account(storage: StorageLike, name: Optional[str]) -> AccountCredential:
@@ -433,7 +416,7 @@ def _sync_account_pages(
                             typer.echo("已暂停同步，断点进度已保留")
                             raise typer.Exit(code=1)
                         try:
-                            _run_login_flow(timeout=300, poll_interval=2, output=None)
+                            _run_login_flow(timeout=300, poll_interval=2)
                         except typer.Exit:
                             typer.echo("登录未完成，断点进度已保留")
                             raise
@@ -548,13 +531,6 @@ def _get_login_session(storage: StorageLike) -> LoginSession:
         raise typer.Exit(code=1)
 
 
-@app.callback()
-def main_callback() -> None:
-    """Ensure required directories exist before running sub-commands."""
-    HOME_DIR.mkdir(parents=True, exist_ok=True)
-    ensure_directory(DOWNLOAD_ROOT)
-
-
 # ---------------------------------------------------------------------------
 # Account commands
 @accounts_app.command("add")
@@ -576,7 +552,7 @@ def add_account(
         pass_ticket="",
         is_default=set_default,
     )
-    with open_storage(DB_PATH) as storage:
+    with open_storage() as storage:
         stored = storage.upsert_account(credential)
         if set_default:
             storage.set_default_account(stored.biz)
@@ -591,7 +567,7 @@ def search_accounts(
     interactive: bool = typer.Option(False, is_flag=True, help="交互式选择并添加账号"),
 ) -> None:
     _require_nonempty(keyword, "请提供搜索关键词。")
-    with open_storage(DB_PATH) as storage:
+    with open_storage() as storage:
         session = _get_login_session(storage)
         existing_biz = {account.biz for account in storage.list_accounts()}
     page_size = 10
@@ -639,7 +615,7 @@ def search_accounts(
             except typer.BadParameter as exc:
                 typer.echo(str(exc))
                 continue
-            with open_storage(DB_PATH) as storage:
+            with open_storage() as storage:
                 saved = []
                 for idx in indices:
                     item = records[idx]
@@ -666,7 +642,7 @@ def search_accounts(
 def list_accounts(
     group: Optional[str] = typer.Option(None, help="Filter by group name"),
 ) -> None:
-    with open_storage(DB_PATH) as storage:
+    with open_storage() as storage:
         accounts = storage.list_accounts(group=group)
     if not accounts:
         typer.echo("尚未保存任何账号，使用 `account add` 添加")
@@ -697,14 +673,14 @@ def add_group(
     if not name.strip():
         typer.echo("Please provide a group name.")
         raise typer.Exit(code=2)
-    with open_storage(DB_PATH) as storage:
+    with open_storage() as storage:
         group = storage.upsert_group(name)
     typer.echo(f"Group {group.name} saved.")
 
 
 @groups_app.command("list")
 def list_groups() -> None:
-    with open_storage(DB_PATH) as storage:
+    with open_storage() as storage:
         groups = storage.list_groups()
     if not groups:
         typer.echo("No groups found.")
@@ -723,7 +699,7 @@ def set_account_group(
 ) -> None:
     _require_nonempty(account, "Please provide an account name or fakeid.")
     _require_nonempty(group, "Please provide a group name.")
-    with open_storage(DB_PATH) as storage:
+    with open_storage() as storage:
         try:
             target = _resolve_account(storage, account)
         except LookupError as exc:
@@ -738,7 +714,7 @@ def clear_account_group(
     account: str = typer.Argument(..., help="Account name, alias, or fakeid"),
 ) -> None:
     _require_nonempty(account, "Please provide an account name or fakeid.")
-    with open_storage(DB_PATH) as storage:
+    with open_storage() as storage:
         try:
             target = _resolve_account(storage, account)
         except LookupError as exc:
@@ -752,7 +728,7 @@ def clear_account_group(
 def remove_account(
     account: str = typer.Argument(..., help="Account name, alias, or fakeid")
 ) -> None:
-    with open_storage(DB_PATH) as storage:
+    with open_storage() as storage:
         try:
             target = _resolve_account(storage, account)
         except LookupError as exc:
@@ -770,7 +746,7 @@ def set_default_account(
     biz: str = typer.Argument(..., help="设置为默认账号的 fakeid")
 ) -> None:
     _require_nonempty(biz, "请提供要设置的账号 fakeid。")
-    with open_storage(DB_PATH) as storage:
+    with open_storage() as storage:
         storage.set_default_account(biz)
     typer.echo(f"{biz} 已设为默认账号")
 
@@ -780,7 +756,7 @@ def disable_account(
     account: str = typer.Argument(..., help="Account name, alias, or fakeid"),
 ) -> None:
     _require_nonempty(account, "Please provide an account name or fakeid.")
-    with open_storage(DB_PATH) as storage:
+    with open_storage() as storage:
         try:
             target = _resolve_account(storage, account)
         except LookupError as exc:
@@ -795,7 +771,7 @@ def enable_account(
     account: str = typer.Argument(..., help="Account name, alias, or fakeid"),
 ) -> None:
     _require_nonempty(account, "Please provide an account name or fakeid.")
-    with open_storage(DB_PATH) as storage:
+    with open_storage() as storage:
         try:
             target = _resolve_account(storage, account)
         except LookupError as exc:
@@ -833,7 +809,7 @@ def sync_account_articles(
     ),
 ) -> None:
     _enforce_exclusive_flags(force, skip_time)
-    with open_storage(DB_PATH) as storage:
+    with open_storage() as storage:
         account = storage.get_account(biz)
         if account.is_disabled:
             typer.echo(f"Account {account.nickname} ({account.biz}) is disabled. Skipping.")
@@ -942,7 +918,7 @@ def sync_all_accounts(
     ),
 ) -> None:
     _enforce_exclusive_flags(force, skip_time)
-    with open_storage(DB_PATH) as storage:
+    with open_storage() as storage:
         accounts = storage.list_accounts()
         if not accounts:
             typer.echo("尚未保存任何账号，使用 `account add` 添加")
@@ -1093,7 +1069,7 @@ def list_articles(
     since: Optional[str] = typer.Option(None, help="仅显示某时间后的文章，格式 YYYY-MM-DD"),
 ) -> None:
     since_timestamp = _parse_since(since)
-    with open_storage(DB_PATH) as storage:
+    with open_storage() as storage:
         account = storage.get_account(biz)
         articles = storage.list_articles(account.biz, limit=limit, since_timestamp=since_timestamp)
     if not articles:
@@ -1116,23 +1092,12 @@ def list_articles(
 @articles_app.command("sync")
 def sync_article_download(
     account: str = typer.Argument(..., help="公众号名称或 fakeid"),
-    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="使用配置文件中的 profile"),
     limit: Optional[int] = typer.Option(None, min=1, max=5000, help="下载文章数量，默认全部"),
-    output_format: OutputFormat = typer.Option(
-        OutputFormat.html, "--format", "-f", help="导出格式", show_default=True
-    ),
     with_images: bool = typer.Option(True, is_flag=True, help="是否下载图片"),
     article_only: bool = typer.Option(
         False, "--article-only", help="仅下载文章，不下载图片（仍创建图片记录）"
     ),
     since: Optional[str] = typer.Option(None, help="仅下载某日期后的文章"),
-    output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
-    pg_only: bool = typer.Option(
-        False, "--pg-only", help="Write to PostgreSQL only (requires HIPPO_PG_DSN)"
-    ),
-    write_local: bool = typer.Option(
-        False, "--write-local", help="Write local files even when HIPPO_PG_DSN is set"
-    ),
     worker_prefix: Optional[str] = typer.Option(None, help="文章 HTML worker 前缀或模板，留空使用环境变量"),
     worker_proxy: Optional[str] = typer.Option(None, help="访问 worker 时使用的代理（HTTP/SOCKS5），留空直连"),
     workers: Optional[int] = typer.Option(
@@ -1146,30 +1111,10 @@ def sync_article_download(
         None, min=1, help="图片下载并发数，留空使用默认"
     ),
 ) -> None:
-    # Load profile if specified
-    if profile:
-        try:
-            profile_config = load_profile(profile)
-            # Apply profile values if CLI args not explicitly set
-            limit = limit or get_profile_value(profile_config, "limit")
-            if "format" in profile_config and output_format == OutputFormat.html:
-                output_format = OutputFormat(get_profile_value(profile_config, "format", "html"))
-            with_images = get_profile_value(profile_config, "with_images", with_images)
-            article_only = get_profile_value(profile_config, "article_only", article_only)
-            since = since or get_profile_value(profile_config, "since")
-            output = output or (Path(p) if (p := get_profile_value(profile_config, "output")) else None)
-            worker_prefix = worker_prefix or get_profile_value(profile_config, "worker_prefix")
-            worker_proxy = worker_proxy or get_profile_value(profile_config, "worker_proxy")
-            workers = workers or get_profile_value(profile_config, "workers")
-            image_workers = image_workers or get_profile_value(profile_config, "image_workers")
-        except (FileNotFoundError, ValueError) as exc:
-            typer.echo(f"加载 profile 失败：{exc}")
-            raise typer.Exit(code=1)
-
-    effective_write_local = _resolve_write_local(pg_only, write_local)
+    _resolve_pg_dsn()
 
     since_timestamp = _parse_since(since)
-    with open_storage(DB_PATH) as storage:
+    with open_storage() as storage:
         try:
             account_record = _resolve_account(storage, account)
         except LookupError as exc:
@@ -1184,19 +1129,9 @@ def sync_article_download(
         if not articles:
             typer.echo("没有可下载的文章，先执行 `account sync`")
             return
-        target_dir = (
-            ensure_directory(output or DOWNLOAD_ROOT)
-            if effective_write_local
-            else Path(output or DOWNLOAD_ROOT)
-        )
-        typer.echo(f"开始下载 {len(articles)} 篇文章 -> {target_dir}")
+        typer.echo("开始下载 {count} 篇文章 -> PostgreSQL".format(count=len(articles)))
         download_images = with_images and not article_only
         record_images_only = article_only
-        fmt_value = (
-            output_format.value
-            if isinstance(output_format, OutputFormat)
-            else str(output_format)
-        )
         progress = tqdm(
             total=len(articles),
             desc=f"下载 {account_record.nickname or account_record.biz}",
@@ -1206,21 +1141,17 @@ def sync_article_download(
         )
         try:
             with ArticleDownloader(
-                output_dir=target_dir,
                 storage=storage,
                 article_worker=worker_prefix,
                 article_worker_proxy=worker_proxy,
                 article_max_connections=workers,
                 image_workers=image_workers,
                 enable_image_worker=not article_only,
-                write_local=effective_write_local,
             ) as downloader:
                 results, skipped, failed = downloader.download_many(
                     articles,
-                    fmt=fmt_value,
                     with_images=download_images,
                     record_images_only=record_images_only,
-                    account_name=account_record.nickname or account_record.biz,
                     progress=progress,
                     skip_if_downloaded=True,
                 )
@@ -1233,28 +1164,17 @@ def sync_article_download(
     if failed > 0:
         typer.echo(f"下载完成，成功 {len(results)} 篇，跳过 {skipped} 篇，失败 {failed} 篇")
     else:
-        typer.echo(f"下载完成，生成 {len(results)} 个目录，跳过 {skipped} 篇")
+        typer.echo(f"下载完成，已写入 {len(results)} 篇，跳过 {skipped} 篇")
 
 
 @articles_app.command("sync-all")
 def sync_all_article_download(
-    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="使用配置文件中的 profile"),
     limit: Optional[int] = typer.Option(None, min=1, max=5000, help="每个账号下载文章数量，默认全部"),
-    output_format: OutputFormat = typer.Option(
-        OutputFormat.html, "--format", "-f", help="导出格式", show_default=True
-    ),
     with_images: bool = typer.Option(True, is_flag=True, help="是否下载图片"),
     article_only: bool = typer.Option(
         False, "--article-only", help="仅下载文章，不下载图片（仍创建图片记录）"
     ),
     since: Optional[str] = typer.Option(None, help="仅下载某日期后的文章"),
-    output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
-    pg_only: bool = typer.Option(
-        False, "--pg-only", help="Write to PostgreSQL only (requires HIPPO_PG_DSN)"
-    ),
-    write_local: bool = typer.Option(
-        False, "--write-local", help="Write local files even when HIPPO_PG_DSN is set"
-    ),
     worker_prefix: Optional[str] = typer.Option(None, help="文章 HTML worker 前缀或模板，留空使用环境变量"),
     worker_proxy: Optional[str] = typer.Option(None, help="访问 worker 时使用的代理（HTTP/SOCKS5），留空直连"),
     workers: Optional[int] = typer.Option(
@@ -1268,56 +1188,24 @@ def sync_all_article_download(
         None, min=1, help="图片下载并发数，留空使用默认"
     ),
 ) -> None:
-    # Load profile if specified
-    if profile:
-        try:
-            profile_config = load_profile(profile)
-            # Apply profile values if CLI args not explicitly set
-            limit = limit or get_profile_value(profile_config, "limit")
-            if "format" in profile_config and output_format == OutputFormat.html:
-                output_format = OutputFormat(get_profile_value(profile_config, "format", "html"))
-            with_images = get_profile_value(profile_config, "with_images", with_images)
-            article_only = get_profile_value(profile_config, "article_only", article_only)
-            since = since or get_profile_value(profile_config, "since")
-            output = output or (Path(p) if (p := get_profile_value(profile_config, "output")) else None)
-            worker_prefix = worker_prefix or get_profile_value(profile_config, "worker_prefix")
-            worker_proxy = worker_proxy or get_profile_value(profile_config, "worker_proxy")
-            workers = workers or get_profile_value(profile_config, "workers")
-            image_workers = image_workers or get_profile_value(profile_config, "image_workers")
-        except (FileNotFoundError, ValueError) as exc:
-            typer.echo(f"加载 profile 失败：{exc}")
-            raise typer.Exit(code=1)
-
-    effective_write_local = _resolve_write_local(pg_only, write_local)
+    _resolve_pg_dsn()
 
     since_timestamp = _parse_since(since)
     total_downloads = 0
-    with open_storage(DB_PATH) as storage:
+    with open_storage() as storage:
         accounts = storage.list_accounts()
         if not accounts:
             typer.echo("尚未保存任何账号，使用 `account add` 添加")
             return
-        target_dir = (
-            ensure_directory(output or DOWNLOAD_ROOT)
-            if effective_write_local
-            else Path(output or DOWNLOAD_ROOT)
-        )
         download_images = with_images and not article_only
         record_images_only = article_only
-        fmt_value = (
-            output_format.value
-            if isinstance(output_format, OutputFormat)
-            else str(output_format)
-        )
         with ArticleDownloader(
-            output_dir=target_dir,
             storage=storage,
             article_worker=worker_prefix,
             article_worker_proxy=worker_proxy,
             article_max_connections=workers,
             image_workers=image_workers,
             enable_image_worker=not article_only,
-            write_local=effective_write_local,
         ) as downloader:
             total_skipped = 0
             total_failed = 0
@@ -1340,10 +1228,8 @@ def sync_all_article_download(
                 try:
                     results, skipped, failed = downloader.download_many(
                         articles,
-                        fmt=fmt_value,
                         with_images=download_images,
                         record_images_only=record_images_only,
-                        account_name=account.nickname or account.biz,
                         progress=progress,
                         skip_if_downloaded=True,
                     )
@@ -1361,22 +1247,14 @@ def sync_all_article_download(
     if total_failed > 0:
         typer.echo(f"全部下载完成，成功 {total_downloads} 篇，跳过 {total_skipped} 篇，失败 {total_failed} 篇")
     else:
-        typer.echo(f"全部下载完成，生成 {total_downloads} 个目录，跳过 {total_skipped} 篇")
+        typer.echo(f"全部下载完成，已写入 {total_downloads} 篇，跳过 {total_skipped} 篇")
 
 
 @articles_app.command("download")
 def download_article(
     url: str = typer.Argument(..., help="文章 URL"),
-    output_format: OutputFormat = typer.Option(OutputFormat.html, "--format", "-f", help="导出格式"),
     with_images: bool = typer.Option(True, is_flag=True, help="是否下载图片"),
-    output: Optional[Path] = typer.Option(None, help="自定义输出目录"),
     title: Optional[str] = typer.Option(None, help="覆盖文章标题"),
-    pg_only: bool = typer.Option(
-        False, "--pg-only", help="Write to PostgreSQL only (requires HIPPO_PG_DSN)"
-    ),
-    write_local: bool = typer.Option(
-        False, "--write-local", help="Write local files even when HIPPO_PG_DSN is set"
-    ),
     worker_prefix: Optional[str] = typer.Option(None, help="文章 HTML worker 前缀或模板，留空使用环境变量"),
     worker_proxy: Optional[str] = typer.Option(None, help="访问 worker 时使用的代理（HTTP/SOCKS5），留空直连"),
     workers: Optional[int] = typer.Option(
@@ -1393,40 +1271,24 @@ def download_article(
     if not url:
         typer.echo("请提供文章 URL。示例：python -m hippo article download \"https://mp.weixin.qq.com/...\"")
         raise typer.Exit(code=2)
-    effective_write_local = _resolve_write_local(pg_only, write_local)
-    target_dir = (
-        ensure_directory(output or DOWNLOAD_ROOT)
-        if effective_write_local
-        else Path(output or DOWNLOAD_ROOT)
-    )
-    fmt_value = (
-        output_format.value
-        if isinstance(output_format, OutputFormat)
-        else str(output_format)
-    )
-    with open_storage(DB_PATH) as storage, ArticleDownloader(
-        output_dir=target_dir,
+    _resolve_pg_dsn()
+    with open_storage() as storage, ArticleDownloader(
         storage=storage,
         article_worker=worker_prefix,
         article_worker_proxy=worker_proxy,
         article_max_connections=workers,
         image_workers=image_workers,
-        write_local=effective_write_local,
     ) as downloader:
         try:
             result = downloader.download_from_url(
                 url,
-                fmt=fmt_value,
                 with_images=with_images,
                 title=title,
             )
         except Exception as exc:
             typer.echo(f"下载失败：{exc}")
             raise typer.Exit(code=1)
-    if result.output_path:
-        typer.echo(f"单篇文章已保存至 {result.output_path}")
-    else:
-        typer.echo("Article saved to PostgreSQL.")
+    typer.echo("Article saved to PostgreSQL.")
 
 
 @articles_app.command("backfill-images")
@@ -1634,7 +1496,7 @@ def backfill_article_images(
 @app.command("export-accounts")
 def export_accounts() -> None:
     """Dump stored accounts as JSON (sensitive)."""
-    with open_storage(DB_PATH) as storage:
+    with open_storage() as storage:
         accounts = storage.list_accounts()
     payload = [
         {
@@ -1660,9 +1522,8 @@ def export_accounts() -> None:
 def login(
     timeout: int = typer.Option(300, min=30, help="扫码等待超时时间（秒）"),
     poll_interval: int = typer.Option(2, min=1, help="轮询间隔（秒）"),
-    output: Optional[Path] = typer.Option(None, help="二维码输出目录"),
 ) -> None:
-    _run_login_flow(timeout=timeout, poll_interval=poll_interval, output=output)
+    _run_login_flow(timeout=timeout, poll_interval=poll_interval)
 
 
 @app.command("serve")
@@ -1691,7 +1552,6 @@ def rss(
     days: Optional[int] = typer.Option(None, min=1, help="最近 N 天的文章"),
     since: Optional[str] = typer.Option(None, help="开始日期 (YYYY-MM-DD)"),
     until: Optional[str] = typer.Option(None, help="结束日期 (YYYY-MM-DD)"),
-    output: Path = typer.Option(Path("feed.xml"), help="RSS 输出路径"),
     title: Optional[str] = typer.Option(None, help="RSS 标题"),
     link: Optional[str] = typer.Option(None, help="RSS 站点链接"),
     description: Optional[str] = typer.Option(None, help="RSS 描述"),
@@ -1722,9 +1582,7 @@ def rss(
         description=description_value,
         items=items,
     )
-    output_path = ensure_xml_path(output)
-    output_path.write_text(xml, encoding="utf-8")
-    typer.echo(f"RSS saved to {output_path}")
+    typer.echo(xml)
 
 
 def _render_qr_in_terminal(qr_bytes: bytes) -> bool:
@@ -1749,26 +1607,29 @@ def _render_qr_in_terminal(qr_bytes: bytes) -> bool:
     return True
 
 
-def _run_login_flow(*, timeout: int, poll_interval: int, output: Optional[Path]) -> None:
-    target_dir = ensure_directory(output or (HOME_DIR / "login"))
+def _emit_qr_data_url(qr_bytes: bytes) -> None:
+    encoded = base64.b64encode(qr_bytes).decode("ascii")
+    typer.echo("无法在终端渲染二维码，请将以下 data URL 复制到浏览器打开：")
+    typer.echo(f"data:image/png;base64,{encoded}")
+
+
+def _run_login_flow(*, timeout: int, poll_interval: int) -> None:
     sid = f"{int(time.time() * 1000)}{random.randint(100, 999)}"
     typer.echo("正在获取二维码...")
-    with MPClient(timeout=15.0) as client, open_storage(DB_PATH) as storage:
+    with MPClient(timeout=15.0) as client, open_storage() as storage:
         try:
             uuid_cookie = client.start_login_session(sid)
         except Exception as exc:
             typer.echo(f"获取登录会话失败：{exc}")
             raise typer.Exit(code=1)
-        qrcode_path = target_dir / "qrcode.png"
         try:
             qrcode_bytes = client.fetch_login_qrcode(uuid_cookie)
         except Exception as exc:
             typer.echo(f"获取二维码失败：{exc}")
             raise typer.Exit(code=1)
-        qrcode_path.write_bytes(qrcode_bytes)
         if not _render_qr_in_terminal(qrcode_bytes):
-            typer.echo("Terminal QR rendering failed. Use the saved file instead.")
-        typer.echo(f"请使用微信扫码登录，二维码已保存：{qrcode_path}")
+            _emit_qr_data_url(qrcode_bytes)
+        typer.echo("请使用微信扫码登录")
         started = time.time()
         while True:
             if time.time() - started > timeout:
@@ -1791,9 +1652,8 @@ def _run_login_flow(*, timeout: int, poll_interval: int, output: Optional[Path])
                 return
             if status in (2, 3):
                 qrcode_bytes = client.fetch_login_qrcode(uuid_cookie)
-                qrcode_path.write_bytes(qrcode_bytes)
                 if not _render_qr_in_terminal(qrcode_bytes):
-                    typer.echo("Terminal QR rendering failed. Use the saved file instead.")
+                    _emit_qr_data_url(qrcode_bytes)
                 typer.echo("二维码已刷新，请重新扫码")
                 time.sleep(poll_interval)
                 continue

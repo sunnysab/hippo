@@ -47,7 +47,6 @@ class ArticleRecord:
 @dataclass(slots=True)
 class DownloadResult:
     article: ArticleRecord
-    output_path: str
     asset_count: int
 
 

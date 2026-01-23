@@ -4,24 +4,18 @@ from __future__ import annotations
 
 import logging
 import sys
-from pathlib import Path
-from typing import Optional
-
-from .config import HOME_DIR, LOG_PATH
 
 
 def setup_logger(
     name: str = "hippo",
     level: int = logging.INFO,
-    log_file: Optional[Path] = None,
     verbose: bool = False,
 ) -> logging.Logger:
     """Configure and return a logger instance.
     
     Args:
         name: Logger name
-        level: Logging level for file handler
-        log_file: Path to log file, defaults to LOG_PATH
+        level: Logging level for console output
         verbose: If True, also output detailed logs to console
         
     Returns:
@@ -35,25 +29,9 @@ def setup_logger(
     
     logger.setLevel(logging.DEBUG)
     
-    # Ensure log directory exists
-    if log_file is None:
-        log_file = LOG_PATH
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    
-    # File handler - detailed logs with DEBUG level
-    file_handler = logging.FileHandler(log_file, encoding="utf-8")
-    file_handler.setLevel(level)
-    file_formatter = logging.Formatter(
-        "%(asctime)s | %(name)s | %(levelname)-8s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    file_handler.setFormatter(file_formatter)
-    logger.addHandler(file_handler)
-    
-    # Console handler - only warnings and errors by default
     if verbose:
         console_handler = logging.StreamHandler(sys.stderr)
-        console_handler.setLevel(logging.DEBUG)
+        console_handler.setLevel(level)
         console_formatter = logging.Formatter(
             "%(levelname)s: %(message)s"
         )

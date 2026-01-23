@@ -6,13 +6,12 @@ import json
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from email.utils import formatdate
-from pathlib import Path
 from typing import Any, Iterable, Optional
 from xml.sax.saxutils import escape
 
 import psycopg2.extras
 
-from .storage import PostgresStorage, StorageLike, open_storage
+from .storage import StorageLike, open_storage
 
 DEFAULT_GROUP_NAME = "Default"
 
@@ -24,10 +23,6 @@ class RssItem:
     guid: str
     pub_date: Optional[int]
     description: str
-
-
-def _is_postgres(storage: StorageLike) -> bool:
-    return isinstance(storage, PostgresStorage)
 
 
 def _parse_date(value: Optional[str], *, end_of_day: bool = False) -> Optional[int]:
@@ -44,29 +39,19 @@ def _ensure_default_group(storage: StorageLike) -> int:
     if default_group is None:
         default_group = storage.upsert_group(DEFAULT_GROUP_NAME)
     default_id = default_group.id
-    if _is_postgres(storage):
-        with storage.conn.cursor() as cur:
-            cur.execute(
-                "UPDATE accounts SET group_id = %s WHERE group_id IS NULL",
-                (default_id,),
-            )
-        storage.conn.commit()
-    else:
-        storage.conn.execute(
-            "UPDATE accounts SET group_id = ? WHERE group_id IS NULL",
+    with storage.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE accounts SET group_id = %s WHERE group_id IS NULL",
             (default_id,),
         )
-        storage.conn.commit()
+    storage.conn.commit()
     return default_id
 
 
 def _fetchall(storage: StorageLike, query: str, params: list[Any]) -> list[dict[str, Any]]:
-    if _is_postgres(storage):
-        with storage.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(query, params)
-            rows = cur.fetchall()
-        return [dict(row) for row in rows]
-    rows = storage.conn.execute(query, params).fetchall()
+    with storage.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(query, params)
+        rows = cur.fetchall()
     return [dict(row) for row in rows]
 
 
@@ -74,7 +59,7 @@ def _resolve_group_ids(storage: StorageLike, names: Iterable[str]) -> list[int]:
     cleaned = [name.strip() for name in names if name and name.strip()]
     if not cleaned:
         return []
-    placeholders = ",".join(["%s"] * len(cleaned)) if _is_postgres(storage) else ",".join(["?"] * len(cleaned))
+    placeholders = ",".join(["%s"] * len(cleaned))
     query = (
         f"SELECT id, name FROM account_groups WHERE name IN ({placeholders})"
         if cleaned
@@ -149,18 +134,13 @@ def query_rss_items(
     with open_storage() as storage:
         _ensure_default_group(storage)
         group_ids = _resolve_group_ids(storage, group_names)
-        is_pg = _is_postgres(storage)
 
         where: list[str] = []
         params: list[Any] = []
 
         if group_ids:
-            if is_pg:
-                where.append("acc.group_id = ANY(%s)")
-                params.append(group_ids)
-            else:
-                where.append(f"acc.group_id IN ({','.join(['?'] * len(group_ids))})")
-                params.extend(group_ids)
+            where.append("acc.group_id = ANY(%s)")
+            params.append(group_ids)
 
         since_ts = _parse_date(since)
         until_ts = _parse_date(until, end_of_day=True)
@@ -169,14 +149,14 @@ def query_rss_items(
             since_ts = int((now.timestamp() - days * 86400))
 
         if since_ts is not None:
-            where.append("a.publish_at >= %s" if is_pg else "a.publish_at >= ?")
+            where.append("a.publish_at >= %s")
             params.append(since_ts)
         if until_ts is not None:
-            where.append("a.publish_at <= %s" if is_pg else "a.publish_at <= ?")
+            where.append("a.publish_at <= %s")
             params.append(until_ts)
 
         where_sql = f"WHERE {' AND '.join(where)}" if where else ""
-        limit_sql = "LIMIT %s" if is_pg else "LIMIT ?"
+        limit_sql = "LIMIT %s"
 
         query = (
             "SELECT a.id, a.title, a.link, a.publish_at, a.digest, c.content_json"
@@ -243,8 +223,3 @@ def build_rss_xml(
     lines.extend(['</channel>', '</rss>'])
     return "\n".join(lines)
 
-
-def ensure_xml_path(output: Path) -> Path:
-    if output.suffix.lower() != ".xml":
-        return output.with_suffix(".xml")
-    return output

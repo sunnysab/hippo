@@ -28,15 +28,6 @@ COPY __init__.py ./
 RUN pip install --upgrade pip setuptools wheel && \
     pip install -e .
 
-# Create data directory
-RUN mkdir -p /data
-
-# Set data directory as volume
-VOLUME ["/data"]
-
-# Set environment variable for data directory
-ENV HIPPO_HOME=/data
-
 # Set entrypoint
 ENTRYPOINT ["hippo"]
 CMD ["--help"]

@@ -1,6 +1,6 @@
 # WeChat 文章导出 CLI (Python 版)
 
-基于 [Typer](https://typer.tiangolo.com) 的命令行工具，用于管理公众号、同步文章列表、下载文章内容，并支持 SQLite / PostgreSQL 存储。
+基于 [Typer](https://typer.tiangolo.com) 的命令行工具，用于管理公众号、同步文章列表、下载文章内容，数据存储使用 PostgreSQL。
 
 ---
 
@@ -28,17 +28,15 @@ hippo --help
 # Build image
 docker build -t hippo .
 
-# Run with volume mount for persistent data
-docker run -it --rm -v ~/.local/share/hippo:/data hippo --help
+# Run with PostgreSQL
+docker run -it --rm -e HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname" hippo --help
 
 # Example: login
-docker run -it --rm -v ~/.local/share/hippo:/data hippo login
+docker run -it --rm -e HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname" hippo login
 
-# Example: sync articles with profile
-docker run -it --rm -v ~/.local/share/hippo:/data hippo article sync-all --profile production
+# Example: sync articles
+docker run -it --rm -e HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname" hippo article sync-all
 ```
-
-Note: Place `profiles.toml` in your local `~/.local/share/hippo/` directory so the container can read it.
 
 ---
 
@@ -124,30 +122,6 @@ python -m hippo article download "https://mp.weixin.qq.com/..."
 - `article sync` / `sync-all`: download content based on the synced article list
 - `article download`: download a single article URL
 
-### Profile-based configuration
-
-Instead of passing many command-line options, you can define profiles in `~/.local/share/hippo/profiles.toml`:
-
-```toml
-[profiles.production]
-limit = 5000
-format = "html"
-with_images = true
-workers = 20
-image_workers = 10
-worker_prefix = "https://your-worker.example.com"
-worker_proxy = "http://proxy.example.com:1080"
-```
-
-Then use it with:
-
-```bash
-python -m hippo article sync-all --profile production
-python -m hippo article sync <account> --profile production
-```
-
-See `profiles.toml.example` for more examples.
-
 ### Worker configuration
 
 - Article HTML can be fetched via a Cloudflare Worker (images are still direct):
@@ -158,42 +132,17 @@ See `profiles.toml.example` for more examples.
 ### Download behavior
 - Article HTML fetch retries up to 5 times before skipping the article.
 - Image downloads run on 2 background threads and retry up to 3 times.
-- Failed image downloads are logged to `~/.local/share/hippo/logs/download_errors.jsonl` and are retried automatically when a download command starts.
+- Failed image downloads are marked in `article_images.failed_*` and can be retried via `article backfill-images`.
 - For `sync-all`, each account waits for its image queue to finish before moving to the next account.
-- If interrupted with Ctrl+C, any queued images are recorded to the failure log for retry.
-
-Default output directory:
-`~/.local/share/hippo/downloads/` (override with `HIPPO_HOME`)
-
-Directory structure example:
-
-```
-downloads/<account-or-biz>/<YYYY-MM-DD-full-title>/
-  ├── index.html / article.md / article.txt
-  ├── metadata.json
-  └── images/
-```
-
-If a directory name already exists, a numeric suffix is appended (e.g. `-2`, `-3`).
+- If interrupted with Ctrl+C, any queued images are marked as failed for later backfill.
 
 ---
 
 ## 数据库存储
 
-### SQLite（默认）
+### PostgreSQL
 
-默认数据库路径：
-`~/.local/share/hippo/cli.db`
-
-可通过环境变量覆盖：
-
-```bash
-export HIPPO_HOME=/path/to/custom
-```
-
-### PostgreSQL（可选）
-
-设置环境变量即可切换：
+设置环境变量：
 
 ```bash
 export HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname"
@@ -230,70 +179,22 @@ export HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname"
 
 ## 日志系统
 
-CLI 集成了 Python 标准库 logging，详细日志自动记录到文件，终端保持简洁输出。
-
-### 日志文件位置
-
-默认日志文件：`~/.local/share/hippo/cli.log`
-
-记录内容包括：
-- HTTP 请求详情（URL、参数、响应状态）
-- 文章下载进度与重试记录
-- 图片下载状态
-- 错误堆栈信息
+CLI 集成了 Python 标准库 logging，默认仅输出必要信息。
 
 ### 启用详细控制台日志
 
 使用 `--verbose` 或 `-v` 选项：
 
 ```bash
-hippo --verbose article sync-all --profile production
+hippo --verbose article sync-all
 hippo -v account sync-all
 ```
 
-详细模式会将日志同时输出到终端和文件。
-
----
-
-## SQLite -> PostgreSQL 导出
-
-脚本路径：`scripts/export_to_pg.py`
-
-```bash
-python scripts/export_to_pg.py \
-  --pg-dsn "postgresql://user:pass@host:5432/dbname" \
-  --sqlite-path "/home/user/.local/share/hippo/cli.db"
-```
-
-可选参数：
-- `--truncate`：导出前清空 PG 表
-
-导出过程会显示进度条与速率。
+详细模式会将日志输出到终端。
 
 ---
 
 ## 配置与路径
-
-### Profile-based configuration
-
-Create `~/.local/share/hippo/profiles.toml` to define reusable settings:
-
-```toml
-[profiles.production]
-limit = 5000
-format = "html"
-with_images = true
-workers = 20
-image_workers = 10
-worker_prefix = "https://your-worker.example.com"
-worker_proxy = "http://proxy.example.com:1080"
-```
-
-Use with `--profile` or `-p`:
-
-```bash
-hippo article sync-all --profile production
-```
 
 ### Environment variables
 
@@ -301,10 +202,10 @@ hippo article sync-all --profile production
 
 | 配置项 | 说明 |
 | --- | --- |
-| `HIPPO_HOME` | 覆盖数据目录 |
-| `HIPPO_PG_DSN` | 使用 PostgreSQL |
-| `DB_PATH` | SQLite DB 路径 |
-| `DOWNLOAD_ROOT` | 下载目录 |
+| `HIPPO_PG_DSN` | PostgreSQL DSN |
+| `HIPPO_ARTICLE_WORKER` | 文章 HTML worker 前缀或模板 |
+| `HIPPO_ARTICLE_WORKER_PROXY` | worker 访问代理 |
+| `HIPPO_ARTICLE_MAX_CONNECTIONS` | worker 最大并发连接数 |
 
 ## Backfill missing images (PostgreSQL)
 
@@ -326,15 +227,6 @@ Optional flags:
 - `--retries 3` to control download retries
 - `--dry-run` to list targets without writing
 
-核心配置：`hippo/config.py`
-
-| 配置项 | 说明 |
-| --- | --- |
-| `HIPPO_HOME` | 覆盖数据目录 |
-| `HIPPO_PG_DSN` | 使用 PostgreSQL |
-| `DB_PATH` | SQLite DB 路径 |
-| `DOWNLOAD_ROOT` | 下载目录 |
-
 ### Article HTML proxy (images stay direct)
 
 - `HIPPO_ARTICLE_WORKER`: Cloudflare Workers relay for article HTML, e.g. `https://c0c0.sunnysab.workers.dev/?url=` or `https://c0c0.sunnysab.workers.dev/?url={url}`.
@@ -353,7 +245,6 @@ Optional flags:
 ├── pyproject.toml
 ├── hippo/normalize_html.py
 ├── scripts/
-│   └── export_to_pg.py
 └── hippo/
     ├── cli.py
     ├── config.py

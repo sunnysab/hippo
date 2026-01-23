@@ -28,12 +28,11 @@ try:
 except Exception:  # pragma: no cover - optional fallback
     jieba = None
 
-from .config import DB_PATH
 from .downloader import ArticleDownloader
 from .http import MPClient, parse_appmsg_publish
 from .models import AccountCredential, ArticleRecord
 from .rss import build_rss_xml, query_rss_items
-from .storage import PostgresStorage, StorageLike, open_storage
+from .storage import StorageLike, open_storage
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
@@ -55,8 +54,6 @@ class ApiError(RuntimeError):
         self.status = status
 
 
-def _is_postgres(storage: StorageLike) -> bool:
-    return isinstance(storage, PostgresStorage)
 
 
 def _parse_int(value: Optional[str]) -> Optional[int]:
@@ -231,9 +228,7 @@ def _set_sync_state(
 def _get_login_info(storage: StorageLike) -> Optional[dict[str, Any]]:
     row = _fetchone(
         storage,
-        "SELECT nickname, avatar, updated_at FROM login_sessions ORDER BY id DESC LIMIT 1"
-        if _is_postgres(storage)
-        else "SELECT nickname, avatar, updated_at FROM login_sessions ORDER BY id DESC LIMIT 1",
+        "SELECT nickname, avatar, updated_at FROM login_sessions ORDER BY id DESC LIMIT 1",
         [],
     )
     return row
@@ -386,7 +381,7 @@ class SyncScheduler:
 
     def _loop(self) -> None:
         while not self._stop.is_set():
-            with open_storage(DB_PATH) as storage:
+            with open_storage() as storage:
                 settings = _get_sync_settings(storage)
             if not settings.get("enabled"):
                 self._trigger.wait(timeout=10)
@@ -409,7 +404,7 @@ class SyncScheduler:
 
     def _run_sync(self) -> dict[str, Any]:
         started_at = _utc_now_iso()
-        with open_storage(DB_PATH) as storage:
+        with open_storage() as storage:
             settings = _get_sync_settings(storage)
             _set_sync_state(storage, status="running", error="", started_at=started_at)
             try:
@@ -437,7 +432,6 @@ class SyncScheduler:
                 downloader = ArticleDownloader(
                     client=client,
                     storage=storage,
-                    write_local=False,
                     enable_image_worker=bool(settings.get("download_images")),
                 )
                 with downloader:
@@ -502,23 +496,16 @@ class SyncScheduler:
 
 
 def _fetchall(storage: StorageLike, query: str, params: list[Any]) -> list[dict[str, Any]]:
-    if _is_postgres(storage):
-        with storage.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(query, params)
-            rows = cur.fetchall()
-        return [_normalize_record(dict(row)) for row in rows]
-    cur = storage.conn.execute(query, params)
-    rows = cur.fetchall()
+    with storage.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(query, params)
+        rows = cur.fetchall()
     return [_normalize_record(dict(row)) for row in rows]
 
 
 def _fetchone(storage: StorageLike, query: str, params: list[Any]) -> Optional[dict[str, Any]]:
-    if _is_postgres(storage):
-        with storage.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(query, params)
-            row = cur.fetchone()
-        return _normalize_record(dict(row)) if row else None
-    row = storage.conn.execute(query, params).fetchone()
+    with storage.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(query, params)
+        row = cur.fetchone()
     return _normalize_record(dict(row)) if row else None
 
 
@@ -528,101 +515,54 @@ def _ensure_default_group(storage: StorageLike) -> dict[str, Any]:
     if default_group is None:
         default_group = storage.upsert_group(DEFAULT_GROUP_NAME)
     default_id = default_group.id
-    if _is_postgres(storage):
-        with storage.conn.cursor() as cur:
-            cur.execute(
-                "UPDATE accounts SET group_id = %s WHERE group_id IS NULL",
-                (default_id,),
-            )
-        storage.conn.commit()
-    else:
-        storage.conn.execute(
-            "UPDATE accounts SET group_id = ? WHERE group_id IS NULL",
+    with storage.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE accounts SET group_id = %s WHERE group_id IS NULL",
             (default_id,),
         )
-        storage.conn.commit()
+    storage.conn.commit()
     return {"id": default_id, "name": default_group.name}
 
 
 def _ensure_avatar_images_table(storage: StorageLike) -> None:
-    if _is_postgres(storage):
-        with storage.conn.cursor() as cur:
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS avatar_images (
-                    biz TEXT PRIMARY KEY,
-                    avatar_url TEXT,
-                    content_type TEXT,
-                    data BYTEA,
-                    updated_at TIMESTAMPTZ NOT NULL
-                )
-                """
-            )
-        storage.conn.commit()
-    else:
-        storage.conn.execute(
+    with storage.conn.cursor() as cur:
+        cur.execute(
             """
             CREATE TABLE IF NOT EXISTS avatar_images (
                 biz TEXT PRIMARY KEY,
                 avatar_url TEXT,
                 content_type TEXT,
-                data BLOB,
-                updated_at TEXT NOT NULL
+                data BYTEA,
+                updated_at TIMESTAMPTZ NOT NULL
             )
             """
         )
-        storage.conn.commit()
+    storage.conn.commit()
     _migrate_legacy_avatar_tables(storage)
 
 
 def _migrate_legacy_avatar_tables(storage: StorageLike) -> None:
-    if _is_postgres(storage):
-        with storage.conn.cursor() as cur:
-            cur.execute("SELECT to_regclass('public.account_images')")
-            has_account_images = cur.fetchone()[0] is not None
-            if has_account_images:
-                cur.execute(
-                    """
-                    INSERT INTO avatar_images (biz, content_type, data, updated_at)
-                    SELECT biz, content_type, data, updated_at FROM account_images
-                    ON CONFLICT (biz) DO NOTHING
-                    """
-                )
-            cur.execute("SELECT to_regclass('public.account_search_images')")
-            has_search_images = cur.fetchone()[0] is not None
-            if has_search_images:
-                cur.execute(
-                    """
-                    INSERT INTO avatar_images (biz, avatar_url, content_type, data, updated_at)
-                    SELECT biz, avatar_url, content_type, data, updated_at FROM account_search_images
-                    ON CONFLICT (biz) DO NOTHING
-                    """
-                )
-        storage.conn.commit()
-        return
-
-    table = storage.conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
-        ("account_images",),
-    ).fetchone()
-    if table:
-        storage.conn.execute(
-            """
-            INSERT OR IGNORE INTO avatar_images (biz, content_type, data, updated_at)
-            SELECT biz, content_type, data, updated_at FROM account_images
-            """
-        )
-    table = storage.conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
-        ("account_search_images",),
-    ).fetchone()
-    if table:
-        storage.conn.execute(
-            """
-            INSERT OR IGNORE INTO avatar_images (biz, avatar_url, content_type, data, updated_at)
-            SELECT biz, avatar_url, content_type, data, updated_at FROM account_search_images
-            """
-        )
+    with storage.conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.account_images')")
+        has_account_images = cur.fetchone()[0] is not None
+        if has_account_images:
+            cur.execute(
+                """
+                INSERT INTO avatar_images (biz, content_type, data, updated_at)
+                SELECT biz, content_type, data, updated_at FROM account_images
+                ON CONFLICT (biz) DO NOTHING
+                """
+            )
+        cur.execute("SELECT to_regclass('public.account_search_images')")
+        has_search_images = cur.fetchone()[0] is not None
+        if has_search_images:
+            cur.execute(
+                """
+                INSERT INTO avatar_images (biz, avatar_url, content_type, data, updated_at)
+                SELECT biz, avatar_url, content_type, data, updated_at FROM account_search_images
+                ON CONFLICT (biz) DO NOTHING
+                """
+            )
     storage.conn.commit()
 
 
@@ -765,10 +705,8 @@ def _sync_account_articles(
         if candidates:
             results, _, _ = downloader.download_many(
                 candidates.values(),
-                fmt="html",
                 with_images=bool(settings.get("download_images")),
                 record_images_only=not bool(settings.get("download_images")),
-                account_name=account.nickname or account.biz,
                 skip_if_downloaded=True,
             )
             downloaded = len(results)
@@ -791,12 +729,6 @@ def _get_group(storage: StorageLike, group_id: int) -> dict[str, Any]:
         LEFT JOIN accounts a ON a.group_id = g.id
         WHERE g.id = %s
         GROUP BY g.id, g.name
-        """ if _is_postgres(storage) else """
-        SELECT g.id, g.name, COUNT(a.biz) AS account_count
-        FROM account_groups g
-        LEFT JOIN accounts a ON a.group_id = g.id
-        WHERE g.id = ?
-        GROUP BY g.id, g.name
         """,
         [group_id],
     )
@@ -809,20 +741,13 @@ def _update_group(storage: StorageLike, group_id: int, name: str) -> dict[str, A
     trimmed = name.strip()
     if not trimmed:
         raise ApiError("Group name cannot be empty")
-    if _is_postgres(storage):
-        with storage.conn.cursor() as cur:
-            cur.execute(
-                "UPDATE account_groups SET name = %s, updated_at = NOW() WHERE id = %s",
-                (trimmed, group_id),
-            )
-            updated = cur.rowcount
-        storage.conn.commit()
-    else:
-        updated = storage.conn.execute(
-            "UPDATE account_groups SET name = ?, updated_at = ? WHERE id = ?",
-            (trimmed, datetime.utcnow().isoformat(), group_id),
-        ).rowcount
-        storage.conn.commit()
+    with storage.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE account_groups SET name = %s, updated_at = NOW() WHERE id = %s",
+            (trimmed, group_id),
+        )
+        updated = cur.rowcount
+    storage.conn.commit()
     if updated == 0:
         raise ApiError("Group not found", status=404)
     return _get_group(storage, group_id)
@@ -833,25 +758,14 @@ def _delete_group(storage: StorageLike, group_id: int) -> None:
     default_id = default_group["id"]
     if group_id == default_id:
         raise ApiError("Default group cannot be deleted", status=400)
-    if _is_postgres(storage):
-        with storage.conn.cursor() as cur:
-            cur.execute(
-                "UPDATE accounts SET group_id = %s WHERE group_id = %s",
-                (default_id, group_id),
-            )
-            cur.execute("DELETE FROM account_groups WHERE id = %s", (group_id,))
-            deleted = cur.rowcount
-        storage.conn.commit()
-    else:
-        storage.conn.execute(
-            "UPDATE accounts SET group_id = ? WHERE group_id = ?",
+    with storage.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE accounts SET group_id = %s WHERE group_id = %s",
             (default_id, group_id),
         )
-        deleted = storage.conn.execute(
-            "DELETE FROM account_groups WHERE id = ?",
-            (group_id,),
-        ).rowcount
-        storage.conn.commit()
+        cur.execute("DELETE FROM account_groups WHERE id = %s", (group_id,))
+        deleted = cur.rowcount
+    storage.conn.commit()
     if deleted == 0:
         raise ApiError("Group not found", status=404)
 
@@ -869,7 +783,7 @@ def _build_search_clause(
         if is_postgres:
             clause = " OR ".join([f"{field} ILIKE %s" for field in fields])
         else:
-            clause = " OR ".join([f"{field} LIKE ? COLLATE NOCASE" for field in fields])
+            clause = " OR ".join([f"{field} ILIKE %s" for field in fields])
         clauses.append(f"({clause})")
         params.extend([like for _ in fields])
     return " AND ".join(clauses), params
@@ -907,24 +821,23 @@ def _list_accounts(
     page: int,
     page_size: int,
 ) -> dict[str, Any]:
-    is_pg = _is_postgres(storage)
     where: list[str] = []
     params: list[Any] = []
     if group_id is not None:
-        where.append("a.group_id = %s" if is_pg else "a.group_id = ?")
+        where.append("a.group_id = %s")
         params.append(group_id)
     if query:
         tokens = _tokenize_query(query)
         if tokens:
             clause, values = _build_search_clause(
-                is_postgres=is_pg,
+                is_postgres=True,
                 terms=tokens,
                 fields=["a.nickname", "a.alias", "a.biz"],
             )
             where.append(clause)
             params.extend(values)
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
-    limit_sql = "LIMIT %s OFFSET %s" if is_pg else "LIMIT ? OFFSET ?"
+    limit_sql = "LIMIT %s OFFSET %s"
     offset = max(page - 1, 0) * page_size
     query_sql = (
         ""
@@ -963,17 +876,6 @@ def _get_account(storage: StorageLike, biz: str) -> dict[str, Any]:
             " LEFT JOIN account_groups g ON g.id = a.group_id"
             " LEFT JOIN avatar_images ai ON ai.biz = a.biz"
             " WHERE a.biz = %s"
-        )
-        if _is_postgres(storage)
-        else (
-            ""
-            "SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id, a.is_default,"
-            " a.is_disabled, a.last_synced_at, g.name AS group_name,"
-            " (ai.data IS NOT NULL) AS avatar_ready"
-            " FROM accounts a"
-            " LEFT JOIN account_groups g ON g.id = a.group_id"
-            " LEFT JOIN avatar_images ai ON ai.biz = a.biz"
-            " WHERE a.biz = ?"
         ),
         [biz],
     )
@@ -986,8 +888,6 @@ def _get_account(storage: StorageLike, biz: str) -> dict[str, Any]:
 def _update_account(storage: StorageLike, biz: str, payload: dict[str, Any]) -> dict[str, Any]:
     fields: list[str] = []
     params: list[Any] = []
-    is_pg = _is_postgres(storage)
-
     mapping = {
         "nickname": "nickname",
         "alias": "alias",
@@ -1002,31 +902,21 @@ def _update_account(storage: StorageLike, biz: str, payload: dict[str, Any]) -> 
             value = payload[key]
             if key in ("is_default", "is_disabled"):
                 value = bool(value)
-            fields.append(f"{column} = %s" if is_pg else f"{column} = ?")
+            fields.append(f"{column} = %s")
             params.append(value)
 
     if not fields:
         raise ApiError("No fields to update")
 
-    fields.append("updated_at = NOW()" if is_pg else "updated_at = ?")
-    if not is_pg:
-        params.append(datetime.utcnow().isoformat())
+    fields.append("updated_at = NOW()")
 
     params.append(biz)
 
-    query = (
-        f"UPDATE accounts SET {', '.join(fields)} WHERE biz = %s"
-        if is_pg
-        else f"UPDATE accounts SET {', '.join(fields)} WHERE biz = ?"
-    )
-    if is_pg:
-        with storage.conn.cursor() as cur:
-            cur.execute(query, params)
-            updated = cur.rowcount
-        storage.conn.commit()
-    else:
-        updated = storage.conn.execute(query, params).rowcount
-        storage.conn.commit()
+    query = f"UPDATE accounts SET {', '.join(fields)} WHERE biz = %s"
+    with storage.conn.cursor() as cur:
+        cur.execute(query, params)
+        updated = cur.rowcount
+    storage.conn.commit()
     if updated == 0:
         raise ApiError("Account not found", status=404)
     if payload.get("is_default"):
@@ -1047,39 +937,38 @@ def _build_article_query(
     offset: int,
     article_id: Optional[str] = None,
 ) -> tuple[str, list[Any]]:
-    is_pg = _is_postgres(storage)
     where: list[str] = []
     params: list[Any] = []
 
     if article_id:
-        where.append("a.article_id = %s" if is_pg else "a.article_id = ?")
+        where.append("a.article_id = %s")
         params.append(article_id)
 
     if group_id is not None:
-        where.append("acc.group_id = %s" if is_pg else "acc.group_id = ?")
+        where.append("acc.group_id = %s")
         params.append(group_id)
     if biz:
-        where.append("a.biz = %s" if is_pg else "a.biz = ?")
+        where.append("a.biz = %s")
         params.append(biz)
     if query:
         tokens = _tokenize_query(query)
         if tokens:
             clause, values = _build_search_clause(
-                is_postgres=is_pg,
+                is_postgres=True,
                 terms=tokens,
                 fields=["a.title", "a.author", "a.digest"],
             )
             where.append(clause)
             params.extend(values)
     if since_ts is not None:
-        where.append("a.publish_at >= %s" if is_pg else "a.publish_at >= ?")
+        where.append("a.publish_at >= %s")
         params.append(since_ts)
     if until_ts is not None:
-        where.append("a.publish_at <= %s" if is_pg else "a.publish_at <= ?")
+        where.append("a.publish_at <= %s")
         params.append(until_ts)
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
-    limit_sql = "LIMIT %s OFFSET %s" if is_pg else "LIMIT ? OFFSET ?"
+    limit_sql = "LIMIT %s OFFSET %s"
 
     image_sql = (
         "LEFT JOIN LATERAL ("
@@ -1088,15 +977,8 @@ def _build_article_query(
         "  ORDER BY (i.kind = 'cover') DESC, i.position ASC"
         "  LIMIT 1"
         ") img ON TRUE"
-        if is_pg
-        else ""
     )
-    image_select = "img.id AS image_id" if is_pg else (
-        "(SELECT id FROM article_images i"
-        " WHERE i.article_pk = a.id AND i.data IS NOT NULL"
-        " ORDER BY CASE WHEN i.kind = 'cover' THEN 0 ELSE 1 END, i.position ASC"
-        " LIMIT 1) AS image_id"
-    )
+    image_select = "img.id AS image_id"
 
     content_join = " JOIN article_content ac ON ac.article_pk = a.id" if content_only else ""
     query_sql = (
@@ -1149,36 +1031,34 @@ def _list_articles(
     for row in rows:
         row["account_avatar_url"] = f"/api/account/{row['biz']}/avatar"
 
-    is_pg = _is_postgres(storage)
-    
     where: list[str] = []
     count_params: list[Any] = []
 
     if article_id:
-        where.append("a.article_id = %s" if is_pg else "a.article_id = ?")
+        where.append("a.article_id = %s")
         count_params.append(article_id)
         
     if group_id is not None:
-        where.append("acc.group_id = %s" if is_pg else "acc.group_id = ?")
+        where.append("acc.group_id = %s")
         count_params.append(group_id)
     if biz:
-        where.append("a.biz = %s" if is_pg else "a.biz = ?")
+        where.append("a.biz = %s")
         count_params.append(biz)
     if query:
         tokens = _tokenize_query(query)
         if tokens:
             clause, values = _build_search_clause(
-                is_postgres=is_pg,
+                is_postgres=True,
                 terms=tokens,
                 fields=["a.title", "a.author", "a.digest"],
             )
             where.append(clause)
             count_params.extend(values)
     if since_ts is not None:
-        where.append("a.publish_at >= %s" if is_pg else "a.publish_at >= ?")
+        where.append("a.publish_at >= %s")
         count_params.append(since_ts)
     if until_ts is not None:
-        where.append("a.publish_at <= %s" if is_pg else "a.publish_at <= ?")
+        where.append("a.publish_at <= %s")
         count_params.append(until_ts)
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
@@ -1206,17 +1086,6 @@ def _get_article(storage: StorageLike, article_id: int) -> dict[str, Any]:
             " JOIN accounts acc ON acc.biz = a.biz"
             " LEFT JOIN account_groups g ON g.id = acc.group_id"
             " WHERE a.id = %s"
-        )
-        if _is_postgres(storage)
-        else (
-            "SELECT a.id, a.biz, a.article_id, a.title, a.author, a.digest, a.cover, a.link,"
-            " a.source_url, a.publish_at, a.created_at,"
-            " acc.nickname AS account_nickname, acc.alias AS account_alias,"
-            " acc.round_head_img AS account_avatar, acc.group_id, g.name AS group_name"
-            " FROM articles a"
-            " JOIN accounts acc ON acc.biz = a.biz"
-            " LEFT JOIN account_groups g ON g.id = acc.group_id"
-            " WHERE a.id = ?"
         ),
         [article_id],
     )
@@ -1226,9 +1095,7 @@ def _get_article(storage: StorageLike, article_id: int) -> dict[str, Any]:
 
     content_row = _fetchone(
         storage,
-        "SELECT content_json, clean_html FROM article_content WHERE article_pk = %s"
-        if _is_postgres(storage)
-        else "SELECT content_json, clean_html FROM article_content WHERE article_pk = ?",
+        "SELECT content_json, clean_html FROM article_content WHERE article_pk = %s",
         [article_id],
     )
     content_json = None
@@ -1244,9 +1111,7 @@ def _get_article(storage: StorageLike, article_id: int) -> dict[str, Any]:
 
     images = _fetchall(
         storage,
-        "SELECT id, position, kind, content_type FROM article_images WHERE article_pk = %s ORDER BY position ASC"
-        if _is_postgres(storage)
-        else "SELECT id, position, kind, content_type FROM article_images WHERE article_pk = ? ORDER BY position ASC",
+        "SELECT id, position, kind, content_type FROM article_images WHERE article_pk = %s ORDER BY position ASC",
         [article_id],
     )
     return {
@@ -1259,9 +1124,7 @@ def _get_article(storage: StorageLike, article_id: int) -> dict[str, Any]:
 def _list_article_images(storage: StorageLike, article_id: int) -> list[dict[str, Any]]:
     return _fetchall(
         storage,
-        "SELECT id, position, kind, content_type FROM article_images WHERE article_pk = %s ORDER BY position ASC"
-        if _is_postgres(storage)
-        else "SELECT id, position, kind, content_type FROM article_images WHERE article_pk = ? ORDER BY position ASC",
+        "SELECT id, position, kind, content_type FROM article_images WHERE article_pk = %s ORDER BY position ASC",
         [article_id],
     )
 
@@ -1269,9 +1132,7 @@ def _list_article_images(storage: StorageLike, article_id: int) -> list[dict[str
 def _fetch_image(storage: StorageLike, image_id: int) -> tuple[bytes, str]:
     row = _fetchone(
         storage,
-        "SELECT data, content_type FROM article_images WHERE id = %s"
-        if _is_postgres(storage)
-        else "SELECT data, content_type FROM article_images WHERE id = ?",
+        "SELECT data, content_type FROM article_images WHERE id = %s",
         [image_id],
     )
     if not row:
@@ -1290,38 +1151,23 @@ def _fetch_image(storage: StorageLike, image_id: int) -> tuple[bytes, str]:
 def _get_avatar_row(storage: StorageLike, biz: str) -> Optional[dict[str, Any]]:
     return _fetchone(
         storage,
-        "SELECT avatar_url, content_type, data FROM avatar_images WHERE biz = %s"
-        if _is_postgres(storage)
-        else "SELECT avatar_url, content_type, data FROM avatar_images WHERE biz = ?",
+        "SELECT avatar_url, content_type, data FROM avatar_images WHERE biz = %s",
         [biz],
     )
 
 
 def _upsert_avatar_url(storage: StorageLike, biz: str, url: str) -> None:
-    if _is_postgres(storage):
-        with storage.conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO avatar_images (biz, avatar_url, updated_at)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (biz) DO UPDATE SET
-                    avatar_url=EXCLUDED.avatar_url,
-                    updated_at=EXCLUDED.updated_at
-                """,
-                (biz, url, _utc_now_iso()),
-            )
-        storage.conn.commit()
-        return
-    storage.conn.execute(
-        """
-        INSERT INTO avatar_images (biz, avatar_url, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(biz) DO UPDATE SET
-            avatar_url=excluded.avatar_url,
-            updated_at=excluded.updated_at
-        """,
-        (biz, url, _utc_now_iso()),
-    )
+    with storage.conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO avatar_images (biz, avatar_url, updated_at)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (biz) DO UPDATE SET
+                avatar_url=EXCLUDED.avatar_url,
+                updated_at=EXCLUDED.updated_at
+            """,
+            (biz, url, _utc_now_iso()),
+        )
     storage.conn.commit()
 
 
@@ -1333,34 +1179,19 @@ def _store_avatar(
     data: bytes,
     avatar_url: Optional[str] = None,
 ) -> None:
-    if _is_postgres(storage):
-        with storage.conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO avatar_images (biz, avatar_url, content_type, data, updated_at)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (biz) DO UPDATE SET
-                    avatar_url=COALESCE(EXCLUDED.avatar_url, avatar_images.avatar_url),
-                    content_type=EXCLUDED.content_type,
-                    data=EXCLUDED.data,
-                    updated_at=EXCLUDED.updated_at
-                """,
-                (biz, avatar_url, content_type, psycopg2.Binary(data), _utc_now_iso()),
-            )
-        storage.conn.commit()
-        return
-    storage.conn.execute(
-        """
-        INSERT INTO avatar_images (biz, avatar_url, content_type, data, updated_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(biz) DO UPDATE SET
-            avatar_url=COALESCE(excluded.avatar_url, avatar_images.avatar_url),
-            content_type=excluded.content_type,
-            data=excluded.data,
-            updated_at=excluded.updated_at
-        """,
-        (biz, avatar_url, content_type, data, _utc_now_iso()),
-    )
+    with storage.conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO avatar_images (biz, avatar_url, content_type, data, updated_at)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (biz) DO UPDATE SET
+                avatar_url=COALESCE(EXCLUDED.avatar_url, avatar_images.avatar_url),
+                content_type=EXCLUDED.content_type,
+                data=EXCLUDED.data,
+                updated_at=EXCLUDED.updated_at
+            """,
+            (biz, avatar_url, content_type, psycopg2.Binary(data), _utc_now_iso()),
+        )
     storage.conn.commit()
 
 
@@ -1501,7 +1332,7 @@ class HippoHandler(BaseHTTPRequestHandler):
         segments = [seg for seg in parsed.path.split("/") if seg]
         query = parse_qs(parsed.query)
         try:
-            with open_storage(DB_PATH) as storage:
+            with open_storage() as storage:
                 _ensure_default_group(storage)
                 _ensure_avatar_images_table(storage)
                 if len(segments) < 2:
@@ -1734,21 +1565,12 @@ class HippoHandler(BaseHTTPRequestHandler):
                 if group_id is None:
                     default_group = _ensure_default_group(storage)
                     group_id = default_group["id"]
-                is_pg = _is_postgres(storage)
-                if is_pg:
-                    with storage.conn.cursor() as cur:
-                        cur.execute(
-                            "UPDATE accounts SET group_id = %s, updated_at = NOW() WHERE biz = ANY(%s)",
-                            (group_id, biz_list),
-                        )
-                    storage.conn.commit()
-                else:
-                    placeholders = ",".join(["?"] * len(biz_list))
-                    storage.conn.execute(
-                        f"UPDATE accounts SET group_id = ?, updated_at = ? WHERE biz IN ({placeholders})",
-                        [group_id, datetime.utcnow().isoformat(), *biz_list],
+                with storage.conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE accounts SET group_id = %s, updated_at = NOW() WHERE biz = ANY(%s)",
+                        (group_id, biz_list),
                     )
-                    storage.conn.commit()
+                storage.conn.commit()
                 self._send_json(HTTPStatus.OK, {"updated": len(biz_list)})
                 return
             biz = segments[2]
@@ -1780,9 +1602,7 @@ class HippoHandler(BaseHTTPRequestHandler):
                 if not url:
                     row = _fetchone(
                         storage,
-                        "SELECT round_head_img FROM accounts WHERE biz = %s"
-                        if _is_postgres(storage)
-                        else "SELECT round_head_img FROM accounts WHERE biz = ?",
+                        "SELECT round_head_img FROM accounts WHERE biz = %s",
                         [biz],
                     )
                     if not row:
@@ -2049,9 +1869,7 @@ class HippoHandler(BaseHTTPRequestHandler):
             if group_id is not None:
                 row = _fetchone(
                     storage,
-                    "SELECT name FROM account_groups WHERE id = %s"
-                    if _is_postgres(storage)
-                    else "SELECT name FROM account_groups WHERE id = ?",
+                    "SELECT name FROM account_groups WHERE id = %s",
                     [group_id],
                 )
                 if not row:
