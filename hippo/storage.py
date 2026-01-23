@@ -6,36 +6,37 @@ import json
 import os
 from contextlib import AbstractContextManager
 from datetime import datetime, timezone
-from typing import Iterable, List, Optional, Protocol
+from typing import Any, Iterable, List, Optional, Protocol
 
-import psycopg2
-import psycopg2.extras
-from psycopg2 import pool as pg_pool
+import psycopg
+from psycopg.rows import dict_row
+from psycopg.types.json import Json
+from psycopg_pool import ConnectionPool
 
 from .models import AccountCredential, AccountGroup, ArticleRecord, LoginSession
 from . import queries
 
 SCHEMA_VERSION = '10'
 
-_PG_POOL: Optional[pg_pool.ThreadedConnectionPool] = None
+_PG_POOL: Optional[ConnectionPool] = None
 _PG_POOL_DSN: Optional[str] = None
 
 
-def _get_pool(dsn: str) -> pg_pool.ThreadedConnectionPool:
+def _get_pool(dsn: str) -> ConnectionPool:
     global _PG_POOL, _PG_POOL_DSN
     if _PG_POOL is not None and _PG_POOL_DSN == dsn:
         return _PG_POOL
     if _PG_POOL is not None:
-        _PG_POOL.closeall()
+        _PG_POOL.close()
     min_conn = int(os.environ.get("HIPPO_PG_POOL_MIN", "1") or "1")
     max_conn = int(os.environ.get("HIPPO_PG_POOL_MAX", "8") or "8")
     if max_conn < min_conn:
         max_conn = min_conn
-    _PG_POOL = pg_pool.ThreadedConnectionPool(
-        min_conn,
-        max_conn,
-        dsn,
-        options="-c timezone=Asia/Shanghai",
+    _PG_POOL = ConnectionPool(
+        conninfo=dsn,
+        min_size=min_conn,
+        max_size=max_conn,
+        kwargs={"options": "-c timezone=Asia/Shanghai"},
     )
     _PG_POOL_DSN = dsn
     return _PG_POOL
@@ -90,7 +91,7 @@ class PostgresStorage(AbstractContextManager):
         dsn: str,
         *,
         auto_init: bool = False,
-        pool: Optional[pg_pool.AbstractConnectionPool] = None,
+        pool: Optional[ConnectionPool] = None,
     ) -> None:
         self.dsn = dsn
         self._pool = pool or _get_pool(dsn)
@@ -168,7 +169,7 @@ class PostgresStorage(AbstractContextManager):
             raise
     # Meta helpers --------------------------------------------------------
     def get_meta(self, key: str) -> Optional[str]:
-        with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT value FROM meta WHERE key = %s", (key,))
             row = cur.fetchone()
             return row["value"] if row else None
@@ -230,7 +231,7 @@ class PostgresStorage(AbstractContextManager):
             query += " WHERE g.name = %s"
             params.append(group)
         query += " ORDER BY a.nickname ASC"
-        with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute(query, params)
             rows = cur.fetchall()
         return [self._row_to_account(row) for row in rows]
@@ -239,7 +240,7 @@ class PostgresStorage(AbstractContextManager):
         self, biz: Optional[str] = None, *, fallback_to_default: bool = True
     ) -> AccountCredential:
         row = None
-        with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        with self.conn.cursor(row_factory=dict_row) as cur:
             if biz:
                 cur.execute(
                     """
@@ -278,7 +279,7 @@ class PostgresStorage(AbstractContextManager):
         if not trimmed:
             raise ValueError("Group name cannot be empty.")
         now = _utc_now_dt()
-        with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
                 INSERT INTO account_groups (name, created_at, updated_at)
@@ -295,7 +296,7 @@ class PostgresStorage(AbstractContextManager):
         return AccountGroup(id=row["id"], name=row["name"])
 
     def list_groups(self) -> List[AccountGroup]:
-        with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
                 SELECT g.id, g.name, g.sync_mode, g.sync_recent_days, COUNT(a.biz) AS account_count
@@ -368,7 +369,7 @@ class PostgresStorage(AbstractContextManager):
         now = _utc_now_dt()
         cookie_json = json.dumps(session.cookies, ensure_ascii=False)
         session_identity = _session_identity(session.cookies)
-        with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT id, cookies_json, nickname FROM login_sessions ORDER BY id DESC")
             rows = cur.fetchall()
         match_id: Optional[int] = None
@@ -433,7 +434,7 @@ class PostgresStorage(AbstractContextManager):
                     )
                 self.conn.commit()
                 return self.get_login_session()
-            except psycopg2.errors.UniqueViolation:
+            except psycopg.errors.UniqueViolation:
                 self.conn.rollback()
                 if attempt == 0:
                     with self.conn.cursor() as cur:
@@ -454,7 +455,7 @@ class PostgresStorage(AbstractContextManager):
                 raise
 
     def get_login_session(self) -> LoginSession:
-        with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 "SELECT * FROM login_sessions WHERE is_default = TRUE ORDER BY id DESC LIMIT 1"
             )
@@ -589,7 +590,7 @@ class PostgresStorage(AbstractContextManager):
                             image.get("kind", "inline"),
                             orig_url,
                             image.get("content_type"),
-                            psycopg2.Binary(image.get("data")) if image.get("data") else None,
+                            psycopg.Binary(image.get("data")) if image.get("data") else None,
                             now,
                         ),
                     )
@@ -626,7 +627,7 @@ class PostgresStorage(AbstractContextManager):
                         url_token,
                         clean_html,
                         content_markdown,
-                        psycopg2.extras.Json(updated_blocks),
+                        Json(updated_blocks),
                         now,
                         now,
                     ),
@@ -696,7 +697,7 @@ class PostgresStorage(AbstractContextManager):
                     """,
                     (
                         content_type,
-                        psycopg2.Binary(data) if data else None,
+                        psycopg.Binary(data) if data else None,
                         _utc_now_dt(),
                         article_pk,
                         orig_url,
@@ -764,7 +765,7 @@ class PostgresStorage(AbstractContextManager):
         if limit is not None:
             query += " LIMIT %s"
             params.append(limit)
-        with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute(query, params)
             rows = cur.fetchall()
         return [self._row_to_article(row) for row in rows]
@@ -787,7 +788,7 @@ class PostgresStorage(AbstractContextManager):
 
     # Internal helpers ----------------------------------------------------
     @staticmethod
-    def _row_to_account(row: psycopg2.extras.DictRow) -> AccountCredential:
+    def _row_to_account(row: dict[str, Any]) -> AccountCredential:
         last_synced_at = row["last_synced_at"] if row["last_synced_at"] else None
         return AccountCredential(
             biz=row["biz"],
@@ -803,7 +804,7 @@ class PostgresStorage(AbstractContextManager):
         )
 
     @staticmethod
-    def _row_to_article(row: psycopg2.extras.DictRow) -> ArticleRecord:
+    def _row_to_article(row: dict[str, Any]) -> ArticleRecord:
         raw = json.loads(row["raw_json"])
         return ArticleRecord(
             biz=row["biz"],

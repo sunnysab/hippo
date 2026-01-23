@@ -9,7 +9,7 @@ from email.utils import formatdate
 from typing import Any, Iterable, Optional
 from xml.sax.saxutils import escape
 
-import psycopg2.extras
+from psycopg.rows import dict_row
 
 from .storage import StorageLike, open_storage
 
@@ -49,7 +49,7 @@ def _ensure_default_group(storage: StorageLike) -> int:
 
 
 def _fetchall(storage: StorageLike, query: str, params: list[Any]) -> list[dict[str, Any]]:
-    with storage.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+    with storage.conn.cursor(row_factory=dict_row) as cur:
         cur.execute(query, params)
         rows = cur.fetchall()
     return [dict(row) for row in rows]
@@ -222,4 +222,3 @@ def build_rss_xml(
         )
     lines.extend(['</channel>', '</rss>'])
     return "\n".join(lines)
-

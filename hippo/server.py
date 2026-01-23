@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Any, Generator, Optional
 
 import httpx
-import psycopg2
-import psycopg2.extras
+import psycopg
+from psycopg.rows import dict_row
 from fastapi import APIRouter, Body, Depends, FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -543,14 +543,14 @@ class SyncScheduler:
 
 
 def _fetchall(storage: StorageLike, query: str, params: list[Any]) -> list[dict[str, Any]]:
-    with storage.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+    with storage.conn.cursor(row_factory=dict_row) as cur:
         cur.execute(query, params)
         rows = cur.fetchall()
     return [_normalize_record(dict(row)) for row in rows]
 
 
 def _fetchone(storage: StorageLike, query: str, params: list[Any]) -> Optional[dict[str, Any]]:
-    with storage.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+    with storage.conn.cursor(row_factory=dict_row) as cur:
         cur.execute(query, params)
         row = cur.fetchone()
     return _normalize_record(dict(row)) if row else None
@@ -1275,7 +1275,7 @@ def _store_avatar(
                 data=EXCLUDED.data,
                 updated_at=EXCLUDED.updated_at
             """,
-            (biz, avatar_url, content_type, psycopg2.Binary(data), _utc_now_iso()),
+            (biz, avatar_url, content_type, psycopg.Binary(data), _utc_now_iso()),
         )
     storage.conn.commit()
 
