@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import base64
@@ -119,9 +120,12 @@ def _patch_click_for_typer() -> None:
         return
 
     original_option_init = TyperOption.__init__
+    option_init_params = set(inspect.signature(original_option_init).parameters)
 
     def _option_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        if kwargs.get("is_flag") and kwargs.get("flag_value") is None:
+        if "flag_value" in kwargs and "flag_value" not in option_init_params:
+            kwargs.pop("flag_value", None)
+        if kwargs.get("is_flag") and kwargs.get("flag_value") is None and "flag_value" in option_init_params:
             kwargs["flag_value"] = click.core.UNSET
         return original_option_init(self, *args, **kwargs)
 
