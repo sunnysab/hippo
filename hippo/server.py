@@ -32,6 +32,7 @@ from .downloader import ArticleDownloader
 from .http import MPClient
 from .models import AccountCredential, ArticleRecord
 from .rss import build_rss_xml, query_rss_items
+from .s3 import fetch_object_bytes, get_s3_client
 from .storage import StorageLike, open_storage
 from .sync_core import is_freq_control, is_login_error, sync_account_core
 
@@ -1159,11 +1160,26 @@ def _list_article_images(storage: StorageLike, article_id: int) -> list[dict[str
 def _fetch_image(storage: StorageLike, image_id: int) -> tuple[bytes, str]:
     row = _fetchone(
         storage,
-        "SELECT data, content_type FROM article_images WHERE id = %s",
+        'SELECT data, content_type, s3_key FROM article_images WHERE id = %s',
         [image_id],
     )
     if not row:
         raise ApiError("Image not found", status=404)
+    s3_key = row.get("s3_key")
+    if s3_key:
+        bundle = get_s3_client()
+        if bundle:
+            config, client = bundle
+            try:
+                payload, s3_content_type = fetch_object_bytes(
+                    client,
+                    bucket=config.bucket,
+                    key=str(s3_key),
+                )
+                content_type = s3_content_type or row.get('content_type') or 'application/octet-stream'
+                return payload, content_type
+            except Exception as exc:
+                logger.warning('S3 image fetch failed (id=%s key=%s): %s', image_id, s3_key, exc)
     data = row.get("data")
     if data is None:
         raise ApiError("Image data missing", status=404)
