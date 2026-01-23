@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable
 
 import typer
 from tqdm import tqdm
@@ -32,25 +32,25 @@ class SyncMode(str, Enum):
 class SyncOptions:
     mode: SyncMode
     page_size: int
-    pages: Optional[int]
+    pages: int | None
     sleep_seconds: float
     reset: bool
-    recent_days: Optional[int]
-    since_date: Optional[str]
-    until_date: Optional[str]
+    recent_days: int | None
+    since_date: str | None
+    until_date: str | None
     force: bool
-    skip_time: Optional[int]
+    skip_time: int | None
 
 
 @dataclass(frozen=True)
 class SyncPlan:
-    page_limit: Optional[int]
-    since_timestamp: Optional[int]
-    until_timestamp: Optional[int]
+    page_limit: int | None
+    since_timestamp: int | None
+    until_timestamp: int | None
     stop_on_existing: bool
     full_synced_hint: bool
-    resume_key: Optional[str]
-    complete_key: Optional[str]
+    resume_key: str | None
+    complete_key: str | None
 
 
 @dataclass(frozen=True)
@@ -59,7 +59,7 @@ class SyncReport:
     summary: list[tuple[str, int]]
 
 
-def _parse_sync_date(value: Optional[str], *, label: str, end_of_day: bool = False) -> Optional[int]:
+def _parse_sync_date(value: str | None, *, label: str, end_of_day: bool = False) -> int | None:
     if not value:
         return None
     try:
@@ -72,12 +72,12 @@ def _parse_sync_date(value: Optional[str], *, label: str, end_of_day: bool = Fal
     return int(dt.timestamp())
 
 
-def _enforce_exclusive_flags(force: bool, skip_minutes: Optional[int]) -> None:
+def _enforce_exclusive_flags(force: bool, skip_minutes: int | None) -> None:
     if force and skip_minutes is not None:
         raise typer.BadParameter('--force 与 --skip-time 不能同时使用')
 
 
-def _should_skip_by_time(last_synced_at: Optional[datetime], skip_minutes: Optional[int]) -> bool:
+def _should_skip_by_time(last_synced_at: datetime | None, skip_minutes: int | None) -> bool:
     if skip_minutes is None or not last_synced_at:
         return False
     threshold = datetime.now(timezone.utc) - timedelta(minutes=skip_minutes)
@@ -88,11 +88,11 @@ def _should_skip_by_time(last_synced_at: Optional[datetime], skip_minutes: Optio
     return last_synced_at >= threshold
 
 
-def _format_last_synced(last_synced_at: Optional[datetime]) -> str:
+def _format_last_synced(last_synced_at: datetime | None) -> str:
     return last_synced_at.isoformat(timespec='seconds') if last_synced_at else '-'
 
 
-def _to_utc_timestamp(value: Optional[datetime]) -> Optional[int]:
+def _to_utc_timestamp(value: datetime | None) -> int | None:
     if not value:
         return None
     if value.tzinfo is None:
@@ -121,7 +121,7 @@ def _format_table(headers: list[str], rows: list[list[str]]) -> str:
     return '\n'.join(lines)
 
 
-def _pbar_write(progress: Optional[tqdm], message: str) -> None:
+def _pbar_write(progress: tqdm | None, message: str) -> None:
     if progress is not None:
         progress.write(message)
     else:
@@ -141,7 +141,7 @@ def _get_login_session(storage: StorageLike) -> LoginSession:
         raise typer.Exit(code=1)
 
 
-def _resolve_shared_window(options: SyncOptions) -> tuple[Optional[int], Optional[int]]:
+def _resolve_shared_window(options: SyncOptions) -> tuple[int | None, int | None]:
     if options.mode == SyncMode.recent:
         if options.recent_days is None:
             raise typer.BadParameter('--recent-days is required for --mode recent.')
@@ -163,8 +163,8 @@ def _build_sync_plan(
     storage: StorageLike,
     account: AccountCredential,
     options: SyncOptions,
-    shared_since: Optional[int],
-    shared_until: Optional[int],
+    shared_since: int | None,
+    shared_until: int | None,
     bulk: bool,
 ) -> SyncPlan:
     since_timestamp = None
@@ -216,15 +216,15 @@ async def _sync_account_pages(
     client: MPClient,
     account: AccountCredential,
     page_size: int,
-    pages: Optional[int],
+    pages: int | None,
     sleep_seconds: float,
-    resume_key: Optional[str] = None,
+    resume_key: str | None = None,
     full_synced_hint: bool = False,
-    since_timestamp: Optional[int] = None,
-    until_timestamp: Optional[int] = None,
+    since_timestamp: int | None = None,
+    until_timestamp: int | None = None,
     stop_on_existing: bool = False,
-    progress: Optional[tqdm] = None,
-    login_flow: Optional[Callable[..., Awaitable[None]]] = None,
+    progress: tqdm | None = None,
+    login_flow: Callable[..., Awaitable[None]] | None = None,
 ) -> tuple[int, int, bool]:
     total_saved = 0
     page_count = 0
@@ -275,7 +275,7 @@ async def perform_sync(
     accounts: list[AccountCredential],
     options: SyncOptions,
     bulk: bool,
-    login_flow: Optional[Callable[..., Awaitable[None]]],
+    login_flow: Callable[..., Awaitable[None]] | None,
 ) -> SyncReport:
     _enforce_exclusive_flags(options.force, options.skip_time)
     shared_since, shared_until = _resolve_shared_window(options)
@@ -400,16 +400,16 @@ async def perform_sync(
 
 async def sync_account_articles(
     *,
-    biz: Optional[str],
+    biz: str | None,
     pages: int,
     page_size: int,
     mode: SyncMode,
-    recent_days: Optional[int],
-    since_date: Optional[str],
-    until_date: Optional[str],
+    recent_days: int | None,
+    since_date: str | None,
+    until_date: str | None,
     force: bool,
-    skip_time: Optional[int],
-    login_flow: Optional[Callable[..., Awaitable[None]]],
+    skip_time: int | None,
+    login_flow: Callable[..., Awaitable[None]] | None,
 ) -> None:
     options = SyncOptions(
         mode=mode,
@@ -443,12 +443,12 @@ async def sync_all_accounts(
     sleep_seconds: float,
     reset: bool,
     mode: SyncMode,
-    recent_days: Optional[int],
-    since_date: Optional[str],
-    until_date: Optional[str],
+    recent_days: int | None,
+    since_date: str | None,
+    until_date: str | None,
     force: bool,
-    skip_time: Optional[int],
-    login_flow: Optional[Callable[..., Awaitable[None]]],
+    skip_time: int | None,
+    login_flow: Callable[..., Awaitable[None]] | None,
 ) -> None:
     options = SyncOptions(
         mode=mode,
@@ -500,12 +500,12 @@ async def sync_group_accounts(
     sleep_seconds: float,
     reset: bool,
     mode: SyncMode,
-    recent_days: Optional[int],
-    since_date: Optional[str],
-    until_date: Optional[str],
+    recent_days: int | None,
+    since_date: str | None,
+    until_date: str | None,
     force: bool,
-    skip_time: Optional[int],
-    login_flow: Optional[Callable[..., Awaitable[None]]],
+    skip_time: int | None,
+    login_flow: Callable[..., Awaitable[None]] | None,
 ) -> None:
     options = SyncOptions(
         mode=mode,

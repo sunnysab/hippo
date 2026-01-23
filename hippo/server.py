@@ -13,7 +13,7 @@ import time as time_module
 from datetime import date, datetime, time, timezone
 from email.message import EmailMessage
 from pathlib import Path
-from typing import Any, Generator, Optional
+from typing import Any, Generator
 
 import httpx
 import psycopg
@@ -57,7 +57,7 @@ class ApiError(RuntimeError):
 
 
 
-def _parse_int(value: Optional[str]) -> Optional[int]:
+def _parse_int(value: str | None) -> int | None:
     if value is None or value == "":
         return None
     try:
@@ -69,7 +69,7 @@ def _parse_int(value: Optional[str]) -> Optional[int]:
 _SYNC_MODES = {'incremental', 'recent', 'full', 'range'}
 
 
-def _normalize_sync_mode(value: Any) -> Optional[str]:
+def _normalize_sync_mode(value: Any) -> str | None:
     if value in (None, ""):
         return None
     mode = str(value).strip().lower()
@@ -80,7 +80,7 @@ def _normalize_sync_mode(value: Any) -> Optional[str]:
     return mode
 
 
-def _normalize_recent_days(value: Any) -> Optional[int]:
+def _normalize_recent_days(value: Any) -> int | None:
     if value in (None, ""):
         return None
     try:
@@ -92,7 +92,7 @@ def _normalize_recent_days(value: Any) -> Optional[int]:
     return days
 
 
-def _parse_date(value: Optional[str], *, end_of_day: bool = False) -> Optional[int]:
+def _parse_date(value: str | None, *, end_of_day: bool = False) -> int | None:
     if not value:
         return None
     try:
@@ -237,10 +237,10 @@ def _get_sync_status(storage: StorageLike) -> dict[str, Any]:
 def _set_sync_state(
     storage: StorageLike,
     *,
-    status: Optional[str] = None,
-    error: Optional[str] = None,
-    started_at: Optional[str] = None,
-    finished_at: Optional[str] = None,
+    status: str | None = None,
+    error: str | None = None,
+    started_at: str | None = None,
+    finished_at: str | None = None,
 ) -> None:
     if status is not None:
         storage.set_meta(SYNC_STATUS_KEY, status)
@@ -252,7 +252,7 @@ def _set_sync_state(
         storage.set_meta(SYNC_FINISHED_KEY, finished_at)
 
 
-def _get_login_info(storage: StorageLike) -> Optional[dict[str, Any]]:
+def _get_login_info(storage: StorageLike) -> dict[str, Any] | None:
     row = _fetchone(
         storage,
         "SELECT nickname, avatar, updated_at FROM login_sessions ORDER BY id DESC LIMIT 1",
@@ -264,11 +264,11 @@ def _get_login_info(storage: StorageLike) -> Optional[dict[str, Any]]:
 class LoginManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._uuid_cookie: Optional[str] = None
-        self._qrcode: Optional[bytes] = None
+        self._uuid_cookie: str | None = None
+        self._qrcode: bytes | None = None
         self._status: str = "idle"
         self._message: str = ""
-        self._updated_at: Optional[str] = None
+        self._updated_at: str | None = None
 
     def _snapshot(self) -> dict[str, Any]:
         return {
@@ -375,7 +375,7 @@ class LoginManager:
 class SyncScheduler:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._trigger = threading.Event()
 
@@ -425,10 +425,10 @@ class SyncScheduler:
         finally:
             self._lock.release()
 
-    def _run_sync(self, *, group_id: Optional[int] = None) -> dict[str, Any]:
+    def _run_sync(self, *, group_id: int | None = None) -> dict[str, Any]:
         return asyncio.run(self._run_sync_async(group_id=group_id))
 
-    async def _run_sync_async(self, *, group_id: Optional[int] = None) -> dict[str, Any]:
+    async def _run_sync_async(self, *, group_id: int | None = None) -> dict[str, Any]:
         started_at = _utc_now_iso()
         with open_storage() as storage:
             settings = _get_sync_settings(storage)
@@ -463,7 +463,7 @@ class SyncScheduler:
             total_saved = 0
             total_downloaded = 0
             skipped_accounts = 0
-            error: Optional[str] = None
+            error: str | None = None
             async with MPClient() as client:
                 async with ArticleDownloader(
                     client=client,
@@ -538,7 +538,7 @@ def _fetchall(storage: StorageLike, query: str, params: list[Any]) -> list[dict[
     return [_normalize_record(dict(row)) for row in rows]
 
 
-def _fetchone(storage: StorageLike, query: str, params: list[Any]) -> Optional[dict[str, Any]]:
+def _fetchone(storage: StorageLike, query: str, params: list[Any]) -> dict[str, Any] | None:
     with storage.conn.cursor(row_factory=dict_row) as cur:
         cur.execute(query, params)
         row = cur.fetchone()
@@ -602,7 +602,7 @@ def _migrate_legacy_avatar_tables(storage: StorageLike) -> None:
     storage.conn.commit()
 
 
-def _should_skip_by_time(last_synced_at: Optional[datetime], skip_minutes: Optional[int]) -> bool:
+def _should_skip_by_time(last_synced_at: datetime | None, skip_minutes: int | None) -> bool:
     if not skip_minutes or skip_minutes <= 0:
         return False
     if not last_synced_at:
@@ -641,7 +641,7 @@ async def _sync_account_articles(
     downloader: ArticleDownloader,
     account: AccountCredential,
     settings: dict[str, Any],
-    group_defaults: Optional[dict[int, dict[str, Any]]] = None,
+    group_defaults: dict[int, dict[str, Any]] | None = None,
 ) -> tuple[int, int]:
     page_size = max(int(settings.get("page_size") or 10), 1)
     page_limit = settings.get("page_limit")
@@ -662,8 +662,8 @@ async def _sync_account_articles(
     if recent_days is None:
         recent_days = group_recent_days if group_recent_days is not None else settings.get('recent_days')
     now = datetime.now(timezone.utc)
-    since_ts: Optional[int] = None
-    until_ts: Optional[int] = None
+    since_ts: int | None = None
+    until_ts: int | None = None
     stop_on_existing = False
     if mode == 'incremental':
         stop_on_existing = True
@@ -837,8 +837,8 @@ def _tokenize_query(text: str) -> list[str]:
 def _list_accounts(
     storage: StorageLike,
     *,
-    group_id: Optional[int],
-    query: Optional[str],
+    group_id: int | None,
+    query: str | None,
     page: int,
     page_size: int,
 ) -> dict[str, Any]:
@@ -957,15 +957,15 @@ def _update_account(storage: StorageLike, biz: str, payload: dict[str, Any]) -> 
 def _build_article_query(
     *,
     storage: StorageLike,
-    group_id: Optional[int],
-    biz: Optional[str],
-    query: Optional[str],
-    since_ts: Optional[int],
-    until_ts: Optional[int],
+    group_id: int | None,
+    biz: str | None,
+    query: str | None,
+    since_ts: int | None,
+    until_ts: int | None,
     content_only: bool,
     limit: int,
     offset: int,
-    article_id: Optional[str] = None,
+    article_id: str | None = None,
 ) -> tuple[str, list[Any]]:
     where: list[str] = []
     params: list[Any] = []
@@ -1036,15 +1036,15 @@ def _build_article_query(
 def _list_articles(
     storage: StorageLike,
     *,
-    group_id: Optional[int],
-    biz: Optional[str],
-    query: Optional[str],
-    since_ts: Optional[int],
-    until_ts: Optional[int],
+    group_id: int | None,
+    biz: str | None,
+    query: str | None,
+    since_ts: int | None,
+    until_ts: int | None,
     content_only: bool,
     page: int,
     page_size: int,
-    article_id: Optional[str] = None,
+    article_id: str | None = None,
 ) -> dict[str, Any]:
     offset = max(page - 1, 0) * page_size
     query_sql, params = _build_article_query(
@@ -1175,7 +1175,7 @@ def _fetch_image(storage: StorageLike, image_id: int) -> tuple[bytes, str]:
     return payload, content_type
 
 
-def _get_avatar_row(storage: StorageLike, biz: str) -> Optional[dict[str, Any]]:
+def _get_avatar_row(storage: StorageLike, biz: str) -> dict[str, Any] | None:
     return _fetchone(
         storage,
         "SELECT avatar_url, content_type, data FROM avatar_images WHERE biz = %s",
@@ -1204,7 +1204,7 @@ def _store_avatar(
     *,
     content_type: str,
     data: bytes,
-    avatar_url: Optional[str] = None,
+    avatar_url: str | None = None,
 ) -> None:
     with storage.conn.cursor() as cur:
         cur.execute(
@@ -1222,7 +1222,7 @@ def _store_avatar(
     storage.conn.commit()
 
 
-def _fetch_and_cache_avatar(storage: StorageLike, biz: str, url: str) -> Optional[tuple[bytes, str]]:
+def _fetch_and_cache_avatar(storage: StorageLike, biz: str, url: str) -> tuple[bytes, str] | None:
     headers = {
         "Referer": "https://mp.weixin.qq.com/",
         "Origin": "https://mp.weixin.qq.com",
@@ -1245,11 +1245,11 @@ def _fetch_and_cache_avatar(storage: StorageLike, biz: str, url: str) -> Optiona
 def _list_feed(
     storage: StorageLike,
     *,
-    group_id: Optional[int],
-    biz: Optional[str],
-    query: Optional[str],
-    since_ts: Optional[int],
-    until_ts: Optional[int],
+    group_id: int | None,
+    biz: str | None,
+    query: str | None,
+    since_ts: int | None,
+    until_ts: int | None,
     limit: int,
 ) -> list[dict[str, Any]]:
     query_sql, params = _build_article_query(
@@ -1356,7 +1356,7 @@ async def search_account(
     q: str = "",
     page: int = 1,
     page_size: int = 10,
-    begin: Optional[int] = None,
+    begin: int | None = None,
     storage: StorageLike = Depends(_get_storage),
 ) -> dict[str, Any]:
     keyword = (q or "").strip()
@@ -1430,8 +1430,8 @@ def get_search_avatar(
 
 @router.get("/account")
 def list_accounts(
-    group_id: Optional[int] = None,
-    q: Optional[str] = None,
+    group_id: int | None = None,
+    q: str | None = None,
     page: int = 1,
     page_size: int = 20,
     storage: StorageLike = Depends(_get_storage),
@@ -1603,15 +1603,15 @@ def get_account_avatar(
 
 @router.get("/article")
 def list_articles(
-    group_id: Optional[int] = None,
-    biz: Optional[str] = None,
-    article_id: Optional[str] = None,
-    q: Optional[str] = None,
+    group_id: int | None = None,
+    biz: str | None = None,
+    article_id: str | None = None,
+    q: str | None = None,
     page: int = 1,
     page_size: int = 20,
     content: str = "",
-    since: Optional[str] = None,
-    until: Optional[str] = None,
+    since: str | None = None,
+    until: str | None = None,
     storage: StorageLike = Depends(_get_storage),
 ) -> dict[str, Any]:
     content_only = (content or "").lower() in {"1", "true", "yes"}
@@ -1826,14 +1826,14 @@ def run_sync(
 @router.get("/feed/mixed", response_model=None)
 def list_feed(
     request: Request,
-    group_id: Optional[int] = None,
-    biz: Optional[str] = None,
-    q: Optional[str] = None,
+    group_id: int | None = None,
+    biz: str | None = None,
+    q: str | None = None,
     limit: int = 50,
-    format: Optional[str] = None,
-    since: Optional[str] = None,
-    until: Optional[str] = None,
-    days: Optional[int] = None,
+    format: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    days: int | None = None,
     storage: StorageLike = Depends(_get_storage),
 ):
     output_format = (format or "").lower()

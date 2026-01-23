@@ -6,7 +6,7 @@ import asyncio
 import os
 import re
 from contextlib import AbstractAsyncContextManager
-from typing import Callable, Iterable, List, Optional, Tuple
+from typing import Iterable
 from urllib.parse import parse_qs, urljoin, urlparse
 
 from bs4 import BeautifulSoup
@@ -29,7 +29,7 @@ _IMAGE_MAX_RETRIES = 3
 _RETRY_BACKOFF_MAX = 10  # Maximum backoff time in seconds
 
 
-def _extract_url_token(url: str) -> Optional[str]:
+def _extract_url_token(url: str) -> str | None:
     try:
         parsed = urlparse(url)
     except Exception:
@@ -50,7 +50,7 @@ def _is_http_url(url: str) -> bool:
     return parsed.scheme in ("http", "https")
 
 
-def _resolve_asset_url(url: str, *, base: str) -> Optional[str]:
+def _resolve_asset_url(url: str, *, base: str) -> str | None:
     if not url:
         return None
     lowered = url.strip().lower()
@@ -93,10 +93,10 @@ def _resolve_asset_url(url: str, *, base: str) -> Optional[str]:
     return resolved
 
 
-def _parse_markdown_blocks(markdown: str) -> Tuple[Optional[str], Optional[str], list[dict], str]:
+def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[dict], str]:
     lines = markdown.splitlines()
-    title: Optional[str] = None
-    cover_local: Optional[str] = None
+    title: str | None = None
+    cover_local: str | None = None
     blocks: list[dict] = []
     body_lines: list[str] = []
     paragraph: list[str] = []
@@ -158,12 +158,12 @@ class ArticleDownloader(AbstractAsyncContextManager):
     def __init__(
         self,
         *,
-        client: Optional[MPClient] = None,
-        storage: Optional[StorageLike] = None,
-        article_worker: Optional[str] = None,
-        article_worker_proxy: Optional[str] = None,
-        article_max_connections: Optional[int] = None,
-        image_workers: Optional[int] = None,
+        client: MPClient | None = None,
+        storage: StorageLike | None = None,
+        article_worker: str | None = None,
+        article_worker_proxy: str | None = None,
+        article_max_connections: int | None = None,
+        image_workers: int | None = None,
         enable_image_worker: bool = True,
     ) -> None:
         self._managed_client = client is None
@@ -244,20 +244,20 @@ class ArticleDownloader(AbstractAsyncContextManager):
         *,
         with_images: bool = True,
         record_images_only: bool = False,
-        progress: Optional[object] = None,
+        progress: object | None = None,
         skip_if_downloaded: bool = True,
-    ) -> tuple[List[DownloadResult], int, int]:
+    ) -> tuple[list[DownloadResult], int, int]:
         """Download multiple articles.
         
         Returns:
             tuple of (results, skipped_count, failed_count)
         """
-        results: List[DownloadResult] = []
+        results: list[DownloadResult] = []
         skipped = 0
         failed = 0
-        pending: List[ArticleRecord] = []
+        pending: list[ArticleRecord] = []
         articles_list = list(articles)
-        content_ids: Optional[set[str]] = None
+        content_ids: set[str] | None = None
         if self.storage and os.environ.get("HIPPO_PG_DSN"):
             get_content_ids = getattr(self.storage, "get_article_content_ids", None)
             if callable(get_content_ids):
@@ -359,7 +359,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         *,
         with_images: bool = True,
         record_images_only: bool = False,
-        title: Optional[str] = None,
+        title: str | None = None,
     ) -> DownloadResult:
         raw_html = await self._fetch_with_retry(url)
         inferred_title = title or _extract_title(raw_html) or "WeChat Article"
@@ -384,7 +384,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         )
 
     async def _fetch_with_retry(self, url: str) -> str:
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         for attempt in range(_ARTICLE_MAX_RETRIES):
             try:
                 logger.debug("Fetching article (attempt %d/%d): %s", attempt + 1, _ARTICLE_MAX_RETRIES, url)
@@ -418,7 +418,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         with_images: bool,
         record_images_only: bool,
     ) -> DownloadResult:
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         for attempt in range(_ARTICLE_MAX_RETRIES):
             try:
                 logger.debug(
@@ -498,7 +498,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                     text_exc,
                 )
                 markdown_content = ""
-        pg_error: Optional[Exception] = None
+        pg_error: Exception | None = None
         try:
             self._store_article_pg(
                 article=article,
@@ -535,7 +535,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         base_url = article.link or "https://mp.weixin.qq.com/"
         resolved_map = {raw: resolved for raw, resolved in url_map.items() if resolved}
 
-        def resolve_url(value: Optional[str]) -> Optional[str]:
+        def resolve_url(value: str | None) -> str | None:
             if not value:
                 return None
             if value in resolved_map:
@@ -796,9 +796,9 @@ class ArticleDownloader(AbstractAsyncContextManager):
         stage: str,
         article: ArticleRecord,
         error: str,
-        asset_url: Optional[str] = None,
-        resolved_url: Optional[str] = None,
-        referer: Optional[str] = None,
+        asset_url: str | None = None,
+        resolved_url: str | None = None,
+        referer: str | None = None,
     ) -> None:
         payload = {
             "stage": stage,
@@ -820,7 +820,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
 
 
 # Helper functions ---------------------------------------------------------
-def _extract_title(raw_html: str) -> Optional[str]:
+def _extract_title(raw_html: str) -> str | None:
     soup = BeautifulSoup(raw_html, "html.parser")
     if soup.title and soup.title.string:
         return soup.title.string.strip()

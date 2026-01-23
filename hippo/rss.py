@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from email.utils import formatdate
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable
 from xml.sax.saxutils import escape
 
 from psycopg.rows import dict_row
@@ -21,11 +21,11 @@ class RssItem:
     title: str
     link: str
     guid: str
-    pub_date: Optional[int]
+    pub_date: int | None
     description: str
 
 
-def _parse_date(value: Optional[str], *, end_of_day: bool = False) -> Optional[int]:
+def _parse_date(value: str | None, *, end_of_day: bool = False) -> int | None:
     if not value:
         return None
     parsed = date.fromisoformat(value)
@@ -78,9 +78,9 @@ def _text_to_html(text: str) -> str:
 
 
 def _build_image_src(
-    image_base: Optional[str],
-    image_id: Optional[int],
-    orig_url: Optional[str],
+    image_base: str | None,
+    image_id: int | None,
+    orig_url: str | None,
 ) -> str:
     if image_id and image_base:
         return f"{image_base.rstrip('/')}/api/image/{image_id}"
@@ -89,7 +89,7 @@ def _build_image_src(
     return orig_url or ""
 
 
-def _extract_description(raw: Any, image_base: Optional[str]) -> str:
+def _extract_description(raw: Any, image_base: str | None) -> str:
     if not raw:
         return ""
     blocks = raw
@@ -125,11 +125,11 @@ def _extract_description(raw: Any, image_base: Optional[str]) -> str:
 def query_rss_items(
     *,
     group_names: list[str],
-    limit: Optional[int],
-    days: Optional[int],
-    since: Optional[str],
-    until: Optional[str],
-    image_base_url: Optional[str],
+    limit: int | None,
+    days: int | None,
+    since: str | None,
+    until: str | None,
+    image_base_url: str | None,
 ) -> list[RssItem]:
     with open_storage() as storage:
         _ensure_default_group(storage)

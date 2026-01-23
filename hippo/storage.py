@@ -6,7 +6,7 @@ import json
 import os
 from contextlib import AbstractContextManager
 from datetime import datetime, timezone
-from typing import Any, Iterable, List, Optional, Protocol
+from typing import Any, Iterable, Protocol
 
 import psycopg
 from psycopg.rows import dict_row
@@ -326,8 +326,8 @@ VALUES ('schema_version', %s)
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
 """
 
-_PG_POOL: Optional[ConnectionPool] = None
-_PG_POOL_DSN: Optional[str] = None
+_PG_POOL: ConnectionPool | None = None
+_PG_POOL_DSN: str | None = None
 
 
 def _get_pool(dsn: str) -> ConnectionPool:
@@ -358,7 +358,7 @@ def _utc_now_dt() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _session_identity(cookies: dict[str, str]) -> Optional[str]:
+def _session_identity(cookies: dict[str, str]) -> str | None:
     for key in ("wxuin", "uin", "fakeuin", "mpuin"):
         value = cookies.get(key)
         if value:
@@ -368,18 +368,18 @@ def _session_identity(cookies: dict[str, str]) -> Optional[str]:
 
 class StorageLike(Protocol):
     def close(self) -> None: ...
-    def get_meta(self, key: str) -> Optional[str]: ...
+    def get_meta(self, key: str) -> str | None: ...
     def set_meta(self, key: str, value: str) -> None: ...
     def delete_meta(self, key: str) -> None: ...
     def upsert_account(self, account: AccountCredential) -> AccountCredential: ...
-    def list_accounts(self, group: Optional[str] = None) -> List[AccountCredential]: ...
+    def list_accounts(self, group: str | None = None) -> list[AccountCredential]: ...
     def get_account(
-        self, biz: Optional[str] = None, *, fallback_to_default: bool = True
+        self, biz: str | None = None, *, fallback_to_default: bool = True
     ) -> AccountCredential: ...
     def remove_account(self, biz: str) -> int: ...
     def upsert_group(self, name: str) -> AccountGroup: ...
-    def list_groups(self) -> List[AccountGroup]: ...
-    def set_account_group(self, biz: str, group_name: Optional[str]) -> None: ...
+    def list_groups(self) -> list[AccountGroup]: ...
+    def set_account_group(self, biz: str, group_name: str | None) -> None: ...
     def update_last_synced(self, biz: str) -> None: ...
     def set_account_disabled(self, biz: str, is_disabled: bool) -> None: ...
     def save_login_session(
@@ -388,8 +388,8 @@ class StorageLike(Protocol):
     def get_login_session(self) -> LoginSession: ...
     def save_articles(self, articles: Iterable[ArticleRecord]) -> int: ...
     def list_articles(
-        self, biz: str, *, limit: int = 10, since_timestamp: Optional[int] = None
-    ) -> List[ArticleRecord]: ...
+        self, biz: str, *, limit: int = 10, since_timestamp: int | None = None
+    ) -> list[ArticleRecord]: ...
     def get_existing_article_ids(self, biz: str, article_ids: Iterable[str]) -> set[str]: ...
 
 
@@ -399,7 +399,7 @@ class PostgresStorage(AbstractContextManager):
         dsn: str,
         *,
         auto_init: bool = False,
-        pool: Optional[ConnectionPool] = None,
+        pool: ConnectionPool | None = None,
     ) -> None:
         self.dsn = dsn
         self._pool = pool or _get_pool(dsn)
@@ -476,7 +476,7 @@ class PostgresStorage(AbstractContextManager):
             self.conn.rollback()
             raise
     # Meta helpers --------------------------------------------------------
-    def get_meta(self, key: str) -> Optional[str]:
+    def get_meta(self, key: str) -> str | None:
         with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT value FROM meta WHERE key = %s", (key,))
             row = cur.fetchone()
@@ -528,7 +528,7 @@ class PostgresStorage(AbstractContextManager):
         self.conn.commit()
         return self.get_account(account.biz, fallback_to_default=False)
 
-    def list_accounts(self, group: Optional[str] = None) -> List[AccountCredential]:
+    def list_accounts(self, group: str | None = None) -> list[AccountCredential]:
         query = """
             SELECT a.*, g.name AS group_name
             FROM accounts a
@@ -545,7 +545,7 @@ class PostgresStorage(AbstractContextManager):
         return [self._row_to_account(row) for row in rows]
 
     def get_account(
-        self, biz: Optional[str] = None, *, fallback_to_default: bool = True
+        self, biz: str | None = None, *, fallback_to_default: bool = True
     ) -> AccountCredential:
         row = None
         with self.conn.cursor(row_factory=dict_row) as cur:
@@ -603,7 +603,7 @@ class PostgresStorage(AbstractContextManager):
             raise RuntimeError(f"Failed to create group {trimmed}.")
         return AccountGroup(id=row["id"], name=row["name"])
 
-    def list_groups(self) -> List[AccountGroup]:
+    def list_groups(self) -> list[AccountGroup]:
         with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
@@ -626,7 +626,7 @@ class PostgresStorage(AbstractContextManager):
             for row in rows
         ]
 
-    def set_account_group(self, biz: str, group_name: Optional[str]) -> None:
+    def set_account_group(self, biz: str, group_name: str | None) -> None:
         target_name = group_name.strip() if group_name else ""
         now = _utc_now_dt()
         with self.conn.cursor() as cur:
@@ -680,7 +680,7 @@ class PostgresStorage(AbstractContextManager):
         with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT id, cookies_json, nickname FROM login_sessions ORDER BY id DESC")
             rows = cur.fetchall()
-        match_id: Optional[int] = None
+        match_id: int | None = None
         if session_identity:
             for row in rows:
                 try:
@@ -825,12 +825,12 @@ class PostgresStorage(AbstractContextManager):
         self,
         article: ArticleRecord,
         *,
-        url_token: Optional[str],
+        url_token: str | None,
         title: str,
         clean_html: str,
         content_markdown: str,
         content_blocks: list[dict],
-        cover_url: Optional[str],
+        cover_url: str | None,
         images: list[dict],
     ) -> None:
         now = _utc_now_dt()
@@ -980,7 +980,7 @@ class PostgresStorage(AbstractContextManager):
         biz: str,
         article_id: str,
         orig_url: str,
-        content_type: Optional[str],
+        content_type: str | None,
         data: bytes,
     ) -> None:
         try:
@@ -1061,9 +1061,9 @@ class PostgresStorage(AbstractContextManager):
         self,
         biz: str,
         *,
-        limit: Optional[int] = 10,
-        since_timestamp: Optional[int] = None,
-    ) -> List[ArticleRecord]:
+        limit: int | None = 10,
+        since_timestamp: int | None = None,
+    ) -> list[ArticleRecord]:
         query = "SELECT * FROM articles WHERE biz = %s"
         params: list = [biz]
         if since_timestamp is not None:
