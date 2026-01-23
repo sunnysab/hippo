@@ -10,6 +10,10 @@ from bs4 import BeautifulSoup
 
 from hippo.normalize_html import normalize_html
 
+
+# import sys
+sys.setrecursionlimit(3000)
+
 def max_dom_depth_iterative(root) -> int:
     max_depth = 0
     stack: list[tuple[object, int]] = [(root, 1)]
@@ -49,7 +53,7 @@ def main(argv: list[str]) -> int:
     try:
         markdown = normalize_html(raw_html, fmt="markdown")
     except RecursionError as exc:
-        print(f"RecursionError in markdown conversion: {exc}")
+        print(f"RecursionError in markdownify: {exc}")
         return 1
     except Exception as exc:
         print(f"ERROR: {exc}")
