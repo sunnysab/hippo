@@ -639,4 +639,66 @@ async def sync_all_accounts(
     typer.echo(f'全部账号同步完成，共写入 {report.total_saved} 条记录')
 
 
-__all__ = ['SyncMode', 'sync_account_articles', 'sync_all_accounts']
+async def sync_group_accounts(
+    *,
+    group: str,
+    page_size: int,
+    sleep_seconds: float,
+    reset: bool,
+    mode: SyncMode,
+    recent_days: Optional[int],
+    since_date: Optional[str],
+    until_date: Optional[str],
+    force: bool,
+    skip_time: Optional[int],
+    login_flow: Optional[Callable[..., Awaitable[None]]],
+) -> None:
+    options = SyncOptions(
+        mode=mode,
+        page_size=page_size,
+        pages=None,
+        sleep_seconds=sleep_seconds,
+        reset=reset,
+        recent_days=recent_days,
+        since_date=since_date,
+        until_date=until_date,
+        force=force,
+        skip_time=skip_time,
+    )
+
+    with open_storage() as storage:
+        groups = storage.list_groups()
+        target = next((item for item in groups if item.name == group), None)
+        if not target:
+            typer.echo('分组不存在，请先创建分组')
+            return
+        accounts = storage.list_accounts(group=group)
+        if not accounts:
+            typer.echo('分组内暂无账号')
+            return
+
+        header = f'开始同步分组 {group}（从最新文章往更早翻页）'
+        if reset:
+            header = f'开始同步分组 {group}（重置断点，从最新文章往更早翻页）'
+        if sleep_seconds > 0:
+            header += f' 每页间隔 {sleep_seconds} 秒'
+        typer.echo(header)
+
+        report = await perform_sync(
+            storage=storage,
+            accounts=accounts,
+            options=options,
+            bulk=True,
+            login_flow=login_flow,
+        )
+
+    if report.summary:
+        headers = ['账号', '新增/更新']
+        rows = [[name, str(saved)] for name, saved in report.summary]
+        table_text = _format_table(headers, rows)
+        if table_text:
+            typer.echo(table_text)
+    typer.echo(f'分组 {group} 同步完成，共写入 {report.total_saved} 条记录')
+
+
+__all__ = ['SyncMode', 'sync_account_articles', 'sync_all_accounts', 'sync_group_accounts']

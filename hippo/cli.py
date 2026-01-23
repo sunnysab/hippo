@@ -27,7 +27,12 @@ from .models import AccountCredential, LoginSession
 from .server import serve as run_server
 from .rss import build_rss_xml, query_rss_items
 from .storage import StorageInitError, StorageLike, PostgresStorage, open_storage
-from .controllers.sync import SyncMode, sync_account_articles as perform_account_sync, sync_all_accounts as perform_all_sync
+from .controllers.sync import (
+    SyncMode,
+    sync_account_articles as perform_account_sync,
+    sync_all_accounts as perform_all_sync,
+    sync_group_accounts as perform_group_sync,
+)
 
 # Initialize logger on module import
 logger = setup_logger()
@@ -444,6 +449,49 @@ def list_groups() -> None:
     table_text = _format_table(headers, rows)
     if table_text:
         typer.echo(table_text)
+
+
+@groups_app.command("sync")
+def sync_group(
+    group: str = typer.Argument(..., help="Group name"),
+    page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help="每页抓取数量"),
+    sleep_seconds: float = typer.Option(
+        0.05, min=0, help="翻页间隔秒数（可为小数）"
+    ),
+    reset: bool = typer.Option(False, is_flag=True, help="清除断点后从头同步"),
+    mode: SyncMode = typer.Option(
+        SyncMode.full, "--mode", "-m", help="Sync mode: full, incremental, recent, range"
+    ),
+    recent_days: Optional[int] = typer.Option(
+        None, "--recent-days", min=1, help="Sync the last N days (requires --mode recent)"
+    ),
+    since_date: Optional[str] = typer.Option(
+        None, "--since", help="Start date (YYYY-MM-DD, for range mode)"
+    ),
+    until_date: Optional[str] = typer.Option(
+        None, "--until", help="End date (YYYY-MM-DD, for range mode)"
+    ),
+    force: bool = typer.Option(False, is_flag=True, help="忽略跳过条件，强制同步"),
+    skip_time: Optional[int] = typer.Option(
+        None, min=1, help="多少分钟内同步过则跳过"
+    ),
+) -> None:
+    _require_nonempty(group, "Please provide a group name.")
+    _run_async(
+        perform_group_sync(
+            group=group,
+            page_size=page_size,
+            sleep_seconds=sleep_seconds,
+            reset=reset,
+            mode=mode,
+            recent_days=recent_days,
+            since_date=since_date,
+            until_date=until_date,
+            force=force,
+            skip_time=skip_time,
+            login_flow=_run_login_flow,
+        )
+    )
 
 
 @groups_app.command("set")
