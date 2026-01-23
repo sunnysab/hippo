@@ -101,6 +101,16 @@
     menu.dataset.groupId = '';
   };
 
+  const triggerGroupSync = async (groupId) => {
+    try {
+      await apiSend('/api/sync/run', 'POST', { group_id: groupId });
+      showToast(t('groups.syncTriggered', 'Group sync triggered.'));
+    } catch (err) {
+      console.warn('Failed to trigger group sync', err);
+      showToast(t('groups.syncTriggerFailed', 'Failed to trigger group sync.'));
+    }
+  };
+
   const openAccountSearchModal = async () => {
     const modal = $('#account-search-modal');
     if (!modal) return;
@@ -124,13 +134,19 @@
     list.innerHTML = '';
     state.groups.forEach((group) => {
       const item = document.createElement('div');
-      item.className = 'list-item' + (state.selectedGroupId === group.id ? ' is-active' : '');
+      item.className =
+        'list-item group-list-item' + (state.selectedGroupId === group.id ? ' is-active' : '');
       item.innerHTML = `
         <div>
           <div class="account-name">${group.name}</div>
           <div class="account-sub">${group.account_count || 0} ${t('groups.accounts', 'accounts')}</div>
         </div>
-        <span class="badge">${group.account_count || 0}</span>
+        <div class="group-item-actions">
+          <button class="group-sync-btn" type="button" title="${t('groups.syncNow', 'Sync')}" aria-label="${t('groups.syncNow', 'Sync')}">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6V3L8 7l4 4V8c2.2 0 4 1.8 4 4a4 4 0 0 1-4 4 4 4 0 0 1-3.8-2.6l-1.9.6A6 6 0 0 0 12 20a6 6 0 0 0 0-12z"/></svg>
+          </button>
+          <span class="badge">${group.account_count || 0}</span>
+        </div>
       `;
       item.addEventListener('click', async () => {
         state.selectedGroupId = group.id;
@@ -143,6 +159,13 @@
         event.preventDefault();
         showGroupContextMenu(group, event.clientX, event.clientY);
       });
+      const syncBtn = item.querySelector('.group-sync-btn');
+      if (syncBtn) {
+        syncBtn.addEventListener('click', async (event) => {
+          event.stopPropagation();
+          await triggerGroupSync(group.id);
+        });
+      }
       list.appendChild(item);
     });
   };

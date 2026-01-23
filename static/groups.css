@@ -70,6 +70,40 @@
   min-width: 220px;
 }
 
+.group-list-item .group-item-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.group-list-item .group-sync-btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 10px;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.group-list-item:hover .group-sync-btn,
+.group-list-item:focus-within .group-sync-btn {
+  opacity: 1;
+}
+
+.group-list-item .group-sync-btn:hover {
+  transform: translateY(-1px);
+}
+
+.group-list-item .group-sync-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
 .group-sync-toolbar {
   margin: 10px 0 16px;
   padding: 10px 12px;
