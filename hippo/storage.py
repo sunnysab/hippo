@@ -15,7 +15,7 @@ from psycopg2 import pool as pg_pool
 from .models import AccountCredential, AccountGroup, ArticleRecord, LoginSession
 from . import queries
 
-SCHEMA_VERSION = '8'
+SCHEMA_VERSION = '9'
 
 _PG_POOL: Optional[pg_pool.ThreadedConnectionPool] = None
 _PG_POOL_DSN: Optional[str] = None
@@ -192,17 +192,14 @@ class PostgresStorage(AbstractContextManager):
         with self.conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO accounts (biz, nickname, alias, round_head_img, uin, key, pass_ticket,
+                INSERT INTO accounts (biz, nickname, alias, round_head_img,
                                       group_id, is_disabled, sync_mode, sync_recent_days,
                                       last_synced_at, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (biz) DO UPDATE SET
                     nickname=EXCLUDED.nickname,
                     alias=EXCLUDED.alias,
                     round_head_img=EXCLUDED.round_head_img,
-                    uin=EXCLUDED.uin,
-                    key=EXCLUDED.key,
-                    pass_ticket=EXCLUDED.pass_ticket,
                     updated_at=EXCLUDED.updated_at
                 """,
                 (
@@ -210,9 +207,6 @@ class PostgresStorage(AbstractContextManager):
                     account.nickname,
                     account.alias,
                     account.round_head_img,
-                    account.uin or "",
-                    account.key or "",
-                    account.pass_ticket or "",
                     account.group_id,
                     account.is_disabled,
                     account.sync_mode,
@@ -800,9 +794,6 @@ class PostgresStorage(AbstractContextManager):
             nickname=row["nickname"],
             alias=row["alias"],
             round_head_img=row["round_head_img"],
-            uin=row["uin"] or "",
-            key=row["key"] or "",
-            pass_ticket=row["pass_ticket"] or "",
             is_disabled=bool(row.get("is_disabled", False)),
             last_synced_at=last_synced_at,
             sync_mode=row.get('sync_mode'),

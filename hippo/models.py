@@ -13,9 +13,6 @@ class AccountCredential:
     nickname: str
     alias: Optional[str] = None
     round_head_img: Optional[str] = None
-    uin: str = ""
-    key: str = ""
-    pass_ticket: str = ""
     is_disabled: bool = False
     last_synced_at: Optional[datetime] = None
     sync_mode: Optional[str] = None

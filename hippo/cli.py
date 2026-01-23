@@ -283,9 +283,6 @@ def add_account(
         nickname=nickname.strip(),
         alias=(alias.strip() if alias else None),
         round_head_img=(round_head_img.strip() if round_head_img else None),
-        uin="",
-        key="",
-        pass_ticket="",
     )
     with open_storage() as storage:
         stored = storage.upsert_account(credential)
@@ -380,9 +377,6 @@ async def _search_accounts_async(
                         nickname=(item.get("nickname") or "").strip() or "未知公众号",
                         alias=(item.get("alias") or "").strip() or None,
                         round_head_img=(item.get("round_head_img") or "").strip() or None,
-                        uin="",
-                        key="",
-                        pass_ticket="",
                     )
                     stored = storage.upsert_account(credential)
                     saved.append(f"{stored.nickname} ({stored.biz})")
@@ -1196,9 +1190,6 @@ def export_accounts() -> None:
             "nickname": account.nickname,
             "alias": account.alias,
             "round_head_img": account.round_head_img,
-            "uin": account.uin,
-            "key": account.key,
-            "pass_ticket": account.pass_ticket,
             "is_disabled": account.is_disabled,
             "last_synced_at": account.last_synced_at.isoformat()
             if account.last_synced_at

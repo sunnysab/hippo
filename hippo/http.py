@@ -16,10 +16,9 @@ from .config import (
     ARTICLE_WORKER_PROXY,
     ARTICLE_WORKER_URL,
     DEFAULT_USER_AGENT,
-    WECHAT_PROFILE_ENDPOINT,
 )
 from .logger import get_logger
-from .models import AccountCredential, ArticleRecord, LoginSession
+from .models import ArticleRecord, LoginSession
 
 logger = get_logger(__name__)
 
@@ -103,37 +102,6 @@ class MPClient(AbstractAsyncContextManager):
             await self.article_client.aclose()
 
     # ------------------------------------------------------------------
-    async def fetch_profile_messages(
-        self, account: AccountCredential, *, offset: int = 0, count: int = 10
-    ) -> List[ArticleRecord]:
-        params = {
-            "action": "getmsg",
-            "__biz": account.biz,
-            "offset": offset,
-            "count": count,
-            "uin": account.uin,
-            "key": account.key,
-            "pass_ticket": account.pass_ticket,
-            "f": "json",
-            "is_ok": "1",
-            "scene": "124",
-        }
-        logger.debug("Fetching profile messages: biz=%s, offset=%d, count=%d", account.biz, offset, count)
-        resp = await self.client.get(WECHAT_PROFILE_ENDPOINT, params=params)
-        resp.raise_for_status()
-        payload = resp.json()
-        if payload.get("ret") != 0:
-            error_msg = f"WeChat API error: {payload.get('ret')} {payload.get('errmsg')}"
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
-        raw_list = payload.get("general_msg_list") or ""
-        messages = _parse_general_msg_list(raw_list)
-        records: List[ArticleRecord] = []
-        for message in messages:
-            records.extend(_message_to_articles(account.biz, message))
-        logger.info("Fetched %d articles from biz=%s at offset=%d", len(records), account.biz, offset)
-        return records
-
     async def fetch_article_html(self, url: str) -> str:
         client = self.article_client or self.client
         logger.debug("Fetching article HTML: %s", url)

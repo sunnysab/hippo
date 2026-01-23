@@ -23,9 +23,6 @@ SCHEMA_INIT_STATEMENTS = [
         nickname TEXT NOT NULL,
         alias TEXT,
         round_head_img TEXT,
-        uin TEXT NOT NULL,
-        key TEXT NOT NULL,
-        pass_ticket TEXT NOT NULL,
         group_id INTEGER REFERENCES account_groups(id) ON DELETE SET NULL,
         is_disabled BOOLEAN NOT NULL DEFAULT FALSE,
         sync_mode TEXT,
@@ -54,6 +51,12 @@ SCHEMA_INIT_STATEMENTS = [
     """
     ALTER TABLE accounts
     DROP COLUMN IF EXISTS is_default
+    """,
+    """
+    ALTER TABLE accounts
+    DROP COLUMN IF EXISTS uin,
+    DROP COLUMN IF EXISTS key,
+    DROP COLUMN IF EXISTS pass_ticket
     """,
     """
     ALTER TABLE account_groups
