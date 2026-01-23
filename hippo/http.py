@@ -90,7 +90,7 @@ class MPClient(AbstractAsyncContextManager):
             article_max_connections or "None",
         )
 
-    async def __aenter__(self) -> "MPClient":
+    async def __aenter__(self) -> MPClient:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]

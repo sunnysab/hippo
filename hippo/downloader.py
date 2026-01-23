@@ -367,7 +367,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
             self._image_workers,
         )
 
-    async def __aenter__(self) -> "ArticleDownloader":
+    async def __aenter__(self) -> ArticleDownloader:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]

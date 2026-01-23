@@ -1341,11 +1341,11 @@ def _get_storage() -> Generator[StorageLike, None, None]:
         yield storage
 
 
-def _get_login_manager(request: Request) -> "LoginManager":
+def _get_login_manager(request: Request) -> LoginManager:
     return request.app.state.login_manager
 
 
-def _get_sync_scheduler(request: Request) -> "SyncScheduler":
+def _get_sync_scheduler(request: Request) -> SyncScheduler:
     return request.app.state.sync_scheduler
 
 

@@ -105,7 +105,7 @@ class PostgresStorage(AbstractContextManager):
                 self.close()
                 raise
 
-    def __enter__(self) -> "PostgresStorage":
+    def __enter__(self) -> PostgresStorage:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
