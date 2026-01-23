@@ -101,6 +101,42 @@ const loadI18n = async () => {
   applyI18n();
 };
 
+const availableTabs = () =>
+  $$('.tab')
+    .map((btn) => btn.dataset.tab)
+    .filter(Boolean);
+
+const normalizeTab = (tab) => {
+  const options = availableTabs();
+  if (!tab || options.length === 0) return null;
+  return options.includes(tab) ? tab : null;
+};
+
+const getTabFromHash = () => {
+  const hash = window.location.hash || '';
+  const cleaned = hash.replace(/^#\/?/, '').trim();
+  return cleaned || null;
+};
+
+const setHash = (tab, replace = false) => {
+  const target = `#/${tab}`;
+  if (replace) {
+    history.replaceState(null, '', target);
+    return;
+  }
+  if (window.location.hash !== target) {
+    window.location.hash = target;
+  }
+};
+
+const handleRoute = (replace = false) => {
+  const tab = normalizeTab(getTabFromHash()) || 'groups';
+  activateTab(tab);
+  if (getTabFromHash() !== tab) {
+    setHash(tab, replace);
+  }
+};
+
 const activateTab = (tab) => {
   const target = $(`.tab[data-tab="${tab}"]`);
   if (!target) return;
@@ -114,7 +150,14 @@ const initTabs = () => {
   $$('.tab').forEach((btn) => {
     btn.addEventListener('click', () => {
       const tab = btn.dataset.tab;
-      activateTab(tab);
+      const normalized = normalizeTab(tab);
+      if (!normalized) return;
+      const targetHash = `#/${normalized}`;
+      if (window.location.hash === targetHash) {
+        activateTab(normalized);
+        return;
+      }
+      setHash(normalized);
     });
   });
 };
@@ -175,6 +218,8 @@ window.Hippo = {
 const init = async () => {
   await loadViewFragments();
   initTabs();
+  handleRoute(true);
+  window.addEventListener('hashchange', () => handleRoute(false));
   await loadI18n();
   if (window.HippoGroups?.init) {
     await window.HippoGroups.init();
