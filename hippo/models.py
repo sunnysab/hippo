@@ -30,6 +30,8 @@ class AccountGroup:
     id: int
     name: str
     account_count: int = 0
+    sync_mode: Optional[str] = None
+    sync_recent_days: Optional[int] = None
 
 
 @dataclass(slots=True)

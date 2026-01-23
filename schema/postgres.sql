@@ -30,6 +30,8 @@ SET default_table_access_method = heap;
 CREATE TABLE public.account_groups (
     id integer NOT NULL,
     name text NOT NULL,
+    sync_mode text,
+    sync_recent_days integer,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL
 );
@@ -68,6 +70,8 @@ CREATE TABLE public.accounts (
     key text NOT NULL,
     pass_ticket text NOT NULL,
     group_id integer,
+    sync_mode text,
+    sync_recent_days integer,
     is_default boolean DEFAULT false NOT NULL,
     last_synced_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,

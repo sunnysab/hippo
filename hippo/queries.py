@@ -11,6 +11,8 @@ SCHEMA_INIT_STATEMENTS = [
     CREATE TABLE IF NOT EXISTS account_groups (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
+        sync_mode TEXT,
+        sync_recent_days INTEGER,
         created_at TIMESTAMPTZ NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL
     )
@@ -48,6 +50,14 @@ SCHEMA_INIT_STATEMENTS = [
     """,
     """
     ALTER TABLE accounts
+    ADD COLUMN IF NOT EXISTS sync_recent_days INTEGER
+    """,
+    """
+    ALTER TABLE account_groups
+    ADD COLUMN IF NOT EXISTS sync_mode TEXT
+    """,
+    """
+    ALTER TABLE account_groups
     ADD COLUMN IF NOT EXISTS sync_recent_days INTEGER
     """,
     """

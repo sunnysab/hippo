@@ -453,6 +453,14 @@ class SyncScheduler:
                 return _get_sync_status(storage)
 
             accounts = storage.list_accounts()
+            group_defaults: dict[int, dict[str, Any]] = {}
+            group_rows = _fetchall(
+                storage,
+                'SELECT id, sync_mode, sync_recent_days FROM account_groups',
+                [],
+            )
+            for row in group_rows:
+                group_defaults[int(row['id'])] = row
             total_saved = 0
             total_downloaded = 0
             skipped_accounts = 0
@@ -477,6 +485,7 @@ class SyncScheduler:
                                 downloader=downloader,
                                 account=account,
                                 settings=settings,
+                                group_defaults=group_defaults,
                             )
                         except Exception as exc:
                             message = str(exc)
@@ -641,17 +650,26 @@ async def _sync_account_articles(
     downloader: ArticleDownloader,
     account: AccountCredential,
     settings: dict[str, Any],
+    group_defaults: Optional[dict[int, dict[str, Any]]] = None,
 ) -> tuple[int, int]:
     page_size = max(int(settings.get("page_size") or 10), 1)
     page_limit = settings.get("page_limit")
     if page_limit is not None:
         page_limit = max(int(page_limit), 1)
-    mode = (account.sync_mode or settings.get('mode') or 'incremental').strip().lower()
+    group_sync = None
+    if group_defaults and account.group_id is not None:
+        group_sync = group_defaults.get(account.group_id)
+    group_mode = None
+    group_recent_days = None
+    if group_sync:
+        group_mode = group_sync.get('sync_mode')
+        group_recent_days = group_sync.get('sync_recent_days')
+    mode = (account.sync_mode or group_mode or settings.get('mode') or 'incremental').strip().lower()
     if mode not in _SYNC_MODES:
         mode = 'incremental'
     recent_days = account.sync_recent_days
     if recent_days is None:
-        recent_days = settings.get('recent_days')
+        recent_days = group_recent_days if group_recent_days is not None else settings.get('recent_days')
     now = datetime.now(timezone.utc)
     since_ts: Optional[int] = None
     until_ts: Optional[int] = None
@@ -748,7 +766,13 @@ async def _sync_account_articles(
 
 def _list_groups(storage: StorageLike) -> list[dict[str, Any]]:
     return [
-        {"id": g.id, "name": g.name, "account_count": g.account_count}
+        {
+            'id': g.id,
+            'name': g.name,
+            'account_count': g.account_count,
+            'sync_mode': g.sync_mode,
+            'sync_recent_days': g.sync_recent_days,
+        }
         for g in storage.list_groups()
     ]
 
@@ -757,11 +781,11 @@ def _get_group(storage: StorageLike, group_id: int) -> dict[str, Any]:
     row = _fetchone(
         storage,
         """
-        SELECT g.id, g.name, COUNT(a.biz) AS account_count
+        SELECT g.id, g.name, g.sync_mode, g.sync_recent_days, COUNT(a.biz) AS account_count
         FROM account_groups g
         LEFT JOIN accounts a ON a.group_id = g.id
         WHERE g.id = %s
-        GROUP BY g.id, g.name
+        GROUP BY g.id, g.name, g.sync_mode, g.sync_recent_days
         """,
         [group_id],
     )
@@ -770,19 +794,31 @@ def _get_group(storage: StorageLike, group_id: int) -> dict[str, Any]:
     return row
 
 
-def _update_group(storage: StorageLike, group_id: int, name: str) -> dict[str, Any]:
-    trimmed = name.strip()
-    if not trimmed:
-        raise ApiError("Group name cannot be empty")
+def _update_group(storage: StorageLike, group_id: int, updates: dict[str, Any]) -> dict[str, Any]:
+    fields: list[str] = []
+    params: list[Any] = []
+    mapping = {
+        'name': 'name',
+        'sync_mode': 'sync_mode',
+        'sync_recent_days': 'sync_recent_days',
+    }
+    for key, column in mapping.items():
+        if key in updates:
+            fields.append(f"{column} = %s")
+            params.append(updates[key])
+    if not fields:
+        raise ApiError('No fields to update')
+    fields.append('updated_at = NOW()')
+    params.append(group_id)
     with storage.conn.cursor() as cur:
         cur.execute(
-            "UPDATE account_groups SET name = %s, updated_at = NOW() WHERE id = %s",
-            (trimmed, group_id),
+            f"UPDATE account_groups SET {', '.join(fields)} WHERE id = %s",
+            params,
         )
         updated = cur.rowcount
     storage.conn.commit()
     if updated == 0:
-        raise ApiError("Group not found", status=404)
+        raise ApiError('Group not found', status=404)
     return _get_group(storage, group_id)
 
 
@@ -1347,10 +1383,17 @@ def update_group(
     body: dict[str, Any] = Body(default={}),
     storage: StorageLike = Depends(_get_storage),
 ) -> dict[str, Any]:
-    name = str(body.get("name", "")).strip()
-    if not name:
-        raise ApiError("Group name is required")
-    return _update_group(storage, group_id, name)
+    updates: dict[str, Any] = {}
+    if 'name' in body:
+        name = str(body.get('name', '')).strip()
+        if not name:
+            raise ApiError('Group name is required')
+        updates['name'] = name
+    if 'sync_mode' in body:
+        updates['sync_mode'] = _normalize_sync_mode(body.get('sync_mode'))
+    if 'sync_recent_days' in body:
+        updates['sync_recent_days'] = _normalize_recent_days(body.get('sync_recent_days'))
+    return _update_group(storage, group_id, updates)
 
 
 @router.delete("/group/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1514,6 +1557,43 @@ def move_accounts(
         )
     storage.conn.commit()
     return {"updated": len(biz_list)}
+
+
+@router.post("/account/batch")
+def batch_update_accounts(
+    body: dict[str, Any] = Body(default={}),
+    storage: StorageLike = Depends(_get_storage),
+) -> dict[str, Any]:
+    biz_list = body.get('biz_list') or []
+    if not isinstance(biz_list, list) or not biz_list:
+        raise ApiError('biz_list is required')
+    updates: dict[str, Any] = {}
+    if 'sync_mode' in body:
+        updates['sync_mode'] = _normalize_sync_mode(body.get('sync_mode'))
+    if 'sync_recent_days' in body:
+        updates['sync_recent_days'] = _normalize_recent_days(body.get('sync_recent_days'))
+    if not updates:
+        raise ApiError('No fields to update')
+    fields: list[str] = []
+    params: list[Any] = []
+    mapping = {
+        'sync_mode': 'sync_mode',
+        'sync_recent_days': 'sync_recent_days',
+    }
+    for key, column in mapping.items():
+        if key in updates:
+            fields.append(f"{column} = %s")
+            params.append(updates[key])
+    fields.append('updated_at = NOW()')
+    params.append(biz_list)
+    with storage.conn.cursor() as cur:
+        cur.execute(
+            f"UPDATE accounts SET {', '.join(fields)} WHERE biz = ANY(%s)",
+            params,
+        )
+        updated = cur.rowcount
+    storage.conn.commit()
+    return {'updated': updated}
 
 
 @router.get("/account/{biz}")

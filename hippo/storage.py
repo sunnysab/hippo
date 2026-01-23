@@ -15,7 +15,7 @@ from psycopg2 import pool as pg_pool
 from .models import AccountCredential, AccountGroup, ArticleRecord, LoginSession
 from . import queries
 
-SCHEMA_VERSION = '6'
+SCHEMA_VERSION = '7'
 
 _PG_POOL: Optional[pg_pool.ThreadedConnectionPool] = None
 _PG_POOL_DSN: Optional[str] = None
@@ -328,16 +328,22 @@ class PostgresStorage(AbstractContextManager):
         with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             cur.execute(
                 """
-                SELECT g.id, g.name, COUNT(a.biz) AS account_count
+                SELECT g.id, g.name, g.sync_mode, g.sync_recent_days, COUNT(a.biz) AS account_count
                 FROM account_groups g
                 LEFT JOIN accounts a ON a.group_id = g.id
-                GROUP BY g.id, g.name
+                GROUP BY g.id, g.name, g.sync_mode, g.sync_recent_days
                 ORDER BY g.name ASC
                 """
             )
             rows = cur.fetchall()
         return [
-            AccountGroup(id=row["id"], name=row["name"], account_count=row["account_count"])
+            AccountGroup(
+                id=row["id"],
+                name=row["name"],
+                account_count=row["account_count"],
+                sync_mode=row.get('sync_mode'),
+                sync_recent_days=row.get('sync_recent_days'),
+            )
             for row in rows
         ]
 
