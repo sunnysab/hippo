@@ -17,17 +17,11 @@ from . import queries
 
 SCHEMA_VERSION = "5"
 
-_PG_POOL: Optional[pg_pool.SimpleConnectionPool] = None
+_PG_POOL: Optional[pg_pool.ThreadedConnectionPool] = None
 _PG_POOL_DSN: Optional[str] = None
 
 
-def _pool_enabled() -> bool:
-    return os.environ.get("HIPPO_PG_POOL_DISABLED", "").lower() not in ("1", "true", "yes")
-
-
-def _get_pool(dsn: str) -> Optional[pg_pool.SimpleConnectionPool]:
-    if not _pool_enabled():
-        return None
+def _get_pool(dsn: str) -> pg_pool.ThreadedConnectionPool:
     global _PG_POOL, _PG_POOL_DSN
     if _PG_POOL is not None and _PG_POOL_DSN == dsn:
         return _PG_POOL
@@ -37,7 +31,7 @@ def _get_pool(dsn: str) -> Optional[pg_pool.SimpleConnectionPool]:
     max_conn = int(os.environ.get("HIPPO_PG_POOL_MAX", "8") or "8")
     if max_conn < min_conn:
         max_conn = min_conn
-    _PG_POOL = pg_pool.SimpleConnectionPool(
+    _PG_POOL = pg_pool.ThreadedConnectionPool(
         min_conn,
         max_conn,
         dsn,
@@ -98,17 +92,10 @@ class PostgresStorage(AbstractContextManager):
         *,
         auto_init: bool = False,
         pool: Optional[pg_pool.AbstractConnectionPool] = None,
-        use_pool: bool = True,
     ) -> None:
         self.dsn = dsn
-        resolved_pool = pool if use_pool else None
-        if resolved_pool is None and use_pool:
-            resolved_pool = _get_pool(dsn)
-        self._pool = resolved_pool
-        if self._pool:
-            self.conn = self._pool.getconn()
-        else:
-            self.conn = psycopg2.connect(dsn, options="-c timezone=Asia/Shanghai")
+        self._pool = pool or _get_pool(dsn)
+        self.conn = self._pool.getconn()
         self.conn.autocommit = False
         if auto_init:
             self._init_db()
@@ -859,4 +846,4 @@ def open_storage(*, auto_init: bool = False) -> StorageLike:
     dsn = os.environ.get("HIPPO_PG_DSN")
     if not dsn:
         raise StorageInitError("Missing HIPPO_PG_DSN for PostgreSQL storage.")
-    return PostgresStorage(dsn, auto_init=auto_init, pool=_get_pool(dsn))
+    return PostgresStorage(dsn, auto_init=auto_init)
