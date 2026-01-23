@@ -17,6 +17,7 @@ classifiers = [
   "Operating System :: OS Independent",
 ]
 dependencies = [
+  "fastapi>=0.110.0",
   "typer>=0.21.0",
   "httpx[http2,socks]>=0.28.0",
   "beautifulsoup4>=4.14.0",
@@ -28,6 +29,7 @@ dependencies = [
   "psycopg2-binary>=2.9.11",
   "tqdm>=4.67.0",
   "jieba>=0.42.1",
+  "uvicorn[standard]>=0.29.0",
   "tomli>=2.0.1; python_version<'3.11'",
 ]
 

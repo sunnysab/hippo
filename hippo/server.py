@@ -2,26 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-import mimetypes
 import random
 import re
 import smtplib
 import threading
 import time as time_module
 from datetime import date, datetime, time, timezone
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
-from typing import Any, Optional
-from urllib.parse import parse_qs, urlparse
 from email.message import EmailMessage
-
-import psycopg2
-import psycopg2.extras
+from pathlib import Path
+from typing import Any, Generator, Optional
 
 import httpx
+import psycopg2
+import psycopg2.extras
+from fastapi import APIRouter, Body, Depends, FastAPI, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 try:
     import jieba
@@ -263,7 +263,7 @@ class LoginManager:
             "has_qrcode": self._qrcode is not None,
         }
 
-    def start(self) -> dict[str, Any]:
+    async def start(self) -> dict[str, Any]:
         with self._lock:
             if self._status in ("starting", "waiting", "scanned", "refresh"):
                 return self._snapshot()
@@ -271,9 +271,9 @@ class LoginManager:
             self._message = "Requesting QR code"
         sid = f"{int(time_module.time() * 1000)}{random.randint(100, 999)}"
         try:
-            with MPClient(timeout=15.0) as client:
-                uuid_cookie = client.start_login_session(sid)
-                qrcode_bytes = client.fetch_login_qrcode(uuid_cookie)
+            async with MPClient(timeout=15.0) as client:
+                uuid_cookie = await client.start_login_session(sid)
+                qrcode_bytes = await client.fetch_login_qrcode(uuid_cookie)
             with self._lock:
                 self._uuid_cookie = uuid_cookie
                 self._qrcode = qrcode_bytes
@@ -294,20 +294,20 @@ class LoginManager:
                 raise ApiError("QR code not ready", status=404)
             return self._qrcode
 
-    def poll(self, storage: StorageLike) -> dict[str, Any]:
+    async def poll(self, storage: StorageLike) -> dict[str, Any]:
         with self._lock:
             uuid_cookie = self._uuid_cookie
         if not uuid_cookie:
             raise ApiError("Login not started", status=400)
         try:
-            with MPClient(timeout=15.0) as client:
-                resp = client.check_login_status(uuid_cookie)
+            async with MPClient(timeout=15.0) as client:
+                resp = await client.check_login_status(uuid_cookie)
                 if resp.get("base_resp", {}).get("ret") != 0:
                     raise ApiError("Login status error")
                 status = resp.get("status")
                 if status == 1:
-                    session = client.finalize_login(uuid_cookie)
-                    info = client.fetch_login_info(session)
+                    session = await client.finalize_login(uuid_cookie)
+                    info = await client.fetch_login_info(session)
                     session.nickname = info.get("nickname") or None
                     session.avatar = info.get("avatar") or None
                     storage.save_login_session(session)
@@ -319,7 +319,7 @@ class LoginManager:
                         self._updated_at = _utc_now_iso()
                     return self._snapshot()
                 if status in (2, 3):
-                    qrcode_bytes = client.fetch_login_qrcode(uuid_cookie)
+                    qrcode_bytes = await client.fetch_login_qrcode(uuid_cookie)
                     with self._lock:
                         self._qrcode = qrcode_bytes
                         self._status = "refresh"
@@ -403,6 +403,9 @@ class SyncScheduler:
             self._lock.release()
 
     def _run_sync(self) -> dict[str, Any]:
+        return asyncio.run(self._run_sync_async())
+
+    async def _run_sync_async(self) -> dict[str, Any]:
         started_at = _utc_now_iso()
         with open_storage() as storage:
             settings = _get_sync_settings(storage)
@@ -428,13 +431,12 @@ class SyncScheduler:
             total_downloaded = 0
             skipped_accounts = 0
             error: Optional[str] = None
-            with MPClient() as client:
-                downloader = ArticleDownloader(
+            async with MPClient() as client:
+                async with ArticleDownloader(
                     client=client,
                     storage=storage,
                     enable_image_worker=bool(settings.get("download_images")),
-                )
-                with downloader:
+                ) as downloader:
                     for account in accounts:
                         if account.is_disabled:
                             skipped_accounts += 1
@@ -443,7 +445,7 @@ class SyncScheduler:
                             skipped_accounts += 1
                             continue
                         try:
-                            saved, downloaded = _sync_account_articles(
+                            saved, downloaded = await _sync_account_articles(
                                 storage=storage,
                                 client=client,
                                 downloader=downloader,
@@ -456,14 +458,14 @@ class SyncScheduler:
                                 error = message
                                 break
                             if _is_freq_control(message):
-                                time_module.sleep(15)
+                                await asyncio.sleep(15)
                                 continue
                             error = message
                             break
                         total_saved += saved
                         total_downloaded += downloaded
                     if settings.get("download_images"):
-                        downloader.wait_for_images()
+                        await downloader.wait_for_images()
 
             finished_at = _utc_now_iso()
             if error:
@@ -606,7 +608,7 @@ def _select_missing_content(
     return articles
 
 
-def _sync_account_articles(
+async def _sync_account_articles(
     *,
     storage: StorageLike,
     client: MPClient,
@@ -641,7 +643,7 @@ def _sync_account_articles(
     to_download: list[ArticleRecord] = []
 
     while True:
-        payload = client.fetch_appmsg_publish(
+        payload = await client.fetch_appmsg_publish(
             session, fakeid=account.biz, begin=offset, count=page_size
         )
         publish_page = _extract_publish_page(payload)
@@ -694,7 +696,7 @@ def _sync_account_articles(
             break
         sleep_seconds = float(settings.get("sleep_seconds") or 0)
         if sleep_seconds > 0:
-            time_module.sleep(sleep_seconds)
+            await asyncio.sleep(sleep_seconds)
 
     downloaded = 0
     if settings.get("download_content"):
@@ -703,7 +705,7 @@ def _sync_account_articles(
         for missing in _select_missing_content(storage, account.biz, limit=content_limit):
             candidates.setdefault(missing.article_id, missing)
         if candidates:
-            results, _, _ = downloader.download_many(
+            results, _, _ = await downloader.download_many(
                 candidates.values(),
                 with_images=bool(settings.get("download_images")),
                 record_images_only=not bool(settings.get("download_images")),
@@ -1239,698 +1241,618 @@ def _list_feed(
     return _fetchall(storage, query_sql, params)
 
 
-class HippoHandler(BaseHTTPRequestHandler):
-    server_version = "HippoHTTP/1.0"
 
-    def do_OPTIONS(self) -> None:  # pragma: no cover - simple CORS support
-        self.send_response(HTTPStatus.NO_CONTENT)
-        self._set_cors_headers()
-        self.end_headers()
 
-    def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
-        parsed = urlparse(self.path)
-        if parsed.path.startswith("/api/"):
-            self._handle_api("GET", parsed)
-            return
-        self._serve_static(parsed.path)
+def _binary_response(payload: bytes, content_type: str) -> Response:
+    return Response(
+        content=payload,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=259200"},
+    )
 
-    def do_POST(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
-        parsed = urlparse(self.path)
-        if parsed.path.startswith("/api/"):
-            self._handle_api("POST", parsed)
-            return
-        self._send_error(HTTPStatus.NOT_FOUND, "Not found")
 
-    def do_PATCH(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
-        parsed = urlparse(self.path)
-        if parsed.path.startswith("/api/"):
-            self._handle_api("PATCH", parsed)
-            return
-        self._send_error(HTTPStatus.NOT_FOUND, "Not found")
+def _get_storage() -> Generator[StorageLike, None, None]:
+    with open_storage() as storage:
+        _ensure_default_group(storage)
+        _ensure_avatar_images_table(storage)
+        yield storage
 
-    def do_DELETE(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
-        parsed = urlparse(self.path)
-        if parsed.path.startswith("/api/"):
-            self._handle_api("DELETE", parsed)
-            return
-        self._send_error(HTTPStatus.NOT_FOUND, "Not found")
 
-    def log_message(self, fmt: str, *args: Any) -> None:  # pragma: no cover
-        logger.info("%s - %s", self.address_string(), fmt % args)
+def _get_login_manager(request: Request) -> "LoginManager":
+    return request.app.state.login_manager
 
-    def _set_cors_headers(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
-    def _send_json(self, status: int, payload: Any) -> None:
-        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self._set_cors_headers()
-        self.end_headers()
-        self.wfile.write(data)
+def _get_sync_scheduler(request: Request) -> "SyncScheduler":
+    return request.app.state.sync_scheduler
 
-    def _send_error(self, status: HTTPStatus, message: str) -> None:
-        self._send_json(status, {"error": message})
 
-    def _read_json(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length") or 0)
-        if length <= 0:
-            return {}
-        raw = self.rfile.read(length)
-        try:
-            payload = json.loads(raw.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            raise ApiError("Invalid JSON body") from exc
-        if not isinstance(payload, dict):
-            raise ApiError("JSON body must be an object")
-        return payload
+router = APIRouter(prefix="/api")
 
-    def _serve_static(self, raw_path: str) -> None:
-        static_dir = self.server.static_dir  # type: ignore[attr-defined]
-        path = raw_path
-        if path == "/":
-            path = "/index.html"
-        target = (static_dir / path.lstrip("/")).resolve()
-        if not str(target).startswith(str(static_dir.resolve())):
-            self._send_error(HTTPStatus.FORBIDDEN, "Forbidden")
-            return
-        if not target.exists() or not target.is_file():
-            self._send_error(HTTPStatus.NOT_FOUND, "Not found")
-            return
-        content_type, _ = mimetypes.guess_type(str(target))
-        data = target.read_bytes()
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", content_type or "application/octet-stream")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
 
-    def _handle_api(self, method: str, parsed: Any) -> None:
-        segments = [seg for seg in parsed.path.split("/") if seg]
-        query = parse_qs(parsed.query)
-        try:
-            with open_storage() as storage:
-                _ensure_default_group(storage)
-                _ensure_avatar_images_table(storage)
-                if len(segments) < 2:
-                    raise ApiError("Invalid API path", status=404)
-                resource = segments[1]
-                if resource == "group":
-                    self._handle_group(storage, method, segments, query)
-                elif resource == "account":
-                    self._handle_account(storage, method, segments, query)
-                elif resource == "article":
-                    self._handle_article(storage, method, segments, query)
-                elif resource == "image":
-                    self._handle_image(storage, method, segments)
-                elif resource == "feed":
-                    self._handle_feed(storage, method, segments, query)
-                elif resource == "login":
-                    self._handle_login(storage, method, segments)
-                elif resource == "sync":
-                    self._handle_sync(storage, method, segments, query)
-                else:
-                    raise ApiError("Not found", status=404)
-        except ApiError as exc:
-            self._send_error(HTTPStatus(exc.status), str(exc))
-        except Exception as exc:  # pragma: no cover - guardrail
-            logger.exception("API error")
-            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+@router.get("/group")
+def list_groups(storage: StorageLike = Depends(_get_storage)) -> dict[str, Any]:
+    default_group = _ensure_default_group(storage)
+    return {
+        "default_group_id": default_group["id"],
+        "groups": _list_groups(storage),
+    }
 
-    def _handle_group(
-        self,
-        storage: StorageLike,
-        method: str,
-        segments: list[str],
-        query: dict[str, list[str]],
-    ) -> None:
-        if len(segments) == 2:
-            if method == "GET":
-                default_group = _ensure_default_group(storage)
-                payload = {
-                    "default_group_id": default_group["id"],
-                    "groups": _list_groups(storage),
-                }
-                self._send_json(HTTPStatus.OK, payload)
-                return
-            if method == "POST":
-                body = self._read_json()
-                name = str(body.get("name", "")).strip()
-                if not name:
-                    raise ApiError("Group name is required")
-                group = storage.upsert_group(name)
-                payload = {"id": group.id, "name": group.name}
-                self._send_json(HTTPStatus.CREATED, payload)
-                return
-            raise ApiError("Method not allowed", status=405)
 
-        if len(segments) == 3:
-            group_id = _parse_int(segments[2])
-            if group_id is None:
-                raise ApiError("Group id is required")
-            if method == "GET":
-                self._send_json(HTTPStatus.OK, _get_group(storage, group_id))
-                return
-            if method == "PATCH":
-                body = self._read_json()
-                name = str(body.get("name", "")).strip()
-                if not name:
-                    raise ApiError("Group name is required")
-                updated = _update_group(storage, group_id, name)
-                self._send_json(HTTPStatus.OK, updated)
-                return
-            if method == "DELETE":
-                _delete_group(storage, group_id)
-                self._send_json(HTTPStatus.NO_CONTENT, {})
-                return
-        raise ApiError("Not found", status=404)
+@router.post("/group", status_code=status.HTTP_201_CREATED)
+def create_group(
+    body: dict[str, Any] = Body(default={}),
+    storage: StorageLike = Depends(_get_storage),
+) -> dict[str, Any]:
+    name = str(body.get("name", "")).strip()
+    if not name:
+        raise ApiError("Group name is required")
+    group = storage.upsert_group(name)
+    return {"id": group.id, "name": group.name}
 
-    def _handle_account(
-        self,
-        storage: StorageLike,
-        method: str,
-        segments: list[str],
-        query: dict[str, list[str]],
-    ) -> None:
-        if len(segments) >= 3 and segments[2] == "search":
-            if len(segments) == 3:
-                if method != "GET":
-                    raise ApiError("Method not allowed", status=405)
-                keyword = (query.get("q", [""])[0] or "").strip()
-                if not keyword:
-                    raise ApiError("q is required")
-                page = _parse_int(query.get("page", ["1"])[0]) or 1
-                page_size = _parse_int(query.get("page_size", ["10"])[0]) or 10
-                begin = _parse_int(query.get("begin", [None])[0])
-                offset = begin if begin is not None else (max(page, 1) - 1) * page_size
-                _ensure_avatar_images_table(storage)
-                existing = {account.biz for account in storage.list_accounts()}
-                session = storage.get_login_session()
-                with MPClient() as client:
-                    payload = client.search_biz(
-                        session,
-                        keyword=keyword,
-                        begin=offset,
-                        count=min(max(page_size, 1), 20),
-                    )
-                records = payload.get("list") or []
-                results: list[dict[str, Any]] = []
-                for item in records:
-                    biz = (item.get("fakeid") or "").strip()
-                    if not biz:
-                        continue
-                    avatar_url = (item.get("round_head_img") or item.get("headimg") or "").strip()
-                    if avatar_url:
-                        _upsert_avatar_url(storage, biz, avatar_url)
-                    is_added = biz in existing
-                    results.append(
-                        {
-                            "biz": biz,
-                            "nickname": item.get("nickname") or "",
-                            "alias": item.get("alias") or "",
-                            "round_head_img": avatar_url,
-                            "is_added": is_added,
-                            "avatar_url": (
-                                f"/api/account/{biz}/avatar"
-                                if is_added
-                                else f"/api/account/search/{biz}/avatar"
-                            ),
-                        }
-                    )
-                self._send_json(
-                    HTTPStatus.OK,
-                    {
-                        "results": results,
-                        "page": max(page, 1),
-                        "page_size": min(max(page_size, 1), 20),
-                        "total": payload.get("total") or len(results),
-                    },
-                )
-                return
-            if len(segments) == 5 and segments[4] == "avatar":
-                if method != "GET":
-                    raise ApiError("Method not allowed", status=405)
-                biz = segments[3]
-                _ensure_avatar_images_table(storage)
-                avatar = _get_avatar_row(storage, biz)
-                if not avatar:
-                    raise ApiError("Avatar not found", status=404)
-                data = avatar.get("data")
-                if not data:
-                    url = avatar.get("avatar_url")
-                    if url:
-                        cached = _fetch_and_cache_avatar(storage, biz, url)
-                        if cached:
-                            data, content_type = cached
-                            self.send_response(HTTPStatus.OK)
-                            self.send_header("Content-Type", content_type)
-                            self.send_header("Cache-Control", "public, max-age=259200")
-                            self.send_header("Content-Length", str(len(data)))
-                            self.end_headers()
-                            self.wfile.write(data)
-                            return
-                    raise ApiError("Avatar not found", status=404)
-                payload = data.tobytes() if isinstance(data, memoryview) else bytes(data)
-                content_type = avatar.get("content_type") or "application/octet-stream"
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", content_type)
-                self.send_header("Cache-Control", "public, max-age=259200")
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                self.wfile.write(payload)
-                return
-            raise ApiError("Not found", status=404)
-        if len(segments) == 2:
-            if method == "GET":
-                group_id = _parse_int(query.get("group_id", [None])[0])
-                search = query.get("q", [""])[0] or None
-                page = _parse_int(query.get("page", ["1"])[0]) or 1
-                page_size = _parse_int(query.get("page_size", ["20"])[0]) or 20
-                payload = _list_accounts(
-                    storage,
-                    group_id=group_id,
-                    query=search,
-                    page=max(page, 1),
-                    page_size=min(max(page_size, 1), 200),
-                )
-                self._send_json(HTTPStatus.OK, payload)
-                return
-            if method == "POST":
-                body = self._read_json()
-                required = ["biz", "nickname"]
-                for field in required:
-                    if not body.get(field):
-                        raise ApiError(f"{field} is required")
-                group_id = body.get("group_id")
-                if group_id is None:
-                    default_group = _ensure_default_group(storage)
-                    group_id = default_group["id"]
-                account = storage.upsert_account(
-                    AccountCredential(
-                        biz=str(body["biz"]),
-                        nickname=str(body["nickname"]),
-                        alias=body.get("alias"),
-                        round_head_img=body.get("round_head_img"),
-                        uin=str(body.get("uin") or ""),
-                        key=str(body.get("key") or ""),
-                        pass_ticket=str(body.get("pass_ticket") or ""),
-                        group_id=int(group_id) if group_id is not None else None,
-                    )
-                )
-                self._send_json(
-                    HTTPStatus.CREATED,
-                    {
-                        "biz": account.biz,
-                        "nickname": account.nickname,
-                        "alias": account.alias,
-                        "round_head_img": account.round_head_img,
-                        "group_id": account.group_id,
-                    },
-                )
-                return
-            raise ApiError("Method not allowed", status=405)
 
-        if len(segments) == 3:
-            if segments[2] == "move":
-                if method != "POST":
-                    raise ApiError("Method not allowed", status=405)
-                body = self._read_json()
-                biz_list = body.get("biz_list") or []
-                if not isinstance(biz_list, list) or not biz_list:
-                    raise ApiError("biz_list is required")
-                group_id = body.get("group_id")
-                if group_id is None:
-                    default_group = _ensure_default_group(storage)
-                    group_id = default_group["id"]
-                with storage.conn.cursor() as cur:
-                    cur.execute(
-                        "UPDATE accounts SET group_id = %s, updated_at = NOW() WHERE biz = ANY(%s)",
-                        (group_id, biz_list),
-                    )
-                storage.conn.commit()
-                self._send_json(HTTPStatus.OK, {"updated": len(biz_list)})
-                return
-            biz = segments[2]
-            if method == "GET":
-                self._send_json(HTTPStatus.OK, _get_account(storage, biz))
-                return
-            if method == "PATCH":
-                body = self._read_json()
-                if "group_id" in body and body["group_id"] is None:
-                    default_group = _ensure_default_group(storage)
-                    body["group_id"] = default_group["id"]
-                updated = _update_account(storage, biz, body)
-                self._send_json(HTTPStatus.OK, updated)
-                return
-            if method == "DELETE":
-                removed = storage.remove_account(biz)
-                if removed == 0:
-                    raise ApiError("Account not found", status=404)
-                self._send_json(HTTPStatus.NO_CONTENT, {})
-                return
-        if len(segments) == 4 and segments[3] == "avatar":
-            if method != "GET":
-                raise ApiError("Method not allowed", status=405)
-            biz = segments[2]
-            avatar = _get_avatar_row(storage, biz)
-            data = avatar.get("data") if avatar else None
-            if not data:
-                url = avatar.get("avatar_url") if avatar else None
-                if not url:
-                    row = _fetchone(
-                        storage,
-                        "SELECT round_head_img FROM accounts WHERE biz = %s",
-                        [biz],
-                    )
-                    if not row:
-                        raise ApiError("Account not found", status=404)
-                    url = row.get("round_head_img")
-                    if url:
-                        _upsert_avatar_url(storage, biz, url)
-                if url:
-                    cached = _fetch_and_cache_avatar(storage, biz, url)
-                    if cached:
-                        data, content_type = cached
-                        self.send_response(HTTPStatus.OK)
-                        self.send_header("Content-Type", content_type)
-                        self.send_header("Cache-Control", "public, max-age=259200")
-                        self.send_header("Content-Length", str(len(data)))
-                        self.end_headers()
-                        self.wfile.write(data)
-                        return
-                raise ApiError("Avatar not found", status=404)
-            data = avatar.get("data")
-            if isinstance(data, memoryview):
-                payload = data.tobytes()
-            else:
-                payload = bytes(data)
-            content_type = avatar.get("content_type") or "application/octet-stream"
-            self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Cache-Control", "public, max-age=259200")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-            return
-        raise ApiError("Not found", status=404)
+@router.get("/group/{group_id}")
+def get_group(
+    group_id: int,
+    storage: StorageLike = Depends(_get_storage),
+) -> dict[str, Any]:
+    return _get_group(storage, group_id)
 
-    def _handle_article(
-        self,
-        storage: StorageLike,
-        method: str,
-        segments: list[str],
-        query: dict[str, list[str]],
-    ) -> None:
-        if len(segments) == 2:
-            if method == "GET":
-                group_id = _parse_int(query.get("group_id", [None])[0])
-                biz = query.get("biz", [""])[0] or None
-                article_id = query.get("article_id", [""])[0] or None
-                search = query.get("q", [""])[0] or None
-                page = _parse_int(query.get("page", ["1"])[0]) or 1
-                page_size = _parse_int(query.get("page_size", ["20"])[0]) or 20
-                content_flag = (query.get("content", [""])[0] or "").lower()
-                content_only = content_flag in {"1", "true", "yes"}
-                since_ts = _parse_date(query.get("since", [None])[0])
-                until_ts = _parse_date(query.get("until", [None])[0], end_of_day=True)
-                
 
-                payload = _list_articles(
-                    storage,
-                    group_id=group_id,
-                    biz=biz,
-                    query=search,
-                    since_ts=since_ts,
-                    until_ts=until_ts,
-                    content_only=content_only,
-                    page=max(page, 1),
-                    page_size=min(max(page_size, 1), 200),
-                    article_id=article_id,
-                )
-                self._send_json(HTTPStatus.OK, payload)
-                return
-            raise ApiError("Method not allowed", status=405)
+@router.patch("/group/{group_id}")
+def update_group(
+    group_id: int,
+    body: dict[str, Any] = Body(default={}),
+    storage: StorageLike = Depends(_get_storage),
+) -> dict[str, Any]:
+    name = str(body.get("name", "")).strip()
+    if not name:
+        raise ApiError("Group name is required")
+    return _update_group(storage, group_id, name)
 
-        if len(segments) == 3:
-            article_id = _parse_int(segments[2])
-            if article_id is None:
-                raise ApiError("Article id is required")
-            if method == "GET":
-                payload = _get_article(storage, article_id)
-                self._send_json(HTTPStatus.OK, payload)
-                return
-        if len(segments) == 4 and segments[3] == "image":
-            article_id = _parse_int(segments[2])
-            if article_id is None:
-                raise ApiError("Article id is required")
-            if method == "GET":
-                payload = _list_article_images(storage, article_id)
-                self._send_json(HTTPStatus.OK, {"images": payload})
-                return
-        raise ApiError("Not found", status=404)
 
-    def _handle_image(self, storage: StorageLike, method: str, segments: list[str]) -> None:
-        if len(segments) != 3:
-            raise ApiError("Not found", status=404)
-        if method != "GET":
-            raise ApiError("Method not allowed", status=405)
-        image_id = _parse_int(segments[2])
-        if image_id is None:
-            raise ApiError("Image id is required")
-        payload, content_type = _fetch_image(storage, image_id)
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "public, max-age=259200")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
+@router.delete("/group/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_group(
+    group_id: int,
+    storage: StorageLike = Depends(_get_storage),
+) -> Response:
+    _delete_group(storage, group_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    def _handle_login(
-        self,
-        storage: StorageLike,
-        method: str,
-        segments: list[str],
-    ) -> None:
-        manager: LoginManager = self.server.login_manager  # type: ignore[attr-defined]
 
-        def payload_from(snapshot: dict[str, Any]) -> dict[str, Any]:
-            info = _get_login_info(storage)
-            return {
-                **snapshot,
-                "qrcode_url": "/api/login/qrcode" if snapshot.get("has_qrcode") else None,
-                "last_login": info,
-            }
-
-        if len(segments) == 2:
-            if method == "GET":
-                self._send_json(HTTPStatus.OK, payload_from(manager._snapshot()))
-                return
-            raise ApiError("Method not allowed", status=405)
-
-        if len(segments) == 3:
-            action = segments[2]
-            if action == "start" and method == "POST":
-                snapshot = manager.start()
-                self._send_json(HTTPStatus.OK, payload_from(snapshot))
-                return
-            if action == "poll" and method == "POST":
-                snapshot = manager.poll(storage)
-                self._send_json(HTTPStatus.OK, payload_from(snapshot))
-                return
-            if action == "cancel" and method == "POST":
-                manager.cancel()
-                self._send_json(HTTPStatus.OK, payload_from(manager._snapshot()))
-                return
-            if action == "qrcode" and method == "GET":
-                data = manager.get_qrcode()
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", "image/png")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-                return
-        raise ApiError("Not found", status=404)
-
-    def _handle_sync(
-        self,
-        storage: StorageLike,
-        method: str,
-        segments: list[str],
-        query: dict[str, list[str]],
-    ) -> None:
-        scheduler: SyncScheduler = self.server.sync_scheduler  # type: ignore[attr-defined]
-        if len(segments) == 2:
-            if method == "GET":
-                payload = _get_sync_status(storage)
-                self._send_json(HTTPStatus.OK, payload)
-                return
-            raise ApiError("Method not allowed", status=405)
-
-        if len(segments) == 3:
-            action = segments[2]
-            if action == "settings":
-                if method == "GET":
-                    payload = _get_sync_settings(storage)
-                    payload["email"] = _get_email_settings(storage)
-                    self._send_json(HTTPStatus.OK, payload)
-                    return
-                if method == "PATCH":
-                    body = self._read_json()
-                    updates: dict[str, Any] = {}
-                    if "enabled" in body:
-                        updates["enabled"] = bool(body["enabled"])
-                    if "interval_minutes" in body:
-                        updates["interval_minutes"] = max(int(body["interval_minutes"]), 1)
-                    if "mode" in body:
-                        updates["mode"] = body["mode"]
-                    if "recent_days" in body:
-                        updates["recent_days"] = max(int(body["recent_days"]), 1)
-                    if "page_size" in body:
-                        updates["page_size"] = max(int(body["page_size"]), 1)
-                    if "page_limit" in body:
-                        value = body["page_limit"]
-                        if value in ("", None):
-                            updates["page_limit"] = None
-                        else:
-                            updates["page_limit"] = max(int(value), 1)
-                    if "sleep_seconds" in body:
-                        updates["sleep_seconds"] = float(body["sleep_seconds"])
-                    if "download_content" in body:
-                        updates["download_content"] = bool(body["download_content"])
-                    if "download_images" in body:
-                        updates["download_images"] = bool(body["download_images"])
-                    if "content_limit" in body:
-                        updates["content_limit"] = max(int(body["content_limit"]), 0)
-                    if "skip_minutes" in body:
-                        updates["skip_minutes"] = max(int(body["skip_minutes"]), 0)
-                    if "since" in body:
-                        updates["since"] = body["since"]
-                    if "until" in body:
-                        updates["until"] = body["until"]
-                    if "alert_enabled" in body:
-                        updates["alert_enabled"] = bool(body["alert_enabled"])
-                    if "alert_email" in body:
-                        updates["alert_email"] = str(body["alert_email"]).strip()
-                    settings = _set_sync_settings(storage, updates)
-                    email_updates: dict[str, Any] = {}
-                    email_body = body.get("email")
-                    if isinstance(email_body, dict):
-                        for key in (
-                            "smtp_host",
-                            "smtp_port",
-                            "smtp_user",
-                            "smtp_password",
-                            "smtp_tls",
-                            "from_email",
-                        ):
-                            if key in email_body:
-                                email_updates[key] = email_body[key]
-                    if email_updates:
-                        settings["email"] = _set_email_settings(storage, email_updates)
-                    else:
-                        settings["email"] = _get_email_settings(storage)
-                    if settings.get("enabled"):
-                        scheduler.trigger()
-                    self._send_json(HTTPStatus.OK, settings)
-                    return
-            if action == "run" and method == "POST":
-                threading.Thread(target=scheduler.run_once, daemon=True).start()
-                self._send_json(HTTPStatus.ACCEPTED, {"status": "running"})
-                return
-        raise ApiError("Not found", status=404)
-
-    def _handle_feed(
-        self,
-        storage: StorageLike,
-        method: str,
-        segments: list[str],
-        query: dict[str, list[str]],
-    ) -> None:
-        if len(segments) != 3 or segments[2] != "mixed":
-            raise ApiError("Not found", status=404)
-        if method != "GET":
-            raise ApiError("Method not allowed", status=405)
-        group_id = _parse_int(query.get("group_id", [None])[0])
-        biz = query.get("biz", [""])[0] or None
-        search = query.get("q", [""])[0] or None
-        limit = _parse_int(query.get("limit", ["50"])[0]) or 50
-        output_format = (query.get("format", [""])[0] or "").lower()
-        since_ts = _parse_date(query.get("since", [None])[0])
-        until_ts = _parse_date(query.get("until", [None])[0], end_of_day=True)
-        days = _parse_int(query.get("days", [None])[0])
-        if days:
-            now = datetime.utcnow()
-            since_ts = int((now.timestamp() - days * 86400))
-        if output_format == "rss":
-            group_names: list[str] = []
-            if group_id is not None:
-                row = _fetchone(
-                    storage,
-                    "SELECT name FROM account_groups WHERE id = %s",
-                    [group_id],
-                )
-                if not row:
-                    raise ApiError("Group not found", status=404)
-                group_names = [row.get("name") or ""]
-            host = self.headers.get("Host") or f"{DEFAULT_HOST}:{DEFAULT_PORT}"
-            image_base = f"http://{host}"
-            items = query_rss_items(
-                group_names=group_names,
-                limit=min(max(limit, 1), 500),
-                days=days,
-                since=query.get("since", [None])[0],
-                until=query.get("until", [None])[0],
-                image_base_url=image_base,
-            )
-            title = "Hippo RSS"
-            description = "Hippo RSS feed"
-            if group_names:
-                title = f"{group_names[0]} - Hippo RSS"
-                description = f"RSS feed for {group_names[0]}"
-            xml = build_rss_xml(
-                title=title,
-                link=image_base,
-                description=description,
-                items=items,
-            )
-            payload = xml.encode("utf-8")
-            self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", "application/rss+xml; charset=utf-8")
-            self.send_header("Content-Length", str(len(payload)))
-            self._set_cors_headers()
-            self.end_headers()
-            self.wfile.write(payload)
-            return
-        payload = _list_feed(
-            storage,
-            group_id=group_id,
-            biz=biz,
-            query=search,
-            since_ts=since_ts,
-            until_ts=until_ts,
-            limit=min(max(limit, 1), 500),
+@router.get("/account/search")
+async def search_account(
+    q: str = "",
+    page: int = 1,
+    page_size: int = 10,
+    begin: Optional[int] = None,
+    storage: StorageLike = Depends(_get_storage),
+) -> dict[str, Any]:
+    keyword = (q or "").strip()
+    if not keyword:
+        raise ApiError("q is required")
+    offset = begin if begin is not None else (max(page, 1) - 1) * page_size
+    _ensure_avatar_images_table(storage)
+    existing = {account.biz for account in storage.list_accounts()}
+    session = storage.get_login_session()
+    async with MPClient() as client:
+        payload = await client.search_biz(
+            session,
+            keyword=keyword,
+            begin=offset,
+            count=min(max(page_size, 1), 20),
         )
-        self._send_json(HTTPStatus.OK, {"articles": payload})
+    records = payload.get("list") or []
+    results: list[dict[str, Any]] = []
+    for item in records:
+        biz = (item.get("fakeid") or "").strip()
+        if not biz:
+            continue
+        avatar_url = (item.get("round_head_img") or item.get("headimg") or "").strip()
+        if avatar_url:
+            _upsert_avatar_url(storage, biz, avatar_url)
+        is_added = biz in existing
+        results.append(
+            {
+                "biz": biz,
+                "nickname": item.get("nickname") or "",
+                "alias": item.get("alias") or "",
+                "round_head_img": avatar_url,
+                "is_added": is_added,
+                "avatar_url": (
+                    f"/api/account/{biz}/avatar"
+                    if is_added
+                    else f"/api/account/search/{biz}/avatar"
+                ),
+            }
+        )
+    return {
+        "results": results,
+        "page": max(page, 1),
+        "page_size": min(max(page_size, 1), 20),
+        "total": payload.get("total") or len(results),
+    }
 
 
-def serve(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, static_dir: Path | str = "static") -> None:
+@router.get("/account/search/{biz}/avatar")
+def get_search_avatar(
+    biz: str,
+    storage: StorageLike = Depends(_get_storage),
+) -> Response:
+    _ensure_avatar_images_table(storage)
+    avatar = _get_avatar_row(storage, biz)
+    if not avatar:
+        raise ApiError("Avatar not found", status=404)
+    data = avatar.get("data")
+    if not data:
+        url = avatar.get("avatar_url")
+        if url:
+            cached = _fetch_and_cache_avatar(storage, biz, url)
+            if cached:
+                payload, content_type = cached
+                return _binary_response(payload, content_type)
+        raise ApiError("Avatar not found", status=404)
+    payload = data.tobytes() if isinstance(data, memoryview) else bytes(data)
+    content_type = avatar.get("content_type") or "application/octet-stream"
+    return _binary_response(payload, content_type)
+
+
+@router.get("/account")
+def list_accounts(
+    group_id: Optional[int] = None,
+    q: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+    storage: StorageLike = Depends(_get_storage),
+) -> dict[str, Any]:
+    payload = _list_accounts(
+        storage,
+        group_id=group_id,
+        query=q or None,
+        page=max(page, 1),
+        page_size=min(max(page_size, 1), 200),
+    )
+    return payload
+
+
+@router.post("/account", status_code=status.HTTP_201_CREATED)
+def create_account(
+    body: dict[str, Any] = Body(default={}),
+    storage: StorageLike = Depends(_get_storage),
+) -> dict[str, Any]:
+    required = ["biz", "nickname"]
+    for field in required:
+        if not body.get(field):
+            raise ApiError(f"{field} is required")
+    group_id = body.get("group_id")
+    if group_id is None:
+        default_group = _ensure_default_group(storage)
+        group_id = default_group["id"]
+    account = storage.upsert_account(
+        AccountCredential(
+            biz=str(body["biz"]),
+            nickname=str(body["nickname"]),
+            alias=body.get("alias"),
+            round_head_img=body.get("round_head_img"),
+            uin=str(body.get("uin") or ""),
+            key=str(body.get("key") or ""),
+            pass_ticket=str(body.get("pass_ticket") or ""),
+            group_id=int(group_id) if group_id is not None else None,
+        )
+    )
+    return {
+        "biz": account.biz,
+        "nickname": account.nickname,
+        "alias": account.alias,
+        "round_head_img": account.round_head_img,
+        "group_id": account.group_id,
+    }
+
+
+@router.post("/account/move")
+def move_accounts(
+    body: dict[str, Any] = Body(default={}),
+    storage: StorageLike = Depends(_get_storage),
+) -> dict[str, Any]:
+    biz_list = body.get("biz_list") or []
+    if not isinstance(biz_list, list) or not biz_list:
+        raise ApiError("biz_list is required")
+    group_id = body.get("group_id")
+    if group_id is None:
+        default_group = _ensure_default_group(storage)
+        group_id = default_group["id"]
+    with storage.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE accounts SET group_id = %s, updated_at = NOW() WHERE biz = ANY(%s)",
+            (group_id, biz_list),
+        )
+    storage.conn.commit()
+    return {"updated": len(biz_list)}
+
+
+@router.get("/account/{biz}")
+def get_account(
+    biz: str,
+    storage: StorageLike = Depends(_get_storage),
+) -> dict[str, Any]:
+    return _get_account(storage, biz)
+
+
+@router.patch("/account/{biz}")
+def update_account(
+    biz: str,
+    body: dict[str, Any] = Body(default={}),
+    storage: StorageLike = Depends(_get_storage),
+) -> dict[str, Any]:
+    if "group_id" in body and body["group_id"] is None:
+        default_group = _ensure_default_group(storage)
+        body["group_id"] = default_group["id"]
+    return _update_account(storage, biz, body)
+
+
+@router.delete("/account/{biz}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_account(
+    biz: str,
+    storage: StorageLike = Depends(_get_storage),
+) -> Response:
+    removed = storage.remove_account(biz)
+    if removed == 0:
+        raise ApiError("Account not found", status=404)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/account/{biz}/avatar")
+def get_account_avatar(
+    biz: str,
+    storage: StorageLike = Depends(_get_storage),
+) -> Response:
+    avatar = _get_avatar_row(storage, biz)
+    data = avatar.get("data") if avatar else None
+    if not data:
+        url = avatar.get("avatar_url") if avatar else None
+        if not url:
+            row = _fetchone(
+                storage,
+                "SELECT round_head_img FROM accounts WHERE biz = %s",
+                [biz],
+            )
+            if not row:
+                raise ApiError("Account not found", status=404)
+            url = row.get("round_head_img")
+            if url:
+                _upsert_avatar_url(storage, biz, url)
+        if url:
+            cached = _fetch_and_cache_avatar(storage, biz, url)
+            if cached:
+                payload, content_type = cached
+                return _binary_response(payload, content_type)
+        raise ApiError("Avatar not found", status=404)
+    payload = data.tobytes() if isinstance(data, memoryview) else bytes(data)
+    content_type = avatar.get("content_type") or "application/octet-stream"
+    return _binary_response(payload, content_type)
+
+
+@router.get("/article")
+def list_articles(
+    group_id: Optional[int] = None,
+    biz: Optional[str] = None,
+    article_id: Optional[str] = None,
+    q: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+    content: str = "",
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    storage: StorageLike = Depends(_get_storage),
+) -> dict[str, Any]:
+    content_only = (content or "").lower() in {"1", "true", "yes"}
+    since_ts = _parse_date(since)
+    until_ts = _parse_date(until, end_of_day=True)
+    return _list_articles(
+        storage,
+        group_id=group_id,
+        biz=biz or None,
+        query=q or None,
+        since_ts=since_ts,
+        until_ts=until_ts,
+        content_only=content_only,
+        page=max(page, 1),
+        page_size=min(max(page_size, 1), 200),
+        article_id=article_id or None,
+    )
+
+
+@router.get("/article/{article_id}")
+def get_article(
+    article_id: int,
+    storage: StorageLike = Depends(_get_storage),
+) -> dict[str, Any]:
+    return _get_article(storage, article_id)
+
+
+@router.get("/article/{article_id}/image")
+def list_article_images(
+    article_id: int,
+    storage: StorageLike = Depends(_get_storage),
+) -> dict[str, Any]:
+    payload = _list_article_images(storage, article_id)
+    return {"images": payload}
+
+
+@router.get("/image/{image_id}")
+def get_image(
+    image_id: int,
+    storage: StorageLike = Depends(_get_storage),
+) -> Response:
+    payload, content_type = _fetch_image(storage, image_id)
+    return _binary_response(payload, content_type)
+
+
+@router.get("/login")
+def login_status(
+    storage: StorageLike = Depends(_get_storage),
+    manager: "LoginManager" = Depends(_get_login_manager),
+) -> dict[str, Any]:
+    info = _get_login_info(storage)
+    snapshot = manager._snapshot()
+    return {
+        **snapshot,
+        "qrcode_url": "/api/login/qrcode" if snapshot.get("has_qrcode") else None,
+        "last_login": info,
+    }
+
+
+@router.post("/login/start")
+async def login_start(
+    storage: StorageLike = Depends(_get_storage),
+    manager: "LoginManager" = Depends(_get_login_manager),
+) -> dict[str, Any]:
+    snapshot = await manager.start()
+    info = _get_login_info(storage)
+    return {
+        **snapshot,
+        "qrcode_url": "/api/login/qrcode" if snapshot.get("has_qrcode") else None,
+        "last_login": info,
+    }
+
+
+@router.post("/login/poll")
+async def login_poll(
+    storage: StorageLike = Depends(_get_storage),
+    manager: "LoginManager" = Depends(_get_login_manager),
+) -> dict[str, Any]:
+    snapshot = await manager.poll(storage)
+    info = _get_login_info(storage)
+    return {
+        **snapshot,
+        "qrcode_url": "/api/login/qrcode" if snapshot.get("has_qrcode") else None,
+        "last_login": info,
+    }
+
+
+@router.post("/login/cancel")
+def login_cancel(
+    storage: StorageLike = Depends(_get_storage),
+    manager: "LoginManager" = Depends(_get_login_manager),
+) -> dict[str, Any]:
+    manager.cancel()
+    info = _get_login_info(storage)
+    snapshot = manager._snapshot()
+    return {
+        **snapshot,
+        "qrcode_url": "/api/login/qrcode" if snapshot.get("has_qrcode") else None,
+        "last_login": info,
+    }
+
+
+@router.get("/login/qrcode")
+def login_qrcode(
+    manager: "LoginManager" = Depends(_get_login_manager),
+) -> Response:
+    data = manager.get_qrcode()
+    return Response(content=data, media_type="image/png")
+
+
+@router.get("/sync")
+def sync_status(storage: StorageLike = Depends(_get_storage)) -> dict[str, Any]:
+    return _get_sync_status(storage)
+
+
+@router.get("/sync/settings")
+def get_sync_settings(storage: StorageLike = Depends(_get_storage)) -> dict[str, Any]:
+    payload = _get_sync_settings(storage)
+    payload["email"] = _get_email_settings(storage)
+    return payload
+
+
+@router.patch("/sync/settings")
+def update_sync_settings(
+    body: dict[str, Any] = Body(default={}),
+    storage: StorageLike = Depends(_get_storage),
+    scheduler: "SyncScheduler" = Depends(_get_sync_scheduler),
+) -> dict[str, Any]:
+    updates: dict[str, Any] = {}
+    if "enabled" in body:
+        updates["enabled"] = bool(body["enabled"])
+    if "interval_minutes" in body:
+        updates["interval_minutes"] = max(int(body["interval_minutes"]), 1)
+    if "mode" in body:
+        updates["mode"] = body["mode"]
+    if "recent_days" in body:
+        updates["recent_days"] = max(int(body["recent_days"]), 1)
+    if "page_size" in body:
+        updates["page_size"] = max(int(body["page_size"]), 1)
+    if "page_limit" in body:
+        value = body["page_limit"]
+        if value in ("", None):
+            updates["page_limit"] = None
+        else:
+            updates["page_limit"] = max(int(value), 1)
+    if "sleep_seconds" in body:
+        updates["sleep_seconds"] = float(body["sleep_seconds"])
+    if "download_content" in body:
+        updates["download_content"] = bool(body["download_content"])
+    if "download_images" in body:
+        updates["download_images"] = bool(body["download_images"])
+    if "content_limit" in body:
+        updates["content_limit"] = max(int(body["content_limit"]), 0)
+    if "skip_minutes" in body:
+        updates["skip_minutes"] = max(int(body["skip_minutes"]), 0)
+    if "since" in body:
+        updates["since"] = body["since"]
+    if "until" in body:
+        updates["until"] = body["until"]
+    if "alert_enabled" in body:
+        updates["alert_enabled"] = bool(body["alert_enabled"])
+    if "alert_email" in body:
+        updates["alert_email"] = str(body["alert_email"]).strip()
+    settings = _set_sync_settings(storage, updates)
+    email_updates: dict[str, Any] = {}
+    email_body = body.get("email")
+    if isinstance(email_body, dict):
+        for key in (
+            "smtp_host",
+            "smtp_port",
+            "smtp_user",
+            "smtp_password",
+            "smtp_tls",
+            "from_email",
+        ):
+            if key in email_body:
+                email_updates[key] = email_body[key]
+    if email_updates:
+        settings["email"] = _set_email_settings(storage, email_updates)
+    else:
+        settings["email"] = _get_email_settings(storage)
+    if settings.get("enabled"):
+        scheduler.trigger()
+    return settings
+
+
+@router.post("/sync/run", status_code=status.HTTP_202_ACCEPTED)
+def run_sync(
+    scheduler: "SyncScheduler" = Depends(_get_sync_scheduler),
+) -> dict[str, Any]:
+    threading.Thread(target=scheduler.run_once, daemon=True).start()
+    return {"status": "running"}
+
+
+@router.get("/feed/mixed")
+def list_feed(
+    request: Request,
+    group_id: Optional[int] = None,
+    biz: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = 50,
+    format: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    days: Optional[int] = None,
+    storage: StorageLike = Depends(_get_storage),
+) -> Response | dict[str, Any]:
+    output_format = (format or "").lower()
+    since_ts = _parse_date(since)
+    until_ts = _parse_date(until, end_of_day=True)
+    if days:
+        now = datetime.utcnow()
+        since_ts = int((now.timestamp() - days * 86400))
+    if output_format == "rss":
+        group_names: list[str] = []
+        if group_id is not None:
+            row = _fetchone(
+                storage,
+                "SELECT name FROM account_groups WHERE id = %s",
+                [group_id],
+            )
+            if not row:
+                raise ApiError("Group not found", status=404)
+            group_names = [row.get("name") or ""]
+        host = request.headers.get("host") or f"{DEFAULT_HOST}:{DEFAULT_PORT}"
+        scheme = request.url.scheme or "http"
+        image_base = f"{scheme}://{host}"
+        items = query_rss_items(
+            group_names=group_names,
+            limit=min(max(limit, 1), 500),
+            days=days,
+            since=since,
+            until=until,
+            image_base_url=image_base,
+        )
+        title = "Hippo RSS"
+        description = "Hippo RSS feed"
+        if group_names:
+            title = f"{group_names[0]} - Hippo RSS"
+            description = f"RSS feed for {group_names[0]}"
+        xml = build_rss_xml(
+            title=title,
+            link=image_base,
+            description=description,
+            items=items,
+        )
+        return Response(
+            content=xml.encode("utf-8"),
+            media_type="application/rss+xml; charset=utf-8",
+        )
+    payload = _list_feed(
+        storage,
+        group_id=group_id,
+        biz=biz or None,
+        query=q or None,
+        since_ts=since_ts,
+        until_ts=until_ts,
+        limit=min(max(limit, 1), 500),
+    )
+    return {"articles": payload}
+
+
+def create_app(static_dir: Path | str = "static") -> FastAPI:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     static_path = Path(static_dir).expanduser().resolve()
     if not static_path.exists():
         raise RuntimeError(f"Static directory not found: {static_path}")
-    httpd = ThreadingHTTPServer((host, port), HippoHandler)
-    httpd.static_dir = static_path  # type: ignore[attr-defined]
-    httpd.login_manager = LoginManager()  # type: ignore[attr-defined]
-    httpd.sync_scheduler = SyncScheduler()  # type: ignore[attr-defined]
-    httpd.sync_scheduler.start()  # type: ignore[attr-defined]
-    logger.info("Hippo server listening on http://%s:%s", host, port)
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        logger.info("Shutting down")
-    finally:
-        httpd.sync_scheduler.stop()  # type: ignore[attr-defined]
-        httpd.server_close()
+
+    app = FastAPI()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.on_event("startup")
+    def _startup() -> None:
+        app.state.login_manager = LoginManager()
+        app.state.sync_scheduler = SyncScheduler()
+        app.state.sync_scheduler.start()
+
+    @app.on_event("shutdown")
+    def _shutdown() -> None:
+        scheduler = getattr(app.state, "sync_scheduler", None)
+        if scheduler:
+            scheduler.stop()
+
+    @app.exception_handler(ApiError)
+    async def _handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
+        return JSONResponse(status_code=exc.status, content={"error": str(exc)})
+
+    @app.exception_handler(Exception)
+    async def _handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("API error")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": str(exc)},
+        )
+
+    app.include_router(router)
+    app.mount("/", StaticFiles(directory=static_path, html=True), name="static")
+    return app
+
+
+def serve(
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+    static_dir: Path | str = "static",
+) -> None:
+    import uvicorn
+
+    app = create_app(static_dir=static_dir)
+    uvicorn.run(app, host=host, port=port, log_level="info")
