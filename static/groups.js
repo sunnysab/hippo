@@ -184,7 +184,10 @@
           <div>
             <div class="account-name">${account.nickname}</div>
             <div class="account-sub">${account.alias || account.biz}</div>
-            <div class="account-sub account-stats">${lastUpdatedText} · ${articleCountText}</div>
+            <div class="account-sub account-stats">
+              <span class="account-stat">${lastUpdatedText}</span>
+              <span class="account-stat">${articleCountText}</span>
+            </div>
           </div>
         </div>
       `;

@@ -353,9 +353,9 @@ body {
 
 .toast {
   position: fixed;
-  top: 24px;
+  top: 65%;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   background: #111827;
   color: #fff;
   padding: 10px 14px;
