@@ -40,6 +40,11 @@
           <button class="btn ghost" id="btn-group-delete" type="button" data-i18n="groups.delete">Delete</button>
         </div>
       </div>
+      <div class="toolbar group-sync-toolbar">
+        <span class="muted" data-i18n="groups.syncDefault">Default sync</span>
+        <select id="group-sync-mode"></select>
+        <input type="number" id="group-sync-days" min="1" />
+      </div>
       <div class="toolbar accounts-toolbar">
         <label class="switch inline">
           <input type="checkbox" id="account-select-all" />
@@ -48,6 +53,10 @@
         <div class="batch-actions is-hidden" id="batch-actions">
           <select id="batch-group-select"></select>
           <button class="btn ghost" id="btn-batch-move" type="button" data-i18n="accounts.move">Move</button>
+          <div class="batch-divider"></div>
+          <select id="batch-sync-mode"></select>
+          <input type="number" id="batch-sync-days" min="1" />
+          <button class="btn ghost" id="btn-batch-sync" type="button" data-i18n="accounts.batchSyncApply">Apply</button>
         </div>
         <span class="badge" id="batch-count">0</span>
         <button class="btn ghost" id="btn-account-refresh" type="button">

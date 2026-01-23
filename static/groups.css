@@ -70,10 +70,30 @@
   min-width: 220px;
 }
 
+.group-sync-toolbar {
+  margin: 10px 0 16px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
+.group-sync-toolbar select,
+.group-sync-toolbar input {
+  min-width: 160px;
+}
+
 .batch-actions {
   display: inline-flex;
   align-items: center;
   gap: 10px;
+}
+
+.batch-divider {
+  width: 1px;
+  height: 22px;
+  background: var(--border);
+  margin: 0 4px;
 }
 
 .search-results {
@@ -157,7 +177,7 @@
 
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 16px;
   align-content: start;
   grid-auto-rows: max-content;
@@ -258,6 +278,11 @@
   font-size: 12px;
   font-family: "Source Sans 3", sans-serif;
   background: #fff;
+}
+
+.account-sync-mode {
+  flex: 1;
+  min-width: 0;
 }
 
 .account-sync-days {

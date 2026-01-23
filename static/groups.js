@@ -56,6 +56,35 @@
     return mode || '';
   };
 
+  const getDefaultRecentDays = () => {
+    return state.syncSettings?.recent_days ?? syncDefaults.recent_days;
+  };
+
+  const buildSyncModeOptions = (select, { includeInherit, inheritLabel, selected }) => {
+    if (!select) return;
+    select.innerHTML = '';
+    if (includeInherit) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = inheritLabel;
+      select.appendChild(opt);
+    }
+    const options = [
+      { value: 'incremental', label: t('sync.modeIncremental', 'Incremental') },
+      { value: 'recent', label: t('sync.modeRecent', 'Recent') },
+      { value: 'full', label: t('sync.modeFull', 'Full') },
+    ];
+    options.forEach((item) => {
+      const opt = document.createElement('option');
+      opt.value = item.value;
+      opt.textContent = item.label;
+      select.appendChild(opt);
+    });
+    if (selected !== undefined && selected !== null) {
+      select.value = selected;
+    }
+  };
+
   const showGroupContextMenu = (group, x, y) => {
     const menu = $('#group-context-menu');
     if (!menu) return;
@@ -107,6 +136,7 @@
         state.selectedGroupId = group.id;
         renderGroupList();
         renderGroupHeader();
+        renderGroupSelects();
         await loadAccounts();
       });
       item.addEventListener('contextmenu', (event) => {
@@ -124,6 +154,8 @@
     const idEl = $('#group-current-id');
     const renameBtn = $('#btn-group-rename');
     const deleteBtn = $('#btn-group-delete');
+    const syncModeSelect = $('#group-sync-mode');
+    const syncDaysInput = $('#group-sync-days');
     if (!group) {
       if (nameEl) {
         nameEl.textContent = t('groups.currentTitle', 'Group');
@@ -137,6 +169,14 @@
       if (metaEl) metaEl.textContent = t('groups.currentEmpty', 'Select a group.');
       if (renameBtn) renameBtn.disabled = true;
       if (deleteBtn) deleteBtn.disabled = true;
+      if (syncModeSelect) {
+        syncModeSelect.innerHTML = '';
+        syncModeSelect.disabled = true;
+      }
+      if (syncDaysInput) {
+        syncDaysInput.value = '';
+        syncDaysInput.disabled = true;
+      }
       return;
     }
     if (nameEl) {
@@ -158,6 +198,23 @@
     }
     if (renameBtn) renameBtn.disabled = false;
     if (deleteBtn) deleteBtn.disabled = false;
+    if (syncModeSelect && syncDaysInput) {
+      const defaultMode = state.syncSettings?.mode || syncDefaults.mode;
+      const inheritLabel = t('groups.syncModeInherit', 'Follow global ({mode})').replace(
+        '{mode}',
+        getSyncModeLabel(defaultMode),
+      );
+      buildSyncModeOptions(syncModeSelect, {
+        includeInherit: true,
+        inheritLabel,
+        selected: group.sync_mode || '',
+      });
+      const defaultRecentDays = getDefaultRecentDays();
+      const groupRecent = group.sync_recent_days ?? defaultRecentDays;
+      syncDaysInput.value = String(groupRecent);
+      syncDaysInput.disabled = group.sync_mode !== 'recent';
+      syncModeSelect.disabled = false;
+    }
   };
 
   const renderGroupSelects = () => {
@@ -184,11 +241,38 @@
         select.appendChild(opt);
       });
     });
+
+    const batchSyncMode = $('#batch-sync-mode');
+    const batchSyncDays = $('#batch-sync-days');
+    if (batchSyncMode) {
+      const activeGroup = state.groups.find((item) => item.id === state.selectedGroupId);
+      const groupMode = activeGroup?.sync_mode || '';
+      const defaultMode = groupMode || state.syncSettings?.mode || syncDefaults.mode;
+      const inheritLabel = groupMode
+        ? t('accounts.syncModeInheritGroup', 'Follow group ({mode})').replace(
+            '{mode}',
+            getSyncModeLabel(defaultMode),
+          )
+        : t('accounts.syncModeInherit', 'Follow global ({mode})').replace(
+            '{mode}',
+            getSyncModeLabel(defaultMode),
+          );
+      buildSyncModeOptions(batchSyncMode, {
+        includeInherit: true,
+        inheritLabel,
+        selected: batchSyncMode.value || '',
+      });
+    }
+    if (batchSyncDays) {
+      batchSyncDays.value = String(getDefaultRecentDays());
+      batchSyncDays.disabled = batchSyncMode ? batchSyncMode.value !== 'recent' : true;
+    }
   };
 
   const renderAccounts = () => {
     const list = $('#account-list');
     list.innerHTML = '';
+    const activeGroup = state.groups.find((item) => item.id === state.selectedGroupId);
     state.accounts.forEach((account) => {
       const card = document.createElement('div');
       card.className = 'card';
@@ -201,13 +285,21 @@
       const articleCount = Number(account.article_count || 0);
       const articleCountText = t('accounts.articleCount', '{n} articles').replace('{n}', articleCount);
       const storedMode = account.sync_mode || '';
-      const defaultMode = state.syncSettings?.mode || syncDefaults.mode;
-      const inheritLabel = t('accounts.syncModeInherit', 'Follow global ({mode})').replace(
-        '{mode}',
-        getSyncModeLabel(defaultMode),
-      );
-      const defaultRecentDays = state.syncSettings?.recent_days ?? syncDefaults.recent_days;
-      const initialRecentDays = account.sync_recent_days ?? defaultRecentDays;
+      const groupMode = activeGroup?.sync_mode || '';
+      const defaultMode = groupMode || state.syncSettings?.mode || syncDefaults.mode;
+      const inheritLabel = groupMode
+        ? t('accounts.syncModeInheritGroup', 'Follow group ({mode})').replace(
+            '{mode}',
+            getSyncModeLabel(defaultMode),
+          )
+        : t('accounts.syncModeInherit', 'Follow global ({mode})').replace(
+            '{mode}',
+            getSyncModeLabel(defaultMode),
+          );
+      const defaultRecentDays = getDefaultRecentDays();
+      const groupRecentDays = activeGroup?.sync_recent_days;
+      const baseRecentDays = groupRecentDays ?? defaultRecentDays;
+      const initialRecentDays = account.sync_recent_days ?? baseRecentDays;
       const isRecentEditable = storedMode === 'recent';
       const syncModeLabel = t('accounts.syncMode', 'Update strategy');
       const syncRecentLabel = t('accounts.syncRecentDays', 'Recent days');
@@ -271,7 +363,7 @@
       const resolveRecentDays = (value) => {
         const parsed = Number.parseInt(value, 10);
         if (!Number.isFinite(parsed) || parsed < 1) {
-          return defaultRecentDays;
+          return baseRecentDays;
         }
         return parsed;
       };
@@ -299,7 +391,7 @@
           account.sync_mode = previousMode || null;
           account.sync_recent_days = previousDays;
           modeSelect.value = previousMode;
-          const fallbackDays = previousDays ?? defaultRecentDays;
+          const fallbackDays = previousDays ?? baseRecentDays;
           daysInput.value = String(fallbackDays);
           updateDaysState(previousMode);
           showToast(t('accounts.syncFailed', 'Failed to update sync strategy.'));
@@ -558,6 +650,65 @@
       state.selectedGroupId = null;
       await loadGroups();
     });
+    $('#group-sync-mode').addEventListener('change', async (event) => {
+      const group = state.groups.find((item) => item.id === state.selectedGroupId);
+      if (!group) return;
+      const mode = event.target.value;
+      const daysInput = $('#group-sync-days');
+      const defaultRecentDays = getDefaultRecentDays();
+      const resolveDays = (value) => {
+        const parsed = Number.parseInt(value, 10);
+        if (!Number.isFinite(parsed) || parsed < 1) {
+          return defaultRecentDays;
+        }
+        return parsed;
+      };
+      const nextDays = resolveDays(daysInput.value);
+      daysInput.value = String(nextDays);
+      daysInput.disabled = mode !== 'recent';
+      try {
+        const payload = {
+          sync_mode: mode || null,
+        };
+        if (mode === 'recent') {
+          payload.sync_recent_days = nextDays;
+        }
+        const updated = await apiSend(`/api/group/${group.id}`, 'PATCH', payload);
+        group.sync_mode = updated.sync_mode || null;
+        group.sync_recent_days = updated.sync_recent_days ?? group.sync_recent_days;
+        renderGroupHeader();
+        renderAccounts();
+        renderGroupSelects();
+        showToast(t('groups.syncSaved', 'Default sync updated.'));
+      } catch (err) {
+        console.warn('Failed to update group sync', err);
+        renderGroupHeader();
+        showToast(t('groups.syncFailed', 'Failed to update default sync.'));
+      }
+    });
+    $('#group-sync-days').addEventListener('change', async () => {
+      const group = state.groups.find((item) => item.id === state.selectedGroupId);
+      if (!group) return;
+      if ($('#group-sync-mode').value !== 'recent') return;
+      const daysInput = $('#group-sync-days');
+      const defaultRecentDays = getDefaultRecentDays();
+      const parsed = Number.parseInt(daysInput.value, 10);
+      const nextDays = Number.isFinite(parsed) && parsed > 0 ? parsed : defaultRecentDays;
+      daysInput.value = String(nextDays);
+      try {
+        const updated = await apiSend(`/api/group/${group.id}`, 'PATCH', {
+          sync_recent_days: nextDays,
+        });
+        group.sync_recent_days = updated.sync_recent_days ?? group.sync_recent_days;
+        renderAccounts();
+        renderGroupSelects();
+        showToast(t('groups.syncSaved', 'Default sync updated.'));
+      } catch (err) {
+        console.warn('Failed to update group sync days', err);
+        renderGroupHeader();
+        showToast(t('groups.syncFailed', 'Failed to update default sync.'));
+      }
+    });
     const groupRssBtn = $('#group-menu-rss');
     if (groupRssBtn) {
       groupRssBtn.addEventListener('click', async () => {
@@ -611,6 +762,47 @@
       });
       await loadAccounts();
     });
+    $('#batch-sync-mode').addEventListener('change', () => {
+      const mode = $('#batch-sync-mode').value;
+      const daysInput = $('#batch-sync-days');
+      if (!daysInput) return;
+      const defaultRecentDays = getDefaultRecentDays();
+      if (mode === 'recent') {
+        const parsed = Number.parseInt(daysInput.value, 10);
+        const nextDays = Number.isFinite(parsed) && parsed > 0 ? parsed : defaultRecentDays;
+        daysInput.value = String(nextDays);
+        daysInput.disabled = false;
+      } else {
+        daysInput.disabled = true;
+      }
+    });
+    $('#btn-batch-sync').addEventListener('click', async () => {
+      const mode = $('#batch-sync-mode').value;
+      const daysInput = $('#batch-sync-days');
+      if (!state.selectedAccounts.size) {
+        alert(t('accounts.moveSelectAccounts', 'Select accounts to move.'));
+        return;
+      }
+      const payload = {
+        biz_list: Array.from(state.selectedAccounts),
+        sync_mode: mode || null,
+      };
+      if (mode === 'recent') {
+        const defaultRecentDays = getDefaultRecentDays();
+        const parsed = Number.parseInt(daysInput.value, 10);
+        const nextDays = Number.isFinite(parsed) && parsed > 0 ? parsed : defaultRecentDays;
+        daysInput.value = String(nextDays);
+        payload.sync_recent_days = nextDays;
+      }
+      try {
+        await apiSend('/api/account/batch', 'POST', payload);
+        showToast(t('accounts.syncSaved', 'Sync strategy updated.'));
+        await loadAccounts();
+      } catch (err) {
+        console.warn('Batch sync update failed', err);
+        showToast(t('accounts.syncFailed', 'Failed to update sync strategy.'));
+      }
+    });
 
     $('#btn-account-add').addEventListener('click', openAccountSearchModal);
     $('#btn-account-search-close').addEventListener('click', closeAccountSearchModal);
@@ -656,6 +848,7 @@
   };
 
   const refresh = async () => {
+    await ensureSyncSettings();
     await loadGroups();
     await loadAccounts();
   };
