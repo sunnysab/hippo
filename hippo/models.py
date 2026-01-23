@@ -1,61 +1,67 @@
-"""Dataclasses used by the CLI."""
+"""Models used by the CLI."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 
-@dataclass(slots=True)
-class AccountCredential:
+class AccountCredential(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+
     biz: str
     nickname: str
-    alias: Optional[str] = None
-    round_head_img: Optional[str] = None
+    alias: str | None = None
+    round_head_img: str | None = None
     is_disabled: bool = False
-    last_synced_at: Optional[datetime] = None
-    sync_mode: Optional[str] = None
-    sync_recent_days: Optional[int] = None
-    group_id: Optional[int] = None
-    group_name: Optional[str] = None
+    last_synced_at: datetime | None = None
+    sync_mode: str | None = None
+    sync_recent_days: int | None = None
+    group_id: int | None = None
+    group_name: str | None = None
 
 
-@dataclass(slots=True)
-class AccountGroup:
+class AccountGroup(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+
     id: int
     name: str
     account_count: int = 0
-    sync_mode: Optional[str] = None
-    sync_recent_days: Optional[int] = None
+    sync_mode: str | None = None
+    sync_recent_days: int | None = None
 
 
-@dataclass(slots=True)
-class ArticleRecord:
+class ArticleRecord(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+
     biz: str
     article_id: str
     title: str
-    author: Optional[str]
-    digest: Optional[str]
-    cover: Optional[str]
+    author: str | None
+    digest: str | None
+    cover: str | None
     link: str
-    source_url: Optional[str]
-    publish_at: Optional[int]
-    raw: Dict[str, Any]
+    source_url: str | None
+    publish_at: int | None
+    raw: dict[str, Any]
 
 
-@dataclass(slots=True)
-class DownloadResult:
+class DownloadResult(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+
     article: ArticleRecord
     asset_count: int
 
 
-@dataclass(slots=True)
-class LoginSession:
+class LoginSession(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+
     token: str
-    cookies: Dict[str, str]
-    nickname: Optional[str] = None
-    avatar: Optional[str] = None
+    cookies: dict[str, str]
+    nickname: str | None = None
+    avatar: str | None = None
 
 
 __all__ = [
