@@ -10,10 +10,41 @@ from typing import Iterable, List, Optional, Protocol
 
 import psycopg2
 import psycopg2.extras
+from psycopg2 import pool as pg_pool
 
 from .models import AccountCredential, AccountGroup, ArticleRecord, LoginSession
+from . import queries
 
 SCHEMA_VERSION = "5"
+
+_PG_POOL: Optional[pg_pool.SimpleConnectionPool] = None
+_PG_POOL_DSN: Optional[str] = None
+
+
+def _pool_enabled() -> bool:
+    return os.environ.get("HIPPO_PG_POOL_DISABLED", "").lower() not in ("1", "true", "yes")
+
+
+def _get_pool(dsn: str) -> Optional[pg_pool.SimpleConnectionPool]:
+    if not _pool_enabled():
+        return None
+    global _PG_POOL, _PG_POOL_DSN
+    if _PG_POOL is not None and _PG_POOL_DSN == dsn:
+        return _PG_POOL
+    if _PG_POOL is not None:
+        _PG_POOL.closeall()
+    min_conn = int(os.environ.get("HIPPO_PG_POOL_MIN", "1") or "1")
+    max_conn = int(os.environ.get("HIPPO_PG_POOL_MAX", "8") or "8")
+    if max_conn < min_conn:
+        max_conn = min_conn
+    _PG_POOL = pg_pool.SimpleConnectionPool(
+        min_conn,
+        max_conn,
+        dsn,
+        options="-c timezone=Asia/Shanghai",
+    )
+    _PG_POOL_DSN = dsn
+    return _PG_POOL
 
 
 class StorageInitError(RuntimeError):
@@ -61,9 +92,23 @@ class StorageLike(Protocol):
 
 
 class PostgresStorage(AbstractContextManager):
-    def __init__(self, dsn: str, *, auto_init: bool = False) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        auto_init: bool = False,
+        pool: Optional[pg_pool.AbstractConnectionPool] = None,
+        use_pool: bool = True,
+    ) -> None:
         self.dsn = dsn
-        self.conn = psycopg2.connect(dsn, options="-c timezone=Asia/Shanghai")
+        resolved_pool = pool if use_pool else None
+        if resolved_pool is None and use_pool:
+            resolved_pool = _get_pool(dsn)
+        self._pool = resolved_pool
+        if self._pool:
+            self.conn = self._pool.getconn()
+        else:
+            self.conn = psycopg2.connect(dsn, options="-c timezone=Asia/Shanghai")
         self.conn.autocommit = False
         if auto_init:
             self._init_db()
@@ -71,7 +116,7 @@ class PostgresStorage(AbstractContextManager):
             try:
                 self._ensure_initialized()
             except Exception:
-                self.conn.close()
+                self.close()
                 raise
 
     def __enter__(self) -> "PostgresStorage":
@@ -81,119 +126,20 @@ class PostgresStorage(AbstractContextManager):
         self.close()
 
     def close(self) -> None:
-        self.conn.close()
+        if self._pool:
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            self._pool.putconn(self.conn)
+        else:
+            self.conn.close()
 
     def _init_db(self) -> None:
         with self.conn.cursor() as cur:
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS meta (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                )
-                """
-            )
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS account_groups (
-                    id SERIAL PRIMARY KEY,
-                    name TEXT NOT NULL UNIQUE,
-                    created_at TIMESTAMPTZ NOT NULL,
-                    updated_at TIMESTAMPTZ NOT NULL
-                )
-                """
-            )
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS accounts (
-                    biz TEXT PRIMARY KEY,
-                    nickname TEXT NOT NULL,
-                    alias TEXT,
-                    round_head_img TEXT,
-                    uin TEXT NOT NULL,
-                    key TEXT NOT NULL,
-                    pass_ticket TEXT NOT NULL,
-                    group_id INTEGER REFERENCES account_groups(id) ON DELETE SET NULL,
-                    is_default BOOLEAN NOT NULL DEFAULT FALSE,
-                    is_disabled BOOLEAN NOT NULL DEFAULT FALSE,
-                    last_synced_at TIMESTAMPTZ,
-                    created_at TIMESTAMPTZ NOT NULL,
-                    updated_at TIMESTAMPTZ NOT NULL
-                )
-                """
-            )
-            cur.execute(
-                """
-                ALTER TABLE accounts
-                ADD COLUMN IF NOT EXISTS is_disabled BOOLEAN NOT NULL DEFAULT FALSE
-                """
-            )
-            cur.execute(
-                """
-                ALTER TABLE accounts
-                ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES account_groups(id) ON DELETE SET NULL
-                """
-            )
-            cur.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_accounts_group
-                ON accounts (group_id)
-                """
-            )
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS articles (
-                    id SERIAL PRIMARY KEY,
-                    biz TEXT NOT NULL REFERENCES accounts(biz) ON DELETE CASCADE,
-                    article_id TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    author TEXT,
-                    digest TEXT,
-                    cover TEXT,
-                    link TEXT NOT NULL,
-                    source_url TEXT,
-                    publish_at BIGINT,
-                    raw_json TEXT NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL,
-                    updated_at TIMESTAMPTZ NOT NULL,
-                    UNIQUE (biz, article_id)
-                )
-                """
-            )
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS article_content (
-                    id SERIAL PRIMARY KEY,
-                    article_pk INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
-                    url_token TEXT,
-                    clean_html TEXT,
-                    content_markdown TEXT,
-                    content_json JSONB,
-                    created_at TIMESTAMPTZ NOT NULL,
-                    updated_at TIMESTAMPTZ NOT NULL,
-                    UNIQUE (article_pk)
-                )
-                """
-            )
-            cur.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_article_content_article_pk
-                ON article_content (article_pk)
-                """
-            )
-            cur.execute(
-                """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_name = 'articles'
-                AND column_name IN (
-                    'url_token',
-                    'clean_html',
-                    'content_markdown',
-                    'content_json'
-                )
-                """
-            )
+            for statement in queries.SCHEMA_INIT_STATEMENTS:
+                cur.execute(statement)
+            cur.execute(queries.ARTICLES_COLUMN_CHECK_QUERY)
             existing_columns = {row[0] for row in cur.fetchall()}
             if {
                 "url_token",
@@ -201,94 +147,13 @@ class PostgresStorage(AbstractContextManager):
                 "content_markdown",
                 "content_json",
             }.issubset(existing_columns):
-                cur.execute(
-                    """
-                    INSERT INTO article_content
-                        (article_pk, url_token, clean_html, content_markdown, content_json,
-                         created_at, updated_at)
-                    SELECT
-                        id,
-                        url_token,
-                        clean_html,
-                        content_markdown,
-                        content_json::jsonb,
-                        created_at,
-                        updated_at
-                    FROM articles
-                    WHERE url_token IS NOT NULL
-                       OR clean_html IS NOT NULL
-                       OR content_markdown IS NOT NULL
-                       OR content_json IS NOT NULL
-                    ON CONFLICT (article_pk) DO UPDATE SET
-                        url_token=EXCLUDED.url_token,
-                        clean_html=EXCLUDED.clean_html,
-                        content_markdown=EXCLUDED.content_markdown,
-                        content_json=EXCLUDED.content_json,
-                        updated_at=EXCLUDED.updated_at
-                    """
-                )
-            cur.execute(
-                """
-                ALTER TABLE articles
-                DROP COLUMN IF EXISTS url_token,
-                DROP COLUMN IF EXISTS clean_html,
-                DROP COLUMN IF EXISTS content_markdown,
-                DROP COLUMN IF EXISTS content_json,
-                DROP COLUMN IF EXISTS cover_image_id
-                """
-            )
-            cur.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_articles_biz_publish
-                ON articles (biz, publish_at DESC)
-                """
-            )
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS article_images (
-                    id SERIAL PRIMARY KEY,
-                    article_pk INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
-                    position INTEGER NOT NULL,
-                    kind TEXT NOT NULL,
-                    orig_url TEXT,
-                    content_type TEXT,
-                    data BYTEA,
-                    failed_at TIMESTAMPTZ,
-                    failed_reason TEXT,
-                    updated_at TIMESTAMPTZ NOT NULL,
-                    UNIQUE (article_pk, orig_url)
-                )
-                """
-            )
-            cur.execute(
-                """
-                ALTER TABLE article_images
-                ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ,
-                ADD COLUMN IF NOT EXISTS failed_reason TEXT
-                """
-            )
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS login_sessions (
-                    id SERIAL PRIMARY KEY,
-                    token TEXT NOT NULL,
-                    cookies_json TEXT NOT NULL,
-                    nickname TEXT,
-                    avatar TEXT,
-                    is_default BOOLEAN NOT NULL DEFAULT TRUE,
-                    created_at TIMESTAMPTZ NOT NULL,
-                    updated_at TIMESTAMPTZ NOT NULL
-                )
-                """
-            )
-            cur.execute(
-                """
-                INSERT INTO meta(key, value)
-                VALUES ('schema_version', %s)
-                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-                """,
-                (SCHEMA_VERSION,),
-            )
+                cur.execute(queries.ARTICLE_CONTENT_MIGRATION_QUERY)
+            cur.execute(queries.DROP_ARTICLE_LEGACY_COLUMNS)
+            cur.execute(queries.CREATE_ARTICLES_INDEX)
+            cur.execute(queries.CREATE_ARTICLE_IMAGES_TABLE)
+            cur.execute(queries.ALTER_ARTICLE_IMAGES_TABLE)
+            cur.execute(queries.CREATE_LOGIN_SESSIONS_TABLE)
+            cur.execute(queries.UPSERT_SCHEMA_VERSION, (SCHEMA_VERSION,))
         self.conn.commit()
 
     def _ensure_initialized(self) -> None:
@@ -994,4 +859,4 @@ def open_storage(*, auto_init: bool = False) -> StorageLike:
     dsn = os.environ.get("HIPPO_PG_DSN")
     if not dsn:
         raise StorageInitError("Missing HIPPO_PG_DSN for PostgreSQL storage.")
-    return PostgresStorage(dsn, auto_init=auto_init)
+    return PostgresStorage(dsn, auto_init=auto_init, pool=_get_pool(dsn))
