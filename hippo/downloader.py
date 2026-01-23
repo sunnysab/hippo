@@ -154,188 +154,6 @@ def _parse_markdown_blocks(markdown: str) -> Tuple[Optional[str], Optional[str],
     return title, cover_local, blocks, body_markdown
 
 
-class ImageDownloadWorker:
-    def __init__(
-        self,
-        *,
-        log_error: Callable[..., None],
-        pg_dsn: Optional[str],
-        workers: int = _IMAGE_WORKERS,
-        max_retries: int = _IMAGE_MAX_RETRIES,
-    ) -> None:
-        self._log_error = log_error
-        self._pg_dsn = pg_dsn
-        self._max_retries = max_retries
-        self._queue: "asyncio.Queue[Optional[dict]]" = asyncio.Queue()
-        self._stop = asyncio.Event()
-        self._closed = False
-        self._total = 0
-        self._done = 0
-        self._lock = asyncio.Lock()
-        self._tasks: list[asyncio.Task] = []
-        self._worker_count = max(1, workers)
-
-    async def start(self) -> None:
-        if self._tasks:
-            return
-        for _ in range(self._worker_count):
-            self._tasks.append(asyncio.create_task(self._run()))
-
-    async def enqueue(self, task: dict) -> None:
-        if self._closed:
-            return
-        if not task.get("_counted"):
-            task["_counted"] = True
-            async with self._lock:
-                self._total += 1
-        await self._queue.put(task)
-
-    async def wait(self) -> None:
-        await self._queue.join()
-
-    async def stats(self) -> tuple[int, int]:
-        async with self._lock:
-            return self._total, self._done
-
-    async def mark_pending_as_failed(self) -> None:
-        if self._closed:
-            return
-        self._stop.set()
-        while True:
-            try:
-                task = self._queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-            try:
-                if task is None:
-                    continue
-                article = task.get("article")
-                resolved_url = task.get("resolved_url")
-                orig_url = task.get("orig_url")
-                referer = task.get("referer")
-                if article and resolved_url:
-                    self._log_error(
-                        stage="asset_download",
-                        article=article,
-                        error="aborted",
-                        asset_url=orig_url or resolved_url,
-                        resolved_url=resolved_url,
-                        referer=referer,
-                    )
-                async with self._lock:
-                    self._done += 1
-            finally:
-                self._queue.task_done()
-
-    async def close(self) -> None:
-        if self._closed:
-            return
-        try:
-            await self._queue.join()
-        except asyncio.CancelledError:
-            self._stop.set()
-        self._closed = True
-        for _ in self._tasks:
-            await self._queue.put(None)
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-        self._tasks = []
-
-    async def _run(self) -> None:
-        storage = None
-        if self._pg_dsn:
-            from .storage import PostgresStorage
-
-            storage = PostgresStorage(self._pg_dsn)
-        try:
-            async with MPClient(timeout=15.0) as client:
-                while True:
-                    task = await self._queue.get()
-                    if task is None:
-                        self._queue.task_done()
-                        break
-                    try:
-                        if self._stop.is_set():
-                            continue
-                        article = task["article"]
-                        resolved_url = task["resolved_url"]
-                        orig_url = task.get("orig_url")
-                        referer = task.get("referer")
-                        attempt = int(task.get("attempt", 1))
-                        if not _is_http_url(str(resolved_url)):
-                            reason = f"Invalid URL scheme (non-http): {resolved_url}"
-                            self._log_error(
-                                stage="asset_download",
-                                article=article,
-                                error=reason,
-                                asset_url=orig_url or resolved_url,
-                                resolved_url=resolved_url,
-                                referer=referer,
-                            )
-                            if storage and orig_url:
-                                storage.mark_article_image_failed(
-                                    article.biz,
-                                    article.article_id,
-                                    str(orig_url),
-                                    reason,
-                                )
-                            async with self._lock:
-                                self._done += 1
-                            continue
-                        try:
-                            data, content_type = await client.download_binary_with_type(
-                                resolved_url, referer=referer
-                            )
-                            if storage and orig_url:
-                                storage.update_article_image_data(
-                                    article.biz,
-                                    article.article_id,
-                                    str(orig_url),
-                                    content_type,
-                                    data,
-                                )
-                            async with self._lock:
-                                self._done += 1
-                        except Exception as exc:
-                            is_http_400_or_404 = False
-                            if (
-                                isinstance(exc, httpx.HTTPStatusError)
-                                and exc.response is not None
-                            ):
-                                status = exc.response.status_code
-                                is_http_400_or_404 = status in (400, 404)
-                            if (
-                                not is_http_400_or_404
-                                and attempt < self._max_retries
-                                and not self._stop.is_set()
-                            ):
-                                task["attempt"] = attempt + 1
-                                await self._queue.put(task)
-                            else:
-                                self._log_error(
-                                    stage="asset_download",
-                                    article=article,
-                                    error=str(exc),
-                                    asset_url=orig_url or resolved_url,
-                                    resolved_url=resolved_url,
-                                    referer=referer,
-                                )
-                                if storage and orig_url:
-                                    storage.mark_article_image_failed(
-                                        article.biz,
-                                        article.article_id,
-                                        str(orig_url),
-                                        str(exc),
-                                    )
-                                async with self._lock:
-                                    self._done += 1
-                    finally:
-                        self._queue.task_done()
-        finally:
-            if storage:
-                storage.close()
-
-
 class ArticleDownloader(AbstractAsyncContextManager):
     def __init__(
         self,
@@ -355,11 +173,17 @@ class ArticleDownloader(AbstractAsyncContextManager):
             article_max_connections=article_max_connections,
         )
         self.storage = storage
-        self._pg_dsn = os.environ.get("HIPPO_PG_DSN")
-        self._image_worker: Optional[ImageDownloadWorker] = None
         self._enable_image_worker = enable_image_worker
-        self._article_workers = article_max_connections if article_max_connections and article_max_connections > 0 else 1
+        self._article_workers = (
+            article_max_connections if article_max_connections and article_max_connections > 0 else 1
+        )
         self._image_workers = image_workers if image_workers and image_workers > 0 else _IMAGE_WORKERS
+        self._image_semaphore = asyncio.Semaphore(self._image_workers)
+        self._image_total = 0
+        self._image_done = 0
+        self._image_lock = asyncio.Lock()
+        self._image_abort = False
+        self._image_max_retries = _IMAGE_MAX_RETRIES
         
         logger.info(
             "ArticleDownloader initialized: article_workers=%d, image_workers=%d",
@@ -376,37 +200,19 @@ class ArticleDownloader(AbstractAsyncContextManager):
         await self.aclose()
 
     async def aclose(self) -> None:
-        if self._image_worker:
-            await self._image_worker.close()
         if self._managed_client:
             await self.client.aclose()
 
-    async def _ensure_image_worker(self) -> ImageDownloadWorker:
-        if not self._enable_image_worker:
-            raise RuntimeError("Image worker disabled")
-        if not self._image_worker:
-            self._image_worker = ImageDownloadWorker(
-                log_error=self._log_download_error,
-                pg_dsn=self._pg_dsn,
-                workers=self._image_workers,
-            )
-            await self._image_worker.start()
-        return self._image_worker
-
     async def wait_for_images(self) -> None:
-        if self._image_worker:
-            await self._image_worker.wait()
+        return None
 
     async def wait_for_images_with_progress(self, *, label: str = "下载图片") -> None:
-        if not self._image_worker:
+        total, done = await self._image_stats()
+        if total == 0 or done >= total:
             return
         try:
             from tqdm import tqdm
         except Exception:
-            await self._image_worker.wait()
-            return
-        total, done = await self._image_worker.stats()
-        if total == 0:
             return
         bar = tqdm(
             total=total,
@@ -417,7 +223,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         )
         try:
             while True:
-                total, done = await self._image_worker.stats()
+                total, done = await self._image_stats()
                 if total > bar.total:
                     bar.total = total
                 bar.n = done
@@ -425,16 +231,11 @@ class ArticleDownloader(AbstractAsyncContextManager):
                 if done >= total:
                     break
                 await asyncio.sleep(0.2)
-        except KeyboardInterrupt:
-            await self.abort_image_queue()
-            raise
         finally:
             bar.close()
-        await self._image_worker.wait()
 
     async def abort_image_queue(self) -> None:
-        if self._image_worker:
-            await self._image_worker.mark_pending_as_failed()
+        self._image_abort = True
 
     # ------------------------------------------------------------------
     async def download_many(
@@ -849,25 +650,145 @@ class ArticleDownloader(AbstractAsyncContextManager):
 
         return count, url_map
 
+    async def _image_stats(self) -> tuple[int, int]:
+        async with self._image_lock:
+            return self._image_total, self._image_done
+
+    async def _mark_image_total(self, count: int) -> None:
+        if count <= 0:
+            return
+        async with self._image_lock:
+            self._image_total += count
+
+    async def _mark_image_done(self) -> None:
+        async with self._image_lock:
+            self._image_done += 1
+
+    async def _download_one_image(
+        self,
+        *,
+        article: ArticleRecord,
+        resolved_url: str,
+        orig_url: str,
+        referer: str,
+    ) -> None:
+        if self._image_abort:
+            self._log_download_error(
+                stage="asset_download",
+                article=article,
+                error="aborted",
+                asset_url=orig_url,
+                resolved_url=resolved_url,
+                referer=referer,
+            )
+            await self._mark_image_done()
+            return
+        if not _is_http_url(str(resolved_url)):
+            reason = f"Invalid URL scheme (non-http): {resolved_url}"
+            self._log_download_error(
+                stage="asset_download",
+                article=article,
+                error=reason,
+                asset_url=orig_url,
+                resolved_url=resolved_url,
+                referer=referer,
+            )
+            if self.storage and orig_url:
+                self.storage.mark_article_image_failed(
+                    article.biz,
+                    article.article_id,
+                    orig_url,
+                    reason,
+                )
+            await self._mark_image_done()
+            return
+
+        async with self._image_semaphore:
+            for attempt in range(1, self._image_max_retries + 1):
+                if self._image_abort:
+                    self._log_download_error(
+                        stage="asset_download",
+                        article=article,
+                        error="aborted",
+                        asset_url=orig_url,
+                        resolved_url=resolved_url,
+                        referer=referer,
+                    )
+                    await self._mark_image_done()
+                    return
+                try:
+                    data, content_type = await self.client.download_binary_with_type(
+                        resolved_url, referer=referer
+                    )
+                    if self.storage and orig_url:
+                        self.storage.update_article_image_data(
+                            article.biz,
+                            article.article_id,
+                            orig_url,
+                            content_type,
+                            data,
+                        )
+                    await self._mark_image_done()
+                    return
+                except Exception as exc:
+                    is_http_400_or_404 = False
+                    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+                        status = exc.response.status_code
+                        is_http_400_or_404 = status in (400, 404)
+                    if is_http_400_or_404 or attempt >= self._image_max_retries:
+                        self._log_download_error(
+                            stage="asset_download",
+                            article=article,
+                            error=str(exc),
+                            asset_url=orig_url,
+                            resolved_url=resolved_url,
+                            referer=referer,
+                        )
+                        if self.storage and orig_url:
+                            self.storage.mark_article_image_failed(
+                                article.biz,
+                                article.article_id,
+                                orig_url,
+                                str(exc),
+                            )
+                        await self._mark_image_done()
+                        return
+                    await asyncio.sleep(min(2 ** attempt, _RETRY_BACKOFF_MAX))
+
+    async def _download_images_for_article(
+        self,
+        article: ArticleRecord,
+        urls: list[str],
+        *,
+        referer: str,
+    ) -> None:
+        if not urls or not self._enable_image_worker:
+            return
+        await self._mark_image_total(len(urls))
+        async with asyncio.TaskGroup() as tg:
+            for resolved in urls:
+                tg.create_task(
+                    self._download_one_image(
+                        article=article,
+                        resolved_url=resolved,
+                        orig_url=resolved,
+                        referer=referer,
+                    )
+                )
+
     async def _enqueue_image_downloads(
         self, article: ArticleRecord, url_map: dict[str, str], *, referer: str
     ) -> None:
         if not url_map:
             return
-        worker = await self._ensure_image_worker()
         seen: set[str] = set()
+        urls: list[str] = []
         for resolved in url_map.values():
             if not resolved or resolved in seen:
                 continue
             seen.add(resolved)
-            await worker.enqueue(
-                {
-                    "article": article,
-                    "resolved_url": resolved,
-                    "orig_url": resolved,
-                    "referer": referer,
-                }
-            )
+            urls.append(resolved)
+        await self._download_images_for_article(article, urls, referer=referer)
 
     def _log_download_error(
         self,
