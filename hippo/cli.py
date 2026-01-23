@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import inspect
 import json
 import os
-import base64
 import random
 import time
+import functools
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
@@ -45,8 +46,12 @@ app = typer.Typer(
 )
 
 
-def _run_async(coro):
-    return asyncio.run(coro)
+def coro(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return asyncio.run(func(*args, **kwargs))
+
+    return wrapper
 
 
 @app.callback()
@@ -294,19 +299,18 @@ def add_account(
 
 
 @accounts_app.command("search")
-def search_accounts(
+@coro
+async def search_accounts(
     keyword: str = typer.Argument(..., help="搜索关键词"),
     page: int = typer.Option(1, min=1, help="分页页码，从 1 开始"),
     begin: Optional[int] = typer.Option(None, min=0, help="起始偏移，优先于分页"),
     interactive: bool = typer.Option(False, is_flag=True, help="交互式选择并添加账号"),
 ) -> None:
-    _run_async(
-        _search_accounts_async(
-            keyword=keyword,
-            page=page,
-            begin=begin,
-            interactive=interactive,
-        )
+    await _search_accounts_async(
+        keyword=keyword,
+        page=page,
+        begin=begin,
+        interactive=interactive,
     )
 
 
@@ -444,7 +448,8 @@ def list_groups() -> None:
 
 
 @groups_app.command("sync")
-def sync_group(
+@coro
+async def sync_group(
     group: str = typer.Argument(..., help="Group name"),
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help="每页抓取数量"),
     sleep_seconds: float = typer.Option(
@@ -469,20 +474,18 @@ def sync_group(
     ),
 ) -> None:
     _require_nonempty(group, "Please provide a group name.")
-    _run_async(
-        perform_group_sync(
-            group=group,
-            page_size=page_size,
-            sleep_seconds=sleep_seconds,
-            reset=reset,
-            mode=mode,
-            recent_days=recent_days,
-            since_date=since_date,
-            until_date=until_date,
-            force=force,
-            skip_time=skip_time,
-            login_flow=_run_login_flow,
-        )
+    await perform_group_sync(
+        group=group,
+        page_size=page_size,
+        sleep_seconds=sleep_seconds,
+        reset=reset,
+        mode=mode,
+        recent_days=recent_days,
+        since_date=since_date,
+        until_date=until_date,
+        force=force,
+        skip_time=skip_time,
+        login_flow=_run_login_flow,
     )
 
 
@@ -568,7 +571,8 @@ def enable_account(
 # ---------------------------------------------------------------------------
 # Article helpers
 @accounts_app.command("sync")
-def sync_account_articles(
+@coro
+async def sync_account_articles(
     biz: Optional[str] = typer.Option(None, help="指定账号 fakeid，留空使用默认账号"),
     pages: int = typer.Option(1, min=1, help="抓取的分页数量，每页默认 10 篇"),
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help="每页抓取数量"),
@@ -592,24 +596,23 @@ def sync_account_articles(
         None, min=1, help="多少分钟内同步过则跳过"
     ),
 ) -> None:
-    _run_async(
-        perform_account_sync(
-            biz=biz,
-            pages=pages,
-            page_size=page_size,
-            mode=mode,
-            recent_days=recent_days,
-            since_date=since_date,
-            until_date=until_date,
-            force=force,
-            skip_time=skip_time,
-            login_flow=_run_login_flow,
-        )
+    await perform_account_sync(
+        biz=biz,
+        pages=pages,
+        page_size=page_size,
+        mode=mode,
+        recent_days=recent_days,
+        since_date=since_date,
+        until_date=until_date,
+        force=force,
+        skip_time=skip_time,
+        login_flow=_run_login_flow,
     )
 
 
 @accounts_app.command("sync-all")
-def sync_all_accounts(
+@coro
+async def sync_all_accounts(
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help="每页抓取数量"),
     sleep_seconds: float = typer.Option(
         0.05, min=0, help="翻页间隔秒数（可为小数）"
@@ -632,19 +635,17 @@ def sync_all_accounts(
         None, min=1, help="多少分钟内同步过则跳过"
     ),
 ) -> None:
-    _run_async(
-        perform_all_sync(
-            page_size=page_size,
-            sleep_seconds=sleep_seconds,
-            reset=reset,
-            mode=mode,
-            recent_days=recent_days,
-            since_date=since_date,
-            until_date=until_date,
-            force=force,
-            skip_time=skip_time,
-            login_flow=_run_login_flow,
-        )
+    await perform_all_sync(
+        page_size=page_size,
+        sleep_seconds=sleep_seconds,
+        reset=reset,
+        mode=mode,
+        recent_days=recent_days,
+        since_date=since_date,
+        until_date=until_date,
+        force=force,
+        skip_time=skip_time,
+        login_flow=_run_login_flow,
     )
 
 
@@ -676,7 +677,8 @@ def list_articles(
 
 
 @articles_app.command("sync")
-def sync_article_download(
+@coro
+async def sync_article_download(
     account: str = typer.Argument(..., help="公众号名称或 fakeid"),
     limit: Optional[int] = typer.Option(None, min=1, max=5000, help="下载文章数量，默认全部"),
     with_images: bool = typer.Option(True, is_flag=True, help="是否下载图片"),
@@ -697,18 +699,16 @@ def sync_article_download(
         None, min=1, help="图片下载并发数，留空使用默认"
     ),
 ) -> None:
-    _run_async(
-        _sync_article_download_async(
-            account=account,
-            limit=limit,
-            with_images=with_images,
-            article_only=article_only,
-            since=since,
-            worker_prefix=worker_prefix,
-            worker_proxy=worker_proxy,
-            workers=workers,
-            image_workers=image_workers,
-        )
+    await _sync_article_download_async(
+        account=account,
+        limit=limit,
+        with_images=with_images,
+        article_only=article_only,
+        since=since,
+        worker_prefix=worker_prefix,
+        worker_proxy=worker_proxy,
+        workers=workers,
+        image_workers=image_workers,
     )
 
 
@@ -781,7 +781,8 @@ async def _sync_article_download_async(
 
 
 @articles_app.command("sync-all")
-def sync_all_article_download(
+@coro
+async def sync_all_article_download(
     limit: Optional[int] = typer.Option(None, min=1, max=5000, help="每个账号下载文章数量，默认全部"),
     with_images: bool = typer.Option(True, is_flag=True, help="是否下载图片"),
     article_only: bool = typer.Option(
@@ -801,17 +802,15 @@ def sync_all_article_download(
         None, min=1, help="图片下载并发数，留空使用默认"
     ),
 ) -> None:
-    _run_async(
-        _sync_all_article_download_async(
-            limit=limit,
-            with_images=with_images,
-            article_only=article_only,
-            since=since,
-            worker_prefix=worker_prefix,
-            worker_proxy=worker_proxy,
-            workers=workers,
-            image_workers=image_workers,
-        )
+    await _sync_all_article_download_async(
+        limit=limit,
+        with_images=with_images,
+        article_only=article_only,
+        since=since,
+        worker_prefix=worker_prefix,
+        worker_proxy=worker_proxy,
+        workers=workers,
+        image_workers=image_workers,
     )
 
 
@@ -889,7 +888,8 @@ async def _sync_all_article_download_async(
 
 
 @articles_app.command("download")
-def download_article(
+@coro
+async def download_article(
     url: str = typer.Argument(..., help="文章 URL"),
     with_images: bool = typer.Option(True, is_flag=True, help="是否下载图片"),
     title: Optional[str] = typer.Option(None, help="覆盖文章标题"),
@@ -906,16 +906,14 @@ def download_article(
         None, min=1, help="图片下载并发数，留空使用默认"
     ),
 ) -> None:
-    _run_async(
-        _download_article_async(
-            url=url,
-            with_images=with_images,
-            title=title,
-            worker_prefix=worker_prefix,
-            worker_proxy=worker_proxy,
-            workers=workers,
-            image_workers=image_workers,
-        )
+    await _download_article_async(
+        url=url,
+        with_images=with_images,
+        title=title,
+        worker_prefix=worker_prefix,
+        worker_proxy=worker_proxy,
+        workers=workers,
+        image_workers=image_workers,
     )
 
 
@@ -954,7 +952,8 @@ async def _download_article_async(
 
 
 @articles_app.command("backfill-images")
-def backfill_article_images(
+@coro
+async def backfill_article_images(
     pg_dsn: Optional[str] = typer.Option(
         None, help="PostgreSQL DSN (defaults to HIPPO_PG_DSN)"
     ),
@@ -965,16 +964,14 @@ def backfill_article_images(
     retry_failed: bool = typer.Option(False, is_flag=True, help="Include previously failed images"),
     dry_run: bool = typer.Option(False, is_flag=True, help="List targets without writing"),
 ) -> None:
-    _run_async(
-        _backfill_article_images_async(
-            pg_dsn=pg_dsn,
-            limit=limit,
-            workers=workers,
-            retries=retries,
-            sleep_base=sleep_base,
-            retry_failed=retry_failed,
-            dry_run=dry_run,
-        )
+    await _backfill_article_images_async(
+        pg_dsn=pg_dsn,
+        limit=limit,
+        workers=workers,
+        retries=retries,
+        sleep_base=sleep_base,
+        retry_failed=retry_failed,
+        dry_run=dry_run,
     )
 
 
@@ -1205,11 +1202,12 @@ def export_accounts() -> None:
 
 
 @app.command("login")
-def login(
+@coro
+async def login(
     timeout: int = typer.Option(300, min=30, help="扫码等待超时时间（秒）"),
     poll_interval: int = typer.Option(2, min=1, help="轮询间隔（秒）"),
 ) -> None:
-    _run_async(_run_login_flow(timeout=timeout, poll_interval=poll_interval))
+    await _run_login_flow(timeout=timeout, poll_interval=poll_interval)
 
 
 @app.command("serve")
