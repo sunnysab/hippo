@@ -39,4 +39,4 @@ hippo = "hippo.cli:app"
 
 [tool.setuptools]
 py-modules = ["__init__"]
-packages = ["hippo"]
+packages = ["hippo", "hippo.controllers"]
