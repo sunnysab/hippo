@@ -53,6 +53,7 @@
   "accounts.syncSaved": "更新策略已保存",
   "accounts.syncFailed": "更新策略保存失败",
   "accounts.batchSyncApply": "批量设置",
+  "accounts.groupSync": "分组同步",
   "accounts.syncDisabled": "同步已禁用",
   "accounts.disableSync": "禁用同步",
   "accounts.enableSync": "启用同步",

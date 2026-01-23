@@ -111,6 +111,16 @@
     }
   };
 
+  const resolveSelectedGroupId = () => {
+    if (state.selectedGroupId) {
+      return state.selectedGroupId;
+    }
+    const firstBiz = state.selectedAccounts.values().next().value;
+    if (!firstBiz) return null;
+    const account = state.accounts.find((item) => item.biz === firstBiz);
+    return account?.group_id || null;
+  };
+
   const openAccountSearchModal = async () => {
     const modal = $('#account-search-modal');
     if (!modal) return;
@@ -857,6 +867,18 @@
         console.warn('Batch sync update failed', err);
         showToast(t('accounts.syncFailed', 'Failed to update sync strategy.'));
       }
+    });
+    $('#btn-batch-group-sync').addEventListener('click', async () => {
+      if (!state.selectedAccounts.size) {
+        alert(t('accounts.moveSelectAccounts', 'Select accounts to move.'));
+        return;
+      }
+      const groupId = resolveSelectedGroupId();
+      if (!groupId) {
+        showToast(t('groups.syncTriggerFailed', 'Failed to trigger group sync.'));
+        return;
+      }
+      await triggerGroupSync(groupId);
     });
 
     $('#btn-account-add').addEventListener('click', openAccountSearchModal);
