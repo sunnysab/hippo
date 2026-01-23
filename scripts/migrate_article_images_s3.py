@@ -27,7 +27,7 @@ def _log(message: str) -> None:
 
 
 def _iter_images(
-    storage: PostgresStorage, *, limit: int | None
+    storage: PostgresStorage, *, limit: int | None, chunk_size: int
 ) -> Iterable[tuple[int, str | None, bytes]]:
     query = (
         'SELECT id, content_type, data '
@@ -41,13 +41,17 @@ def _iter_images(
         params.append(limit)
     with storage.conn.cursor() as cur:
         cur.execute(query, params)
-        for row in cur:
-            image_id, content_type, data = row
-            if isinstance(data, memoryview):
-                payload = data.tobytes()
-            else:
-                payload = bytes(data)
-            yield image_id, content_type, payload
+        while True:
+            rows = cur.fetchmany(chunk_size)
+            if not rows:
+                break
+            for row in rows:
+                image_id, content_type, data = row
+                if isinstance(data, memoryview):
+                    payload = data.tobytes()
+                else:
+                    payload = bytes(data)
+                yield image_id, content_type, payload
 
 
 def _count_images(storage: PostgresStorage) -> int:
@@ -95,6 +99,7 @@ def main() -> int:
     parser.add_argument('--prune-db', action='store_true')
     parser.add_argument('--timeout', type=float, default=5.0)
     parser.add_argument('--log-every', type=int, default=1)
+    parser.add_argument('--chunk-size', type=int, default=200)
     args = parser.parse_args()
 
     if not args.pg_dsn:
@@ -117,10 +122,11 @@ def main() -> int:
     import boto3
     from botocore.config import Config as BotoConfig
 
+    chunk_size = max(1, args.chunk_size)
     _log(
         'S3 config loaded '
         f'endpoint={config.endpoint} bucket={config.bucket} prefix={config.prefix} '
-        f'timeout={args.timeout}s'
+        f'timeout={args.timeout}s chunk_size={chunk_size}'
     )
     session = boto3.session.Session()
     _log('Creating S3 client...')
@@ -144,7 +150,7 @@ def main() -> int:
         if args.limit is not None:
             total = min(total, args.limit)
         _log(f'Images to migrate: {total}')
-        items = _iter_images(storage, limit=args.limit)
+        items = _iter_images(storage, limit=args.limit, chunk_size=chunk_size)
         for idx, (image_id, content_type, payload) in enumerate(
             tqdm(items, total=total, desc='Migrate images', unit='img'),
             start=1,
