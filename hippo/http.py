@@ -6,7 +6,7 @@ import json
 import time
 from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, quote, urlparse
-from contextlib import AbstractContextManager
+from contextlib import AbstractAsyncContextManager
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import httpx
@@ -30,8 +30,8 @@ HEADERS = {
 }
 
 
-class MPClient(AbstractContextManager):
-    """Tiny wrapper around httpx for the few WeChat endpoints we need."""
+class MPClient(AbstractAsyncContextManager):
+    """Tiny async wrapper around httpx for the few WeChat endpoints we need."""
 
     def __init__(
         self,
@@ -41,7 +41,7 @@ class MPClient(AbstractContextManager):
         article_worker_proxy: Optional[str] = ARTICLE_WORKER_PROXY,
         article_max_connections: Optional[int] = ARTICLE_WORKER_MAX_CONNECTIONS,
     ) -> None:
-        self.client = httpx.Client(timeout=timeout, headers=HEADERS, follow_redirects=True)
+        self.client = httpx.AsyncClient(timeout=timeout, headers=HEADERS, follow_redirects=True)
         self.article_worker = article_worker.rstrip("/") if article_worker else None
         self.article_worker_host = _extract_host(self.article_worker) if self.article_worker else None
         limits = (
@@ -52,7 +52,7 @@ class MPClient(AbstractContextManager):
             if article_max_connections
             else httpx.Limits()
         )
-        self.article_client: Optional[httpx.Client] = None
+        self.article_client: Optional[httpx.AsyncClient] = None
         if self.article_worker or article_worker_proxy:
             client_kwargs = {
                 "timeout": timeout,
@@ -63,7 +63,7 @@ class MPClient(AbstractContextManager):
                 client_kwargs["proxy"] = article_worker_proxy
             if article_max_connections:
                 client_kwargs["limits"] = limits
-            self.article_client = httpx.Client(**client_kwargs)
+            self.article_client = httpx.AsyncClient(**client_kwargs)
         
         logger.info(
             "MPClient initialized: worker=%s, proxy=%s, max_conn=%s",
@@ -72,19 +72,19 @@ class MPClient(AbstractContextManager):
             article_max_connections or "None",
         )
 
-    def __enter__(self) -> "MPClient":
+    async def __aenter__(self) -> "MPClient":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
-        self.close()
+    async def __aexit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+        await self.aclose()
 
-    def close(self) -> None:
-        self.client.close()
+    async def aclose(self) -> None:
+        await self.client.aclose()
         if self.article_client:
-            self.article_client.close()
+            await self.article_client.aclose()
 
     # ------------------------------------------------------------------
-    def fetch_profile_messages(
+    async def fetch_profile_messages(
         self, account: AccountCredential, *, offset: int = 0, count: int = 10
     ) -> List[ArticleRecord]:
         params = {
@@ -100,7 +100,7 @@ class MPClient(AbstractContextManager):
             "scene": "124",
         }
         logger.debug("Fetching profile messages: biz=%s, offset=%d, count=%d", account.biz, offset, count)
-        resp = self.client.get(WECHAT_PROFILE_ENDPOINT, params=params)
+        resp = await self.client.get(WECHAT_PROFILE_ENDPOINT, params=params)
         resp.raise_for_status()
         payload = resp.json()
         if payload.get("ret") != 0:
@@ -115,11 +115,11 @@ class MPClient(AbstractContextManager):
         logger.info("Fetched %d articles from biz=%s at offset=%d", len(records), account.biz, offset)
         return records
 
-    def fetch_article_html(self, url: str) -> str:
+    async def fetch_article_html(self, url: str) -> str:
         target_url, client = self._prepare_article_request(url)
         logger.debug("Fetching article HTML: %s", target_url)
         try:
-            resp = client.get(target_url)
+            resp = await client.get(target_url)
             resp.raise_for_status()
             logger.info("Successfully fetched article: %s (size=%d bytes)", url, len(resp.text))
             return resp.text
@@ -127,13 +127,13 @@ class MPClient(AbstractContextManager):
             logger.error("Failed to fetch article %s: %s", url, exc)
             raise
 
-    def download_binary(self, url: str, *, referer: str | None = None) -> bytes:
+    async def download_binary(self, url: str, *, referer: str | None = None) -> bytes:
         headers = {}
         if referer:
             headers["Referer"] = referer
         logger.debug("Downloading binary: %s", url)
         try:
-            resp = self.client.get(url, headers=headers)
+            resp = await self.client.get(url, headers=headers)
             resp.raise_for_status()
             logger.debug("Downloaded %d bytes from %s", len(resp.content), url)
             return resp.content
@@ -141,18 +141,18 @@ class MPClient(AbstractContextManager):
             logger.warning("Failed to download %s: %s", url, exc)
             raise
 
-    def download_binary_with_type(
+    async def download_binary_with_type(
         self, url: str, *, referer: str | None = None
     ) -> tuple[bytes, Optional[str]]:
         headers = {}
         if referer:
             headers["Referer"] = referer
-        resp = self.client.get(url, headers=headers)
+        resp = await self.client.get(url, headers=headers)
         resp.raise_for_status()
         content_type = resp.headers.get("content-type")
         return resp.content, content_type
 
-    def _prepare_article_request(self, url: str) -> Tuple[str, httpx.Client]:
+    def _prepare_article_request(self, url: str) -> Tuple[str, httpx.AsyncClient]:
         if self.article_worker and _is_mp_article(url):
             wrapped = _wrap_worker_url(url, self.article_worker)
             return wrapped, self.article_client or self.client
@@ -162,7 +162,7 @@ class MPClient(AbstractContextManager):
         return url, self.client
 
     # ------------------------------------------------------------------
-    def start_login_session(self, sid: str) -> str:
+    async def start_login_session(self, sid: str) -> str:
         payload = {
             "userlang": "zh_CN",
             "redirect_url": "",
@@ -173,7 +173,7 @@ class MPClient(AbstractContextManager):
             "f": "json",
             "ajax": 1,
         }
-        resp = self.client.post(
+        resp = await self.client.post(
             "https://mp.weixin.qq.com/cgi-bin/bizlogin",
             params={"action": "startlogin"},
             data=payload,
@@ -185,8 +185,8 @@ class MPClient(AbstractContextManager):
             raise RuntimeError("Failed to get login uuid cookie.")
         return f"uuid={uuid}"
 
-    def fetch_login_qrcode(self, cookie: str) -> bytes:
-        resp = self.client.get(
+    async def fetch_login_qrcode(self, cookie: str) -> bytes:
+        resp = await self.client.get(
             "https://mp.weixin.qq.com/cgi-bin/scanloginqrcode",
             params={"action": "getqrcode", "random": int(time.time() * 1000)},
             headers={"Cookie": cookie},
@@ -194,8 +194,8 @@ class MPClient(AbstractContextManager):
         resp.raise_for_status()
         return resp.content
 
-    def check_login_status(self, cookie: str) -> Dict[str, Any]:
-        resp = self.client.get(
+    async def check_login_status(self, cookie: str) -> Dict[str, Any]:
+        resp = await self.client.get(
             "https://mp.weixin.qq.com/cgi-bin/scanloginqrcode",
             params={"action": "ask", "token": "", "lang": "zh_CN", "f": "json", "ajax": 1},
             headers={"Cookie": cookie},
@@ -203,7 +203,7 @@ class MPClient(AbstractContextManager):
         resp.raise_for_status()
         return resp.json()
 
-    def finalize_login(self, cookie: str) -> LoginSession:
+    async def finalize_login(self, cookie: str) -> LoginSession:
         payload = {
             "userlang": "zh_CN",
             "redirect_url": "",
@@ -216,7 +216,7 @@ class MPClient(AbstractContextManager):
             "f": "json",
             "ajax": 1,
         }
-        resp = self.client.post(
+        resp = await self.client.post(
             "https://mp.weixin.qq.com/cgi-bin/bizlogin",
             params={"action": "login"},
             data=payload,
@@ -233,17 +233,18 @@ class MPClient(AbstractContextManager):
         cookies = _parse_set_cookies(resp.headers.get_list("set-cookie"))
         return LoginSession(token=token, cookies=cookies)
 
-    def fetch_login_info(self, session: LoginSession) -> Dict[str, str]:
-        html = self.client.get(
+    async def fetch_login_info(self, session: LoginSession) -> Dict[str, str]:
+        resp = await self.client.get(
             "https://mp.weixin.qq.com/cgi-bin/home",
             params={"t": "home/index", "token": session.token, "lang": "zh_CN"},
             headers={"Cookie": _cookie_header(session.cookies)},
-        ).text
+        )
+        html = resp.text
         nickname = _match_value(html, r'wx\.cgiData\.nick_name\s*?=\s*?"(?P<value>[^"]+)"')
         avatar = _match_value(html, r'wx\.cgiData\.head_img\s*?=\s*?"(?P<value>[^"]+)"')
         return {"nickname": nickname or "", "avatar": avatar or ""}
 
-    def search_biz(
+    async def search_biz(
         self,
         session: LoginSession,
         *,
@@ -261,7 +262,7 @@ class MPClient(AbstractContextManager):
             "f": "json",
             "ajax": "1",
         }
-        resp = self.client.get(
+        resp = await self.client.get(
             "https://mp.weixin.qq.com/cgi-bin/searchbiz",
             params=params,
             headers={"Cookie": _cookie_header(session.cookies)},
@@ -272,7 +273,7 @@ class MPClient(AbstractContextManager):
             raise RuntimeError(payload.get("base_resp", {}).get("err_msg", "searchbiz failed"))
         return payload
 
-    def fetch_appmsg_publish(
+    async def fetch_appmsg_publish(
         self,
         session: LoginSession,
         *,
@@ -297,7 +298,7 @@ class MPClient(AbstractContextManager):
             "f": "json",
             "ajax": 1,
         }
-        resp = self.client.get(
+        resp = await self.client.get(
             "https://mp.weixin.qq.com/cgi-bin/appmsgpublish",
             params=params,
             headers={"Cookie": _cookie_header(session.cookies)},

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import base64
@@ -36,6 +37,10 @@ app = typer.Typer(
     no_args_is_help=True,
     rich_markup_mode=None,
 )
+
+
+def _run_async(coro):
+    return asyncio.run(coro)
 
 
 @app.callback()
@@ -369,7 +374,7 @@ def _handle_login_expired() -> bool:
     return False
 
 
-def _sync_account_pages(
+async def _sync_account_pages(
     *,
     storage: StorageLike,
     client: MPClient,
@@ -406,7 +411,7 @@ def _sync_account_pages(
             freq_attempt = 0
             while True:
                 try:
-                    payload = client.fetch_appmsg_publish(
+                    payload = await client.fetch_appmsg_publish(
                         session, fakeid=account.biz, begin=offset, count=page_size
                     )
                     break
@@ -416,7 +421,7 @@ def _sync_account_pages(
                             typer.echo("已暂停同步，断点进度已保留")
                             raise typer.Exit(code=1)
                         try:
-                            _run_login_flow(timeout=300, poll_interval=2)
+                            await _run_login_flow(timeout=300, poll_interval=2)
                         except typer.Exit:
                             typer.echo("登录未完成，断点进度已保留")
                             raise
@@ -430,19 +435,19 @@ def _sync_account_pages(
                             wait_seconds = min(15 + 5 * (freq_attempt - 1), 60)
                         message = f"触发频率控制，等待 {wait_seconds} 秒后重试"
                         _pbar_write(progress, message)
-                        time.sleep(wait_seconds)
+                        await asyncio.sleep(wait_seconds)
                         continue
                     raise
                 except (httpx.ReadTimeout, httpx.TimeoutException, httpx.TransportError) as exc:
                     attempt += 1
                     if attempt >= 3:
                         raise RuntimeError(f"网络请求超时或失败：{exc}") from exc
-                    time.sleep(min(2 ** attempt, 5))
+                    await asyncio.sleep(min(2 ** attempt, 5))
             request_count += 1
             if request_count % 60 == 0:
                 message = "达到 60 次请求，等待 15 秒"
                 _pbar_write(progress, message)
-                time.sleep(15)
+                await asyncio.sleep(15)
             publish_page = _extract_publish_page(payload)
             publish_list = publish_page.get("publish_list") or []
             publish_list_len = len(publish_list)
@@ -510,7 +515,7 @@ def _sync_account_pages(
                 completed = False
                 break
             if sleep_seconds > 0:
-                time.sleep(sleep_seconds)
+                await asyncio.sleep(sleep_seconds)
         except KeyboardInterrupt as exc:
             message = f"检测到中断，已保存断点：{account.nickname}"
             _pbar_write(progress, message)
@@ -566,6 +571,23 @@ def search_accounts(
     begin: Optional[int] = typer.Option(None, min=0, help="起始偏移，优先于分页"),
     interactive: bool = typer.Option(False, is_flag=True, help="交互式选择并添加账号"),
 ) -> None:
+    _run_async(
+        _search_accounts_async(
+            keyword=keyword,
+            page=page,
+            begin=begin,
+            interactive=interactive,
+        )
+    )
+
+
+async def _search_accounts_async(
+    *,
+    keyword: str,
+    page: int,
+    begin: Optional[int],
+    interactive: bool,
+) -> None:
     _require_nonempty(keyword, "请提供搜索关键词。")
     with open_storage() as storage:
         session = _get_login_session(storage)
@@ -574,8 +596,13 @@ def search_accounts(
     current_page = page
     while True:
         offset = begin if begin is not None else (current_page - 1) * page_size
-        with MPClient() as client:
-            payload = client.search_biz(session, keyword=keyword, begin=offset, count=page_size)
+        async with MPClient() as client:
+            payload = await client.search_biz(
+                session,
+                keyword=keyword,
+                begin=offset,
+                count=page_size,
+            )
         records = payload.get("list") or []
         if not records:
             typer.echo("未找到匹配的公众号")
@@ -808,6 +835,33 @@ def sync_account_articles(
         None, min=1, help="多少分钟内同步过则跳过"
     ),
 ) -> None:
+    _run_async(
+        _sync_account_articles_async(
+            biz=biz,
+            pages=pages,
+            page_size=page_size,
+            mode=mode,
+            recent_days=recent_days,
+            since_date=since_date,
+            until_date=until_date,
+            force=force,
+            skip_time=skip_time,
+        )
+    )
+
+
+async def _sync_account_articles_async(
+    *,
+    biz: Optional[str],
+    pages: int,
+    page_size: int,
+    mode: SyncMode,
+    recent_days: Optional[int],
+    since_date: Optional[str],
+    until_date: Optional[str],
+    force: bool,
+    skip_time: Optional[int],
+) -> None:
     _enforce_exclusive_flags(force, skip_time)
     with open_storage() as storage:
         account = storage.get_account(biz)
@@ -854,7 +908,7 @@ def sync_account_articles(
                 raise typer.BadParameter("--until must be on or after --since.")
         typer.echo(f"开始同步 {account.nickname} 的文章")
         total_saved = 0
-        with MPClient() as client:
+        async with MPClient() as client:
             progress = tqdm(
                 total=None,
                 desc=f"同步 {account.nickname}",
@@ -863,7 +917,7 @@ def sync_account_articles(
                 leave=True,
             )
             try:
-                total_saved, _, completed = _sync_account_pages(
+                total_saved, _, completed = await _sync_account_pages(
                     storage=storage,
                     client=client,
                     account=account,
@@ -917,6 +971,33 @@ def sync_all_accounts(
         None, min=1, help="多少分钟内同步过则跳过"
     ),
 ) -> None:
+    _run_async(
+        _sync_all_accounts_async(
+            page_size=page_size,
+            sleep_seconds=sleep_seconds,
+            reset=reset,
+            mode=mode,
+            recent_days=recent_days,
+            since_date=since_date,
+            until_date=until_date,
+            force=force,
+            skip_time=skip_time,
+        )
+    )
+
+
+async def _sync_all_accounts_async(
+    *,
+    page_size: int,
+    sleep_seconds: float,
+    reset: bool,
+    mode: SyncMode,
+    recent_days: Optional[int],
+    since_date: Optional[str],
+    until_date: Optional[str],
+    force: bool,
+    skip_time: Optional[int],
+) -> None:
     _enforce_exclusive_flags(force, skip_time)
     with open_storage() as storage:
         accounts = storage.list_accounts()
@@ -948,7 +1029,7 @@ def sync_all_accounts(
         if sleep_seconds > 0:
             header += f" 每页间隔 {sleep_seconds} 秒"
         typer.echo(header)
-        with MPClient() as client:
+        async with MPClient() as client:
             total_saved = 0
             summary: list[tuple[str, int]] = []
             for account in accounts:
@@ -1021,7 +1102,7 @@ def sync_all_accounts(
                     leave=True,
                 )
                 try:
-                    saved, _, completed = _sync_account_pages(
+                    saved, _, completed = await _sync_account_pages(
                         storage=storage,
                         client=client,
                         account=account,
@@ -1111,6 +1192,33 @@ def sync_article_download(
         None, min=1, help="图片下载并发数，留空使用默认"
     ),
 ) -> None:
+    _run_async(
+        _sync_article_download_async(
+            account=account,
+            limit=limit,
+            with_images=with_images,
+            article_only=article_only,
+            since=since,
+            worker_prefix=worker_prefix,
+            worker_proxy=worker_proxy,
+            workers=workers,
+            image_workers=image_workers,
+        )
+    )
+
+
+async def _sync_article_download_async(
+    *,
+    account: str,
+    limit: Optional[int],
+    with_images: bool,
+    article_only: bool,
+    since: Optional[str],
+    worker_prefix: Optional[str],
+    worker_proxy: Optional[str],
+    workers: Optional[int],
+    image_workers: Optional[int],
+) -> None:
     _resolve_pg_dsn()
 
     since_timestamp = _parse_since(since)
@@ -1140,7 +1248,7 @@ def sync_article_download(
             leave=True,
         )
         try:
-            with ArticleDownloader(
+            async with ArticleDownloader(
                 storage=storage,
                 article_worker=worker_prefix,
                 article_worker_proxy=worker_proxy,
@@ -1148,7 +1256,7 @@ def sync_article_download(
                 image_workers=image_workers,
                 enable_image_worker=not article_only,
             ) as downloader:
-                results, skipped, failed = downloader.download_many(
+                results, skipped, failed = await downloader.download_many(
                     articles,
                     with_images=download_images,
                     record_images_only=record_images_only,
@@ -1160,7 +1268,7 @@ def sync_article_download(
             raise typer.Exit(code=1)
         finally:
             progress.close()
-    
+
     if failed > 0:
         typer.echo(f"下载完成，成功 {len(results)} 篇，跳过 {skipped} 篇，失败 {failed} 篇")
     else:
@@ -1188,6 +1296,31 @@ def sync_all_article_download(
         None, min=1, help="图片下载并发数，留空使用默认"
     ),
 ) -> None:
+    _run_async(
+        _sync_all_article_download_async(
+            limit=limit,
+            with_images=with_images,
+            article_only=article_only,
+            since=since,
+            worker_prefix=worker_prefix,
+            worker_proxy=worker_proxy,
+            workers=workers,
+            image_workers=image_workers,
+        )
+    )
+
+
+async def _sync_all_article_download_async(
+    *,
+    limit: Optional[int],
+    with_images: bool,
+    article_only: bool,
+    since: Optional[str],
+    worker_prefix: Optional[str],
+    worker_proxy: Optional[str],
+    workers: Optional[int],
+    image_workers: Optional[int],
+) -> None:
     _resolve_pg_dsn()
 
     since_timestamp = _parse_since(since)
@@ -1199,7 +1332,7 @@ def sync_all_article_download(
             return
         download_images = with_images and not article_only
         record_images_only = article_only
-        with ArticleDownloader(
+        async with ArticleDownloader(
             storage=storage,
             article_worker=worker_prefix,
             article_worker_proxy=worker_proxy,
@@ -1226,7 +1359,7 @@ def sync_all_article_download(
                     leave=True,
                 )
                 try:
-                    results, skipped, failed = downloader.download_many(
+                    results, skipped, failed = await downloader.download_many(
                         articles,
                         with_images=download_images,
                         record_images_only=record_images_only,
@@ -1241,9 +1374,9 @@ def sync_all_article_download(
                 total_downloads += len(results)
                 total_skipped += skipped
                 total_failed += failed
-        if download_images:
-            downloader.wait_for_images_with_progress(label="下载图片")
-    
+            if download_images:
+                await downloader.wait_for_images_with_progress(label="下载图片")
+
     if total_failed > 0:
         typer.echo(f"全部下载完成，成功 {total_downloads} 篇，跳过 {total_skipped} 篇，失败 {total_failed} 篇")
     else:
@@ -1268,23 +1401,47 @@ def download_article(
         None, min=1, help="图片下载并发数，留空使用默认"
     ),
 ) -> None:
+    _run_async(
+        _download_article_async(
+            url=url,
+            with_images=with_images,
+            title=title,
+            worker_prefix=worker_prefix,
+            worker_proxy=worker_proxy,
+            workers=workers,
+            image_workers=image_workers,
+        )
+    )
+
+
+async def _download_article_async(
+    *,
+    url: str,
+    with_images: bool,
+    title: Optional[str],
+    worker_prefix: Optional[str],
+    worker_proxy: Optional[str],
+    workers: Optional[int],
+    image_workers: Optional[int],
+) -> None:
     if not url:
         typer.echo("请提供文章 URL。示例：python -m hippo article download \"https://mp.weixin.qq.com/...\"")
         raise typer.Exit(code=2)
     _resolve_pg_dsn()
-    with open_storage() as storage, ArticleDownloader(
-        storage=storage,
-        article_worker=worker_prefix,
-        article_worker_proxy=worker_proxy,
-        article_max_connections=workers,
-        image_workers=image_workers,
-    ) as downloader:
+    with open_storage() as storage:
         try:
-            result = downloader.download_from_url(
-                url,
-                with_images=with_images,
-                title=title,
-            )
+            async with ArticleDownloader(
+                storage=storage,
+                article_worker=worker_prefix,
+                article_worker_proxy=worker_proxy,
+                article_max_connections=workers,
+                image_workers=image_workers,
+            ) as downloader:
+                await downloader.download_from_url(
+                    url,
+                    with_images=with_images,
+                    title=title,
+                )
         except Exception as exc:
             typer.echo(f"下载失败：{exc}")
             raise typer.Exit(code=1)
@@ -1302,6 +1459,29 @@ def backfill_article_images(
     sleep_base: float = typer.Option(0.5, min=0.1, help="Base backoff sleep in seconds"),
     retry_failed: bool = typer.Option(False, is_flag=True, help="Include previously failed images"),
     dry_run: bool = typer.Option(False, is_flag=True, help="List targets without writing"),
+) -> None:
+    _run_async(
+        _backfill_article_images_async(
+            pg_dsn=pg_dsn,
+            limit=limit,
+            workers=workers,
+            retries=retries,
+            sleep_base=sleep_base,
+            retry_failed=retry_failed,
+            dry_run=dry_run,
+        )
+    )
+
+
+async def _backfill_article_images_async(
+    *,
+    pg_dsn: Optional[str],
+    limit: Optional[int],
+    workers: int,
+    retries: int,
+    sleep_base: float,
+    retry_failed: bool,
+    dry_run: bool,
 ) -> None:
     resolved_dsn = pg_dsn or os.environ.get("HIPPO_PG_DSN")
     if not resolved_dsn:
@@ -1323,21 +1503,21 @@ def backfill_article_images(
             return False
         return parsed.scheme in ("http", "https")
 
-    def download_with_retry(url: str, *, referer: Optional[str]) -> tuple[bytes, Optional[str]]:
+    async def download_with_retry(url: str, *, referer: Optional[str]) -> tuple[bytes, Optional[str]]:
         last_exc: Optional[Exception] = None
         for attempt in range(retries):
             try:
-                return client.download_binary_with_type(
+                return await client.download_binary_with_type(
                     normalize_image_url(url), referer=referer
                 )
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
                 if exc.response is not None and exc.response.status_code in (400, 404):
                     raise
-                time.sleep(min(sleep_base * (2**attempt), 5.0))
+                await asyncio.sleep(min(sleep_base * (2**attempt), 5.0))
             except Exception as exc:
                 last_exc = exc
-                time.sleep(min(sleep_base * (2**attempt), 5.0))
+                await asyncio.sleep(min(sleep_base * (2**attempt), 5.0))
         raise RuntimeError(str(last_exc)) from last_exc
 
     def format_error(exc: Exception) -> str:
@@ -1354,90 +1534,95 @@ def backfill_article_images(
     failed = 0
     interrupted = False
 
-    with PostgresStorage(resolved_dsn) as storage, MPClient() as client:
-        failed_clause = "" if retry_failed else " AND i.failed_at IS NULL"
-        count_query = f"""
-            SELECT COUNT(*)
-            FROM article_images i
-            JOIN articles a ON a.id = i.article_pk
-            WHERE i.data IS NULL AND i.orig_url IS NOT NULL{failed_clause}
-        """
-        with storage.conn.cursor() as cur:
-            cur.execute(count_query)
-            total_count = cur.fetchone()[0]
-        
-        if limit is not None:
-            total_count = min(total_count, limit)
+    async with MPClient() as client:
+        with PostgresStorage(resolved_dsn) as storage:
+            failed_clause = "" if retry_failed else " AND i.failed_at IS NULL"
+            count_query = f"""
+                SELECT COUNT(*)
+                FROM article_images i
+                JOIN articles a ON a.id = i.article_pk
+                WHERE i.data IS NULL AND i.orig_url IS NOT NULL{failed_clause}
+            """
+            with storage.conn.cursor() as cur:
+                cur.execute(count_query)
+                total_count = cur.fetchone()[0]
+            
+            if limit is not None:
+                total_count = min(total_count, limit)
 
-        base_query = f"""
-            SELECT i.id, a.biz, a.article_id, a.link, i.orig_url
-            FROM article_images i
-            JOIN articles a ON a.id = i.article_pk
-            WHERE i.data IS NULL AND i.orig_url IS NOT NULL{failed_clause}
-        """
-        order_clause = "ORDER BY i.id DESC"
-        
-        try:
-            if dry_run:
-                progress = tqdm(
-                    total=total_count,
-                    desc="Backfill images",
-                    unit="img",
-                    dynamic_ncols=True,
-                    leave=True,
-                )
-                try:
-                    last_id: Optional[int] = None
-                    remaining = total_count
-                    fetch_size = 100
-                    while remaining > 0:
-                        with storage.conn.cursor() as cur:
-                            current_limit = min(fetch_size, remaining)
-                            if last_id is None:
-                                query = f"{base_query} {order_clause} LIMIT %s"
-                                params = (current_limit,)
-                            else:
-                                query = f"{base_query} AND i.id < %s {order_clause} LIMIT %s"
-                                params = (last_id, current_limit)
-                            cur.execute(query, params)
-                            rows = cur.fetchall()
-                        if not rows:
-                            break
-                        for _, _, _, _, orig_url in rows:
-                            typer.echo(f"DRY-RUN {orig_url}")
-                            skipped += 1
-                            progress.update(1)
-                        remaining -= len(rows)
-                        last_id = rows[-1][0]
-                finally:
-                    progress.close()
-            else:
-                from concurrent.futures import ThreadPoolExecutor, as_completed
-
-                worker_count = max(1, workers)
-                batch_size = worker_count * 4
-
-                def worker(item: tuple) -> tuple[tuple, Optional[bytes], Optional[str], Optional[str]]:
-                    _, biz, article_id, referer, orig_url = item
-                    normalized = normalize_image_url(str(orig_url))
-                    if not is_http_url(normalized):
-                        return item, None, None, f"Invalid URL scheme (non-http): {normalized}"
-                    data, content_type = download_with_retry(
-                        normalized, referer=str(referer) if referer else None
+            base_query = f"""
+                SELECT i.id, a.biz, a.article_id, a.link, i.orig_url
+                FROM article_images i
+                JOIN articles a ON a.id = i.article_pk
+                WHERE i.data IS NULL AND i.orig_url IS NOT NULL{failed_clause}
+            """
+            order_clause = "ORDER BY i.id DESC"
+            
+            try:
+                if dry_run:
+                    progress = tqdm(
+                        total=total_count,
+                        desc="Backfill images",
+                        unit="img",
+                        dynamic_ncols=True,
+                        leave=True,
                     )
-                    return item, data, content_type, None
+                    try:
+                        last_id: Optional[int] = None
+                        remaining = total_count
+                        fetch_size = 100
+                        while remaining > 0:
+                            with storage.conn.cursor() as cur:
+                                current_limit = min(fetch_size, remaining)
+                                if last_id is None:
+                                    query = f"{base_query} {order_clause} LIMIT %s"
+                                    params = (current_limit,)
+                                else:
+                                    query = f"{base_query} AND i.id < %s {order_clause} LIMIT %s"
+                                    params = (last_id, current_limit)
+                                cur.execute(query, params)
+                                rows = cur.fetchall()
+                            if not rows:
+                                break
+                            for _, _, _, _, orig_url in rows:
+                                typer.echo(f"DRY-RUN {orig_url}")
+                                skipped += 1
+                                progress.update(1)
+                            remaining -= len(rows)
+                            last_id = rows[-1][0]
+                    finally:
+                        progress.close()
+                else:
+                    worker_count = max(1, workers)
+                    batch_size = worker_count * 4
+                    sem = asyncio.Semaphore(worker_count)
 
-                progress = tqdm(
-                    total=total_count,
-                    desc="Backfill images",
-                    unit="img",
-                    dynamic_ncols=True,
-                    leave=True,
-                )
-                try:
-                    last_id: Optional[int] = None
-                    remaining = total_count
-                    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                    async def worker(
+                        item: tuple,
+                    ) -> tuple[tuple, Optional[bytes], Optional[str], Optional[str]]:
+                        _, biz, article_id, referer, orig_url = item
+                        normalized = normalize_image_url(str(orig_url))
+                        if not is_http_url(normalized):
+                            return item, None, None, f"Invalid URL scheme (non-http): {normalized}"
+                        data, content_type = await download_with_retry(
+                            normalized, referer=str(referer) if referer else None
+                        )
+                        return item, data, content_type, None
+
+                    async def run(item: tuple) -> tuple[tuple, Optional[bytes], Optional[str], Optional[str]]:
+                        async with sem:
+                            return await worker(item)
+
+                    progress = tqdm(
+                        total=total_count,
+                        desc="Backfill images",
+                        unit="img",
+                        dynamic_ncols=True,
+                        leave=True,
+                    )
+                    try:
+                        last_id: Optional[int] = None
+                        remaining = total_count
                         while remaining > 0:
                             with storage.conn.cursor() as cur:
                                 current_limit = min(batch_size, remaining)
@@ -1452,12 +1637,12 @@ def backfill_article_images(
                             if not batch:
                                 break
                             
-                            future_map = {executor.submit(worker, item): item for item in batch}
-                            for future in as_completed(future_map):
-                                item = future_map[future]
+                            tasks = {asyncio.create_task(run(item)): item for item in batch}
+                            for task in asyncio.as_completed(tasks):
+                                item = tasks[task]
                                 _, biz, article_id, _, orig_url = item
                                 try:
-                                    _, data, content_type, error = future.result()
+                                    _, data, content_type, error = await task
                                     if error:
                                         raise RuntimeError(error)
                                     storage.update_article_image_data(
@@ -1481,11 +1666,11 @@ def backfill_article_images(
                                     progress.update(1)
                             remaining -= len(batch)
                             last_id = batch[-1][0]
-                finally:
-                    progress.close()
-        except KeyboardInterrupt:
-            interrupted = True
-            typer.echo("Interrupted. Exiting.")
+                    finally:
+                        progress.close()
+            except KeyboardInterrupt:
+                interrupted = True
+                typer.echo("Interrupted. Exiting.")
 
     typer.echo(f"Done. updated={updated} skipped={skipped} failed={failed}")
     if interrupted:
@@ -1523,7 +1708,7 @@ def login(
     timeout: int = typer.Option(300, min=30, help="扫码等待超时时间（秒）"),
     poll_interval: int = typer.Option(2, min=1, help="轮询间隔（秒）"),
 ) -> None:
-    _run_login_flow(timeout=timeout, poll_interval=poll_interval)
+    _run_async(_run_login_flow(timeout=timeout, poll_interval=poll_interval))
 
 
 @app.command("serve")
@@ -1613,58 +1798,59 @@ def _emit_qr_data_url(qr_bytes: bytes) -> None:
     typer.echo(f"data:image/png;base64,{encoded}")
 
 
-def _run_login_flow(*, timeout: int, poll_interval: int) -> None:
+async def _run_login_flow(*, timeout: int, poll_interval: int) -> None:
     sid = f"{int(time.time() * 1000)}{random.randint(100, 999)}"
     typer.echo("正在获取二维码...")
-    with MPClient(timeout=15.0) as client, open_storage() as storage:
-        try:
-            uuid_cookie = client.start_login_session(sid)
-        except Exception as exc:
-            typer.echo(f"获取登录会话失败：{exc}")
-            raise typer.Exit(code=1)
-        try:
-            qrcode_bytes = client.fetch_login_qrcode(uuid_cookie)
-        except Exception as exc:
-            typer.echo(f"获取二维码失败：{exc}")
-            raise typer.Exit(code=1)
-        if not _render_qr_in_terminal(qrcode_bytes):
-            _emit_qr_data_url(qrcode_bytes)
-        typer.echo("请使用微信扫码登录")
-        started = time.time()
-        while True:
-            if time.time() - started > timeout:
+    async with MPClient(timeout=15.0) as client:
+        with open_storage() as storage:
+            try:
+                uuid_cookie = await client.start_login_session(sid)
+            except Exception as exc:
+                typer.echo(f"获取登录会话失败：{exc}")
                 raise typer.Exit(code=1)
-            resp = client.check_login_status(uuid_cookie)
-            if resp.get("base_resp", {}).get("ret") != 0:
-                typer.echo("扫码状态获取失败，请重试")
+            try:
+                qrcode_bytes = await client.fetch_login_qrcode(uuid_cookie)
+            except Exception as exc:
+                typer.echo(f"获取二维码失败：{exc}")
                 raise typer.Exit(code=1)
-            status = resp.get("status")
-            if status == 0:
-                time.sleep(poll_interval)
-                continue
-            if status == 1:
-                session = client.finalize_login(uuid_cookie)
-                info = client.fetch_login_info(session)
-                session.nickname = info.get("nickname") or None
-                session.avatar = info.get("avatar") or None
-                storage.save_login_session(session)
-                typer.echo(f"登录成功：{session.nickname or '未知账号'}")
-                return
-            if status in (2, 3):
-                qrcode_bytes = client.fetch_login_qrcode(uuid_cookie)
-                if not _render_qr_in_terminal(qrcode_bytes):
-                    _emit_qr_data_url(qrcode_bytes)
-                typer.echo("二维码已刷新，请重新扫码")
-                time.sleep(poll_interval)
-                continue
-            if status in (4, 6):
-                typer.echo("扫码成功，等待确认...")
-                time.sleep(poll_interval)
-                continue
-            if status == 5:
-                typer.echo("该账号尚未绑定邮箱，无法登录")
-                raise typer.Exit(code=1)
-            time.sleep(poll_interval)
+            if not _render_qr_in_terminal(qrcode_bytes):
+                _emit_qr_data_url(qrcode_bytes)
+            typer.echo("请使用微信扫码登录")
+            started = time.time()
+            while True:
+                if time.time() - started > timeout:
+                    raise typer.Exit(code=1)
+                resp = await client.check_login_status(uuid_cookie)
+                if resp.get("base_resp", {}).get("ret") != 0:
+                    typer.echo("扫码状态获取失败，请重试")
+                    raise typer.Exit(code=1)
+                status = resp.get("status")
+                if status == 0:
+                    await asyncio.sleep(poll_interval)
+                    continue
+                if status == 1:
+                    session = await client.finalize_login(uuid_cookie)
+                    info = await client.fetch_login_info(session)
+                    session.nickname = info.get("nickname") or None
+                    session.avatar = info.get("avatar") or None
+                    storage.save_login_session(session)
+                    typer.echo(f"登录成功：{session.nickname or '未知账号'}")
+                    return
+                if status in (2, 3):
+                    qrcode_bytes = await client.fetch_login_qrcode(uuid_cookie)
+                    if not _render_qr_in_terminal(qrcode_bytes):
+                        _emit_qr_data_url(qrcode_bytes)
+                    typer.echo("二维码已刷新，请重新扫码")
+                    await asyncio.sleep(poll_interval)
+                    continue
+                if status in (4, 6):
+                    typer.echo("扫码成功，等待确认...")
+                    await asyncio.sleep(poll_interval)
+                    continue
+                if status == 5:
+                    typer.echo("该账号尚未绑定邮箱，无法登录")
+                    raise typer.Exit(code=1)
+                await asyncio.sleep(poll_interval)
 
 
 __all__ = ["app"]
