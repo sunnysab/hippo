@@ -7,7 +7,7 @@ import time
 from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, quote, urlparse
 from contextlib import AbstractAsyncContextManager
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional
 
 import httpx
 
@@ -30,6 +30,27 @@ HEADERS = {
 }
 
 
+class WorkerURLTransport(httpx.AsyncBaseTransport):
+    def __init__(self, base: httpx.AsyncBaseTransport, worker_url: Optional[str]) -> None:
+        self._base = base
+        self._worker_url = worker_url.rstrip("/") if worker_url else None
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if self._worker_url and _is_mp_article(str(request.url)):
+            wrapped = _wrap_worker_url(str(request.url), self._worker_url)
+            request = httpx.Request(
+                method=request.method,
+                url=wrapped,
+                headers=request.headers,
+                stream=request.stream,
+                extensions=request.extensions,
+            )
+        return await self._base.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self._base.aclose()
+
+
 class MPClient(AbstractAsyncContextManager):
     """Tiny async wrapper around httpx for the few WeChat endpoints we need."""
 
@@ -43,27 +64,25 @@ class MPClient(AbstractAsyncContextManager):
     ) -> None:
         self.client = httpx.AsyncClient(timeout=timeout, headers=HEADERS, follow_redirects=True)
         self.article_worker = article_worker.rstrip("/") if article_worker else None
-        self.article_worker_host = _extract_host(self.article_worker) if self.article_worker else None
-        limits = (
-            httpx.Limits(
-                max_connections=article_max_connections,
-                max_keepalive_connections=article_max_connections,
-            )
-            if article_max_connections
-            else httpx.Limits()
-        )
         self.article_client: Optional[httpx.AsyncClient] = None
         if self.article_worker or article_worker_proxy:
-            client_kwargs = {
-                "timeout": timeout,
-                "headers": HEADERS,
-                "follow_redirects": True,
-            }
+            transport_kwargs: dict[str, Any] = {}
             if article_worker_proxy:
-                client_kwargs["proxy"] = article_worker_proxy
+                transport_kwargs["proxy"] = article_worker_proxy
             if article_max_connections:
-                client_kwargs["limits"] = limits
-            self.article_client = httpx.AsyncClient(**client_kwargs)
+                limits = httpx.Limits(
+                    max_connections=article_max_connections,
+                    max_keepalive_connections=article_max_connections,
+                )
+                transport_kwargs["limits"] = limits
+            transport = httpx.AsyncHTTPTransport(**transport_kwargs)
+            wrapped_transport = WorkerURLTransport(transport, self.article_worker)
+            self.article_client = httpx.AsyncClient(
+                timeout=timeout,
+                headers=HEADERS,
+                follow_redirects=True,
+                transport=wrapped_transport,
+            )
         
         logger.info(
             "MPClient initialized: worker=%s, proxy=%s, max_conn=%s",
@@ -116,10 +135,10 @@ class MPClient(AbstractAsyncContextManager):
         return records
 
     async def fetch_article_html(self, url: str) -> str:
-        target_url, client = self._prepare_article_request(url)
-        logger.debug("Fetching article HTML: %s", target_url)
+        client = self.article_client or self.client
+        logger.debug("Fetching article HTML: %s", url)
         try:
-            resp = await client.get(target_url)
+            resp = await client.get(url)
             resp.raise_for_status()
             logger.info("Successfully fetched article: %s (size=%d bytes)", url, len(resp.text))
             return resp.text
@@ -151,15 +170,6 @@ class MPClient(AbstractAsyncContextManager):
         resp.raise_for_status()
         content_type = resp.headers.get("content-type")
         return resp.content, content_type
-
-    def _prepare_article_request(self, url: str) -> Tuple[str, httpx.AsyncClient]:
-        if self.article_worker and _is_mp_article(url):
-            wrapped = _wrap_worker_url(url, self.article_worker)
-            return wrapped, self.article_client or self.client
-        parsed = urlparse(url)
-        if self.article_client and _is_worker_host(parsed.netloc, self.article_worker_host):
-            return url, self.article_client
-        return url, self.client
 
     # ------------------------------------------------------------------
     async def start_login_session(self, sid: str) -> str:
@@ -311,24 +321,6 @@ class MPClient(AbstractAsyncContextManager):
 
 
 # Parsing helpers -----------------------------------------------------------
-
-
-def _extract_host(url: str | None) -> Optional[str]:
-    if not url:
-        return None
-    try:
-        return urlparse(url).netloc
-    except Exception:
-        return None
-
-
-def _is_worker_host(netloc: str, expected: Optional[str]) -> bool:
-    if not netloc:
-        return False
-    lowered = netloc.lower()
-    if expected:
-        return lowered == expected.lower()
-    return lowered.endswith(".workers.dev")
 
 
 def _is_mp_article(url: str) -> bool:
