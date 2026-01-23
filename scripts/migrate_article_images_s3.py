@@ -22,6 +22,10 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _log(message: str) -> None:
+    print(f'[migrate s3] {message}', file=sys.stderr, flush=True)
+
+
 def _iter_images(
     storage: PostgresStorage, *, limit: int | None
 ) -> Iterable[tuple[int, str | None, bytes]]:
@@ -37,14 +41,13 @@ def _iter_images(
         params.append(limit)
     with storage.conn.cursor() as cur:
         cur.execute(query, params)
-        rows = cur.fetchall()
-    for row in rows:
-        image_id, content_type, data = row
-        if isinstance(data, memoryview):
-            payload = data.tobytes()
-        else:
-            payload = bytes(data)
-        yield image_id, content_type, payload
+        for row in cur:
+            image_id, content_type, data = row
+            if isinstance(data, memoryview):
+                payload = data.tobytes()
+            else:
+                payload = bytes(data)
+            yield image_id, content_type, payload
 
 
 def _count_images(storage: PostgresStorage) -> int:
@@ -90,6 +93,8 @@ def main() -> int:
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--prefix', default=None)
     parser.add_argument('--prune-db', action='store_true')
+    parser.add_argument('--timeout', type=float, default=5.0)
+    parser.add_argument('--log-every', type=int, default=1)
     args = parser.parse_args()
 
     if not args.pg_dsn:
@@ -103,7 +108,7 @@ def main() -> int:
     config = with_prefix(base_config, args.prefix)
 
     if args.dry_run:
-        print('DRY-RUN enabled, no data will be uploaded or updated.')
+        _log('DRY-RUN enabled, no data will be uploaded or updated.')
 
     updated = 0
     skipped = 0
@@ -112,27 +117,46 @@ def main() -> int:
     import boto3
     from botocore.config import Config as BotoConfig
 
+    _log(
+        'S3 config loaded '
+        f'endpoint={config.endpoint} bucket={config.bucket} prefix={config.prefix} '
+        f'timeout={args.timeout}s'
+    )
     session = boto3.session.Session()
+    _log('Creating S3 client...')
     client = session.client(
         's3',
         endpoint_url=config.endpoint,
         aws_access_key_id=config.access_key,
         aws_secret_access_key=config.secret_key,
         region_name=config.region,
-        config=BotoConfig(s3={'addressing_style': 'path'}),
+        config=BotoConfig(
+            s3={'addressing_style': 'path'},
+            connect_timeout=args.timeout,
+            read_timeout=args.timeout,
+        ),
     )
+    _log('S3 client ready.')
 
     with PostgresStorage(args.pg_dsn) as storage:
+        _log('Counting images...')
         total = _count_images(storage)
         if args.limit is not None:
             total = min(total, args.limit)
+        _log(f'Images to migrate: {total}')
         items = _iter_images(storage, limit=args.limit)
-        for image_id, content_type, payload in tqdm(
-            items, total=total, desc='Migrate images', unit='img'
+        for idx, (image_id, content_type, payload) in enumerate(
+            tqdm(items, total=total, desc='Migrate images', unit='img'),
+            start=1,
         ):
             s3_key = build_image_key(config.prefix, image_id, content_type)
+            if args.log_every > 0 and idx % args.log_every == 0:
+                _log(
+                    f'[{idx}/{total}] uploading id={image_id} key={s3_key} '
+                    f'bytes={len(payload)} type={content_type or ""}'
+                )
             if args.dry_run:
-                print(f'DRY-RUN {image_id} -> {s3_key}')
+                _log(f'DRY-RUN {image_id} -> {s3_key}')
                 skipped += 1
                 continue
             try:
