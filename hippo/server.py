@@ -1736,7 +1736,7 @@ def run_sync(
     return {"status": "running"}
 
 
-@router.get("/feed/mixed")
+@router.get("/feed/mixed", response_model=None)
 def list_feed(
     request: Request,
     group_id: Optional[int] = None,
@@ -1748,7 +1748,7 @@ def list_feed(
     until: Optional[str] = None,
     days: Optional[int] = None,
     storage: StorageLike = Depends(_get_storage),
-) -> Response | dict[str, Any]:
+):
     output_format = (format or "").lower()
     since_ts = _parse_date(since)
     until_ts = _parse_date(until, end_of_day=True)
