@@ -180,8 +180,7 @@ async def sync_account_core(
             saved = 0
             if records:
                 saved = storage.save_articles(records)
-                if saved:
-                    storage.update_last_synced(account.biz)
+                storage.update_last_synced(account.biz)
                 total_saved += saved
             page_count += 1
             current_completed = offset + publish_list_len
