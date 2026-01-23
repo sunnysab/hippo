@@ -422,16 +422,24 @@ class SyncScheduler:
 
     def run_once(self) -> dict[str, Any]:
         if not self._lock.acquire(blocking=False):
-            return {"status": "running"}
+            return {'status': 'running'}
         try:
             return self._run_sync()
         finally:
             self._lock.release()
 
-    def _run_sync(self) -> dict[str, Any]:
-        return asyncio.run(self._run_sync_async())
+    def run_group(self, group_id: int) -> dict[str, Any]:
+        if not self._lock.acquire(blocking=False):
+            return {'status': 'running'}
+        try:
+            return self._run_sync(group_id=group_id)
+        finally:
+            self._lock.release()
 
-    async def _run_sync_async(self) -> dict[str, Any]:
+    def _run_sync(self, *, group_id: Optional[int] = None) -> dict[str, Any]:
+        return asyncio.run(self._run_sync_async(group_id=group_id))
+
+    async def _run_sync_async(self, *, group_id: Optional[int] = None) -> dict[str, Any]:
         started_at = _utc_now_iso()
         with open_storage() as storage:
             settings = _get_sync_settings(storage)
@@ -453,6 +461,8 @@ class SyncScheduler:
                 return _get_sync_status(storage)
 
             accounts = storage.list_accounts()
+            if group_id is not None:
+                accounts = [account for account in accounts if account.group_id == group_id]
             group_defaults: dict[int, dict[str, Any]] = {}
             group_rows = _fetchall(
                 storage,
@@ -1857,10 +1867,27 @@ def update_sync_settings(
 
 @router.post("/sync/run", status_code=status.HTTP_202_ACCEPTED)
 def run_sync(
+    body: dict[str, Any] = Body(default={}),
+    storage: StorageLike = Depends(_get_storage),
     scheduler: "SyncScheduler" = Depends(_get_sync_scheduler),
 ) -> dict[str, Any]:
+    group_id = body.get('group_id')
+    if group_id is not None:
+        try:
+            group_id = int(group_id)
+        except (TypeError, ValueError) as exc:
+            raise ApiError('Invalid group_id') from exc
+        row = _fetchone(
+            storage,
+            'SELECT id FROM account_groups WHERE id = %s',
+            [group_id],
+        )
+        if not row:
+            raise ApiError('Group not found', status=404)
+        threading.Thread(target=scheduler.run_group, args=(group_id,), daemon=True).start()
+        return {'status': 'running', 'group_id': group_id}
     threading.Thread(target=scheduler.run_once, daemon=True).start()
-    return {"status": "running"}
+    return {'status': 'running'}
 
 
 @router.get("/feed/mixed", response_model=None)
