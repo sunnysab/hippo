@@ -16,7 +16,6 @@ class AccountCredential:
     uin: str = ""
     key: str = ""
     pass_ticket: str = ""
-    is_default: bool = False
     is_disabled: bool = False
     last_synced_at: Optional[datetime] = None
     sync_mode: Optional[str] = None

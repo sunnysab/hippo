@@ -72,7 +72,6 @@ CREATE TABLE public.accounts (
     group_id integer,
     sync_mode text,
     sync_recent_days integer,
-    is_default boolean DEFAULT false NOT NULL,
     last_synced_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL

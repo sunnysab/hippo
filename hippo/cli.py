@@ -276,7 +276,6 @@ def add_account(
     nickname: str = typer.Option(..., prompt="昵称", help="公众号昵称"),
     alias: Optional[str] = typer.Option(None, prompt=False, help="可选别名"),
     round_head_img: Optional[str] = typer.Option(None, help="头像 URL，可选"),
-    set_default: bool = typer.Option(False, is_flag=True, help="是否设置为默认账号"),
 ) -> None:
     target_biz = biz.strip()
     credential = AccountCredential(
@@ -287,12 +286,9 @@ def add_account(
         uin="",
         key="",
         pass_ticket="",
-        is_default=set_default,
     )
     with open_storage() as storage:
         stored = storage.upsert_account(credential)
-        if set_default:
-            storage.set_default_account(stored.biz)
     typer.echo(f"账号 {stored.nickname} ({stored.biz}) 已保存")
 
 
@@ -387,7 +383,6 @@ async def _search_accounts_async(
                         uin="",
                         key="",
                         pass_ticket="",
-                        is_default=False,
                     )
                     stored = storage.upsert_account(credential)
                     saved.append(f"{stored.nickname} ({stored.biz})")
@@ -406,13 +401,12 @@ def list_accounts(
     if not accounts:
         typer.echo("尚未保存任何账号，使用 `account add` 添加")
         return
-    headers = ["默认", "昵称", "fakeid", "Group", "Disabled", "最近同步"]
+    headers = ["昵称", "fakeid", "Group", "Disabled", "最近同步"]
     rows: list[list[str]] = []
     for account in accounts:
         last_synced = account.last_synced_at.isoformat() if account.last_synced_at else "-"
         rows.append(
             [
-                "✅" if account.is_default else "",
                 account.nickname,
                 account.biz,
                 account.group_name or "-",
@@ -541,16 +535,6 @@ def remove_account(
         typer.echo(f"Account {target.nickname} ({target.biz}) removed.")
     else:
         typer.echo(f"Account {target.biz} not found.")
-
-
-@accounts_app.command("set-default")
-def set_default_account(
-    biz: str = typer.Argument(..., help="设置为默认账号的 fakeid")
-) -> None:
-    _require_nonempty(biz, "请提供要设置的账号 fakeid。")
-    with open_storage() as storage:
-        storage.set_default_account(biz)
-    typer.echo(f"{biz} 已设为默认账号")
 
 
 @accounts_app.command("disable")
@@ -1215,7 +1199,6 @@ def export_accounts() -> None:
             "uin": account.uin,
             "key": account.key,
             "pass_ticket": account.pass_ticket,
-            "is_default": account.is_default,
             "is_disabled": account.is_disabled,
             "last_synced_at": account.last_synced_at.isoformat()
             if account.last_synced_at

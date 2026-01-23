@@ -920,7 +920,7 @@ def _list_accounts(
     offset = max(page - 1, 0) * page_size
     query_sql = (
         ""
-        "SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id, a.is_default,"
+        "SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,"
         " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,"
         " COALESCE(ac.article_count, 0) AS article_count,"
         " (ai.data IS NOT NULL) AS avatar_ready"
@@ -930,7 +930,7 @@ def _list_accounts(
         "   ON ac.biz = a.biz"
         " LEFT JOIN avatar_images ai ON ai.biz = a.biz"
         f" {where_sql}"
-        " ORDER BY a.is_default DESC, a.nickname ASC"
+        " ORDER BY a.nickname ASC"
         f" {limit_sql}"
     )
     rows = _fetchall(storage, query_sql, params + [page_size, offset])
@@ -951,7 +951,7 @@ def _get_account(storage: StorageLike, biz: str) -> dict[str, Any]:
         storage,
         (
             ""
-            "SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id, a.is_default,"
+            "SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,"
             " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,"
             " COALESCE(ac.article_count, 0) AS article_count,"
             " (ai.data IS NOT NULL) AS avatar_ready"
@@ -978,7 +978,6 @@ def _update_account(storage: StorageLike, biz: str, payload: dict[str, Any]) -> 
         'alias': 'alias',
         'round_head_img': 'round_head_img',
         'group_id': 'group_id',
-        'is_default': 'is_default',
         'is_disabled': 'is_disabled',
         'sync_mode': 'sync_mode',
         'sync_recent_days': 'sync_recent_days',
@@ -987,7 +986,7 @@ def _update_account(storage: StorageLike, biz: str, payload: dict[str, Any]) -> 
     for key, column in mapping.items():
         if key in payload:
             value = payload[key]
-            if key in ('is_default', 'is_disabled'):
+            if key == 'is_disabled':
                 value = bool(value)
             if key == 'sync_mode':
                 value = _normalize_sync_mode(value)
@@ -1010,8 +1009,6 @@ def _update_account(storage: StorageLike, biz: str, payload: dict[str, Any]) -> 
     storage.conn.commit()
     if updated == 0:
         raise ApiError("Account not found", status=404)
-    if payload.get("is_default"):
-        storage.set_default_account(biz)
     return _get_account(storage, biz)
 
 

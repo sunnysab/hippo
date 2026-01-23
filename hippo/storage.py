@@ -15,7 +15,7 @@ from psycopg2 import pool as pg_pool
 from .models import AccountCredential, AccountGroup, ArticleRecord, LoginSession
 from . import queries
 
-SCHEMA_VERSION = '7'
+SCHEMA_VERSION = '8'
 
 _PG_POOL: Optional[pg_pool.ThreadedConnectionPool] = None
 _PG_POOL_DSN: Optional[str] = None
@@ -68,7 +68,6 @@ class StorageLike(Protocol):
         self, biz: Optional[str] = None, *, fallback_to_default: bool = True
     ) -> AccountCredential: ...
     def remove_account(self, biz: str) -> int: ...
-    def set_default_account(self, biz: str) -> None: ...
     def upsert_group(self, name: str) -> AccountGroup: ...
     def list_groups(self) -> List[AccountGroup]: ...
     def set_account_group(self, biz: str, group_name: Optional[str]) -> None: ...
@@ -194,9 +193,9 @@ class PostgresStorage(AbstractContextManager):
             cur.execute(
                 """
                 INSERT INTO accounts (biz, nickname, alias, round_head_img, uin, key, pass_ticket,
-                                      group_id, is_default, is_disabled, sync_mode, sync_recent_days,
+                                      group_id, is_disabled, sync_mode, sync_recent_days,
                                       last_synced_at, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (biz) DO UPDATE SET
                     nickname=EXCLUDED.nickname,
                     alias=EXCLUDED.alias,
@@ -215,7 +214,6 @@ class PostgresStorage(AbstractContextManager):
                     account.key or "",
                     account.pass_ticket or "",
                     account.group_id,
-                    account.is_default,
                     account.is_disabled,
                     account.sync_mode,
                     account.sync_recent_days,
@@ -225,8 +223,6 @@ class PostgresStorage(AbstractContextManager):
                 ),
             )
         self.conn.commit()
-        if account.is_default:
-            self.set_default_account(account.biz)
         return self.get_account(account.biz, fallback_to_default=False)
 
     def list_accounts(self, group: Optional[str] = None) -> List[AccountCredential]:
@@ -239,7 +235,7 @@ class PostgresStorage(AbstractContextManager):
         if group:
             query += " WHERE g.name = %s"
             params.append(group)
-        query += " ORDER BY a.is_default DESC, a.nickname ASC"
+        query += " ORDER BY a.nickname ASC"
         with self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             cur.execute(query, params)
             rows = cur.fetchall()
@@ -259,17 +255,6 @@ class PostgresStorage(AbstractContextManager):
                     WHERE a.biz = %s
                     """,
                     (biz,),
-                )
-                row = cur.fetchone()
-            if not row and fallback_to_default:
-                cur.execute(
-                    """
-                    SELECT a.*, g.name AS group_name
-                    FROM accounts a
-                    LEFT JOIN account_groups g ON g.id = a.group_id
-                    WHERE a.is_default = TRUE
-                    LIMIT 1
-                    """
                 )
                 row = cur.fetchone()
             if not row and fallback_to_default and not biz:
@@ -293,15 +278,6 @@ class PostgresStorage(AbstractContextManager):
             removed = cur.rowcount
         self.conn.commit()
         return removed
-
-    def set_default_account(self, biz: str) -> None:
-        with self.conn.cursor() as cur:
-            cur.execute("UPDATE accounts SET is_default = FALSE")
-            cur.execute("UPDATE accounts SET is_default = TRUE WHERE biz = %s", (biz,))
-            updated = cur.rowcount
-        self.conn.commit()
-        if updated == 0:
-            raise LookupError(f"Account {biz} not found")
 
     def upsert_group(self, name: str) -> AccountGroup:
         trimmed = name.strip()
@@ -827,7 +803,6 @@ class PostgresStorage(AbstractContextManager):
             uin=row["uin"] or "",
             key=row["key"] or "",
             pass_ticket=row["pass_ticket"] or "",
-            is_default=bool(row["is_default"]),
             is_disabled=bool(row.get("is_disabled", False)),
             last_synced_at=last_synced_at,
             sync_mode=row.get('sync_mode'),

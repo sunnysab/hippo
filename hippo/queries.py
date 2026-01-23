@@ -27,7 +27,6 @@ SCHEMA_INIT_STATEMENTS = [
         key TEXT NOT NULL,
         pass_ticket TEXT NOT NULL,
         group_id INTEGER REFERENCES account_groups(id) ON DELETE SET NULL,
-        is_default BOOLEAN NOT NULL DEFAULT FALSE,
         is_disabled BOOLEAN NOT NULL DEFAULT FALSE,
         sync_mode TEXT,
         sync_recent_days INTEGER,
@@ -51,6 +50,10 @@ SCHEMA_INIT_STATEMENTS = [
     """
     ALTER TABLE accounts
     ADD COLUMN IF NOT EXISTS sync_recent_days INTEGER
+    """,
+    """
+    ALTER TABLE accounts
+    DROP COLUMN IF EXISTS is_default
     """,
     """
     ALTER TABLE account_groups
