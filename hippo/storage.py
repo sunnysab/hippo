@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 from typing import Any, Iterable, Protocol
@@ -17,214 +18,7 @@ from .models import AccountCredential, AccountGroup, ArticleRecord, LoginSession
 
 SCHEMA_VERSION = '10'
 
-SCHEMA_INIT_STATEMENTS = [
-    """
-    CREATE EXTENSION IF NOT EXISTS pg_jieba
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS meta (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS account_groups (
-        id SERIAL PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
-        sync_mode TEXT,
-        sync_recent_days INTEGER,
-        created_at TIMESTAMPTZ NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS accounts (
-        biz TEXT PRIMARY KEY,
-        nickname TEXT NOT NULL,
-        alias TEXT,
-        round_head_img TEXT,
-        group_id INTEGER REFERENCES account_groups(id) ON DELETE SET NULL,
-        is_disabled BOOLEAN NOT NULL DEFAULT FALSE,
-        sync_mode TEXT,
-        sync_recent_days INTEGER,
-        last_synced_at TIMESTAMPTZ,
-        created_at TIMESTAMPTZ NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL
-    )
-    """,
-    """
-    ALTER TABLE accounts
-    ADD COLUMN IF NOT EXISTS is_disabled BOOLEAN NOT NULL DEFAULT FALSE
-    """,
-    """
-    ALTER TABLE accounts
-    ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES account_groups(id) ON DELETE SET NULL
-    """,
-    """
-    ALTER TABLE accounts
-    ADD COLUMN IF NOT EXISTS sync_mode TEXT
-    """,
-    """
-    ALTER TABLE accounts
-    ADD COLUMN IF NOT EXISTS sync_recent_days INTEGER
-    """,
-    """
-    ALTER TABLE accounts
-    DROP COLUMN IF EXISTS is_default
-    """,
-    """
-    ALTER TABLE accounts
-    DROP COLUMN IF EXISTS uin,
-    DROP COLUMN IF EXISTS key,
-    DROP COLUMN IF EXISTS pass_ticket
-    """,
-    """
-    ALTER TABLE account_groups
-    ADD COLUMN IF NOT EXISTS sync_mode TEXT
-    """,
-    """
-    ALTER TABLE account_groups
-    ADD COLUMN IF NOT EXISTS sync_recent_days INTEGER
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_accounts_group
-    ON accounts (group_id)
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS articles (
-        id SERIAL PRIMARY KEY,
-        biz TEXT NOT NULL REFERENCES accounts(biz) ON DELETE CASCADE,
-        article_id TEXT NOT NULL,
-        title TEXT NOT NULL,
-        author TEXT,
-        digest TEXT,
-        cover TEXT,
-        link TEXT NOT NULL,
-        source_url TEXT,
-        publish_at BIGINT,
-        raw_json TEXT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL,
-        UNIQUE (biz, article_id)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS article_content (
-        id SERIAL PRIMARY KEY,
-        article_pk INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
-        url_token TEXT,
-        clean_html TEXT,
-        content_markdown TEXT,
-        content_json JSONB,
-        created_at TIMESTAMPTZ NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL,
-        UNIQUE (article_pk)
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_article_content_article_pk
-    ON article_content (article_pk)
-    """,
-    """
-    ALTER TABLE articles
-    ADD COLUMN IF NOT EXISTS search_vector tsvector
-    """,
-    """
-    CREATE OR REPLACE FUNCTION build_article_search_vector(
-        title TEXT,
-        author TEXT,
-        digest TEXT,
-        content TEXT
-    ) RETURNS tsvector AS $$
-    SELECT
-        setweight(to_tsvector('jiebaqry', COALESCE(title, '')), 'A') ||
-        setweight(to_tsvector('jiebaqry', COALESCE(author, '')), 'C') ||
-        setweight(to_tsvector('jiebaqry', COALESCE(digest, '')), 'B') ||
-        setweight(
-            to_tsvector('jiebaqry', COALESCE(SUBSTRING(content FROM 1 FOR 50000), '')),
-            'B'
-        );
-    $$ LANGUAGE sql STABLE
-    """,
-    """
-    CREATE OR REPLACE FUNCTION articles_search_vector_trigger()
-    RETURNS trigger AS $$
-    DECLARE
-        content_text TEXT;
-    BEGIN
-        IF TG_OP = 'INSERT' AND NEW.id IS NULL THEN
-            content_text := '';
-        ELSE
-            SELECT COALESCE(c.content_markdown, c.clean_html, '')
-            INTO content_text
-            FROM article_content c
-            WHERE c.article_pk = NEW.id;
-        END IF;
-        NEW.search_vector = build_article_search_vector(
-            NEW.title,
-            NEW.author,
-            NEW.digest,
-            content_text
-        );
-        RETURN NEW;
-    END;
-    $$ LANGUAGE plpgsql
-    """,
-    """
-    DROP TRIGGER IF EXISTS trg_articles_search_vector ON articles
-    """,
-    """
-    CREATE TRIGGER trg_articles_search_vector
-    BEFORE INSERT OR UPDATE OF title, author, digest
-    ON articles
-    FOR EACH ROW EXECUTE FUNCTION articles_search_vector_trigger()
-    """,
-    """
-    CREATE OR REPLACE FUNCTION article_content_search_vector_trigger()
-    RETURNS trigger AS $$
-    BEGIN
-        UPDATE articles
-        SET search_vector = build_article_search_vector(
-            title,
-            author,
-            digest,
-            COALESCE(NEW.content_markdown, NEW.clean_html, '')
-        )
-        WHERE id = NEW.article_pk;
-        RETURN NEW;
-    END;
-    $$ LANGUAGE plpgsql
-    """,
-    """
-    DROP TRIGGER IF EXISTS trg_article_content_search_vector ON article_content
-    """,
-    """
-    CREATE TRIGGER trg_article_content_search_vector
-    AFTER INSERT OR UPDATE OF content_markdown, clean_html
-    ON article_content
-    FOR EACH ROW EXECUTE FUNCTION article_content_search_vector_trigger()
-    """,
-    """
-    UPDATE articles a
-    SET search_vector = build_article_search_vector(
-        a.title,
-        a.author,
-        a.digest,
-        COALESCE(c.content_markdown, c.clean_html, '')
-    )
-    FROM article_content c
-    WHERE c.article_pk = a.id
-    """,
-    """
-    UPDATE articles
-    SET search_vector = build_article_search_vector(title, author, digest, '')
-    WHERE search_vector IS NULL
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_articles_search_vector
-    ON articles USING GIN (search_vector)
-    """,
-]
+SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'schema' / 'postgres.sql'
 
 
 ARTICLES_COLUMN_CHECK_QUERY = """
@@ -276,50 +70,6 @@ DROP COLUMN IF EXISTS cover_image_id
 """
 
 
-CREATE_ARTICLES_INDEX = """
-CREATE INDEX IF NOT EXISTS idx_articles_biz_publish
-ON articles (biz, publish_at DESC)
-"""
-
-
-CREATE_ARTICLE_IMAGES_TABLE = """
-CREATE TABLE IF NOT EXISTS article_images (
-    id SERIAL PRIMARY KEY,
-    article_pk INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
-    position INTEGER NOT NULL,
-    kind TEXT NOT NULL,
-    orig_url TEXT,
-    content_type TEXT,
-    data BYTEA,
-    failed_at TIMESTAMPTZ,
-    failed_reason TEXT,
-    updated_at TIMESTAMPTZ NOT NULL,
-    UNIQUE (article_pk, orig_url)
-)
-"""
-
-
-ALTER_ARTICLE_IMAGES_TABLE = """
-ALTER TABLE article_images
-ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ,
-ADD COLUMN IF NOT EXISTS failed_reason TEXT
-"""
-
-
-CREATE_LOGIN_SESSIONS_TABLE = """
-CREATE TABLE IF NOT EXISTS login_sessions (
-    id SERIAL PRIMARY KEY,
-    token TEXT NOT NULL,
-    cookies_json TEXT NOT NULL,
-    nickname TEXT,
-    avatar TEXT,
-    is_default BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
-)
-"""
-
-
 UPSERT_SCHEMA_VERSION = """
 INSERT INTO meta(key, value)
 VALUES ('schema_version', %s)
@@ -352,6 +102,88 @@ def _get_pool(dsn: str) -> ConnectionPool:
 
 class StorageInitError(RuntimeError):
     pass
+
+
+def _load_schema_sql() -> str:
+    try:
+        return SCHEMA_PATH.read_text(encoding='utf-8')
+    except FileNotFoundError as exc:
+        raise StorageInitError(f'Schema file not found: {SCHEMA_PATH}') from exc
+
+
+def _split_sql_statements(sql_text: str) -> list[str]:
+    statements: list[str] = []
+    buffer: list[str] = []
+    in_single = False
+    in_double = False
+    dollar_tag: str | None = None
+    idx = 0
+    length = len(sql_text)
+    while idx < length:
+        char = sql_text[idx]
+        if dollar_tag:
+            if sql_text.startswith(dollar_tag, idx):
+                buffer.append(dollar_tag)
+                idx += len(dollar_tag)
+                dollar_tag = None
+            else:
+                buffer.append(char)
+                idx += 1
+            continue
+        if in_single:
+            buffer.append(char)
+            if char == "'":
+                if idx + 1 < length and sql_text[idx + 1] == "'":
+                    buffer.append("'")
+                    idx += 2
+                    continue
+                in_single = False
+            idx += 1
+            continue
+        if in_double:
+            buffer.append(char)
+            if char == '"':
+                if idx + 1 < length and sql_text[idx + 1] == '"':
+                    buffer.append('"')
+                    idx += 2
+                    continue
+                in_double = False
+            idx += 1
+            continue
+        if char == "'":
+            in_single = True
+            buffer.append(char)
+            idx += 1
+            continue
+        if char == '"':
+            in_double = True
+            buffer.append(char)
+            idx += 1
+            continue
+        if char == '$':
+            tag_end = idx + 1
+            while tag_end < length and (
+                sql_text[tag_end].isalnum() or sql_text[tag_end] == '_'
+            ):
+                tag_end += 1
+            if tag_end < length and sql_text[tag_end] == '$':
+                dollar_tag = sql_text[idx : tag_end + 1]
+                buffer.append(dollar_tag)
+                idx = tag_end + 1
+                continue
+        if char == ';':
+            statement = ''.join(buffer).strip()
+            if statement:
+                statements.append(statement)
+            buffer = []
+            idx += 1
+            continue
+        buffer.append(char)
+        idx += 1
+    statement = ''.join(buffer).strip()
+    if statement:
+        statements.append(statement)
+    return statements
 
 
 def _utc_now_dt() -> datetime:
@@ -432,7 +264,8 @@ class PostgresStorage(AbstractContextManager):
 
     def _init_db(self) -> None:
         with self.conn.cursor() as cur:
-            for statement in SCHEMA_INIT_STATEMENTS:
+            schema_sql = _load_schema_sql()
+            for statement in _split_sql_statements(schema_sql):
                 cur.execute(statement)
             cur.execute(ARTICLES_COLUMN_CHECK_QUERY)
             existing_columns = {row[0] for row in cur.fetchall()}
@@ -444,10 +277,6 @@ class PostgresStorage(AbstractContextManager):
             }.issubset(existing_columns):
                 cur.execute(ARTICLE_CONTENT_MIGRATION_QUERY)
             cur.execute(DROP_ARTICLE_LEGACY_COLUMNS)
-            cur.execute(CREATE_ARTICLES_INDEX)
-            cur.execute(CREATE_ARTICLE_IMAGES_TABLE)
-            cur.execute(ALTER_ARTICLE_IMAGES_TABLE)
-            cur.execute(CREATE_LOGIN_SESSIONS_TABLE)
             cur.execute(UPSERT_SCHEMA_VERSION, (SCHEMA_VERSION,))
         self.conn.commit()
 
