@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from contextlib import AbstractContextManager
 from datetime import datetime, timezone
@@ -78,6 +79,17 @@ ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
 
 _PG_POOL: ConnectionPool | None = None
 _PG_POOL_DSN: str | None = None
+_DB_INIT_LOG_VALUES = {'1', 'true', 'yes', 'on'}
+
+
+def _db_init_log_enabled() -> bool:
+    return os.environ.get('HIPPO_DB_INIT_LOG', '').strip().lower() in _DB_INIT_LOG_VALUES
+
+
+def _log_db_init(message: str) -> None:
+    if not _db_init_log_enabled():
+        return
+    print(f'[db init] {message}', file=sys.stderr, flush=True)
 
 
 def _get_pool(dsn: str) -> ConnectionPool:
@@ -265,7 +277,14 @@ class PostgresStorage(AbstractContextManager):
     def _init_db(self) -> None:
         with self.conn.cursor() as cur:
             schema_sql = _load_schema_sql()
-            for statement in _split_sql_statements(schema_sql):
+            statements = _split_sql_statements(schema_sql)
+            total = len(statements)
+            for idx, statement in enumerate(statements, start=1):
+                first_line = statement.strip().splitlines()[0].strip()
+                preview = first_line[:160]
+                if len(first_line) > 160:
+                    preview = f'{preview}...'
+                _log_db_init(f'sql {idx}/{total}: {preview}')
                 cur.execute(statement)
             cur.execute(ARTICLES_COLUMN_CHECK_QUERY)
             existing_columns = {row[0] for row in cur.fetchall()}
@@ -275,8 +294,11 @@ class PostgresStorage(AbstractContextManager):
                 "content_markdown",
                 "content_json",
             }.issubset(existing_columns):
+                _log_db_init('migrate article_content')
                 cur.execute(ARTICLE_CONTENT_MIGRATION_QUERY)
+            _log_db_init('drop legacy article columns')
             cur.execute(DROP_ARTICLE_LEGACY_COLUMNS)
+            _log_db_init('update schema version')
             cur.execute(UPSERT_SCHEMA_VERSION, (SCHEMA_VERSION,))
         self.conn.commit()
 
