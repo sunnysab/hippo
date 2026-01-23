@@ -17,6 +17,20 @@
     hasMore: true,
   };
 
+  const formatRelativeTime = (isoString) => {
+    if (!isoString) return '';
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) return '';
+    const diff = Date.now() - date.getTime();
+    const minutes = Math.floor(diff / 60000);
+    if (minutes < 1) return t('time.justNow', 'just now');
+    if (minutes < 60) return t('time.minutesAgo', '{n} minutes ago').replace('{n}', minutes);
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return t('time.hoursAgo', '{n} hours ago').replace('{n}', hours);
+    const days = Math.floor(hours / 24);
+    return t('time.daysAgo', '{n} days ago').replace('{n}', days);
+  };
+
   const showGroupContextMenu = (group, x, y) => {
     const menu = $('#group-context-menu');
     if (!menu) return;
@@ -155,6 +169,12 @@
       card.className = 'card';
       const checked = state.selectedAccounts.has(account.biz) ? 'checked' : '';
       const avatar = account.avatar_url || '';
+      const lastSynced = formatRelativeTime(account.last_synced_at);
+      const lastUpdatedText = lastSynced
+        ? t('accounts.lastUpdated', 'Last update {time}').replace('{time}', lastSynced)
+        : t('accounts.lastUpdatedEmpty', 'No updates yet');
+      const articleCount = Number(account.article_count || 0);
+      const articleCountText = t('accounts.articleCount', '{n} articles').replace('{n}', articleCount);
       card.innerHTML = `
         <div class="card-header">
           <input class="account-check" type="checkbox" data-biz="${account.biz}" ${checked} />
@@ -164,6 +184,7 @@
           <div>
             <div class="account-name">${account.nickname}</div>
             <div class="account-sub">${account.alias || account.biz}</div>
+            <div class="account-sub account-stats">${lastUpdatedText} · ${articleCountText}</div>
           </div>
         </div>
       `;

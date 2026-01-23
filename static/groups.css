@@ -215,6 +215,10 @@
   color: var(--muted);
 }
 
+.account-stats {
+  margin-top: 4px;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;
