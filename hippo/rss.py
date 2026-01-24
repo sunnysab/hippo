@@ -10,7 +10,7 @@ from typing import Any, Iterable
 from xml.sax.saxutils import escape
 
 from .storage import PostgresStorage, open_storage
-from .utils import fetchall_rows, parse_iso_date_to_timestamp
+from .utils import ensure_default_group, fetchall_rows, parse_iso_date_to_timestamp
 
 DEFAULT_GROUP_NAME = "Default"
 
@@ -22,21 +22,6 @@ class RssItem:
     guid: str
     pub_date: int | None
     description: str
-
-
-def _ensure_default_group(storage: PostgresStorage) -> int:
-    groups = storage.list_groups()
-    default_group = next((g for g in groups if g.name == DEFAULT_GROUP_NAME), None)
-    if default_group is None:
-        default_group = storage.upsert_group(DEFAULT_GROUP_NAME)
-    default_id = default_group.id
-    with storage.conn.cursor() as cur:
-        cur.execute(
-            "UPDATE accounts SET group_id = %s WHERE group_id IS NULL",
-            (default_id,),
-        )
-    storage.conn.commit()
-    return default_id
 
 
 def _resolve_group_ids(storage: PostgresStorage, names: Iterable[str]) -> list[int]:
@@ -116,7 +101,7 @@ def query_rss_items(
     image_base_url: str | None,
 ) -> list[RssItem]:
     with open_storage() as storage:
-        _ensure_default_group(storage)
+        ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
         group_ids = _resolve_group_ids(storage, group_names)
 
         where: list[str] = []

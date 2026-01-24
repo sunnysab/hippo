@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import random
 import re
-import smtplib
 import threading
 import time as time_module
 from datetime import datetime, timezone
-from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Generator
 
@@ -27,25 +24,23 @@ try:
 except Exception:  # pragma: no cover - optional fallback
     jieba = None
 
-from .downloader import ArticleDownloader
+from .emailer import get_email_settings, set_email_settings
 from .http import MPClient
-from .models import AccountCredential, ArticleRecord
+from .models import AccountCredential
 from .rss import build_rss_xml, query_rss_items
 from .s3 import fetch_object_bytes, get_s3_client
 from .storage import PostgresStorage, open_storage
-from .utils import fetchall_rows, fetchone_row, parse_iso_date_to_timestamp
-from .sync_core import is_freq_control, is_login_error, sync_account_core
+from .sync_service import (
+    SyncScheduler,
+    get_sync_settings as load_sync_settings,
+    get_sync_status as load_sync_status,
+    set_sync_settings as save_sync_settings,
+)
+from .utils import ensure_default_group, fetchall_rows, fetchone_row, parse_iso_date_to_timestamp
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 DEFAULT_GROUP_NAME = "Default"
-SYNC_STATUS_KEY = "sync:last_status"
-SYNC_ERROR_KEY = "sync:last_error"
-SYNC_STARTED_KEY = "sync:last_started_at"
-SYNC_FINISHED_KEY = "sync:last_finished_at"
-SYNC_HISTORY_KEY = "sync:history"
-SYNC_SETTINGS_KEY = "sync:settings"
-ALERT_SENT_KEY = "sync:alert_sent"
 
 logger = logging.getLogger("hippo.serve")
 
@@ -112,141 +107,6 @@ def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _load_meta_json(storage: PostgresStorage, key: str, default: Any) -> Any:
-    raw = storage.get_meta(key)
-    if not raw:
-        return default
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return default
-
-
-def _save_meta_json(storage: PostgresStorage, key: str, value: Any) -> None:
-    storage.set_meta(key, json.dumps(value, ensure_ascii=False))
-
-
-def _default_sync_settings() -> dict[str, Any]:
-    return {
-        "enabled": False,
-        "interval_minutes": 60,
-        "mode": "incremental",
-        "recent_days": 7,
-        "page_size": 10,
-        "page_limit": 2,
-        "sleep_seconds": 0.05,
-        "download_content": True,
-        "download_images": True,
-        "content_limit": 20,
-        "skip_minutes": 30,
-        "alert_enabled": False,
-        "alert_email": "",
-    }
-
-
-def _default_email_settings() -> dict[str, Any]:
-    return {
-        "smtp_host": "",
-        "smtp_port": 587,
-        "smtp_user": "",
-        "smtp_password": "",
-        "smtp_tls": True,
-        "from_email": "",
-    }
-
-
-def _get_email_settings(storage: PostgresStorage) -> dict[str, Any]:
-    settings = _load_meta_json(storage, "email:settings", _default_email_settings())
-    defaults = _default_email_settings()
-    return {**defaults, **(settings or {})}
-
-
-def _set_email_settings(storage: PostgresStorage, updates: dict[str, Any]) -> dict[str, Any]:
-    current = _get_email_settings(storage)
-    current.update(updates)
-    _save_meta_json(storage, "email:settings", current)
-    return current
-
-
-def _send_alert_email(storage: PostgresStorage, subject: str, body: str) -> None:
-    settings = _get_email_settings(storage)
-    sync_settings = _get_sync_settings(storage)
-    if not sync_settings.get("alert_enabled"):
-        return
-    to_email = sync_settings.get("alert_email") or ""
-    if not to_email:
-        return
-    if not settings.get("smtp_host"):
-        return
-    message = EmailMessage()
-    message["Subject"] = subject
-    message["From"] = settings.get("from_email") or settings.get("smtp_user") or to_email
-    message["To"] = to_email
-    message.set_content(body)
-    smtp_host = settings.get("smtp_host")
-    smtp_port = int(settings.get("smtp_port") or 587)
-    smtp_user = settings.get("smtp_user")
-    smtp_password = settings.get("smtp_password")
-    use_tls = bool(settings.get("smtp_tls"))
-    with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as smtp:
-        if use_tls:
-            smtp.starttls()
-        if smtp_user:
-            smtp.login(smtp_user, smtp_password or "")
-        smtp.send_message(message)
-
-
-def _get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
-    settings = _load_meta_json(storage, SYNC_SETTINGS_KEY, _default_sync_settings())
-    defaults = _default_sync_settings()
-    merged = {**defaults, **(settings or {})}
-    return merged
-
-
-def _set_sync_settings(storage: PostgresStorage, updates: dict[str, Any]) -> dict[str, Any]:
-    current = _get_sync_settings(storage)
-    current.update(updates)
-    _save_meta_json(storage, SYNC_SETTINGS_KEY, current)
-    return current
-
-
-def _append_sync_history(storage: PostgresStorage, entry: dict[str, Any]) -> None:
-    history = _load_meta_json(storage, SYNC_HISTORY_KEY, [])
-    if not isinstance(history, list):
-        history = []
-    history.insert(0, entry)
-    history = history[:50]
-    _save_meta_json(storage, SYNC_HISTORY_KEY, history)
-
-
-def _get_sync_status(storage: PostgresStorage) -> dict[str, Any]:
-    return {
-        "status": storage.get_meta(SYNC_STATUS_KEY) or "idle",
-        "last_started_at": storage.get_meta(SYNC_STARTED_KEY),
-        "last_finished_at": storage.get_meta(SYNC_FINISHED_KEY),
-        "last_error": storage.get_meta(SYNC_ERROR_KEY),
-        "history": _load_meta_json(storage, SYNC_HISTORY_KEY, []),
-    }
-
-
-def _set_sync_state(
-    storage: PostgresStorage,
-    *,
-    status: str | None = None,
-    error: str | None = None,
-    started_at: str | None = None,
-    finished_at: str | None = None,
-) -> None:
-    if status is not None:
-        storage.set_meta(SYNC_STATUS_KEY, status)
-    if error is not None:
-        storage.set_meta(SYNC_ERROR_KEY, error)
-    if started_at is not None:
-        storage.set_meta(SYNC_STARTED_KEY, started_at)
-    if finished_at is not None:
-        storage.set_meta(SYNC_FINISHED_KEY, finished_at)
 
 
 def _get_login_info(storage: PostgresStorage) -> dict[str, Any] | None:
@@ -370,179 +230,8 @@ class LoginManager:
             self._updated_at = _utc_now_iso()
 
 
-class SyncScheduler:
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._thread: threading.Thread | None = None
-        self._stop = threading.Event()
-        self._trigger = threading.Event()
-
-    def start(self) -> None:
-        if self._thread and self._thread.is_alive():
-            return
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
-
-    def stop(self) -> None:
-        self._stop.set()
-        self._trigger.set()
-        if self._thread:
-            self._thread.join(timeout=5)
-
-    def trigger(self) -> None:
-        self._trigger.set()
-
-    def _loop(self) -> None:
-        while not self._stop.is_set():
-            with open_storage() as storage:
-                settings = _get_sync_settings(storage)
-            if not settings.get("enabled"):
-                self._trigger.wait(timeout=10)
-                self._trigger.clear()
-                continue
-            interval = max(int(settings.get("interval_minutes") or 1), 1) * 60
-            self._trigger.wait(timeout=interval)
-            self._trigger.clear()
-            if self._stop.is_set():
-                break
-            self.run_once()
-
-    def run_once(self) -> dict[str, Any]:
-        if not self._lock.acquire(blocking=False):
-            return {'status': 'running'}
-        try:
-            return self._run_sync()
-        finally:
-            self._lock.release()
-
-    def run_group(self, group_id: int) -> dict[str, Any]:
-        if not self._lock.acquire(blocking=False):
-            return {'status': 'running'}
-        try:
-            return self._run_sync(group_id=group_id)
-        finally:
-            self._lock.release()
-
-    def _run_sync(self, *, group_id: int | None = None) -> dict[str, Any]:
-        return asyncio.run(self._run_sync_async(group_id=group_id))
-
-    async def _run_sync_async(self, *, group_id: int | None = None) -> dict[str, Any]:
-        started_at = _utc_now_iso()
-        with open_storage() as storage:
-            settings = _get_sync_settings(storage)
-            _set_sync_state(storage, status="running", error="", started_at=started_at)
-            try:
-                storage.get_login_session()
-            except Exception as exc:
-                error = str(exc)
-                _set_sync_state(storage, status="login_required", error=error, finished_at=_utc_now_iso())
-                _append_sync_history(
-                    storage,
-                    {
-                        "started_at": started_at,
-                        "finished_at": _utc_now_iso(),
-                        "status": "login_required",
-                        "error": error,
-                    },
-                )
-                return _get_sync_status(storage)
-
-            accounts = storage.list_accounts()
-            if group_id is not None:
-                accounts = [account for account in accounts if account.group_id == group_id]
-            group_defaults: dict[int, dict[str, Any]] = {}
-            group_rows = fetchall_rows(
-                storage,
-                'SELECT id, sync_mode, sync_recent_days FROM account_groups',
-                [],
-                normalize=_normalize_record,
-            )
-            for row in group_rows:
-                group_defaults[int(row['id'])] = row
-            total_saved = 0
-            total_downloaded = 0
-            skipped_accounts = 0
-            error: str | None = None
-            async with MPClient() as client:
-                async with ArticleDownloader(
-                    client=client,
-                    storage=storage,
-                    enable_image_worker=bool(settings.get("download_images")),
-                ) as downloader:
-                    for account in accounts:
-                        if account.is_disabled:
-                            skipped_accounts += 1
-                            continue
-                        if _should_skip_by_time(account.last_synced_at, settings.get("skip_minutes")):
-                            skipped_accounts += 1
-                            continue
-                        try:
-                            saved, downloaded = await _sync_account_articles(
-                                storage=storage,
-                                client=client,
-                                downloader=downloader,
-                                account=account,
-                                settings=settings,
-                                group_defaults=group_defaults,
-                            )
-                        except Exception as exc:
-                            message = str(exc)
-                            if is_login_error(message):
-                                error = message
-                                break
-                            if is_freq_control(message):
-                                await asyncio.sleep(15)
-                                continue
-                            error = message
-                            break
-                        total_saved += saved
-                        total_downloaded += downloaded
-                    if settings.get("download_images"):
-                        await downloader.wait_for_images()
-
-            finished_at = _utc_now_iso()
-            if error:
-                status = "login_required" if is_login_error(error) else "failed"
-                _set_sync_state(storage, status=status, error=error, finished_at=finished_at)
-            else:
-                _set_sync_state(storage, status="success", error="", finished_at=finished_at)
-                storage.delete_meta(ALERT_SENT_KEY)
-            _append_sync_history(
-                storage,
-                {
-                    "started_at": started_at,
-                    "finished_at": finished_at,
-                    "status": "login_required" if error and is_login_error(error) else ("failed" if error else "success"),
-                    "error": error or "",
-                    "saved": total_saved,
-                    "downloaded": total_downloaded,
-                    "skipped_accounts": skipped_accounts,
-                },
-            )
-            if error and not storage.get_meta(ALERT_SENT_KEY):
-                subject = "Hippo sync failed"
-                body = f"Status: {status}\\nError: {error}\\nStarted: {started_at}\\nFinished: {finished_at}"
-                try:
-                    _send_alert_email(storage, subject, body)
-                    storage.set_meta(ALERT_SENT_KEY, "1")
-                except Exception as exc:
-                    logger.warning("Failed to send alert email: %s", exc)
-            return _get_sync_status(storage)
 
 
-def _ensure_default_group(storage: PostgresStorage) -> dict[str, Any]:
-    groups = storage.list_groups()
-    default_group = next((g for g in groups if g.name == DEFAULT_GROUP_NAME), None)
-    if default_group is None:
-        default_group = storage.upsert_group(DEFAULT_GROUP_NAME)
-    default_id = default_group.id
-    with storage.conn.cursor() as cur:
-        cur.execute(
-            "UPDATE accounts SET group_id = %s WHERE group_id IS NULL",
-            (default_id,),
-        )
-    storage.conn.commit()
-    return {"id": default_id, "name": default_group.name}
 
 
 def _ensure_avatar_images_table(storage: PostgresStorage) -> None:
@@ -587,118 +276,6 @@ def _migrate_legacy_avatar_tables(storage: PostgresStorage) -> None:
     storage.conn.commit()
 
 
-def _should_skip_by_time(last_synced_at: datetime | None, skip_minutes: int | None) -> bool:
-    if not skip_minutes or skip_minutes <= 0:
-        return False
-    if not last_synced_at:
-        return False
-    now = datetime.now(timezone.utc)
-    synced_at = last_synced_at
-    if synced_at.tzinfo is None:
-        synced_at = synced_at.replace(tzinfo=timezone.utc)
-    delta = now - synced_at
-    return delta.total_seconds() < skip_minutes * 60
-
-
-def _select_missing_content(
-    storage: PostgresStorage,
-    biz: str,
-    *,
-    limit: int,
-) -> list[ArticleRecord]:
-    if limit <= 0:
-        return []
-    articles = storage.list_articles(biz, limit=limit)
-    get_content_ids = getattr(storage, "get_article_content_ids", None)
-    if callable(get_content_ids):
-        try:
-            ids = get_content_ids(biz, [article.article_id for article in articles])
-            return [article for article in articles if article.article_id not in ids]
-        except Exception:
-            return articles
-    return articles
-
-
-async def _sync_account_articles(
-    *,
-    storage: PostgresStorage,
-    client: MPClient,
-    downloader: ArticleDownloader,
-    account: AccountCredential,
-    settings: dict[str, Any],
-    group_defaults: dict[int, dict[str, Any]] | None = None,
-) -> tuple[int, int]:
-    page_size = max(int(settings.get("page_size") or 10), 1)
-    page_limit = settings.get("page_limit")
-    if page_limit is not None:
-        page_limit = max(int(page_limit), 1)
-    group_sync = None
-    if group_defaults and account.group_id is not None:
-        group_sync = group_defaults.get(account.group_id)
-    group_mode = None
-    group_recent_days = None
-    if group_sync:
-        group_mode = group_sync.get('sync_mode')
-        group_recent_days = group_sync.get('sync_recent_days')
-    mode = (account.sync_mode or group_mode or settings.get('mode') or 'incremental').strip().lower()
-    if mode not in _SYNC_MODES:
-        mode = 'incremental'
-    recent_days = account.sync_recent_days
-    if recent_days is None:
-        recent_days = group_recent_days if group_recent_days is not None else settings.get('recent_days')
-    now = datetime.now(timezone.utc)
-    since_ts: int | None = None
-    until_ts: int | None = None
-    stop_on_existing = False
-    if mode == 'incremental':
-        stop_on_existing = True
-        if account.last_synced_at:
-            since_ts = int(account.last_synced_at.timestamp())
-    elif mode == 'recent':
-        recent_days = max(int(recent_days or 1), 1)
-        since_ts = int((now.timestamp() - recent_days * 86400))
-    elif mode == 'range':
-        since_ts = _parse_date(settings.get('since'))
-        until_ts = _parse_date(settings.get('until'), end_of_day=True)
-
-    total_saved = 0
-    to_download: list[ArticleRecord] = []
-    async for event, payload in sync_account_core(
-        storage=storage,
-        client=client,
-        account=account,
-        page_size=page_size,
-        pages=page_limit,
-        sleep_seconds=float(settings.get("sleep_seconds") or 0),
-        since_timestamp=since_ts,
-        until_timestamp=until_ts,
-        stop_on_existing=stop_on_existing,
-        collect_existing_ids=True,
-    ):
-        if event == "page":
-            records = payload.get("records") or []
-            existing_ids = payload.get("existing_ids") or set()
-            if records:
-                new_records = [r for r in records if r.article_id not in existing_ids]
-                to_download.extend(new_records)
-        elif event == "complete":
-            total_saved = int(payload.get("total_saved", 0))
-
-    downloaded = 0
-    if settings.get("download_content"):
-        content_limit = int(settings.get("content_limit") or 0)
-        candidates = {item.article_id: item for item in to_download}
-        for missing in _select_missing_content(storage, account.biz, limit=content_limit):
-            candidates.setdefault(missing.article_id, missing)
-        if candidates:
-            results, _, _ = await downloader.download_many(
-                candidates.values(),
-                with_images=bool(settings.get("download_images")),
-                record_images_only=not bool(settings.get("download_images")),
-                skip_if_downloaded=True,
-            )
-            downloaded = len(results)
-    return total_saved, downloaded
 
 
 def _list_groups(storage: PostgresStorage) -> list[dict[str, Any]]:
@@ -761,8 +338,8 @@ def _update_group(storage: PostgresStorage, group_id: int, updates: dict[str, An
 
 
 def _delete_group(storage: PostgresStorage, group_id: int) -> None:
-    default_group = _ensure_default_group(storage)
-    default_id = default_group["id"]
+    default_group = ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
+    default_id = default_group.id
     if group_id == default_id:
         raise ApiError("Default group cannot be deleted", status=400)
     with storage.conn.cursor() as cur:
@@ -1286,7 +863,7 @@ def _binary_response(payload: bytes, content_type: str) -> Response:
 
 def _get_storage() -> Generator[PostgresStorage, None, None]:
     with open_storage() as storage:
-        _ensure_default_group(storage)
+        ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
         _ensure_avatar_images_table(storage)
         yield storage
 
@@ -1304,9 +881,9 @@ router = APIRouter(prefix="/api")
 
 @router.get("/group")
 def list_groups(storage: PostgresStorage = Depends(_get_storage)) -> dict[str, Any]:
-    default_group = _ensure_default_group(storage)
+    default_group = ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
     return {
-        "default_group_id": default_group["id"],
+        "default_group_id": default_group.id,
         "groups": _list_groups(storage),
     }
 
@@ -1465,8 +1042,8 @@ def create_account(
             raise ApiError(f"{field} is required")
     group_id = body.get("group_id")
     if group_id is None:
-        default_group = _ensure_default_group(storage)
-        group_id = default_group["id"]
+        default_group = ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
+        group_id = default_group.id
     sync_mode = _normalize_sync_mode(body.get('sync_mode'))
     sync_recent_days = _normalize_recent_days(body.get('sync_recent_days'))
     account = storage.upsert_account(
@@ -1499,8 +1076,8 @@ def move_accounts(
         raise ApiError("biz_list is required")
     group_id = body.get("group_id")
     if group_id is None:
-        default_group = _ensure_default_group(storage)
-        group_id = default_group["id"]
+        default_group = ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
+        group_id = default_group.id
     with storage.conn.cursor() as cur:
         cur.execute(
             "UPDATE accounts SET group_id = %s, updated_at = NOW() WHERE biz = ANY(%s)",
@@ -1562,8 +1139,8 @@ def update_account(
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
     if "group_id" in body and body["group_id"] is None:
-        default_group = _ensure_default_group(storage)
-        body["group_id"] = default_group["id"]
+        default_group = ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
+        body["group_id"] = default_group.id
     return _update_account(storage, biz, body)
 
 
@@ -1733,13 +1310,13 @@ def login_qrcode(
 
 @router.get("/sync")
 def sync_status(storage: PostgresStorage = Depends(_get_storage)) -> dict[str, Any]:
-    return _get_sync_status(storage)
+    return load_sync_status(storage)
 
 
 @router.get("/sync/settings")
 def get_sync_settings(storage: PostgresStorage = Depends(_get_storage)) -> dict[str, Any]:
-    payload = _get_sync_settings(storage)
-    payload["email"] = _get_email_settings(storage)
+    payload = load_sync_settings(storage)
+    payload["email"] = get_email_settings(storage)
     return payload
 
 
@@ -1784,7 +1361,7 @@ def update_sync_settings(
         updates["alert_enabled"] = bool(body["alert_enabled"])
     if "alert_email" in body:
         updates["alert_email"] = str(body["alert_email"]).strip()
-    settings = _set_sync_settings(storage, updates)
+    settings = save_sync_settings(storage, updates)
     email_updates: dict[str, Any] = {}
     email_body = body.get("email")
     if isinstance(email_body, dict):
@@ -1799,9 +1376,9 @@ def update_sync_settings(
             if key in email_body:
                 email_updates[key] = email_body[key]
     if email_updates:
-        settings["email"] = _set_email_settings(storage, email_updates)
+        settings["email"] = set_email_settings(storage, email_updates)
     else:
-        settings["email"] = _get_email_settings(storage)
+        settings["email"] = get_email_settings(storage)
     if settings.get("enabled"):
         scheduler.trigger()
     return settings

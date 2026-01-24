@@ -15,7 +15,7 @@ from ..http import MPClient
 from ..models import AccountCredential, LoginSession
 from ..storage import PostgresStorage, open_storage
 from ..sync_core import SyncInterrupted, sync_account_core
-from ..utils import format_table
+from ..utils import format_table, should_skip_by_time
 
 
 class SyncMode(str, Enum):
@@ -76,17 +76,6 @@ def _parse_sync_date(value: str | None, *, label: str, end_of_day: bool = False)
 def _enforce_exclusive_flags(force: bool, skip_minutes: int | None) -> None:
     if force and skip_minutes is not None:
         raise typer.BadParameter('--force 与 --skip-time 不能同时使用')
-
-
-def _should_skip_by_time(last_synced_at: datetime | None, skip_minutes: int | None) -> bool:
-    if skip_minutes is None or not last_synced_at:
-        return False
-    threshold = datetime.now(timezone.utc) - timedelta(minutes=skip_minutes)
-    if last_synced_at.tzinfo is None:
-        last_synced_at = last_synced_at.replace(tzinfo=timezone.utc)
-    else:
-        last_synced_at = last_synced_at.astimezone(timezone.utc)
-    return last_synced_at >= threshold
 
 
 def _format_last_synced(last_synced_at: datetime | None) -> str:
@@ -312,7 +301,7 @@ async def perform_sync(
                 progress.close()
                 continue
 
-            if not options.force and _should_skip_by_time(account.last_synced_at, options.skip_time):
+            if not options.force and should_skip_by_time(account.last_synced_at, options.skip_time):
                 last_synced = _format_last_synced(account.last_synced_at)
                 if bulk:
                     progress = tqdm(

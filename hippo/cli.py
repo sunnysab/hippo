@@ -13,7 +13,7 @@ import functools
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 import httpx
@@ -550,6 +550,49 @@ def enable_account(
             raise typer.Exit(code=1)
         storage.set_account_disabled(target.biz, False)
     typer.echo(f"Account {target.nickname} ({target.biz}) enabled.")
+
+
+@accounts_app.command("sync-config")
+def set_account_sync_config(
+    account: str = typer.Argument(..., help="Account name, alias, or fakeid"),
+    mode: Optional[SyncMode] = typer.Option(
+        None, "--mode", help="Sync mode: full, incremental, recent, range"
+    ),
+    recent_days: Optional[int] = typer.Option(
+        None, "--recent-days", min=1, help="Recent days for recent mode"
+    ),
+    clear_recent_days: bool = typer.Option(
+        False, "--clear-recent-days", is_flag=True, help="Clear recent days override"
+    ),
+) -> None:
+    _require_nonempty(account, "Please provide an account name or fakeid.")
+    if clear_recent_days and recent_days is not None:
+        raise typer.BadParameter("Cannot use --recent-days with --clear-recent-days.")
+    with open_storage() as storage:
+        try:
+            target = _resolve_account(storage, account)
+        except LookupError as exc:
+            typer.echo(str(exc))
+            raise typer.Exit(code=1)
+        updates: dict[str, Any] = {}
+        if mode is not None:
+            updates["sync_mode"] = mode.value
+        if clear_recent_days:
+            updates["sync_recent_days"] = None
+        elif recent_days is not None:
+            updates["sync_recent_days"] = recent_days
+        if not updates:
+            typer.echo("No sync settings provided.")
+            return
+        if (
+            (mode == SyncMode.recent)
+            and updates.get("sync_recent_days") is None
+            and target.sync_recent_days is None
+        ):
+            raise typer.BadParameter("recent mode requires --recent-days.")
+        updated = target.model_copy(update=updates)
+        storage.upsert_account(updated)
+    typer.echo(f"Account {target.nickname} ({target.biz}) sync settings updated.")
 
 
 # ---------------------------------------------------------------------------

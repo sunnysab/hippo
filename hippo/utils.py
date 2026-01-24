@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable, Sequence
 
 from psycopg.rows import dict_row
 
+from .models import AccountGroup
 from .storage import PostgresStorage
 
 _slug_pattern = re.compile(r"[^a-z0-9-]+")
@@ -95,11 +97,58 @@ def fetchone_row(
     return normalize(record) if normalize else record
 
 
+def load_meta_json(storage: PostgresStorage, key: str, default: Any) -> Any:
+    raw = storage.get_meta(key)
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return default
+
+
+def save_meta_json(storage: PostgresStorage, key: str, value: Any) -> None:
+    storage.set_meta(key, json.dumps(value, ensure_ascii=False))
+
+
+def should_skip_by_time(last_synced_at: datetime | None, skip_minutes: int | None) -> bool:
+    if not skip_minutes or skip_minutes <= 0:
+        return False
+    if not last_synced_at:
+        return False
+    synced_at = last_synced_at
+    if synced_at.tzinfo is None:
+        synced_at = synced_at.replace(tzinfo=timezone.utc)
+    else:
+        synced_at = synced_at.astimezone(timezone.utc)
+    threshold = datetime.now(timezone.utc) - timedelta(minutes=skip_minutes)
+    return synced_at >= threshold
+
+
+def ensure_default_group(storage: PostgresStorage, *, name: str = 'Default') -> AccountGroup:
+    groups = storage.list_groups()
+    default_group = next((g for g in groups if g.name == name), None)
+    if default_group is None:
+        default_group = storage.upsert_group(name)
+    default_id = default_group.id
+    with storage.conn.cursor() as cur:
+        cur.execute(
+            'UPDATE accounts SET group_id = %s WHERE group_id IS NULL',
+            (default_id,),
+        )
+    storage.conn.commit()
+    return default_group
+
+
 __all__ = [
     'fetchall_rows',
     'fetchone_row',
+    'ensure_default_group',
     'format_table',
+    'load_meta_json',
     'parse_iso_date_to_timestamp',
     'parse_iso_datetime_to_timestamp',
+    'save_meta_json',
+    'should_skip_by_time',
     'slugify',
 ]

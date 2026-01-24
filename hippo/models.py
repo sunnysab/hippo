@@ -8,8 +8,11 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 
-class AccountCredential(BaseModel):
+class HippoBaseModel(BaseModel):
     model_config = ConfigDict(extra='ignore')
+
+
+class AccountCredential(HippoBaseModel):
 
     biz: str
     nickname: str
@@ -23,8 +26,7 @@ class AccountCredential(BaseModel):
     group_name: str | None = None
 
 
-class AccountGroup(BaseModel):
-    model_config = ConfigDict(extra='ignore')
+class AccountGroup(HippoBaseModel):
 
     id: int
     name: str
@@ -33,8 +35,7 @@ class AccountGroup(BaseModel):
     sync_recent_days: int | None = None
 
 
-class ArticleRecord(BaseModel):
-    model_config = ConfigDict(extra='ignore')
+class ArticleRecord(HippoBaseModel):
 
     biz: str
     article_id: str
@@ -48,15 +49,13 @@ class ArticleRecord(BaseModel):
     raw: dict[str, Any]
 
 
-class DownloadResult(BaseModel):
-    model_config = ConfigDict(extra='ignore')
+class DownloadResult(HippoBaseModel):
 
     article: ArticleRecord
     asset_count: int
 
 
-class LoginSession(BaseModel):
-    model_config = ConfigDict(extra='ignore')
+class LoginSession(HippoBaseModel):
 
     token: str
     cookies: dict[str, str]
