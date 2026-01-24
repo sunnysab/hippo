@@ -121,6 +121,8 @@ async def sync_account_core(
                         continue
                     if is_freq_control(message):
                         freq_attempt += 1
+                        if freq_attempt > 10:
+                            raise RuntimeError(f"频控重试次数过多 ({freq_attempt})，终止同步") from exc
                         wait_seconds = 15 if freq_attempt == 1 else min(15 + 5 * (freq_attempt - 1), 60)
                         yield "log", f"触发频率控制，等待 {wait_seconds} 秒后重试"
                         await asyncio.sleep(wait_seconds)
