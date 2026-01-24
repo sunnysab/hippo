@@ -28,13 +28,14 @@ from .logger import setup_logger
 from .models import AccountCredential, LoginSession
 from .server import serve as run_server
 from .rss import build_rss_xml, query_rss_items
-from .storage import StorageInitError, StorageLike, PostgresStorage, open_storage
+from .storage import StorageInitError, PostgresStorage, open_storage
 from .controllers.sync import (
     SyncMode,
     sync_account_articles as perform_account_sync,
     sync_all_accounts as perform_all_sync,
     sync_group_accounts as perform_group_sync,
 )
+from .utils import format_table, parse_iso_datetime_to_timestamp
 
 # Initialize logger on module import
 logger = setup_logger()
@@ -172,10 +173,8 @@ app.add_typer(db_app, name="db")
 
 
 def _parse_since(value: Optional[str]) -> Optional[int]:
-    if not value:
-        return None
     try:
-        return int(datetime.fromisoformat(value).timestamp())
+        return parse_iso_datetime_to_timestamp(value)
     except ValueError as exc:
         raise typer.BadParameter("时间格式应为 YYYY-MM-DD") from exc
 
@@ -216,21 +215,6 @@ def _parse_selection_indices(selection: str, total: int) -> list[int]:
     return sorted(selected)
 
 
-def _format_table(headers: list[str], rows: list[list[str]]) -> str:
-    if not rows:
-        return ""
-    widths = [len(h) for h in headers]
-    for row in rows:
-        for idx, cell in enumerate(row):
-            widths[idx] = max(widths[idx], len(cell))
-    sep = "  "
-    lines = [sep.join(h.ljust(widths[idx]) for idx, h in enumerate(headers))]
-    lines.append(sep.join("-" * widths[idx] for idx in range(len(headers))))
-    for row in rows:
-        lines.append(sep.join(row[idx].ljust(widths[idx]) for idx in range(len(headers))))
-    return "\n".join(lines)
-
-
 def _require_nonempty(value: Optional[str], message: str) -> None:
     if value is None or not str(value).strip():
         typer.echo(message)
@@ -244,7 +228,7 @@ def _resolve_pg_dsn() -> str:
     return pg_dsn
 
 
-def _resolve_account(storage: StorageLike, name: Optional[str]) -> AccountCredential:
+def _resolve_account(storage: PostgresStorage, name: Optional[str]) -> AccountCredential:
     if name is None:
         raise LookupError("请输入公众号名称或 fakeid")
     target = name.strip()
@@ -269,7 +253,7 @@ def _resolve_account(storage: StorageLike, name: Optional[str]) -> AccountCreden
     raise LookupError(f"未找到账号：{target}")
 
 
-def _get_login_session(storage: StorageLike) -> LoginSession:
+def _get_login_session(storage: PostgresStorage) -> LoginSession:
     try:
         return storage.get_login_session()
     except LookupError as exc:
@@ -355,7 +339,7 @@ async def _search_accounts_async(
                     item.get("alias", "-"),
                 ]
             )
-        table_text = _format_table(headers, rows)
+        table_text = format_table(headers, rows)
         if table_text:
             typer.echo(table_text)
 
@@ -416,7 +400,7 @@ def list_accounts(
                 last_synced,
             ]
         )
-    table_text = _format_table(headers, rows)
+    table_text = format_table(headers, rows)
     if table_text:
         typer.echo(table_text)
 
@@ -442,7 +426,7 @@ def list_groups() -> None:
         return
     headers = ["Group", "Accounts"]
     rows = [[group.name, str(group.account_count)] for group in groups]
-    table_text = _format_table(headers, rows)
+    table_text = format_table(headers, rows)
     if table_text:
         typer.echo(table_text)
 
@@ -671,7 +655,7 @@ def list_articles(
             else "-"
         )
         rows.append([publish_date, article.title, article.author or "-", article.link])
-    table_text = _format_table(headers, rows)
+    table_text = format_table(headers, rows)
     if table_text:
         typer.echo(table_text)
 

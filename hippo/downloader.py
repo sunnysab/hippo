@@ -17,7 +17,7 @@ from .normalize_html import normalize_html
 from .http import MPClient
 from .logger import get_logger
 from .models import ArticleRecord, DownloadResult
-from .storage import StorageLike
+from .storage import PostgresStorage
 from .utils import slugify
 
 logger = get_logger(__name__)
@@ -159,7 +159,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         self,
         *,
         client: MPClient | None = None,
-        storage: StorageLike | None = None,
+        storage: PostgresStorage | None = None,
         article_worker: str | None = None,
         article_worker_proxy: str | None = None,
         article_max_connections: int | None = None,

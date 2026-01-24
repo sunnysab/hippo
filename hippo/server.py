@@ -10,14 +10,13 @@ import re
 import smtplib
 import threading
 import time as time_module
-from datetime import date, datetime, time, timezone
+from datetime import datetime, timezone
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Generator
 
 import httpx
 import psycopg
-from psycopg.rows import dict_row
 from fastapi import APIRouter, Body, Depends, FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -33,7 +32,8 @@ from .http import MPClient
 from .models import AccountCredential, ArticleRecord
 from .rss import build_rss_xml, query_rss_items
 from .s3 import fetch_object_bytes, get_s3_client
-from .storage import StorageLike, open_storage
+from .storage import PostgresStorage, open_storage
+from .utils import fetchall_rows, fetchone_row, parse_iso_date_to_timestamp
 from .sync_core import is_freq_control, is_login_error, sync_account_core
 
 DEFAULT_HOST = "127.0.0.1"
@@ -94,14 +94,10 @@ def _normalize_recent_days(value: Any) -> int | None:
 
 
 def _parse_date(value: str | None, *, end_of_day: bool = False) -> int | None:
-    if not value:
-        return None
     try:
-        parsed = date.fromisoformat(value)
+        return parse_iso_date_to_timestamp(value, end_of_day=end_of_day)
     except ValueError as exc:
         raise ApiError(f"Invalid date: {value}") from exc
-    dt = datetime.combine(parsed, time.max if end_of_day else time.min)
-    return int(dt.timestamp())
 
 
 def _normalize_value(value: Any) -> Any:
@@ -118,7 +114,7 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _load_meta_json(storage: StorageLike, key: str, default: Any) -> Any:
+def _load_meta_json(storage: PostgresStorage, key: str, default: Any) -> Any:
     raw = storage.get_meta(key)
     if not raw:
         return default
@@ -128,7 +124,7 @@ def _load_meta_json(storage: StorageLike, key: str, default: Any) -> Any:
         return default
 
 
-def _save_meta_json(storage: StorageLike, key: str, value: Any) -> None:
+def _save_meta_json(storage: PostgresStorage, key: str, value: Any) -> None:
     storage.set_meta(key, json.dumps(value, ensure_ascii=False))
 
 
@@ -161,20 +157,20 @@ def _default_email_settings() -> dict[str, Any]:
     }
 
 
-def _get_email_settings(storage: StorageLike) -> dict[str, Any]:
+def _get_email_settings(storage: PostgresStorage) -> dict[str, Any]:
     settings = _load_meta_json(storage, "email:settings", _default_email_settings())
     defaults = _default_email_settings()
     return {**defaults, **(settings or {})}
 
 
-def _set_email_settings(storage: StorageLike, updates: dict[str, Any]) -> dict[str, Any]:
+def _set_email_settings(storage: PostgresStorage, updates: dict[str, Any]) -> dict[str, Any]:
     current = _get_email_settings(storage)
     current.update(updates)
     _save_meta_json(storage, "email:settings", current)
     return current
 
 
-def _send_alert_email(storage: StorageLike, subject: str, body: str) -> None:
+def _send_alert_email(storage: PostgresStorage, subject: str, body: str) -> None:
     settings = _get_email_settings(storage)
     sync_settings = _get_sync_settings(storage)
     if not sync_settings.get("alert_enabled"):
@@ -202,21 +198,21 @@ def _send_alert_email(storage: StorageLike, subject: str, body: str) -> None:
         smtp.send_message(message)
 
 
-def _get_sync_settings(storage: StorageLike) -> dict[str, Any]:
+def _get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
     settings = _load_meta_json(storage, SYNC_SETTINGS_KEY, _default_sync_settings())
     defaults = _default_sync_settings()
     merged = {**defaults, **(settings or {})}
     return merged
 
 
-def _set_sync_settings(storage: StorageLike, updates: dict[str, Any]) -> dict[str, Any]:
+def _set_sync_settings(storage: PostgresStorage, updates: dict[str, Any]) -> dict[str, Any]:
     current = _get_sync_settings(storage)
     current.update(updates)
     _save_meta_json(storage, SYNC_SETTINGS_KEY, current)
     return current
 
 
-def _append_sync_history(storage: StorageLike, entry: dict[str, Any]) -> None:
+def _append_sync_history(storage: PostgresStorage, entry: dict[str, Any]) -> None:
     history = _load_meta_json(storage, SYNC_HISTORY_KEY, [])
     if not isinstance(history, list):
         history = []
@@ -225,7 +221,7 @@ def _append_sync_history(storage: StorageLike, entry: dict[str, Any]) -> None:
     _save_meta_json(storage, SYNC_HISTORY_KEY, history)
 
 
-def _get_sync_status(storage: StorageLike) -> dict[str, Any]:
+def _get_sync_status(storage: PostgresStorage) -> dict[str, Any]:
     return {
         "status": storage.get_meta(SYNC_STATUS_KEY) or "idle",
         "last_started_at": storage.get_meta(SYNC_STARTED_KEY),
@@ -236,7 +232,7 @@ def _get_sync_status(storage: StorageLike) -> dict[str, Any]:
 
 
 def _set_sync_state(
-    storage: StorageLike,
+    storage: PostgresStorage,
     *,
     status: str | None = None,
     error: str | None = None,
@@ -253,11 +249,12 @@ def _set_sync_state(
         storage.set_meta(SYNC_FINISHED_KEY, finished_at)
 
 
-def _get_login_info(storage: StorageLike) -> dict[str, Any] | None:
-    row = _fetchone(
+def _get_login_info(storage: PostgresStorage) -> dict[str, Any] | None:
+    row = fetchone_row(
         storage,
         "SELECT nickname, avatar, updated_at FROM login_sessions ORDER BY id DESC LIMIT 1",
         [],
+        normalize=_normalize_record,
     )
     return row
 
@@ -310,7 +307,7 @@ class LoginManager:
                 raise ApiError("QR code not ready", status=404)
             return self._qrcode
 
-    async def poll(self, storage: StorageLike) -> dict[str, Any]:
+    async def poll(self, storage: PostgresStorage) -> dict[str, Any]:
         with self._lock:
             uuid_cookie = self._uuid_cookie
         if not uuid_cookie:
@@ -454,10 +451,11 @@ class SyncScheduler:
             if group_id is not None:
                 accounts = [account for account in accounts if account.group_id == group_id]
             group_defaults: dict[int, dict[str, Any]] = {}
-            group_rows = _fetchall(
+            group_rows = fetchall_rows(
                 storage,
                 'SELECT id, sync_mode, sync_recent_days FROM account_groups',
                 [],
+                normalize=_normalize_record,
             )
             for row in group_rows:
                 group_defaults[int(row['id'])] = row
@@ -532,21 +530,7 @@ class SyncScheduler:
             return _get_sync_status(storage)
 
 
-def _fetchall(storage: StorageLike, query: str, params: list[Any]) -> list[dict[str, Any]]:
-    with storage.conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(query, params)
-        rows = cur.fetchall()
-    return [_normalize_record(dict(row)) for row in rows]
-
-
-def _fetchone(storage: StorageLike, query: str, params: list[Any]) -> dict[str, Any] | None:
-    with storage.conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(query, params)
-        row = cur.fetchone()
-    return _normalize_record(dict(row)) if row else None
-
-
-def _ensure_default_group(storage: StorageLike) -> dict[str, Any]:
+def _ensure_default_group(storage: PostgresStorage) -> dict[str, Any]:
     groups = storage.list_groups()
     default_group = next((g for g in groups if g.name == DEFAULT_GROUP_NAME), None)
     if default_group is None:
@@ -561,7 +545,7 @@ def _ensure_default_group(storage: StorageLike) -> dict[str, Any]:
     return {"id": default_id, "name": default_group.name}
 
 
-def _ensure_avatar_images_table(storage: StorageLike) -> None:
+def _ensure_avatar_images_table(storage: PostgresStorage) -> None:
     with storage.conn.cursor() as cur:
         cur.execute(
             """
@@ -578,7 +562,7 @@ def _ensure_avatar_images_table(storage: StorageLike) -> None:
     _migrate_legacy_avatar_tables(storage)
 
 
-def _migrate_legacy_avatar_tables(storage: StorageLike) -> None:
+def _migrate_legacy_avatar_tables(storage: PostgresStorage) -> None:
     with storage.conn.cursor() as cur:
         cur.execute("SELECT to_regclass('public.account_images')")
         has_account_images = cur.fetchone()[0] is not None
@@ -617,7 +601,7 @@ def _should_skip_by_time(last_synced_at: datetime | None, skip_minutes: int | No
 
 
 def _select_missing_content(
-    storage: StorageLike,
+    storage: PostgresStorage,
     biz: str,
     *,
     limit: int,
@@ -637,7 +621,7 @@ def _select_missing_content(
 
 async def _sync_account_articles(
     *,
-    storage: StorageLike,
+    storage: PostgresStorage,
     client: MPClient,
     downloader: ArticleDownloader,
     account: AccountCredential,
@@ -717,7 +701,7 @@ async def _sync_account_articles(
     return total_saved, downloaded
 
 
-def _list_groups(storage: StorageLike) -> list[dict[str, Any]]:
+def _list_groups(storage: PostgresStorage) -> list[dict[str, Any]]:
     return [
         {
             'id': g.id,
@@ -730,8 +714,8 @@ def _list_groups(storage: StorageLike) -> list[dict[str, Any]]:
     ]
 
 
-def _get_group(storage: StorageLike, group_id: int) -> dict[str, Any]:
-    row = _fetchone(
+def _get_group(storage: PostgresStorage, group_id: int) -> dict[str, Any]:
+    row = fetchone_row(
         storage,
         """
         SELECT g.id, g.name, g.sync_mode, g.sync_recent_days, COUNT(a.biz) AS account_count
@@ -741,13 +725,14 @@ def _get_group(storage: StorageLike, group_id: int) -> dict[str, Any]:
         GROUP BY g.id, g.name, g.sync_mode, g.sync_recent_days
         """,
         [group_id],
+        normalize=_normalize_record,
     )
     if not row:
         raise ApiError("Group not found", status=404)
     return row
 
 
-def _update_group(storage: StorageLike, group_id: int, updates: dict[str, Any]) -> dict[str, Any]:
+def _update_group(storage: PostgresStorage, group_id: int, updates: dict[str, Any]) -> dict[str, Any]:
     fields: list[str] = []
     params: list[Any] = []
     mapping = {
@@ -775,7 +760,7 @@ def _update_group(storage: StorageLike, group_id: int, updates: dict[str, Any]) 
     return _get_group(storage, group_id)
 
 
-def _delete_group(storage: StorageLike, group_id: int) -> None:
+def _delete_group(storage: PostgresStorage, group_id: int) -> None:
     default_group = _ensure_default_group(storage)
     default_id = default_group["id"]
     if group_id == default_id:
@@ -836,7 +821,7 @@ def _tokenize_query(text: str) -> list[str]:
 
 
 def _list_accounts(
-    storage: StorageLike,
+    storage: PostgresStorage,
     *,
     group_id: int | None,
     query: str | None,
@@ -876,7 +861,7 @@ def _list_accounts(
         " ORDER BY a.nickname ASC"
         f" {limit_sql}"
     )
-    rows = _fetchall(storage, query_sql, params + [page_size, offset])
+    rows = fetchall_rows(storage, query_sql, params + [page_size, offset], normalize=_normalize_record)
     for row in rows:
         row["avatar_url"] = f"/api/account/{row['biz']}/avatar"
     count_sql = (
@@ -884,13 +869,13 @@ def _list_accounts(
         " LEFT JOIN account_groups g ON g.id = a.group_id"
         f" {where_sql}"
     )
-    total_row = _fetchone(storage, count_sql, params)
+    total_row = fetchone_row(storage, count_sql, params, normalize=_normalize_record)
     total = int(total_row["total"]) if total_row else 0
     return {"accounts": rows, "page": page, "page_size": page_size, "total": total}
 
 
-def _get_account(storage: StorageLike, biz: str) -> dict[str, Any]:
-    row = _fetchone(
+def _get_account(storage: PostgresStorage, biz: str) -> dict[str, Any]:
+    row = fetchone_row(
         storage,
         (
             ""
@@ -906,6 +891,7 @@ def _get_account(storage: StorageLike, biz: str) -> dict[str, Any]:
             " WHERE a.biz = %s"
         ),
         [biz],
+        normalize=_normalize_record,
     )
     if not row:
         raise ApiError("Account not found", status=404)
@@ -913,7 +899,7 @@ def _get_account(storage: StorageLike, biz: str) -> dict[str, Any]:
     return row
 
 
-def _update_account(storage: StorageLike, biz: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _update_account(storage: PostgresStorage, biz: str, payload: dict[str, Any]) -> dict[str, Any]:
     fields: list[str] = []
     params: list[Any] = []
     mapping = {
@@ -957,7 +943,7 @@ def _update_account(storage: StorageLike, biz: str, payload: dict[str, Any]) -> 
 
 def _build_article_query(
     *,
-    storage: StorageLike,
+    storage: PostgresStorage,
     group_id: int | None,
     biz: str | None,
     query: str | None,
@@ -1035,7 +1021,7 @@ def _build_article_query(
 
 
 def _list_articles(
-    storage: StorageLike,
+    storage: PostgresStorage,
     *,
     group_id: int | None,
     biz: str | None,
@@ -1060,7 +1046,7 @@ def _list_articles(
         offset=offset,
         article_id=article_id,
     )
-    rows = _fetchall(storage, query_sql, params)
+    rows = fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
     for row in rows:
         row["account_avatar_url"] = f"/api/account/{row['biz']}/avatar"
 
@@ -1097,13 +1083,13 @@ def _list_articles(
         + (" JOIN article_content ac ON ac.article_pk = a.id" if content_only else "")
         + f" {where_sql}"
     )
-    total_row = _fetchone(storage, count_sql, count_params)
+    total_row = fetchone_row(storage, count_sql, count_params, normalize=_normalize_record)
     total = int(total_row["total"]) if total_row else 0
     return {"articles": rows, "page": page, "page_size": page_size, "total": total}
 
 
-def _get_article(storage: StorageLike, article_id: int) -> dict[str, Any]:
-    article = _fetchone(
+def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
+    article = fetchone_row(
         storage,
         (
             "SELECT a.id, a.biz, a.article_id, a.title, a.author, a.digest, a.cover, a.link,"
@@ -1116,15 +1102,17 @@ def _get_article(storage: StorageLike, article_id: int) -> dict[str, Any]:
             " WHERE a.id = %s"
         ),
         [article_id],
+        normalize=_normalize_record,
     )
     if not article:
         raise ApiError("Article not found", status=404)
     article["account_avatar_url"] = f"/api/account/{article['biz']}/avatar"
 
-    content_row = _fetchone(
+    content_row = fetchone_row(
         storage,
         "SELECT content_json, clean_html FROM article_content WHERE article_pk = %s",
         [article_id],
+        normalize=_normalize_record,
     )
     content_json = None
     clean_html = None
@@ -1137,10 +1125,11 @@ def _get_article(storage: StorageLike, article_id: int) -> dict[str, Any]:
             except json.JSONDecodeError:
                 content_json = None
 
-    images = _fetchall(
+    images = fetchall_rows(
         storage,
         "SELECT id, position, kind, content_type FROM article_images WHERE article_pk = %s ORDER BY position ASC",
         [article_id],
+        normalize=_normalize_record,
     )
     return {
         "article": article,
@@ -1149,19 +1138,21 @@ def _get_article(storage: StorageLike, article_id: int) -> dict[str, Any]:
     }
 
 
-def _list_article_images(storage: StorageLike, article_id: int) -> list[dict[str, Any]]:
-    return _fetchall(
+def _list_article_images(storage: PostgresStorage, article_id: int) -> list[dict[str, Any]]:
+    return fetchall_rows(
         storage,
         "SELECT id, position, kind, content_type FROM article_images WHERE article_pk = %s ORDER BY position ASC",
         [article_id],
+        normalize=_normalize_record,
     )
 
 
-def _fetch_image(storage: StorageLike, image_id: int) -> tuple[bytes, str]:
-    row = _fetchone(
+def _fetch_image(storage: PostgresStorage, image_id: int) -> tuple[bytes, str]:
+    row = fetchone_row(
         storage,
         'SELECT data, content_type, s3_key FROM article_images WHERE id = %s',
         [image_id],
+        normalize=_normalize_record,
     )
     if not row:
         raise ApiError("Image not found", status=404)
@@ -1191,15 +1182,16 @@ def _fetch_image(storage: StorageLike, image_id: int) -> tuple[bytes, str]:
     return payload, content_type
 
 
-def _get_avatar_row(storage: StorageLike, biz: str) -> dict[str, Any] | None:
-    return _fetchone(
+def _get_avatar_row(storage: PostgresStorage, biz: str) -> dict[str, Any] | None:
+    return fetchone_row(
         storage,
         "SELECT avatar_url, content_type, data FROM avatar_images WHERE biz = %s",
         [biz],
+        normalize=_normalize_record,
     )
 
 
-def _upsert_avatar_url(storage: StorageLike, biz: str, url: str) -> None:
+def _upsert_avatar_url(storage: PostgresStorage, biz: str, url: str) -> None:
     with storage.conn.cursor() as cur:
         cur.execute(
             """
@@ -1215,7 +1207,7 @@ def _upsert_avatar_url(storage: StorageLike, biz: str, url: str) -> None:
 
 
 def _store_avatar(
-    storage: StorageLike,
+    storage: PostgresStorage,
     biz: str,
     *,
     content_type: str,
@@ -1238,7 +1230,7 @@ def _store_avatar(
     storage.conn.commit()
 
 
-def _fetch_and_cache_avatar(storage: StorageLike, biz: str, url: str) -> tuple[bytes, str] | None:
+def _fetch_and_cache_avatar(storage: PostgresStorage, biz: str, url: str) -> tuple[bytes, str] | None:
     headers = {
         "Referer": "https://mp.weixin.qq.com/",
         "Origin": "https://mp.weixin.qq.com",
@@ -1259,7 +1251,7 @@ def _fetch_and_cache_avatar(storage: StorageLike, biz: str, url: str) -> tuple[b
 
 
 def _list_feed(
-    storage: StorageLike,
+    storage: PostgresStorage,
     *,
     group_id: int | None,
     biz: str | None,
@@ -1279,7 +1271,7 @@ def _list_feed(
         limit=limit,
         offset=0,
     )
-    return _fetchall(storage, query_sql, params)
+    return fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
 
 
 
@@ -1292,7 +1284,7 @@ def _binary_response(payload: bytes, content_type: str) -> Response:
     )
 
 
-def _get_storage() -> Generator[StorageLike, None, None]:
+def _get_storage() -> Generator[PostgresStorage, None, None]:
     with open_storage() as storage:
         _ensure_default_group(storage)
         _ensure_avatar_images_table(storage)
@@ -1311,7 +1303,7 @@ router = APIRouter(prefix="/api")
 
 
 @router.get("/group")
-def list_groups(storage: StorageLike = Depends(_get_storage)) -> dict[str, Any]:
+def list_groups(storage: PostgresStorage = Depends(_get_storage)) -> dict[str, Any]:
     default_group = _ensure_default_group(storage)
     return {
         "default_group_id": default_group["id"],
@@ -1322,7 +1314,7 @@ def list_groups(storage: StorageLike = Depends(_get_storage)) -> dict[str, Any]:
 @router.post("/group", status_code=status.HTTP_201_CREATED)
 def create_group(
     body: dict[str, Any] = Body(default={}),
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
     name = str(body.get("name", "")).strip()
     if not name:
@@ -1334,7 +1326,7 @@ def create_group(
 @router.get("/group/{group_id}")
 def get_group(
     group_id: int,
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
     return _get_group(storage, group_id)
 
@@ -1343,7 +1335,7 @@ def get_group(
 def update_group(
     group_id: int,
     body: dict[str, Any] = Body(default={}),
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
     updates: dict[str, Any] = {}
     if 'name' in body:
@@ -1361,7 +1353,7 @@ def update_group(
 @router.delete("/group/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_group(
     group_id: int,
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> Response:
     _delete_group(storage, group_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -1373,7 +1365,7 @@ async def search_account(
     page: int = 1,
     page_size: int = 10,
     begin: int | None = None,
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
     keyword = (q or "").strip()
     if not keyword:
@@ -1424,7 +1416,7 @@ async def search_account(
 @router.get("/account/search/{biz}/avatar")
 def get_search_avatar(
     biz: str,
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> Response:
     _ensure_avatar_images_table(storage)
     avatar = _get_avatar_row(storage, biz)
@@ -1450,7 +1442,7 @@ def list_accounts(
     q: str | None = None,
     page: int = 1,
     page_size: int = 20,
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
     payload = _list_accounts(
         storage,
@@ -1465,7 +1457,7 @@ def list_accounts(
 @router.post("/account", status_code=status.HTTP_201_CREATED)
 def create_account(
     body: dict[str, Any] = Body(default={}),
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
     required = ["biz", "nickname"]
     for field in required:
@@ -1500,7 +1492,7 @@ def create_account(
 @router.post("/account/move")
 def move_accounts(
     body: dict[str, Any] = Body(default={}),
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
     biz_list = body.get("biz_list") or []
     if not isinstance(biz_list, list) or not biz_list:
@@ -1521,7 +1513,7 @@ def move_accounts(
 @router.post("/account/batch")
 def batch_update_accounts(
     body: dict[str, Any] = Body(default={}),
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
     biz_list = body.get('biz_list') or []
     if not isinstance(biz_list, list) or not biz_list:
@@ -1558,7 +1550,7 @@ def batch_update_accounts(
 @router.get("/account/{biz}")
 def get_account(
     biz: str,
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
     return _get_account(storage, biz)
 
@@ -1567,7 +1559,7 @@ def get_account(
 def update_account(
     biz: str,
     body: dict[str, Any] = Body(default={}),
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
     if "group_id" in body and body["group_id"] is None:
         default_group = _ensure_default_group(storage)
@@ -1578,7 +1570,7 @@ def update_account(
 @router.delete("/account/{biz}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_account(
     biz: str,
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> Response:
     removed = storage.remove_account(biz)
     if removed == 0:
@@ -1589,17 +1581,18 @@ def delete_account(
 @router.get("/account/{biz}/avatar")
 def get_account_avatar(
     biz: str,
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> Response:
     avatar = _get_avatar_row(storage, biz)
     data = avatar.get("data") if avatar else None
     if not data:
         url = avatar.get("avatar_url") if avatar else None
         if not url:
-            row = _fetchone(
+            row = fetchone_row(
                 storage,
                 "SELECT round_head_img FROM accounts WHERE biz = %s",
                 [biz],
+                normalize=_normalize_record,
             )
             if not row:
                 raise ApiError("Account not found", status=404)
@@ -1628,7 +1621,7 @@ def list_articles(
     content: str = "",
     since: str | None = None,
     until: str | None = None,
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
     content_only = (content or "").lower() in {"1", "true", "yes"}
     since_ts = _parse_date(since)
@@ -1650,7 +1643,7 @@ def list_articles(
 @router.get("/article/{article_id}")
 def get_article(
     article_id: int,
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
     return _get_article(storage, article_id)
 
@@ -1658,7 +1651,7 @@ def get_article(
 @router.get("/article/{article_id}/image")
 def list_article_images(
     article_id: int,
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
     payload = _list_article_images(storage, article_id)
     return {"images": payload}
@@ -1667,7 +1660,7 @@ def list_article_images(
 @router.get("/image/{image_id}")
 def get_image(
     image_id: int,
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> Response:
     payload, content_type = _fetch_image(storage, image_id)
     return _binary_response(payload, content_type)
@@ -1675,7 +1668,7 @@ def get_image(
 
 @router.get("/login")
 def login_status(
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
     manager: "LoginManager" = Depends(_get_login_manager),
 ) -> dict[str, Any]:
     info = _get_login_info(storage)
@@ -1689,7 +1682,7 @@ def login_status(
 
 @router.post("/login/start")
 async def login_start(
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
     manager: "LoginManager" = Depends(_get_login_manager),
 ) -> dict[str, Any]:
     snapshot = await manager.start()
@@ -1703,7 +1696,7 @@ async def login_start(
 
 @router.post("/login/poll")
 async def login_poll(
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
     manager: "LoginManager" = Depends(_get_login_manager),
 ) -> dict[str, Any]:
     snapshot = await manager.poll(storage)
@@ -1717,7 +1710,7 @@ async def login_poll(
 
 @router.post("/login/cancel")
 def login_cancel(
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
     manager: "LoginManager" = Depends(_get_login_manager),
 ) -> dict[str, Any]:
     manager.cancel()
@@ -1739,12 +1732,12 @@ def login_qrcode(
 
 
 @router.get("/sync")
-def sync_status(storage: StorageLike = Depends(_get_storage)) -> dict[str, Any]:
+def sync_status(storage: PostgresStorage = Depends(_get_storage)) -> dict[str, Any]:
     return _get_sync_status(storage)
 
 
 @router.get("/sync/settings")
-def get_sync_settings(storage: StorageLike = Depends(_get_storage)) -> dict[str, Any]:
+def get_sync_settings(storage: PostgresStorage = Depends(_get_storage)) -> dict[str, Any]:
     payload = _get_sync_settings(storage)
     payload["email"] = _get_email_settings(storage)
     return payload
@@ -1753,7 +1746,7 @@ def get_sync_settings(storage: StorageLike = Depends(_get_storage)) -> dict[str,
 @router.patch("/sync/settings")
 def update_sync_settings(
     body: dict[str, Any] = Body(default={}),
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
     scheduler: "SyncScheduler" = Depends(_get_sync_scheduler),
 ) -> dict[str, Any]:
     updates: dict[str, Any] = {}
@@ -1817,7 +1810,7 @@ def update_sync_settings(
 @router.post("/sync/run", status_code=status.HTTP_202_ACCEPTED)
 def run_sync(
     body: dict[str, Any] = Body(default={}),
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
     scheduler: "SyncScheduler" = Depends(_get_sync_scheduler),
 ) -> dict[str, Any]:
     group_id = body.get('group_id')
@@ -1826,10 +1819,11 @@ def run_sync(
             group_id = int(group_id)
         except (TypeError, ValueError) as exc:
             raise ApiError('Invalid group_id') from exc
-        row = _fetchone(
+        row = fetchone_row(
             storage,
             'SELECT id FROM account_groups WHERE id = %s',
             [group_id],
+            normalize=_normalize_record,
         )
         if not row:
             raise ApiError('Group not found', status=404)
@@ -1850,7 +1844,7 @@ def list_feed(
     since: str | None = None,
     until: str | None = None,
     days: int | None = None,
-    storage: StorageLike = Depends(_get_storage),
+    storage: PostgresStorage = Depends(_get_storage),
 ):
     output_format = (format or "").lower()
     since_ts = _parse_date(since)
@@ -1861,10 +1855,11 @@ def list_feed(
     if output_format == "rss":
         group_names: list[str] = []
         if group_id is not None:
-            row = _fetchone(
+            row = fetchone_row(
                 storage,
                 "SELECT name FROM account_groups WHERE id = %s",
                 [group_id],
+                normalize=_normalize_record,
             )
             if not row:
                 raise ApiError("Group not found", status=404)

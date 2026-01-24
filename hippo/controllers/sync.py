@@ -13,8 +13,9 @@ from tqdm import tqdm
 
 from ..http import MPClient
 from ..models import AccountCredential, LoginSession
-from ..storage import StorageLike, open_storage
+from ..storage import PostgresStorage, open_storage
 from ..sync_core import SyncInterrupted, sync_account_core
+from ..utils import format_table
 
 
 class SyncMode(str, Enum):
@@ -106,21 +107,6 @@ def _today_str() -> str:
     return date.today().isoformat()
 
 
-def _format_table(headers: list[str], rows: list[list[str]]) -> str:
-    if not rows:
-        return ''
-    widths = [len(h) for h in headers]
-    for row in rows:
-        for idx, cell in enumerate(row):
-            widths[idx] = max(widths[idx], len(cell))
-    sep = '  '
-    lines = [sep.join(h.ljust(widths[idx]) for idx, h in enumerate(headers))]
-    lines.append(sep.join('-' * widths[idx] for idx in range(len(headers))))
-    for row in rows:
-        lines.append(sep.join(row[idx].ljust(widths[idx]) for idx in range(len(headers))))
-    return '\n'.join(lines)
-
-
 def _pbar_write(progress: tqdm | None, message: str) -> None:
     if progress is not None:
         progress.write(message)
@@ -133,7 +119,7 @@ def _handle_login_expired() -> bool:
     return False
 
 
-def _get_login_session(storage: StorageLike) -> LoginSession:
+def _get_login_session(storage: PostgresStorage) -> LoginSession:
     try:
         return storage.get_login_session()
     except LookupError as exc:
@@ -160,7 +146,7 @@ def _resolve_shared_window(options: SyncOptions) -> tuple[int | None, int | None
 
 def _build_sync_plan(
     *,
-    storage: StorageLike,
+    storage: PostgresStorage,
     account: AccountCredential,
     options: SyncOptions,
     shared_since: int | None,
@@ -212,7 +198,7 @@ def _build_sync_plan(
 
 async def _sync_account_pages(
     *,
-    storage: StorageLike,
+    storage: PostgresStorage,
     client: MPClient,
     account: AccountCredential,
     page_size: int,
@@ -271,7 +257,7 @@ async def _sync_account_pages(
 
 async def perform_sync(
     *,
-    storage: StorageLike,
+    storage: PostgresStorage,
     accounts: list[AccountCredential],
     options: SyncOptions,
     bulk: bool,
@@ -487,7 +473,7 @@ async def sync_all_accounts(
     if report.summary:
         headers = ['账号', '新增/更新']
         rows = [[name, str(saved)] for name, saved in report.summary]
-        table_text = _format_table(headers, rows)
+        table_text = format_table(headers, rows)
         if table_text:
             typer.echo(table_text)
     typer.echo(f'全部账号同步完成，共写入 {report.total_saved} 条记录')
@@ -549,7 +535,7 @@ async def sync_group_accounts(
     if report.summary:
         headers = ['账号', '新增/更新']
         rows = [[name, str(saved)] for name, saved in report.summary]
-        table_text = _format_table(headers, rows)
+        table_text = format_table(headers, rows)
         if table_text:
             typer.echo(table_text)
     typer.echo(f'分组 {group} 同步完成，共写入 {report.total_saved} 条记录')

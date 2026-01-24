@@ -11,7 +11,7 @@ import httpx
 
 from .http import MPClient, parse_appmsg_publish
 from .models import AccountCredential, ArticleRecord
-from .storage import StorageLike
+from .storage import PostgresStorage
 
 SyncEventType = Literal["progress", "log", "page", "complete"]
 SyncEvent = tuple[SyncEventType, Any]
@@ -67,7 +67,7 @@ def is_freq_control(message: str) -> bool:
 
 async def sync_account_core(
     *,
-    storage: StorageLike,
+    storage: PostgresStorage,
     client: MPClient,
     account: AccountCredential,
     page_size: int,

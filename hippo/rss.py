@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date, datetime, time, timezone
+from datetime import datetime, timezone
 from email.utils import formatdate
 from typing import Any, Iterable
 from xml.sax.saxutils import escape
 
-from psycopg.rows import dict_row
-
-from .storage import StorageLike, open_storage
+from .storage import PostgresStorage, open_storage
+from .utils import fetchall_rows, parse_iso_date_to_timestamp
 
 DEFAULT_GROUP_NAME = "Default"
 
@@ -25,15 +24,7 @@ class RssItem:
     description: str
 
 
-def _parse_date(value: str | None, *, end_of_day: bool = False) -> int | None:
-    if not value:
-        return None
-    parsed = date.fromisoformat(value)
-    dt = datetime.combine(parsed, time.max if end_of_day else time.min)
-    return int(dt.replace(tzinfo=timezone.utc).timestamp())
-
-
-def _ensure_default_group(storage: StorageLike) -> int:
+def _ensure_default_group(storage: PostgresStorage) -> int:
     groups = storage.list_groups()
     default_group = next((g for g in groups if g.name == DEFAULT_GROUP_NAME), None)
     if default_group is None:
@@ -48,14 +39,7 @@ def _ensure_default_group(storage: StorageLike) -> int:
     return default_id
 
 
-def _fetchall(storage: StorageLike, query: str, params: list[Any]) -> list[dict[str, Any]]:
-    with storage.conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(query, params)
-        rows = cur.fetchall()
-    return [dict(row) for row in rows]
-
-
-def _resolve_group_ids(storage: StorageLike, names: Iterable[str]) -> list[int]:
+def _resolve_group_ids(storage: PostgresStorage, names: Iterable[str]) -> list[int]:
     cleaned = [name.strip() for name in names if name and name.strip()]
     if not cleaned:
         return []
@@ -65,7 +49,7 @@ def _resolve_group_ids(storage: StorageLike, names: Iterable[str]) -> list[int]:
         if cleaned
         else "SELECT id, name FROM account_groups"
     )
-    rows = _fetchall(storage, query, cleaned)
+    rows = fetchall_rows(storage, query, cleaned)
     found = {row["name"]: row["id"] for row in rows}
     missing = [name for name in cleaned if name not in found]
     if missing:
@@ -142,8 +126,8 @@ def query_rss_items(
             where.append("acc.group_id = ANY(%s)")
             params.append(group_ids)
 
-        since_ts = _parse_date(since)
-        until_ts = _parse_date(until, end_of_day=True)
+        since_ts = parse_iso_date_to_timestamp(since, tz=timezone.utc)
+        until_ts = parse_iso_date_to_timestamp(until, end_of_day=True, tz=timezone.utc)
         if days:
             now = datetime.now(timezone.utc)
             since_ts = int((now.timestamp() - days * 86400))
@@ -170,7 +154,7 @@ def query_rss_items(
             query = f"{query} {limit_sql}"
             params.append(limit)
 
-        rows = _fetchall(storage, query, params)
+        rows = fetchall_rows(storage, query, params)
 
     items: list[RssItem] = []
     for row in rows:
