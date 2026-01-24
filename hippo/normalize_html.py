@@ -68,6 +68,21 @@ def _prepare_dom(raw_html: str) -> Tuple[BeautifulSoup, BeautifulSoup]:
         if src:
             img['src'] = src
 
+    # Decouple <img> inside <a> to prevent linked images in Markdown
+    # Transform <a href="..."><img ...></a> into <img ...><a href="...">链接</a>
+    for a_tag in list(js_article.find_all('a')):
+        imgs = list(a_tag.find_all('img'))
+        if not imgs:
+            continue
+
+        for img in imgs:
+            img.extract()
+            a_tag.insert_before(img)
+        
+        # If link text is empty after removing images, set a default text
+        if not a_tag.get_text(strip=True):
+            a_tag.string = '链接'
+
     return soup, js_article
 
 
@@ -99,100 +114,91 @@ def _render_html(soup: BeautifulSoup, js_article: BeautifulSoup) -> str:
 
 
 def _postprocess_markdown(markdown: str) -> str:
-    lines = [line.rstrip() for line in markdown.splitlines()]
-    processed: list[str] = []
+    # 1. Isolate images: Ensure they are on separate lines
+    markdown = re.sub(r'(!\[[^\]]*\]\([^)]+\))', r'\n\1\n', markdown)
+
+    lines = [line.strip() for line in markdown.splitlines()]
+    
+    # 2. Filter specific unwanted lines
     image_pattern = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
     empty_image_pattern = re.compile(r'^!\[[^\]]*]\(\s*\)$')
-    js_void_pattern = re.compile(r'\]\(\s*javascript:void\(0\);?\s*\)', re.IGNORECASE)
     immersive_tip = '在小说阅读器中沉浸阅读'
-    prev_blank = False
+    
+    cleaned: list[str] = []
     for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            if prev_blank:
-                continue
-            prev_blank = True
-            processed.append('')
+        if not line:
+            cleaned.append('')
             continue
-        prev_blank = False
-        rebuilt = []
-        last_end = 0
-        found = False
-        for match in image_pattern.finditer(line):
-            found = True
-            if match.start() > last_end:
-                chunk = line[last_end:match.start()].strip()
-                if chunk:
-                    rebuilt.append(chunk)
-            alt, url = match.groups()
-            rebuilt.append(f'![{alt}]({url})')
-            last_end = match.end()
-        if found:
-            tail = line[last_end:].strip()
-            if tail:
-                rebuilt.append(tail)
-            for part in rebuilt:
-                processed.append(part)
+        if line == immersive_tip:
             continue
-        processed.append(line.strip())
+        if empty_image_pattern.match(line):
+            continue
+        cleaned.append(line)
+
+    # 3. Heuristic cleanup for javascript:void artifacts
+    js_void_pattern = re.compile(r'\]\(\s*javascript:void\(0\);?\s*\)', re.IGNORECASE)
 
     def is_plain_text_line(text: str) -> bool:
         if not text:
             return False
-        if text.startswith(('#', '-', '*', '+', '>', '|')):
-            return False
-        if text.startswith('!['):
+        if text.startswith(('#', '-', '*', '+', '>', '|', '![')):
             return False
         if re.search(r'\[[^\]]+]\([^)]*\)', text):
             return False
         return True
 
-    cleaned: list[str] = []
-    for line in processed:
-        stripped = line.strip()
-        if stripped == immersive_tip:
-            continue
-        if empty_image_pattern.match(stripped):
-            continue
-        cleaned.append(line)
-
     to_remove: set[int] = set()
-    non_empty = [i for i, line in enumerate(cleaned) if line.strip()]
+    non_empty = [i for i, line in enumerate(cleaned) if line]
     js_void_lines = [i for i, line in enumerate(cleaned) if js_void_pattern.search(line)]
+    
     for idx in js_void_lines:
         to_remove.add(idx)
+        # Determine ordinal position among non-empty lines
         if idx in non_empty:
             ordinal = non_empty.index(idx) + 1
         else:
+            # Fallback if somehow idx is not in non_empty (shouldn't happen if pattern matched)
             ordinal = len(non_empty) + 1
+            
         if ordinal <= 8:
+            # Try to remove the preceding plain text line
             prev_idx = idx - 1
-            while prev_idx >= 0 and not cleaned[prev_idx].strip():
+            while prev_idx >= 0 and not cleaned[prev_idx]:
                 prev_idx -= 1
+            
             if prev_idx >= 0:
-                prev_line = cleaned[prev_idx].strip()
-                if is_plain_text_line(prev_line):
+                if is_plain_text_line(cleaned[prev_idx]):
                     to_remove.add(prev_idx)
             else:
+                # If no direct previous line, search forward in non_empty (legacy logic preservation)
                 for candidate in non_empty:
-                    candidate_line = cleaned[candidate].strip()
-                    if is_plain_text_line(candidate_line):
+                    if is_plain_text_line(cleaned[candidate]):
                         to_remove.add(candidate)
                         break
+
+    # Secondary heuristic: if there are void lines, maybe remove the first plain text line
     if js_void_lines and non_empty:
         first_plain_idx = None
         for candidate in non_empty:
-            candidate_line = cleaned[candidate].strip()
-            if is_plain_text_line(candidate_line):
+            if is_plain_text_line(cleaned[candidate]):
                 first_plain_idx = candidate
                 break
+        
         if first_plain_idx is not None and first_plain_idx not in to_remove:
+            # Check ordinal of the first void line
             first_js_void_ordinal = min(non_empty.index(idx) + 1 for idx in js_void_lines if idx in non_empty)
             if first_js_void_ordinal <= 8:
                 to_remove.add(first_plain_idx)
 
+    # 4. Reconstruct and collapse empty lines
     final_lines = [line for i, line in enumerate(cleaned) if i not in to_remove]
-    return '\n'.join(final_lines).strip()
+    text = '\n'.join(final_lines)
+    
+    # Collapse 3+ newlines to 2 (one empty line between blocks)
+    # Also handle standardizing newlines
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    return text.strip()
 
 
 def _swap_markdown_image_urls(markdown: str, url_map: Dict[str, str]) -> str:
