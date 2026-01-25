@@ -328,31 +328,45 @@ class ArticleDownloader(AbstractAsyncContextManager):
             async with sem:
                 return await download_one(article)
 
-        tasks = {asyncio.create_task(run(article)): article for article in pending}
+        # Map tasks to articles
+        active_tasks = {asyncio.create_task(run(article)): article for article in pending}
+        
         try:
-            for task in asyncio.as_completed(tasks):
-                article = tasks[task]
-                try:
-                    result = await task
-                except Exception as exc:
-                    failed += 1
-                    self._log_download_error(
-                        stage="article_download",
-                        article=article,
-                        error=str(exc),
-                    )
-                    if progress is not None:
-                        progress.write(
-                            f"下载失败：{article.title} ({article.article_id}) {exc}"
+            while active_tasks:
+                done, _ = await asyncio.wait(
+                    active_tasks.keys(),
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                for task in done:
+                    article = active_tasks.pop(task)
+                    try:
+                        result = await task
+                    except Exception as exc:
+                        failed += 1
+                        self._log_download_error(
+                            stage="article_download",
+                            article=article,
+                            error=str(exc),
                         )
-                else:
-                    results.append(result)
-                if progress is not None:
-                    progress.update(1)
-        except KeyboardInterrupt:
+                        if progress is not None:
+                            progress.write(
+                                f"下载失败：{article.title} ({article.article_id}) {exc}"
+                            )
+                    else:
+                        results.append(result)
+                    
+                    if progress is not None:
+                        progress.update(1)
+
+        except Exception:
             await self.abort_image_queue()
-            for task in tasks:
+            # Cancel all remaining tasks
+            for task in active_tasks:
                 task.cancel()
+            # Wait for cancellations to propagate
+            if active_tasks:
+                await asyncio.gather(*active_tasks.keys(), return_exceptions=True)
             raise
         return results, skipped, failed
 
