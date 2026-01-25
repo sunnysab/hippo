@@ -17,7 +17,7 @@ from .normalize_html import normalize_html
 from .env import load_env
 from .http import MPClient
 from .logger import get_logger
-from .models import ArticleRecord, DownloadResult
+from .models import AccountCredential, ArticleRecord, DownloadResult
 from .storage import PostgresStorage
 from .utils import slugify
 
@@ -379,11 +379,34 @@ class ArticleDownloader(AbstractAsyncContextManager):
             publish_at=None,
             raw={"source": "adhoc"},
         )
+        self._ensure_adhoc_account(stub.biz)
         return await self._persist_article(
             stub,
             raw_html=raw_html,
             with_images=with_images,
             record_images_only=record_images_only,
+        )
+
+    def _ensure_adhoc_account(self, biz: str) -> None:
+        if biz != 'adhoc' or not self.storage:
+            return
+        get_account = getattr(self.storage, 'get_account', None)
+        upsert_account = getattr(self.storage, 'upsert_account', None)
+        if not callable(upsert_account):
+            return
+        if callable(get_account):
+            try:
+                get_account(biz, fallback_to_default=False)
+                return
+            except LookupError:
+                pass
+        upsert_account(
+            AccountCredential(
+                biz=biz,
+                nickname=biz,
+                alias=None,
+                round_head_img=None,
+            )
         )
 
     async def _fetch_with_retry(self, url: str) -> str:
