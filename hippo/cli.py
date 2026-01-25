@@ -11,7 +11,7 @@ import random
 import time
 import functools
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -26,7 +26,7 @@ from .downloader import ArticleDownloader
 from .env import load_env
 from .http import MPClient, SessionExpiredError
 from .logger import setup_logger
-from .models import AccountCredential, LoginSession
+from .models import AccountCredential, AccountGroup, LoginSession
 from .server import serve as run_server
 from .rss import build_rss_xml, query_rss_items
 from .storage import StorageInitError, PostgresStorage, open_storage
@@ -179,6 +179,30 @@ def _parse_since(value: Optional[str]) -> Optional[int]:
         return parse_iso_datetime_to_timestamp(value)
     except ValueError as exc:
         raise typer.BadParameter("时间格式应为 YYYY-MM-DD") from exc
+
+
+def _build_group_defaults(storage: PostgresStorage) -> dict[int, AccountGroup]:
+    return {group.id: group for group in storage.list_groups()}
+
+
+def _resolve_recent_since(
+    account: AccountCredential,
+    group_defaults: dict[int, AccountGroup],
+) -> Optional[int]:
+    group = group_defaults.get(account.group_id) if account.group_id is not None else None
+    group_mode = group.sync_mode if group else None
+    group_recent_days = group.sync_recent_days if group else None
+    mode = (account.sync_mode or group_mode or '').strip().lower()
+    if mode != 'recent':
+        return None
+    recent_days = account.sync_recent_days
+    if recent_days is None:
+        recent_days = group_recent_days
+    if recent_days is None:
+        recent_days = 7
+    recent_days = max(int(recent_days), 1)
+    now = datetime.now(timezone.utc)
+    return int(now.timestamp() - recent_days * 86400)
 
 
 def _parse_selection_indices(selection: str, total: int) -> list[int]:
@@ -770,6 +794,9 @@ async def _sync_article_download_async(
         if account_record.is_disabled:
             typer.echo(f"Account {account_record.nickname} ({account_record.biz}) is disabled. Skipping.")
             return
+        if since_timestamp is None:
+            group_defaults = _build_group_defaults(storage)
+            since_timestamp = _resolve_recent_since(account_record, group_defaults)
         articles = storage.list_articles(
             account_record.biz,
             limit=limit,
@@ -871,6 +898,7 @@ async def _sync_all_article_download_async(
         if not accounts:
             typer.echo("尚未保存任何账号，使用 `account add` 添加")
             return
+        group_defaults = _build_group_defaults(storage)
         download_images = with_images and not article_only
         record_images_only = article_only
         async with ArticleDownloader(
@@ -887,10 +915,13 @@ async def _sync_all_article_download_async(
                 if account.is_disabled:
                     typer.echo(f"Account {account.nickname} ({account.biz}) is disabled. Skipping.")
                     continue
+                account_since = since_timestamp
+                if account_since is None:
+                    account_since = _resolve_recent_since(account, group_defaults)
                 articles = storage.list_articles(
                     account.biz,
                     limit=limit,
-                    since_timestamp=since_timestamp,
+                    since_timestamp=account_since,
                     exclude_downloaded=True,
                 )
                 if not articles:
