@@ -4,6 +4,7 @@
   "nav.articles": "文章",
   "nav.sync": "同步",
   "actions.refresh": "刷新",
+  "common.loading": "加载中...",
   "groups.title": "分组管理",
   "groups.subtitle": "把公众号整理到清晰的分组中。",
   "groups.create": "新建分组",

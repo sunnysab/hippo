@@ -17,6 +17,12 @@
     hasMore: true,
   };
 
+  const setAccountSearchLoading = (isLoading) => {
+    const loading = $('#account-search-loading');
+    if (!loading) return;
+    loading.classList.toggle('is-hidden', !isLoading);
+  };
+
   const formatRelativeTime = (isoString) => {
     if (!isoString) return '';
     const date = new Date(isoString);
@@ -564,6 +570,7 @@
       state.searchResults = [];
       searchState.page = 1;
       searchState.hasMore = true;
+      setAccountSearchLoading(false);
       renderAccountSearchResults([]);
       return;
     }
@@ -580,6 +587,7 @@
     if (!searchState.hasMore) return;
 
     searchState.loading = true;
+    setAccountSearchLoading(true);
     const pageSize = 10;
     const url = new URL('/api/account/search', window.location.origin);
     url.searchParams.set('q', keyword);
@@ -611,6 +619,7 @@
       }
     } finally {
       searchState.loading = false;
+      setAccountSearchLoading(false);
     }
   };
 

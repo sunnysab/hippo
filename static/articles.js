@@ -1,6 +1,12 @@
 (() => {
   const { state, $, apiGet, t, copyToClipboard, showToast } = window.Hippo;
 
+  const setArticleSearchLoading = (isLoading) => {
+    const loading = $('#article-search-loading');
+    if (!loading) return;
+    loading.classList.toggle('is-hidden', !isLoading);
+  };
+
   const showArticleContextMenu = (article, x, y) => {
     const menu = $('#article-context-menu');
     if (!menu) return;
@@ -89,6 +95,8 @@
     const groupId = $('#article-group-filter')?.value;
     const accountBiz = $('#article-account-filter')?.value;
     const search = $('#article-search')?.value.trim();
+    const shouldShowLoading = Boolean(search);
+    setArticleSearchLoading(shouldShowLoading);
     const url = new URL('/api/article', window.location.origin);
     if (groupId) url.searchParams.set('group_id', groupId);
     if (accountBiz) url.searchParams.set('biz', accountBiz);
@@ -115,6 +123,9 @@
         renderArticleList();
     } finally {
         state.isArticleLoading = false;
+        if (shouldShowLoading) {
+          setArticleSearchLoading(false);
+        }
     }
   };
 
