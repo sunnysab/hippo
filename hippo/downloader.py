@@ -14,11 +14,14 @@ import httpx
 
 from .normalize_html import normalize_html
 
+from .env import load_env
 from .http import MPClient
 from .logger import get_logger
 from .models import ArticleRecord, DownloadResult
 from .storage import PostgresStorage
 from .utils import slugify
+
+load_env()
 
 logger = get_logger(__name__)
 

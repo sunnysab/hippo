@@ -15,8 +15,11 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 from psycopg_pool import ConnectionPool
 
+from .env import load_env
 from .models import AccountCredential, AccountGroup, ArticleRecord, LoginSession
 from .s3 import build_image_key, get_s3_client, upload_object_bytes
+
+load_env()
 
 SCHEMA_VERSION = '12'
 
@@ -992,6 +995,7 @@ class PostgresStorage(AbstractContextManager):
 
 
 def open_storage(*, auto_init: bool = False) -> PostgresStorage:
+    load_env()
     dsn = os.environ.get("HIPPO_PG_DSN")
     if not dsn:
         raise StorageInitError("Missing HIPPO_PG_DSN for PostgreSQL storage.")

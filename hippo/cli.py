@@ -23,6 +23,7 @@ from tqdm import tqdm
 
 from .config import DEFAULT_PAGE_SIZE
 from .downloader import ArticleDownloader
+from .env import load_env
 from .http import MPClient, SessionExpiredError
 from .logger import setup_logger
 from .models import AccountCredential, LoginSession
@@ -140,6 +141,7 @@ def _patch_click_for_typer() -> None:
 
 
 def run() -> None:
+    load_env()
     _patch_click_for_typer()
     command = typer.main.get_command(app)
     _fix_click_option_flags(command)
@@ -222,6 +224,7 @@ def _require_nonempty(value: Optional[str], message: str) -> None:
 
 
 def _resolve_pg_dsn() -> str:
+    load_env()
     pg_dsn = os.environ.get("HIPPO_PG_DSN")
     if not pg_dsn:
         raise typer.BadParameter("Missing HIPPO_PG_DSN.")

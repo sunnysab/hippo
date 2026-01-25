@@ -5,6 +5,10 @@ from __future__ import annotations
 import os
 from typing import Final
 
+from .env import load_env
+
+load_env()
+
 APP_NAME: Final = "hippo"
 CLI_NAME: Final = "hippo"
 DEFAULT_USER_AGENT: Final = (
