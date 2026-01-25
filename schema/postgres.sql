@@ -168,7 +168,7 @@ SET search_vector = build_article_search_vector(
     COALESCE(c.content_markdown, c.clean_html, '')
 )
 FROM article_content c
-WHERE c.article_pk = a.id;
+WHERE c.article_pk = a.id AND a.search_vector IS NULL;
 
 UPDATE articles
 SET search_vector = build_article_search_vector(title, author, digest, '')
