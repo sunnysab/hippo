@@ -89,6 +89,18 @@ def _update_s3_key(
     storage.conn.commit()
 
 
+def _has_data_column(storage: PostgresStorage) -> bool:
+    with storage.conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = 'article_images' AND column_name = 'data'
+            """
+        )
+        return cur.fetchone() is not None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description='Migrate article_images blobs into S3')
     parser.add_argument('--pg-dsn', default=os.environ.get('HIPPO_PG_DSN'))
@@ -107,9 +119,17 @@ def main() -> int:
         print('Missing --pg-dsn or HIPPO_PG_DSN', file=sys.stderr)
         return 2
 
+    with PostgresStorage(args.pg_dsn) as check_storage:
+        if not _has_data_column(check_storage):
+            _log('article_images.data is missing. Nothing to migrate.')
+            return 0
+
     base_config = load_s3_config()
     if not base_config:
-        print('Missing S3 config. Set HIPPO_S3_ENDPOINT/HIPPO_S3_BUCKET/HIPPO_S3_ACCESS_KEY/HIPPO_S3_SECRET_KEY', file=sys.stderr)
+        print(
+            'Missing S3 config. Set HIPPO_S3_ENDPOINT/HIPPO_S3_BUCKET/HIPPO_S3_ACCESS_KEY/HIPPO_S3_SECRET_KEY',
+            file=sys.stderr,
+        )
         return 2
     config = with_prefix(base_config, args.prefix)
 

@@ -764,7 +764,10 @@ async def _sync_article_download_async(
             typer.echo(f"Account {account_record.nickname} ({account_record.biz}) is disabled. Skipping.")
             return
         articles = storage.list_articles(
-            account_record.biz, limit=limit, since_timestamp=since_timestamp
+            account_record.biz,
+            limit=limit,
+            since_timestamp=since_timestamp,
+            exclude_downloaded=True,
         )
         if not articles:
             typer.echo("没有可下载的文章，先执行 `account sync`")
@@ -878,7 +881,10 @@ async def _sync_all_article_download_async(
                     typer.echo(f"Account {account.nickname} ({account.biz}) is disabled. Skipping.")
                     continue
                 articles = storage.list_articles(
-                    account.biz, limit=limit, since_timestamp=since_timestamp
+                    account.biz,
+                    limit=limit,
+                    since_timestamp=since_timestamp,
+                    exclude_downloaded=True,
                 )
                 if not articles:
                     continue
@@ -1070,7 +1076,7 @@ async def _backfill_article_images_async(
                 SELECT COUNT(*)
                 FROM article_images i
                 JOIN articles a ON a.id = i.article_pk
-                WHERE i.data IS NULL AND i.orig_url IS NOT NULL{failed_clause}
+                WHERE (i.s3_key IS NULL OR i.s3_key = '') AND i.orig_url IS NOT NULL{failed_clause}
             """
             with storage.conn.cursor() as cur:
                 cur.execute(count_query)
@@ -1083,7 +1089,7 @@ async def _backfill_article_images_async(
                 SELECT i.id, a.biz, a.article_id, a.link, i.orig_url
                 FROM article_images i
                 JOIN articles a ON a.id = i.article_pk
-                WHERE i.data IS NULL AND i.orig_url IS NOT NULL{failed_clause}
+                WHERE (i.s3_key IS NULL OR i.s3_key = '') AND i.orig_url IS NOT NULL{failed_clause}
             """
             order_clause = "ORDER BY i.id DESC"
             

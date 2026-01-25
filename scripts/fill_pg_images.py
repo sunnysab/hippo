@@ -1,4 +1,4 @@
-"""Backfill missing image blobs in PostgreSQL."""
+"""Backfill missing image objects in S3."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def _iter_missing_images(
         SELECT a.biz, a.article_id, a.link, i.orig_url
         FROM article_images i
         JOIN articles a ON a.id = i.article_pk
-        WHERE i.data IS NULL AND i.orig_url IS NOT NULL
+        WHERE (i.s3_key IS NULL OR i.s3_key = '') AND i.orig_url IS NOT NULL
         ORDER BY a.id DESC, i.position ASC
     """
     params: list = []
@@ -82,7 +82,7 @@ def _format_error(exc: Exception) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Backfill missing image data in PostgreSQL")
+    parser = argparse.ArgumentParser(description="Backfill missing image objects in S3")
     parser.add_argument("--pg-dsn", default=os.environ.get("HIPPO_PG_DSN"))
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--workers", type=int, default=8)
