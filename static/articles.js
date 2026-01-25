@@ -7,6 +7,12 @@
     loading.classList.toggle('is-hidden', !isLoading);
   };
 
+  const setArticleListLoading = (isLoading) => {
+    const loading = $('#article-list-loading');
+    if (!loading) return;
+    loading.classList.toggle('is-hidden', !isLoading);
+  };
+
   const showArticleContextMenu = (article, x, y) => {
     const menu = $('#article-context-menu');
     if (!menu) return;
@@ -41,6 +47,84 @@
     }
     if (Number.isNaN(date.getTime())) return '';
     return date.toLocaleDateString('zh-CN');
+  };
+
+  const formatDateTime = (value) => {
+    if (!value) return '';
+    let date;
+    if (typeof value === 'number') {
+      date = new Date(value * 1000);
+    } else {
+      date = new Date(value);
+    }
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString('zh-CN');
+  };
+
+  const buildArticleHeader = (article) => {
+    if (!article) return null;
+    const header = document.createElement('div');
+    header.className = 'article-header';
+
+    const title = document.createElement('h1');
+    title.className = 'article-preview-title';
+    title.textContent = article.title || '';
+    header.appendChild(title);
+
+    const meta = document.createElement('div');
+    meta.className = 'article-preview-meta';
+
+    const account = document.createElement('div');
+    account.className = 'article-preview-account';
+    const avatarUrl = article.account_avatar_url || article.account_avatar || '';
+    if (avatarUrl) {
+      const avatar = document.createElement('img');
+      avatar.className = 'article-preview-avatar';
+      avatar.src = avatarUrl;
+      avatar.alt = article.account_nickname || article.account_alias || article.biz || '';
+      avatar.onerror = () => {
+        avatar.style.display = 'none';
+      };
+      account.appendChild(avatar);
+    } else {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'article-preview-avatar placeholder';
+      account.appendChild(placeholder);
+    }
+
+    const accountName = document.createElement('span');
+    accountName.className = 'article-preview-name';
+    accountName.textContent = article.account_nickname || article.account_alias || article.biz || '';
+    account.appendChild(accountName);
+
+    const metaItems = document.createElement('div');
+    metaItems.className = 'article-preview-items';
+
+    const addMetaItem = (label, value) => {
+      const item = document.createElement('div');
+      item.className = 'article-preview-item';
+      const labelEl = document.createElement('span');
+      labelEl.className = 'article-preview-label';
+      labelEl.textContent = label;
+      const valueEl = document.createElement('span');
+      valueEl.className = 'article-preview-value';
+      valueEl.textContent = value || t('articles.meta.unknown', 'Unknown');
+      item.appendChild(labelEl);
+      item.appendChild(valueEl);
+      metaItems.appendChild(item);
+    };
+
+    addMetaItem(t('articles.meta.author', 'Author'), article.author || '');
+    addMetaItem(
+      t('articles.meta.publishedAt', 'Published'),
+      formatDateTime(article.publish_at || article.created_at),
+    );
+
+    meta.appendChild(account);
+    meta.appendChild(metaItems);
+    header.appendChild(meta);
+
+    return header;
   };
 
   const renderArticleList = () => {
@@ -96,7 +180,13 @@
     const accountBiz = $('#article-account-filter')?.value;
     const search = $('#article-search')?.value.trim();
     const shouldShowLoading = Boolean(search);
+    const shouldShowListLoading = reset && !search;
     setArticleSearchLoading(shouldShowLoading);
+    if (shouldShowListLoading) {
+      setArticleListLoading(true);
+      const list = $('#article-list');
+      if (list) list.innerHTML = '';
+    }
     const url = new URL('/api/article', window.location.origin);
     if (groupId) url.searchParams.set('group_id', groupId);
     if (accountBiz) url.searchParams.set('biz', accountBiz);
@@ -125,6 +215,9 @@
         state.isArticleLoading = false;
         if (shouldShowLoading) {
           setArticleSearchLoading(false);
+        }
+        if (shouldShowListLoading) {
+          setArticleListLoading(false);
         }
     }
   };
@@ -202,8 +295,22 @@
     container.innerHTML = '';
     const reader = document.createElement('div');
     reader.className = 'reader';
-    if (!payload || !Array.isArray(payload.content)) {
+    if (!payload) {
       reader.innerHTML = `<div class="empty-state">${t('articles.empty', 'Select an article to preview.')}</div>`;
+      container.appendChild(reader);
+      return;
+    }
+
+    const header = buildArticleHeader(payload.article);
+    if (header) {
+      reader.appendChild(header);
+    }
+
+    if (!Array.isArray(payload.content)) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.textContent = t('articles.empty', 'Select an article to preview.');
+      reader.appendChild(empty);
       container.appendChild(reader);
       return;
     }
@@ -323,12 +430,19 @@
     });
   };
 
+  const resetArticlePreviewScroll = () => {
+    const container = $('#article-preview');
+    if (!container) return;
+    container.scrollTop = 0;
+  };
+
   const selectArticle = async (id) => {
     state.selectedArticleId = id;
     renderArticleList();
     const payload = await apiGet(`/api/article/${id}`);
     state.currentArticlePayload = payload;
     renderArticleContent(payload);
+    resetArticlePreviewScroll();
   };
 
   const initReaderControls = () => {
