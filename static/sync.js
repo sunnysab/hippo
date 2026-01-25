@@ -95,12 +95,7 @@
     if (!settings) return;
     $('#sync-enabled').checked = Boolean(settings.enabled);
     $('#sync-interval').value = settings.interval_minutes ?? 60;
-    $('#sync-mode').value = settings.mode || 'incremental';
-    $('#sync-recent-days').value = settings.recent_days ?? 7;
-    $('#sync-page-size').value = settings.page_size ?? 10;
-    $('#sync-page-limit').value = settings.page_limit ?? 2;
     $('#sync-sleep').value = settings.sleep_seconds ?? 0.05;
-    $('#sync-content-limit').value = settings.content_limit ?? 20;
     $('#sync-skip-minutes').value = settings.skip_minutes ?? 30;
     $('#sync-download-content').checked = Boolean(settings.download_content);
     $('#sync-download-images').checked = Boolean(settings.download_images);
@@ -108,11 +103,12 @@
     $('#sync-alert-email').value = settings.alert_email || '';
     const email = settings.email || {};
     $('#email-smtp-host').value = email.smtp_host || '';
-    $('#email-smtp-port').value = email.smtp_port ?? 587;
     $('#email-smtp-user').value = email.smtp_user || '';
     $('#email-smtp-password').value = email.smtp_password || '';
     $('#email-from').value = email.from_email || '';
-    $('#email-tls').checked = email.smtp_tls !== false;
+    const tlsEnabled = email.smtp_tls !== false;
+    $('#email-tls').checked = tlsEnabled;
+    $('#email-smtp-port').value = email.smtp_port ?? (tlsEnabled ? 587 : 25);
   };
 
   const loadSyncSettings = async () => {
@@ -125,12 +121,7 @@
     const body = {
       enabled: $('#sync-enabled').checked,
       interval_minutes: Number($('#sync-interval').value),
-      mode: $('#sync-mode').value,
-      recent_days: Number($('#sync-recent-days').value),
-      page_size: Number($('#sync-page-size').value),
-      page_limit: Number($('#sync-page-limit').value),
       sleep_seconds: Number($('#sync-sleep').value),
-      content_limit: Number($('#sync-content-limit').value),
       skip_minutes: Number($('#sync-skip-minutes').value),
       download_content: $('#sync-download-content').checked,
       download_images: $('#sync-download-images').checked,
@@ -229,6 +220,14 @@
     $('#btn-login-refresh').addEventListener('click', startLogin);
     $('#btn-sync-save').addEventListener('click', saveSyncSettings);
     $('#btn-sync-run').addEventListener('click', triggerSyncRun);
+    const emailTls = $('#email-tls');
+    if (emailTls) {
+      emailTls.addEventListener('change', () => {
+        const port = $('#email-smtp-port');
+        if (!port) return;
+        port.value = emailTls.checked ? '587' : '25';
+      });
+    }
     $('#btn-banner-login').addEventListener('click', async () => {
       activateTab('sync');
       await startLogin();
