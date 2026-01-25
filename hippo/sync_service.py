@@ -14,7 +14,14 @@ from .http import MPClient
 from .models import AccountCredential, ArticleRecord
 from .storage import PostgresStorage, open_storage
 from .sync_core import is_freq_control, is_login_error, sync_account_core
-from .utils import fetchall_rows, load_meta_json, parse_iso_date_to_timestamp, save_meta_json, should_skip_by_time
+from .utils import (
+    fetchall_rows,
+    fetchone_row,
+    load_meta_json,
+    parse_iso_date_to_timestamp,
+    save_meta_json,
+    should_skip_by_time,
+)
 
 SYNC_STATUS_KEY = 'sync:last_status'
 SYNC_ERROR_KEY = 'sync:last_error'
@@ -23,9 +30,14 @@ SYNC_FINISHED_KEY = 'sync:last_finished_at'
 SYNC_HISTORY_KEY = 'sync:history'
 SYNC_SETTINGS_KEY = 'sync:settings'
 ALERT_SENT_KEY = 'sync:alert_sent'
+SYNC_LOGIN_REQUIRED_AT_KEY = 'sync:login_required_at'
 
 _SYNC_MODES = {'incremental', 'recent', 'full', 'range'}
 _logger = logging.getLogger('hippo.sync')
+_DEFAULT_RECENT_DAYS = 7
+_DEFAULT_PAGE_SIZE = 10
+_DEFAULT_PAGE_LIMIT = 2
+_DEFAULT_CONTENT_LIMIT = 20
 
 
 def default_sync_settings() -> dict[str, Any]:
@@ -49,7 +61,10 @@ def default_sync_settings() -> dict[str, Any]:
 def get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
     settings = load_meta_json(storage, SYNC_SETTINGS_KEY, default_sync_settings())
     defaults = default_sync_settings()
-    return {**defaults, **(settings or {})}
+    merged = {**defaults, **(settings or {})}
+    for key in ('mode', 'recent_days', 'page_size', 'page_limit', 'content_limit'):
+        merged[key] = defaults[key]
+    return merged
 
 
 def set_sync_settings(storage: PostgresStorage, updates: dict[str, Any]) -> dict[str, Any]:
@@ -66,6 +81,29 @@ def append_sync_history(storage: PostgresStorage, entry: dict[str, Any]) -> None
     history.insert(0, entry)
     history = history[:50]
     save_meta_json(storage, SYNC_HISTORY_KEY, history)
+
+
+def _send_sync_alert(
+    storage: PostgresStorage,
+    *,
+    status: str,
+    error: str,
+    started_at: str,
+    finished_at: str,
+) -> None:
+    if not error or storage.get_meta(ALERT_SENT_KEY):
+        return
+    sync_settings = get_sync_settings(storage)
+    if not sync_settings.get('alert_enabled') or not sync_settings.get('alert_email'):
+        return
+    subject = 'Hippo sync failed'
+    body = f'Status: {status}\nError: {error}\nStarted: {started_at}\nFinished: {finished_at}'
+    try:
+        email_settings = get_email_settings(storage)
+        send_email(email_settings, to_email=str(sync_settings.get('alert_email')), subject=subject, body=body)
+        storage.set_meta(ALERT_SENT_KEY, '1')
+    except Exception as exc:
+        _logger.warning('Failed to send alert email: %s', exc)
 
 
 def get_sync_status(storage: PostgresStorage) -> dict[str, Any]:
@@ -98,6 +136,52 @@ def set_sync_state(
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _to_utc_dt(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return _to_utc_dt(parsed)
+
+
+def _get_login_updated_at(storage: PostgresStorage) -> datetime | None:
+    row = fetchone_row(
+        storage,
+        "SELECT updated_at FROM login_sessions WHERE is_default = TRUE ORDER BY id DESC LIMIT 1",
+        [],
+    )
+    if not row:
+        return None
+    updated_at = row.get('updated_at')
+    if isinstance(updated_at, str):
+        return _parse_iso_datetime(updated_at)
+    if isinstance(updated_at, datetime):
+        return _to_utc_dt(updated_at)
+    return None
+
+
+def _should_skip_for_login(storage: PostgresStorage) -> bool:
+    if storage.get_meta(SYNC_STATUS_KEY) != 'login_required':
+        return False
+    blocked_at = _parse_iso_datetime(storage.get_meta(SYNC_LOGIN_REQUIRED_AT_KEY))
+    if not blocked_at:
+        return False
+    last_login = _get_login_updated_at(storage)
+    if not last_login or last_login <= blocked_at:
+        return True
+    storage.delete_meta(SYNC_LOGIN_REQUIRED_AT_KEY)
+    storage.delete_meta(ALERT_SENT_KEY)
+    return False
 
 
 def _parse_date(value: str | None, *, end_of_day: bool = False) -> int | None:
@@ -137,8 +221,8 @@ async def _sync_account_articles(
     settings: dict[str, Any],
     group_defaults: dict[int, dict[str, Any]] | None = None,
 ) -> tuple[int, int]:
-    page_size = max(int(settings.get('page_size') or 10), 1)
-    page_limit = settings.get('page_limit')
+    page_size = max(int(_DEFAULT_PAGE_SIZE), 1)
+    page_limit = _DEFAULT_PAGE_LIMIT
     if page_limit is not None:
         page_limit = max(int(page_limit), 1)
     group_sync = None
@@ -149,12 +233,12 @@ async def _sync_account_articles(
     if group_sync:
         group_mode = group_sync.get('sync_mode')
         group_recent_days = group_sync.get('sync_recent_days')
-    mode = (account.sync_mode or group_mode or settings.get('mode') or 'incremental').strip().lower()
+    mode = (account.sync_mode or group_mode or 'incremental').strip().lower()
     if mode not in _SYNC_MODES:
         mode = 'incremental'
     recent_days = account.sync_recent_days
     if recent_days is None:
-        recent_days = group_recent_days if group_recent_days is not None else settings.get('recent_days')
+        recent_days = group_recent_days if group_recent_days is not None else _DEFAULT_RECENT_DAYS
     now = datetime.now(timezone.utc)
     since_ts: int | None = None
     until_ts: int | None = None
@@ -195,7 +279,7 @@ async def _sync_account_articles(
 
     downloaded = 0
     if settings.get('download_content'):
-        content_limit = int(settings.get('content_limit') or 0)
+        content_limit = int(_DEFAULT_CONTENT_LIMIT)
         candidates = {item.article_id: item for item in to_download}
         for missing in _select_missing_content(storage, account.biz, limit=content_limit):
             candidates.setdefault(missing.article_id, missing)
@@ -269,21 +353,32 @@ class SyncScheduler:
     async def _run_sync_async(self, *, group_id: int | None = None) -> dict[str, Any]:
         started_at = _utc_now_iso()
         with open_storage() as storage:
+            if _should_skip_for_login(storage):
+                return get_sync_status(storage)
             settings = get_sync_settings(storage)
             set_sync_state(storage, status='running', error='', started_at=started_at)
             try:
                 storage.get_login_session()
             except Exception as exc:
                 error = str(exc)
-                set_sync_state(storage, status='login_required', error=error, finished_at=_utc_now_iso())
+                finished_at = _utc_now_iso()
+                set_sync_state(storage, status='login_required', error=error, finished_at=finished_at)
+                storage.set_meta(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
                 append_sync_history(
                     storage,
                     {
                         'started_at': started_at,
-                        'finished_at': _utc_now_iso(),
+                        'finished_at': finished_at,
                         'status': 'login_required',
                         'error': error,
                     },
+                )
+                _send_sync_alert(
+                    storage,
+                    status='login_required',
+                    error=error,
+                    started_at=started_at,
+                    finished_at=finished_at,
                 )
                 return get_sync_status(storage)
 
@@ -343,9 +438,12 @@ class SyncScheduler:
             if error:
                 status = 'login_required' if is_login_error(error) else 'failed'
                 set_sync_state(storage, status=status, error=error, finished_at=finished_at)
+                if status == 'login_required':
+                    storage.set_meta(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
             else:
                 set_sync_state(storage, status='success', error='', finished_at=finished_at)
                 storage.delete_meta(ALERT_SENT_KEY)
+                storage.delete_meta(SYNC_LOGIN_REQUIRED_AT_KEY)
             append_sync_history(
                 storage,
                 {
@@ -358,17 +456,13 @@ class SyncScheduler:
                     'skipped_accounts': skipped_accounts,
                 },
             )
-            if error and not storage.get_meta(ALERT_SENT_KEY):
-                sync_settings = get_sync_settings(storage)
-                if sync_settings.get('alert_enabled') and sync_settings.get('alert_email'):
-                    subject = 'Hippo sync failed'
-                    body = f'Status: {status}\\nError: {error}\\nStarted: {started_at}\\nFinished: {finished_at}'
-                    try:
-                        email_settings = get_email_settings(storage)
-                        send_email(email_settings, to_email=str(sync_settings.get('alert_email')), subject=subject, body=body)
-                        storage.set_meta(ALERT_SENT_KEY, '1')
-                    except Exception as exc:
-                        _logger.warning('Failed to send alert email: %s', exc)
+            _send_sync_alert(
+                storage,
+                status=status if error else 'success',
+                error=error or '',
+                started_at=started_at,
+                finished_at=finished_at,
+            )
             return get_sync_status(storage)
 
 

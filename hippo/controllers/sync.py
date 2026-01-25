@@ -14,7 +14,8 @@ from tqdm import tqdm
 from ..http import MPClient
 from ..models import AccountCredential, LoginSession
 from ..storage import PostgresStorage, open_storage
-from ..sync_core import SyncInterrupted, sync_account_core
+from ..sync_core import SyncInterrupted, is_login_error, sync_account_core
+from ..sync_service import append_sync_history
 from ..utils import format_table, should_skip_by_time
 
 
@@ -60,6 +61,12 @@ class SyncReport:
     summary: list[tuple[str, int]]
 
 
+class SyncRunError(RuntimeError):
+    def __init__(self, message: str, *, login_required: bool = False) -> None:
+        super().__init__(message)
+        self.login_required = login_required
+
+
 def _parse_sync_date(value: str | None, *, label: str, end_of_day: bool = False) -> int | None:
     if not value:
         return None
@@ -94,6 +101,32 @@ def _to_utc_timestamp(value: datetime | None) -> int | None:
 
 def _today_str() -> str:
     return date.today().isoformat()
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _append_cli_sync_history(
+    storage: PostgresStorage,
+    *,
+    started_at: str,
+    finished_at: str,
+    status: str,
+    saved: int,
+    error: str = "",
+) -> None:
+    append_sync_history(
+        storage,
+        {
+            'started_at': started_at,
+            'finished_at': finished_at,
+            'status': status,
+            'error': error,
+            'saved': saved,
+            'source': 'cli',
+        },
+    )
 
 
 def _pbar_write(progress: tqdm | None, message: str) -> None:
@@ -359,11 +392,11 @@ async def perform_sync(
             except SyncInterrupted:
                 progress.set_postfix_str('未完成', refresh=True)
                 typer.echo('同步中断，断点已保存')
-                raise typer.Exit(code=130)
+                raise
             except RuntimeError as exc:
                 progress.set_postfix_str('失败', refresh=True)
                 typer.echo(f'同步失败：{exc}')
-                raise typer.Exit(code=1)
+                raise SyncRunError(str(exc), login_required=is_login_error(str(exc))) from exc
             finally:
                 progress.close()
 
@@ -398,16 +431,49 @@ async def sync_account_articles(
         force=force,
         skip_time=skip_time,
     )
+    started_at = _utc_now_iso()
     with open_storage() as storage:
         account = storage.get_account(biz)
         typer.echo(f'开始同步 {account.nickname} 的文章')
-        report = await perform_sync(
-            storage=storage,
-            accounts=[account],
-            options=options,
-            bulk=False,
-            login_flow=login_flow,
-        )
+        try:
+            report = await perform_sync(
+                storage=storage,
+                accounts=[account],
+                options=options,
+                bulk=False,
+                login_flow=login_flow,
+            )
+            finished_at = _utc_now_iso()
+            _append_cli_sync_history(
+                storage,
+                started_at=started_at,
+                finished_at=finished_at,
+                status='success',
+                saved=report.total_saved,
+            )
+        except SyncRunError as exc:
+            finished_at = _utc_now_iso()
+            status = 'login_required' if exc.login_required else 'failed'
+            _append_cli_sync_history(
+                storage,
+                started_at=started_at,
+                finished_at=finished_at,
+                status=status,
+                saved=0,
+                error=str(exc),
+            )
+            raise typer.Exit(code=1)
+        except SyncInterrupted:
+            finished_at = _utc_now_iso()
+            _append_cli_sync_history(
+                storage,
+                started_at=started_at,
+                finished_at=finished_at,
+                status='failed',
+                saved=0,
+                error='Interrupted',
+            )
+            raise typer.Exit(code=130)
     if report.summary:
         typer.echo(f'同步完成，共写入 {report.total_saved} 条记录')
 
@@ -451,13 +517,46 @@ async def sync_all_accounts(
             header += f' 每页间隔 {sleep_seconds} 秒'
         typer.echo(header)
 
-        report = await perform_sync(
-            storage=storage,
-            accounts=accounts,
-            options=options,
-            bulk=True,
-            login_flow=login_flow,
-        )
+        started_at = _utc_now_iso()
+        try:
+            report = await perform_sync(
+                storage=storage,
+                accounts=accounts,
+                options=options,
+                bulk=True,
+                login_flow=login_flow,
+            )
+            finished_at = _utc_now_iso()
+            _append_cli_sync_history(
+                storage,
+                started_at=started_at,
+                finished_at=finished_at,
+                status='success',
+                saved=report.total_saved,
+            )
+        except SyncRunError as exc:
+            finished_at = _utc_now_iso()
+            status = 'login_required' if exc.login_required else 'failed'
+            _append_cli_sync_history(
+                storage,
+                started_at=started_at,
+                finished_at=finished_at,
+                status=status,
+                saved=0,
+                error=str(exc),
+            )
+            raise typer.Exit(code=1)
+        except SyncInterrupted:
+            finished_at = _utc_now_iso()
+            _append_cli_sync_history(
+                storage,
+                started_at=started_at,
+                finished_at=finished_at,
+                status='failed',
+                saved=0,
+                error='Interrupted',
+            )
+            raise typer.Exit(code=130)
 
     if report.summary:
         headers = ['账号', '新增/更新']
@@ -513,13 +612,46 @@ async def sync_group_accounts(
             header += f' 每页间隔 {sleep_seconds} 秒'
         typer.echo(header)
 
-        report = await perform_sync(
-            storage=storage,
-            accounts=accounts,
-            options=options,
-            bulk=True,
-            login_flow=login_flow,
-        )
+        started_at = _utc_now_iso()
+        try:
+            report = await perform_sync(
+                storage=storage,
+                accounts=accounts,
+                options=options,
+                bulk=True,
+                login_flow=login_flow,
+            )
+            finished_at = _utc_now_iso()
+            _append_cli_sync_history(
+                storage,
+                started_at=started_at,
+                finished_at=finished_at,
+                status='success',
+                saved=report.total_saved,
+            )
+        except SyncRunError as exc:
+            finished_at = _utc_now_iso()
+            status = 'login_required' if exc.login_required else 'failed'
+            _append_cli_sync_history(
+                storage,
+                started_at=started_at,
+                finished_at=finished_at,
+                status=status,
+                saved=0,
+                error=str(exc),
+            )
+            raise typer.Exit(code=1)
+        except SyncInterrupted:
+            finished_at = _utc_now_iso()
+            _append_cli_sync_history(
+                storage,
+                started_at=started_at,
+                finished_at=finished_at,
+                status='failed',
+                saved=0,
+                error='Interrupted',
+            )
+            raise typer.Exit(code=130)
 
     if report.summary:
         headers = ['账号', '新增/更新']
