@@ -10,6 +10,7 @@ from queue import Queue
 from datetime import datetime, timezone
 from typing import Iterable
 
+from hippo.env import load_env
 from hippo.s3 import (
     build_image_key,
     load_s3_config,
@@ -102,6 +103,7 @@ def _has_data_column(storage: PostgresStorage) -> bool:
 
 
 def main() -> int:
+    load_env()
     parser = argparse.ArgumentParser(description='Migrate article_images blobs into S3')
     parser.add_argument('--pg-dsn', default=os.environ.get('HIPPO_PG_DSN'))
     parser.add_argument('--limit', type=int, default=None)

@@ -11,6 +11,7 @@ from typing import Iterable, Iterator, Optional
 
 import httpx
 from hippo.http import MPClient
+from hippo.env import load_env
 from hippo.storage import PostgresStorage
 from tqdm import tqdm
 
@@ -82,6 +83,7 @@ def _format_error(exc: Exception) -> str:
 
 
 def main() -> int:
+    load_env()
     parser = argparse.ArgumentParser(description="Backfill missing image objects in S3")
     parser.add_argument("--pg-dsn", default=os.environ.get("HIPPO_PG_DSN"))
     parser.add_argument("--limit", type=int, default=None)
