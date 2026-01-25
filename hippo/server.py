@@ -26,7 +26,7 @@ except Exception:  # pragma: no cover - optional fallback
     jieba = None
 
 from .emailer import get_email_settings, set_email_settings
-from .http import MPClient
+from .http import MPClient, SessionExpiredError
 from .models import AccountCredential
 from .rss import build_rss_xml, query_rss_items
 from .s3 import build_image_key, fetch_object_bytes, get_s3_client, upload_object_bytes
@@ -1013,12 +1013,15 @@ async def search_account(
     existing = {account.biz for account in storage.list_accounts()}
     session = storage.get_login_session()
     async with MPClient() as client:
-        payload = await client.search_biz(
-            session,
-            keyword=keyword,
-            begin=offset,
-            count=min(max(page_size, 1), 20),
-        )
+        try:
+            payload = await client.search_biz(
+                session,
+                keyword=keyword,
+                begin=offset,
+                count=min(max(page_size, 1), 20),
+            )
+        except SessionExpiredError as exc:
+            raise ApiError("Session expired. Please login again.", status=401) from exc
     records = payload.get("list") or []
     results: list[dict[str, Any]] = []
     for item in records:

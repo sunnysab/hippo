@@ -50,6 +50,26 @@ class WorkerURLTransport(httpx.AsyncBaseTransport):
         await self._base.aclose()
 
 
+class SessionExpiredError(RuntimeError):
+    pass
+
+
+def _is_session_error_message(message: str) -> bool:
+    lowered = message.lower()
+    hints = ("invalid session", "invalid token", "session expired", "session timeout", "expired")
+    return any(hint in lowered for hint in hints)
+
+
+def _raise_for_base_resp(payload: Dict[str, Any], *, fallback: str) -> None:
+    base_resp = payload.get("base_resp") or {}
+    if base_resp.get("ret") == 0:
+        return
+    err_msg = str(base_resp.get("err_msg") or fallback)
+    if _is_session_error_message(err_msg):
+        raise SessionExpiredError(err_msg)
+    raise RuntimeError(err_msg)
+
+
 class MPClient(AbstractAsyncContextManager):
     """Tiny async wrapper around httpx for the few WeChat endpoints we need."""
 
@@ -247,8 +267,7 @@ class MPClient(AbstractAsyncContextManager):
         )
         resp.raise_for_status()
         payload = resp.json()
-        if payload.get("base_resp", {}).get("ret") != 0:
-            raise RuntimeError(payload.get("base_resp", {}).get("err_msg", "searchbiz failed"))
+        _raise_for_base_resp(payload, fallback="searchbiz failed")
         return payload
 
     async def fetch_appmsg_publish(
@@ -283,8 +302,7 @@ class MPClient(AbstractAsyncContextManager):
         )
         resp.raise_for_status()
         payload = resp.json()
-        if payload.get("base_resp", {}).get("ret") != 0:
-            raise RuntimeError(payload.get("base_resp", {}).get("err_msg", "appmsgpublish failed"))
+        _raise_for_base_resp(payload, fallback="appmsgpublish failed")
         return payload
 
 

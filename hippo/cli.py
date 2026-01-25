@@ -23,7 +23,7 @@ from tqdm import tqdm
 
 from .config import DEFAULT_PAGE_SIZE
 from .downloader import ArticleDownloader
-from .http import MPClient
+from .http import MPClient, SessionExpiredError
 from .logger import setup_logger
 from .models import AccountCredential, LoginSession
 from .server import serve as run_server
@@ -314,12 +314,16 @@ async def _search_accounts_async(
     while True:
         offset = begin if begin is not None else (current_page - 1) * page_size
         async with MPClient() as client:
-            payload = await client.search_biz(
-                session,
-                keyword=keyword,
-                begin=offset,
-                count=page_size,
-            )
+            try:
+                payload = await client.search_biz(
+                    session,
+                    keyword=keyword,
+                    begin=offset,
+                    count=page_size,
+                )
+            except SessionExpiredError:
+                typer.echo("Session expired. Please login again.")
+                raise typer.Exit(code=2)
         records = payload.get("list") or []
         if not records:
             typer.echo("未找到匹配的公众号")
