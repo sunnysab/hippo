@@ -942,6 +942,12 @@ router = APIRouter(prefix="/api")
 
 @router.get("/group")
 def list_groups(storage: PostgresStorage = Depends(_get_storage)) -> dict[str, Any]:
+    """
+    获取所有分组列表。
+
+    Returns:
+        dict: 包含默认分组 ID 和所有分组列表的字典。
+    """
     default_group = ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
     return {
         "default_group_id": default_group.id,
@@ -954,6 +960,18 @@ def create_group(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
+    """
+    创建一个新的分组。
+
+    Args:
+        body (dict): 请求体，包含分组名称 "name"。
+
+    Returns:
+        dict: 创建的分组 ID 和名称。
+
+    Raises:
+        ApiError: 如果分组名称缺失或为空。
+    """
     name = str(body.get("name", "")).strip()
     if not name:
         raise ApiError("Group name is required")
@@ -966,6 +984,18 @@ def get_group(
     group_id: int,
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
+    """
+    获取指定分组的详细信息。
+
+    Args:
+        group_id (int): 分组 ID。
+
+    Returns:
+        dict: 分组详情，包括 ID、名称、同步设置和公众号数量。
+
+    Raises:
+        ApiError: 如果分组不存在。
+    """
     return _get_group(storage, group_id)
 
 
@@ -975,6 +1005,16 @@ def update_group(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
+    """
+    更新指定分组的信息。
+
+    Args:
+        group_id (int): 分组 ID。
+        body (dict): 需要更新的字段 (name, sync_mode, sync_recent_days)。
+
+    Returns:
+        dict: 更新后的分组详情。
+    """
     updates: dict[str, Any] = {}
     if 'name' in body:
         name = str(body.get('name', '')).strip()
@@ -993,6 +1033,18 @@ def delete_group(
     group_id: int,
     storage: PostgresStorage = Depends(_get_storage),
 ) -> Response:
+    """
+    删除指定分组。该分组下的公众号将被移动到默认分组。
+
+    Args:
+        group_id (int): 分组 ID。
+
+    Returns:
+        Response: HTTP 204 No Content。
+
+    Raises:
+        ApiError: 如果是默认分组或分组不存在。
+    """
     _delete_group(storage, group_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -1005,6 +1057,21 @@ async def search_account(
     begin: int | None = None,
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
+    """
+    通过微信接口搜索公众号。需要有效的登录会话。
+
+    Args:
+        q (str): 搜索关键词（公众号名称或 ID）。
+        page (int): 页码 (默认: 1)。
+        page_size (int): 每页结果数量 (默认: 10, 最大: 20)。
+        begin (int | None): 可选的偏移量。
+
+    Returns:
+        dict: 包含公众号详情的搜索结果。
+
+    Raises:
+        ApiError: 如果关键词为空或会话过期。
+    """
     keyword = (q or "").strip()
     if not keyword:
         raise ApiError("q is required")
@@ -1059,6 +1126,15 @@ def get_search_avatar(
     biz: str,
     storage: PostgresStorage = Depends(_get_storage),
 ) -> Response:
+    """
+    获取搜索到的（尚未添加的）公众号头像。
+
+    Args:
+        biz (str): 公众号唯一标识 (fakeid)。
+
+    Returns:
+        Response: 包含正确 Content-Type 的图片数据。
+    """
     _ensure_avatar_images_table(storage)
     avatar = _get_avatar_row(storage, biz)
     if not avatar:
@@ -1085,6 +1161,18 @@ def list_accounts(
     page_size: int = 20,
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
+    """
+    列出已保存的公众号，支持筛选。
+
+    Args:
+        group_id (int | None): 按分组 ID 筛选。
+        q (str | None): 按关键词搜索 (昵称、微信号或 biz)。
+        page (int): 页码。
+        page_size (int): 每页数量。
+
+    Returns:
+        dict: 公众号列表和分页信息。
+    """
     payload = _list_accounts(
         storage,
         group_id=group_id,
@@ -1100,6 +1188,18 @@ def create_account(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
+    """
+    添加一个新的公众号到数据库。
+
+    Args:
+        body (dict): 公众号详情，包括 biz, nickname 等。
+
+    Returns:
+        dict: 创建的公众号详情。
+
+    Raises:
+        ApiError: 如果缺少必填字段 (biz, nickname)。
+    """
     required = ["biz", "nickname"]
     for field in required:
         if not body.get(field):
@@ -1135,6 +1235,15 @@ def move_accounts(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
+    """
+    批量移动公众号到另一个分组。
+
+    Args:
+        body (dict): 包含 'biz_list' (字符串列表) 和 'group_id' (整数)。
+
+    Returns:
+        dict: 更新的公众号数量。
+    """
     biz_list = body.get("biz_list") or []
     if not isinstance(biz_list, list) or not biz_list:
         raise ApiError("biz_list is required")
@@ -1156,6 +1265,15 @@ def batch_update_accounts(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
+    """
+    批量更新多个公众号的同步设置。
+
+    Args:
+        body (dict): 包含 'biz_list' 和需更新的字段 ('sync_mode', 'sync_recent_days')。
+
+    Returns:
+        dict: 更新的公众号数量。
+    """
     biz_list = body.get('biz_list') or []
     if not isinstance(biz_list, list) or not biz_list:
         raise ApiError('biz_list is required')
@@ -1193,6 +1311,18 @@ def get_account(
     biz: str,
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
+    """
+    获取指定公众号的详细信息。
+
+    Args:
+        biz (str): 公众号唯一标识。
+
+    Returns:
+        dict: 公众号详情。
+
+    Raises:
+        ApiError: 如果公众号未找到。
+    """
     return _get_account(storage, biz)
 
 
@@ -1202,6 +1332,16 @@ def update_account(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
+    """
+    更新指定公众号的信息。
+
+    Args:
+        biz (str): 公众号唯一标识。
+        body (dict): 需要更新的字段。
+
+    Returns:
+        dict: 更新后的公众号详情。
+    """
     if "group_id" in body and body["group_id"] is None:
         default_group = ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
         body["group_id"] = default_group.id
@@ -1213,6 +1353,18 @@ def delete_account(
     biz: str,
     storage: PostgresStorage = Depends(_get_storage),
 ) -> Response:
+    """
+    删除指定公众号及其关联数据。
+
+    Args:
+        biz (str): 公众号唯一标识。
+
+    Returns:
+        Response: HTTP 204 No Content。
+
+    Raises:
+        ApiError: 如果公众号未找到。
+    """
     removed = storage.remove_account(biz)
     if removed == 0:
         raise ApiError("Account not found", status=404)
@@ -1224,6 +1376,18 @@ def get_account_avatar(
     biz: str,
     storage: PostgresStorage = Depends(_get_storage),
 ) -> Response:
+    """
+    获取指定公众号的头像。
+
+    Args:
+        biz (str): 公众号唯一标识。
+
+    Returns:
+        Response: 包含正确 Content-Type 的图片数据。
+
+    Raises:
+        ApiError: 如果头像或公众号未找到。
+    """
     avatar = _get_avatar_row(storage, biz)
     data = avatar.get("data") if avatar else None
     if not data:
@@ -1264,6 +1428,23 @@ def list_articles(
     until: str | None = None,
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
+    """
+    列出文章，支持多种筛选条件。
+
+    Args:
+        group_id (int | None): 按分组 ID 筛选。
+        biz (str | None): 按公众号 biz 筛选。
+        article_id (str | None): 按具体文章 ID 筛选 (微信原始 article_id)。
+        q (str | None): 搜索文章内容/标题。
+        page (int): 页码。
+        page_size (int): 每页数量。
+        content (str): 如果为 "1", "true", 或 "yes"，则返回文章内容。
+        since (str | None): 起始日期筛选 (ISO 格式)。
+        until (str | None): 结束日期筛选 (ISO 格式)。
+
+    Returns:
+        dict: 文章列表和分页信息。
+    """
     content_only = (content or "").lower() in {"1", "true", "yes"}
     since_ts = _parse_date(since)
     until_ts = _parse_date(until, end_of_day=True)
@@ -1286,6 +1467,18 @@ def get_article(
     article_id: int,
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
+    """
+    获取指定文章的完整详情。
+
+    Args:
+        article_id (int): 文章的主键 ID。
+
+    Returns:
+        dict: 文章详情，包括内容和图片。
+
+    Raises:
+        ApiError: 如果文章未找到。
+    """
     return _get_article(storage, article_id)
 
 
@@ -1294,6 +1487,15 @@ def list_article_images(
     article_id: int,
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
+    """
+    列出与文章关联的图片。
+
+    Args:
+        article_id (int): 文章 ID。
+
+    Returns:
+        dict: 图片元数据列表。
+    """
     payload = _list_article_images(storage, article_id)
     return {"images": payload}
 
@@ -1303,6 +1505,16 @@ def get_image(
     image_id: int,
     storage: PostgresStorage = Depends(_get_storage),
 ) -> Response:
+    """
+    通过 ID 获取图片内容。
+    如果存储在 S3 中，则从 S3 获取。否则从源地址获取。
+
+    Args:
+        image_id (int): 图片 ID。
+
+    Returns:
+        Response: 图片二进制数据。
+    """
     payload, content_type = _fetch_image(storage, image_id)
     return _binary_response(payload, content_type)
 
@@ -1312,6 +1524,12 @@ def login_status(
     storage: PostgresStorage = Depends(_get_storage),
     manager: "LoginManager" = Depends(_get_login_manager),
 ) -> dict[str, Any]:
+    """
+    获取当前的登录会话状态。
+
+    Returns:
+        dict: 登录状态，消息和上次登录信息。
+    """
     info = _get_login_info(storage)
     snapshot = manager._snapshot()
     return {
@@ -1326,6 +1544,12 @@ async def login_start(
     storage: PostgresStorage = Depends(_get_storage),
     manager: "LoginManager" = Depends(_get_login_manager),
 ) -> dict[str, Any]:
+    """
+    开始新的登录会话（请求二维码）。
+
+    Returns:
+        dict: 登录状态，包含二维码 URL 是否可用。
+    """
     snapshot = await manager.start()
     info = _get_login_info(storage)
     return {
@@ -1340,6 +1564,13 @@ async def login_poll(
     storage: PostgresStorage = Depends(_get_storage),
     manager: "LoginManager" = Depends(_get_login_manager),
 ) -> dict[str, Any]:
+    """
+    轮询登录状态。应在开始登录后重复调用。
+    检查二维码是否已被扫描或确认。
+
+    Returns:
+        dict: 更新后的登录状态。
+    """
     snapshot = await manager.poll(storage)
     info = _get_login_info(storage)
     return {
@@ -1354,6 +1585,12 @@ def login_cancel(
     storage: PostgresStorage = Depends(_get_storage),
     manager: "LoginManager" = Depends(_get_login_manager),
 ) -> dict[str, Any]:
+    """
+    取消当前的登录尝试。
+
+    Returns:
+        dict: 重置后的登录状态。
+    """
     manager.cancel()
     info = _get_login_info(storage)
     snapshot = manager._snapshot()
@@ -1368,17 +1605,35 @@ def login_cancel(
 def login_qrcode(
     manager: "LoginManager" = Depends(_get_login_manager),
 ) -> Response:
+    """
+    获取登录二维码图片。
+
+    Returns:
+        Response: 二维码的 PNG 图片。
+    """
     data = manager.get_qrcode()
     return Response(content=data, media_type="image/png")
 
 
 @router.get("/sync")
 def sync_status(storage: PostgresStorage = Depends(_get_storage)) -> dict[str, Any]:
+    """
+    获取后台同步任务的状态。
+
+    Returns:
+        dict: 同步状态详情。
+    """
     return load_sync_status(storage)
 
 
 @router.get("/sync/settings")
 def get_sync_settings(storage: PostgresStorage = Depends(_get_storage)) -> dict[str, Any]:
+    """
+    获取当前的同步配置设置。
+
+    Returns:
+        dict: 同步设置，包括启用状态、间隔、邮件配置等。
+    """
     payload = load_sync_settings(storage)
     payload["email"] = get_email_settings(storage)
     return payload
@@ -1390,6 +1645,15 @@ def update_sync_settings(
     storage: PostgresStorage = Depends(_get_storage),
     scheduler: "SyncScheduler" = Depends(_get_sync_scheduler),
 ) -> dict[str, Any]:
+    """
+    更新同步设置。
+
+    Args:
+        body (dict): 需要更新的设置 (enabled, interval_minutes, email 等)。
+
+    Returns:
+        dict: 更新后的设置。
+    """
     updates: dict[str, Any] = {}
     if "enabled" in body:
         updates["enabled"] = bool(body["enabled"])
@@ -1454,6 +1718,15 @@ def run_sync(
     storage: PostgresStorage = Depends(_get_storage),
     scheduler: "SyncScheduler" = Depends(_get_sync_scheduler),
 ) -> dict[str, Any]:
+    """
+    手动触发同步操作。
+
+    Args:
+        body (dict): 可选的 'group_id' 用于同步指定分组。
+
+    Returns:
+        dict: 触发操作的状态。
+    """
     group_id = body.get('group_id')
     if group_id is not None:
         try:
@@ -1487,6 +1760,24 @@ def list_feed(
     days: int | None = None,
     storage: PostgresStorage = Depends(_get_storage),
 ):
+    """
+    获取所有公众号或特定分组的混合文章流。
+    支持 JSON 和 RSS 输出。
+
+    Args:
+        request (Request): 请求对象。
+        group_id (int | None): 按分组 ID 筛选。
+        biz (str | None): 按公众号 biz 筛选。
+        q (str | None): 搜索关键词。
+        limit (int): 返回条目数量 (默认: 50)。
+        format (str | None): 输出格式 ("rss" 表示 RSS Feed)。
+        since (str | None): 起始日期筛选。
+        until (str | None): 结束日期筛选。
+        days (int | None): 按最近天数筛选。
+
+    Returns:
+        dict | Response: 文章列表或 RSS XML 响应。
+    """
     output_format = (format or "").lower()
     since_ts = _parse_date(since)
     until_ts = _parse_date(until, end_of_day=True)
