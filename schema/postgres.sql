@@ -188,7 +188,6 @@ CREATE TABLE IF NOT EXISTS article_images (
     orig_url TEXT,
     content_type TEXT,
     s3_key TEXT,
-    data BYTEA,
     failed_at TIMESTAMPTZ,
     failed_reason TEXT,
     updated_at TIMESTAMPTZ NOT NULL,
@@ -198,7 +197,12 @@ CREATE TABLE IF NOT EXISTS article_images (
 ALTER TABLE article_images
 ADD COLUMN IF NOT EXISTS s3_key TEXT,
 ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ,
-ADD COLUMN IF NOT EXISTS failed_reason TEXT;
+ADD COLUMN IF NOT EXISTS failed_reason TEXT,
+DROP COLUMN IF EXISTS data;
+
+CREATE INDEX IF NOT EXISTS idx_article_images_pending
+ON article_images (id)
+WHERE (s3_key IS NULL OR s3_key = '') AND orig_url IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS login_sessions (
     id SERIAL PRIMARY KEY,

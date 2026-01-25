@@ -16,8 +16,9 @@ from psycopg.types.json import Json
 from psycopg_pool import ConnectionPool
 
 from .models import AccountCredential, AccountGroup, ArticleRecord, LoginSession
+from .s3 import build_image_key, get_s3_client, upload_object_bytes
 
-SCHEMA_VERSION = '11'
+SCHEMA_VERSION = '12'
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'schema' / 'postgres.sql'
 
@@ -712,8 +713,8 @@ class PostgresStorage(AbstractContextManager):
                     cur.execute(
                         """
                         INSERT INTO article_images
-                            (article_pk, position, kind, orig_url, content_type, data, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            (article_pk, position, kind, orig_url, content_type, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                         RETURNING id
                         """,
                         (
@@ -722,7 +723,6 @@ class PostgresStorage(AbstractContextManager):
                             image.get("kind", "inline"),
                             orig_url,
                             image.get("content_type"),
-                            psycopg.Binary(image.get("data")) if image.get("data") else None,
                             now,
                         ),
                     )
@@ -807,6 +807,12 @@ class PostgresStorage(AbstractContextManager):
         content_type: str | None,
         data: bytes,
     ) -> None:
+        bundle = get_s3_client()
+        if not bundle:
+            raise StorageInitError(
+                'Missing S3 config. Set HIPPO_S3_ENDPOINT/HIPPO_S3_BUCKET/HIPPO_S3_ACCESS_KEY/HIPPO_S3_SECRET_KEY.'
+            )
+        config, client = bundle
         try:
             with self.conn.cursor() as cur:
                 cur.execute(
@@ -818,10 +824,27 @@ class PostgresStorage(AbstractContextManager):
                     return
                 article_pk = row[0]
                 cur.execute(
+                    "SELECT id, s3_key FROM article_images WHERE article_pk = %s AND orig_url = %s",
+                    (article_pk, orig_url),
+                )
+                image_row = cur.fetchone()
+                if not image_row:
+                    return
+                image_id, existing_key = image_row
+            s3_key = existing_key or build_image_key(config.prefix, image_id, content_type)
+            upload_object_bytes(
+                client,
+                bucket=config.bucket,
+                key=s3_key,
+                payload=data,
+                content_type=content_type,
+            )
+            with self.conn.cursor() as cur:
+                cur.execute(
                     """
                     UPDATE article_images
                     SET content_type = %s,
-                        data = %s,
+                        s3_key = %s,
                         failed_at = NULL,
                         failed_reason = NULL,
                         updated_at = %s
@@ -829,7 +852,7 @@ class PostgresStorage(AbstractContextManager):
                     """,
                     (
                         content_type,
-                        psycopg.Binary(data) if data else None,
+                        s3_key,
                         _utc_now_dt(),
                         article_pk,
                         orig_url,
@@ -887,16 +910,32 @@ class PostgresStorage(AbstractContextManager):
         *,
         limit: int | None = 10,
         since_timestamp: int | None = None,
+        exclude_downloaded: bool = False,
     ) -> list[ArticleRecord]:
-        query = "SELECT * FROM articles WHERE biz = %s"
-        params: list = [biz]
+        query_parts = ["SELECT a.* FROM articles a"]
+        params: list = []
+
+        if exclude_downloaded:
+            query_parts.append("LEFT JOIN article_content c ON c.article_pk = a.id")
+        
+        query_parts.append("WHERE a.biz = %s")
+        params.append(biz)
+
+        if exclude_downloaded:
+            query_parts.append("AND c.id IS NULL")
+
         if since_timestamp is not None:
-            query += " AND (publish_at IS NULL OR publish_at >= %s)"
+            query_parts.append("AND (a.publish_at IS NULL OR a.publish_at >= %s)")
             params.append(since_timestamp)
-        query += " ORDER BY publish_at IS NULL, publish_at DESC, id DESC"
+        
+        query_parts.append("ORDER BY a.publish_at IS NULL, a.publish_at DESC, a.id DESC")
+        
         if limit is not None:
-            query += " LIMIT %s"
+            query_parts.append("LIMIT %s")
             params.append(limit)
+            
+        query = "\n".join(query_parts)
+        
         with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute(query, params)
             rows = cur.fetchall()
