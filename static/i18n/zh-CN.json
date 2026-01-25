@@ -94,6 +94,7 @@
   "login.status.refresh": "二维码已刷新",
   "login.status.success": "登录成功",
   "login.status.error": "登录失败",
+  "login.sessionExpired": "登录已过期，请重新登录。",
   "time.justNow": "刚刚",
   "time.minutesAgo": "{n} 分钟前",
   "time.hoursAgo": "{n} 小时前",

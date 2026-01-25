@@ -24,10 +24,19 @@ let toastTimer = null;
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
+const handleAuthError = (message) => {
+  const fallback = t('login.sessionExpired', 'Session expired. Please login again.');
+  showToast(message || fallback);
+  setHash('sync');
+};
+
 const apiGet = async (path) => {
   const res = await fetch(path, { headers: { "Accept": "application/json" } });
   if (!res.ok) {
     const payload = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      handleAuthError(payload.error);
+    }
     throw new Error(payload.error || `Request failed: ${res.status}`);
   }
   return res.json();
@@ -41,6 +50,9 @@ const apiSend = async (path, method, body) => {
   });
   if (!res.ok && res.status !== 204) {
     const payload = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      handleAuthError(payload.error);
+    }
     throw new Error(payload.error || `Request failed: ${res.status}`);
   }
   if (res.status === 204) {
