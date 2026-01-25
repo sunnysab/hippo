@@ -1,6 +1,6 @@
 .panel-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.1fr) minmax(0, 1.1fr);
   gap: 24px;
 }
 
@@ -15,8 +15,9 @@
 }
 
 .login-qr {
-  width: 220px;
-  height: 220px;
+  width: min(220px, 100%);
+  height: auto;
+  aspect-ratio: 1;
   border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--accent-soft);
@@ -53,6 +54,12 @@
   border-radius: 10px;
   padding: 8px 10px;
   font-size: 14px;
+}
+
+@media (max-width: 1200px) {
+  .panel-grid {
+    grid-template-columns: minmax(240px, 1fr) minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 1100px) {

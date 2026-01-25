@@ -1,6 +1,6 @@
 <section id="view-sync" class="view">
   <div class="panel-grid">
-    <div class="panel">
+    <div class="panel sync-login">
       <div class="panel-header">
         <div>
           <h2 data-i18n="login.title">Login</h2>
@@ -18,7 +18,7 @@
         <button class="btn ghost" id="btn-login-refresh" type="button" data-i18n="login.refresh">刷新登录</button>
       </div>
     </div>
-    <div class="panel">
+    <div class="panel sync-settings">
       <div class="panel-header">
         <div>
           <h2 data-i18n="sync.title">Sync Settings</h2>
@@ -39,32 +39,8 @@
           <input type="number" id="sync-interval" min="1" />
         </label>
         <label>
-          <span data-i18n="sync.mode">Sync mode</span>
-          <select id="sync-mode">
-            <option value="incremental" data-i18n="sync.modeIncremental">Incremental</option>
-            <option value="recent" data-i18n="sync.modeRecent">Recent</option>
-            <option value="full" data-i18n="sync.modeFull">Full</option>
-          </select>
-        </label>
-        <label>
-          <span data-i18n="sync.recentDays">Recent days</span>
-          <input type="number" id="sync-recent-days" min="1" />
-        </label>
-        <label>
-          <span data-i18n="sync.pageSize">Page size</span>
-          <input type="number" id="sync-page-size" min="1" />
-        </label>
-        <label>
-          <span data-i18n="sync.pageLimit">Max pages</span>
-          <input type="number" id="sync-page-limit" min="1" />
-        </label>
-        <label>
           <span data-i18n="sync.sleepSeconds">Sleep (seconds)</span>
           <input type="number" id="sync-sleep" min="0" step="0.01" />
-        </label>
-        <label>
-          <span data-i18n="sync.contentLimit">Content limit</span>
-          <input type="number" id="sync-content-limit" min="1" />
         </label>
         <label>
           <span data-i18n="sync.skipMinutes">Skip interval (minutes)</span>
@@ -79,48 +55,47 @@
           <input type="checkbox" id="sync-download-images" />
         </label>
       </div>
-
-      <div class="panel" style="margin-top:20px;">
-        <div class="panel-header">
-          <div>
-            <h2 data-i18n="email.title">Email Settings</h2>
-            <p class="muted" data-i18n="email.subtitle">SMTP config for alert emails.</p>
-          </div>
+    </div>
+    <div class="panel sync-email">
+      <div class="panel-header">
+        <div>
+          <h2 data-i18n="email.title">Email Settings</h2>
+          <p class="muted" data-i18n="email.subtitle">SMTP config for alert emails.</p>
         </div>
-        <div class="form-grid">
-          <label class="switch">
-            <span data-i18n="sync.alertEnabled">Enable alert email</span>
-            <input type="checkbox" id="sync-alert-enabled" />
-          </label>
-          <label>
-            <span data-i18n="sync.alertEmail">Alert email</span>
-            <input type="email" id="sync-alert-email" />
-          </label>
-          <label>
-            <span data-i18n="email.smtpHost">SMTP host</span>
-            <input type="text" id="email-smtp-host" />
-          </label>
-          <label>
-            <span data-i18n="email.smtpPort">SMTP port</span>
-            <input type="number" id="email-smtp-port" min="1" />
-          </label>
-          <label>
-            <span data-i18n="email.smtpUser">SMTP user</span>
-            <input type="text" id="email-smtp-user" />
-          </label>
-          <label>
-            <span data-i18n="email.smtpPassword">SMTP password</span>
-            <input type="password" id="email-smtp-password" />
-          </label>
-          <label>
-            <span data-i18n="email.fromEmail">From email</span>
-            <input type="email" id="email-from" />
-          </label>
-          <label class="switch">
-            <span data-i18n="email.tls">Enable TLS</span>
-            <input type="checkbox" id="email-tls" />
-          </label>
-        </div>
+      </div>
+      <div class="form-grid">
+        <label class="switch">
+          <span data-i18n="sync.alertEnabled">Enable alert email</span>
+          <input type="checkbox" id="sync-alert-enabled" />
+        </label>
+        <label>
+          <span data-i18n="sync.alertEmail">Alert email</span>
+          <input type="email" id="sync-alert-email" placeholder="alerts@example.com" />
+        </label>
+        <label>
+          <span data-i18n="email.smtpHost">SMTP host</span>
+          <input type="text" id="email-smtp-host" placeholder="smtp.example.com" />
+        </label>
+        <label>
+          <span data-i18n="email.smtpPort">SMTP port</span>
+          <input type="number" id="email-smtp-port" min="1" placeholder="587" />
+        </label>
+        <label>
+          <span data-i18n="email.smtpUser">SMTP user</span>
+          <input type="text" id="email-smtp-user" placeholder="username@example.com" />
+        </label>
+        <label>
+          <span data-i18n="email.smtpPassword">SMTP password</span>
+          <input type="password" id="email-smtp-password" placeholder="app password" />
+        </label>
+        <label>
+          <span data-i18n="email.fromEmail">From email</span>
+          <input type="email" id="email-from" placeholder="no-reply@example.com" />
+        </label>
+        <label class="switch">
+          <span data-i18n="email.tls">Enable TLS</span>
+          <input type="checkbox" id="email-tls" />
+        </label>
       </div>
     </div>
   </div>
