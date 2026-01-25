@@ -110,6 +110,14 @@ class MPClient(AbstractAsyncContextManager):
             article_max_connections or "None",
         )
 
+    @property
+    def is_closed(self) -> bool:
+        if self.client.is_closed:
+            return True
+        if self.article_client and self.article_client.is_closed:
+            return True
+        return False
+
     async def __aenter__(self) -> MPClient:
         return self
 
@@ -124,14 +132,18 @@ class MPClient(AbstractAsyncContextManager):
     # ------------------------------------------------------------------
     async def fetch_article_html(self, url: str) -> str:
         client = self.article_client or self.client
-        logger.debug("Fetching article HTML: %s", url)
+        final_url = url
+        if self.article_worker and _is_mp_article(url):
+            final_url = _wrap_worker_url(url, self.article_worker)
+            logger.debug("Wrapping article URL with worker: %s -> %s", url, final_url)
+        logger.debug("Fetching article HTML: %s", final_url)
         try:
-            resp = await client.get(url)
+            resp = await client.get(final_url)
             resp.raise_for_status()
-            logger.info("Successfully fetched article: %s (size=%d bytes)", url, len(resp.text))
+            logger.info("Successfully fetched article: %s (size=%d bytes)", final_url, len(resp.text))
             return resp.text
         except Exception as exc:
-            logger.error("Failed to fetch article %s: %s", url, exc)
+            logger.error("Failed to fetch article %s: %s", final_url, exc)
             raise
 
     async def download_binary(self, url: str, *, referer: str | None = None) -> bytes:
