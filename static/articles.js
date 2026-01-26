@@ -587,6 +587,24 @@
       });
     }
 
+    const readerCopy = $('#reader-copy');
+    if (readerCopy) {
+      readerCopy.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const content = document.querySelector('.article-preview-body .reader');
+        if (content) {
+          const text = content.innerText;
+          try {
+            await copyToClipboard(text);
+            showToast(t('articles.copied', '已复制全文'));
+          } catch (err) {
+            console.error(err);
+            showToast(t('articles.copyFailed', '复制失败'));
+          }
+        }
+      });
+    }
+
     const readerToggle = $('#reader-toggle');
     const readerControls = $('#reader-controls');
     if (readerToggle && readerControls) {

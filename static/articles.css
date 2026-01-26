@@ -189,7 +189,7 @@
 .reader-controls {
   position: absolute;
   right: 28px;
-  bottom: 92px;
+  bottom: 156px;
   width: min(360px, calc(100vw - 40px));
   display: none;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -223,6 +223,10 @@
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   z-index: 50;
   pointer-events: auto;
+}
+
+#reader-copy {
+  bottom: 92px;
 }
 
 .reader-fab:hover {
