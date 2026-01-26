@@ -25,6 +25,8 @@ from .config import DEFAULT_PAGE_SIZE
 from .downloader import ArticleDownloader
 from .env import load_env
 from .http import MPClient, SessionExpiredError
+from .file_storage import FileStorageError, S3FileStorage
+from .image_store import DbArticleImageStore
 from .logger import setup_logger
 from .models import AccountCredential, AccountGroup, LoginSession
 from .server import serve as run_server
@@ -182,7 +184,7 @@ def _parse_since(value: Optional[str]) -> Optional[int]:
 
 
 def _build_group_defaults(storage: PostgresStorage) -> dict[int, AccountGroup]:
-    return {group.id: group for group in storage.list_groups()}
+    return {group.id: group for group in storage.groups.list_groups()}
 
 
 def _resolve_recent_since(
@@ -255,13 +257,23 @@ def _resolve_pg_dsn() -> str:
     return pg_dsn
 
 
+def _build_image_store(storage: PostgresStorage, *, enabled: bool) -> DbArticleImageStore | None:
+    if not enabled:
+        return None
+    try:
+        return DbArticleImageStore(image_repo=storage.images, file_storage=S3FileStorage())
+    except FileStorageError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1)
+
+
 def _resolve_account(storage: PostgresStorage, name: Optional[str]) -> AccountCredential:
     if name is None:
         raise LookupError("请输入公众号名称或 fakeid")
     target = name.strip()
     if not target:
         raise LookupError("请输入公众号名称或 fakeid")
-    accounts = storage.list_accounts()
+    accounts = storage.accounts.list_accounts()
     exact = [acc for acc in accounts if acc.biz == target]
     if exact:
         return exact[0]
@@ -282,7 +294,7 @@ def _resolve_account(storage: PostgresStorage, name: Optional[str]) -> AccountCr
 
 def _get_login_session(storage: PostgresStorage) -> LoginSession:
     try:
-        return storage.get_login_session()
+        return storage.sessions.get_login_session()
     except LookupError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1)
@@ -305,7 +317,7 @@ def add_account(
         round_head_img=(round_head_img.strip() if round_head_img else None),
     )
     with open_storage() as storage:
-        stored = storage.upsert_account(credential)
+        stored = storage.accounts.upsert_account(credential)
     typer.echo(f"账号 {stored.nickname} ({stored.biz}) 已保存")
 
 
@@ -335,7 +347,7 @@ async def _search_accounts_async(
     _require_nonempty(keyword, "请提供搜索关键词。")
     with open_storage() as storage:
         session = _get_login_session(storage)
-        existing_biz = {account.biz for account in storage.list_accounts()}
+        existing_biz = {account.biz for account in storage.accounts.list_accounts()}
     page_size = 10
     current_page = page
     while True:
@@ -401,7 +413,7 @@ async def _search_accounts_async(
                         alias=(item.get("alias") or "").strip() or None,
                         round_head_img=(item.get("round_head_img") or "").strip() or None,
                     )
-                    stored = storage.upsert_account(credential)
+                    stored = storage.accounts.upsert_account(credential)
                     saved.append(f"{stored.nickname} ({stored.biz})")
             typer.echo(f"已保存 {len(saved)} 个账号")
         if begin is not None:
@@ -414,7 +426,7 @@ def list_accounts(
     group: Optional[str] = typer.Option(None, help="Filter by group name"),
 ) -> None:
     with open_storage() as storage:
-        accounts = storage.list_accounts(group=group)
+        accounts = storage.accounts.list_accounts(group=group)
     if not accounts:
         typer.echo("尚未保存任何账号，使用 `account add` 添加")
         return
@@ -444,14 +456,14 @@ def add_group(
         typer.echo("Please provide a group name.")
         raise typer.Exit(code=2)
     with open_storage() as storage:
-        group = storage.upsert_group(name)
+        group = storage.groups.upsert_group(name)
     typer.echo(f"Group {group.name} saved.")
 
 
 @groups_app.command("list")
 def list_groups() -> None:
     with open_storage() as storage:
-        groups = storage.list_groups()
+        groups = storage.groups.list_groups()
     if not groups:
         typer.echo("No groups found.")
         return
@@ -517,7 +529,7 @@ def set_account_group(
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
-        storage.set_account_group(target.biz, group)
+        storage.accounts.set_account_group(target.biz, group)
     typer.echo(f"Account {target.nickname} ({target.biz}) assigned to group {group}.")
 
 
@@ -532,7 +544,7 @@ def clear_account_group(
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
-        storage.set_account_group(target.biz, None)
+        storage.accounts.set_account_group(target.biz, None)
     typer.echo(f"Account {target.nickname} ({target.biz}) group cleared.")
 
 
@@ -564,7 +576,7 @@ def disable_account(
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
-        storage.set_account_disabled(target.biz, True)
+        storage.accounts.set_account_disabled(target.biz, True)
     typer.echo(f"Account {target.nickname} ({target.biz}) disabled.")
 
 
@@ -579,7 +591,7 @@ def enable_account(
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
-        storage.set_account_disabled(target.biz, False)
+        storage.accounts.set_account_disabled(target.biz, False)
     typer.echo(f"Account {target.nickname} ({target.biz}) enabled.")
 
 
@@ -622,7 +634,7 @@ def set_account_sync_config(
         ):
             raise typer.BadParameter("recent mode requires --recent-days.")
         updated = target.model_copy(update=updates)
-        storage.upsert_account(updated)
+        storage.accounts.upsert_account(updated)
     typer.echo(f"Account {target.nickname} ({target.biz}) sync settings updated.")
 
 
@@ -715,8 +727,8 @@ def list_articles(
 ) -> None:
     since_timestamp = _parse_since(since)
     with open_storage() as storage:
-        account = storage.get_account(biz)
-        articles = storage.list_articles(account.biz, limit=limit, since_timestamp=since_timestamp)
+        account = storage.accounts.get_account(biz)
+        articles = storage.articles.list_articles(account.biz, limit=limit, since_timestamp=since_timestamp)
     if not articles:
         typer.echo("未找到文章，请先执行 `account sync`")
         return
@@ -797,7 +809,7 @@ async def _sync_article_download_async(
         if since_timestamp is None:
             group_defaults = _build_group_defaults(storage)
             since_timestamp = _resolve_recent_since(account_record, group_defaults)
-        articles = storage.list_articles(
+        articles = storage.articles.list_articles(
             account_record.biz,
             limit=limit,
             since_timestamp=since_timestamp,
@@ -817,8 +829,10 @@ async def _sync_article_download_async(
             leave=True,
         )
         try:
+            image_store = _build_image_store(storage, enabled=download_images)
             async with ArticleDownloader(
                 storage=storage,
+                image_store=image_store,
                 article_worker=worker_prefix,
                 article_worker_proxy=worker_proxy,
                 article_max_connections=workers,
@@ -894,15 +908,17 @@ async def _sync_all_article_download_async(
     since_timestamp = _parse_since(since)
     total_downloads = 0
     with open_storage() as storage:
-        accounts = storage.list_accounts()
+        accounts = storage.accounts.list_accounts()
         if not accounts:
             typer.echo("尚未保存任何账号，使用 `account add` 添加")
             return
         group_defaults = _build_group_defaults(storage)
         download_images = with_images and not article_only
         record_images_only = article_only
+        image_store = _build_image_store(storage, enabled=download_images)
         async with ArticleDownloader(
             storage=storage,
+            image_store=image_store,
             article_worker=worker_prefix,
             article_worker_proxy=worker_proxy,
             article_max_connections=workers,
@@ -918,7 +934,7 @@ async def _sync_all_article_download_async(
                 account_since = since_timestamp
                 if account_since is None:
                     account_since = _resolve_recent_since(account, group_defaults)
-                articles = storage.list_articles(
+                articles = storage.articles.list_articles(
                     account.biz,
                     limit=limit,
                     since_timestamp=account_since,
@@ -1004,8 +1020,10 @@ async def _download_article_async(
     _resolve_pg_dsn()
     with open_storage() as storage:
         try:
+            image_store = _build_image_store(storage, enabled=with_images)
             async with ArticleDownloader(
                 storage=storage,
+                image_store=image_store,
                 article_worker=worker_prefix,
                 article_worker_proxy=worker_proxy,
                 article_max_connections=workers,
@@ -1109,6 +1127,7 @@ async def _backfill_article_images_async(
 
     async with MPClient() as client:
         with PostgresStorage(resolved_dsn) as storage:
+            image_store = _build_image_store(storage, enabled=True)
             failed_clause = "" if retry_failed else " AND i.failed_at IS NULL"
             count_query = f"""
                 SELECT COUNT(*)
@@ -1218,21 +1237,21 @@ async def _backfill_article_images_async(
                                     _, data, content_type, error = await task
                                     if error:
                                         raise RuntimeError(error)
-                                    storage.update_article_image_data(
-                                        biz,
-                                        article_id,
-                                        str(orig_url),
-                                        content_type,
-                                        data,
+                                    image_store.store(
+                                        biz=biz,
+                                        article_id=article_id,
+                                        orig_url=str(orig_url),
+                                        content_type=content_type,
+                                        data=data,
                                     )
                                     updated += 1
                                 except Exception as exc:
                                     failed += 1
-                                    storage.mark_article_image_failed(
-                                        biz,
-                                        article_id,
-                                        str(orig_url),
-                                        str(exc),
+                                    image_store.mark_failed(
+                                        biz=biz,
+                                        article_id=article_id,
+                                        orig_url=str(orig_url),
+                                        reason=str(exc),
                                     )
                                     typer.echo(f"FAILED {orig_url}: {format_error(exc)}")
                                 finally:
@@ -1255,7 +1274,7 @@ async def _backfill_article_images_async(
 def export_accounts() -> None:
     """Dump stored accounts as JSON (sensitive)."""
     with open_storage() as storage:
-        accounts = storage.list_accounts()
+        accounts = storage.accounts.list_accounts()
     payload = [
         {
             "biz": account.biz,
@@ -1403,7 +1422,7 @@ async def _run_login_flow(*, timeout: int, poll_interval: int) -> None:
                     info = await client.fetch_login_info(session)
                     session.nickname = info.get("nickname") or None
                     session.avatar = info.get("avatar") or None
-                    storage.save_login_session(session)
+                    storage.sessions.save_login_session(session)
                     typer.echo(f"登录成功：{session.nickname or '未知账号'}")
                     return
                 if status in (2, 3):

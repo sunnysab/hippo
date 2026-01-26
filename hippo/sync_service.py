@@ -5,18 +5,29 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from datetime import datetime, timezone
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable
 
 from .downloader import ArticleDownloader
 from .emailer import get_email_settings, send_email
+from .file_storage import FileStorageError, S3FileStorage
 from .http import MPClient
+from .image_store import DbArticleImageStore
 from .models import AccountCredential, ArticleRecord
 from .storage import PostgresStorage, open_storage
 from .sync_core import is_freq_control, is_login_error, sync_account_core
+from .sync_types import (
+    NullSyncObserver,
+    SyncAccountResult,
+    SyncConfig,
+    SyncMode,
+    SyncObserver,
+    SyncPlan,
+    SyncReport,
+    SyncSummary,
+)
 from .utils import (
     fetchall_rows,
-    fetchone_row,
     load_meta_json,
     parse_iso_date_to_timestamp,
     save_meta_json,
@@ -32,7 +43,6 @@ SYNC_SETTINGS_KEY = 'sync:settings'
 ALERT_SENT_KEY = 'sync:alert_sent'
 SYNC_LOGIN_REQUIRED_AT_KEY = 'sync:login_required_at'
 
-_SYNC_MODES = {'incremental', 'recent', 'full', 'range'}
 _logger = logging.getLogger('hippo.sync')
 _DEFAULT_RECENT_DAYS = 7
 _DEFAULT_PAGE_SIZE = 10
@@ -91,7 +101,7 @@ def _send_sync_alert(
     started_at: str,
     finished_at: str,
 ) -> None:
-    if not error or storage.get_meta(ALERT_SENT_KEY):
+    if not error or storage.meta.get(ALERT_SENT_KEY):
         return
     sync_settings = get_sync_settings(storage)
     if not sync_settings.get('alert_enabled') or not sync_settings.get('alert_email'):
@@ -101,17 +111,17 @@ def _send_sync_alert(
     try:
         email_settings = get_email_settings(storage)
         send_email(email_settings, to_email=str(sync_settings.get('alert_email')), subject=subject, body=body)
-        storage.set_meta(ALERT_SENT_KEY, '1')
+        storage.meta.set(ALERT_SENT_KEY, '1')
     except Exception as exc:
         _logger.warning('Failed to send alert email: %s', exc)
 
 
 def get_sync_status(storage: PostgresStorage) -> dict[str, Any]:
     return {
-        'status': storage.get_meta(SYNC_STATUS_KEY) or 'idle',
-        'last_started_at': storage.get_meta(SYNC_STARTED_KEY),
-        'last_finished_at': storage.get_meta(SYNC_FINISHED_KEY),
-        'last_error': storage.get_meta(SYNC_ERROR_KEY),
+        'status': storage.meta.get(SYNC_STATUS_KEY) or 'idle',
+        'last_started_at': storage.meta.get(SYNC_STARTED_KEY),
+        'last_finished_at': storage.meta.get(SYNC_FINISHED_KEY),
+        'last_error': storage.meta.get(SYNC_ERROR_KEY),
         'history': load_meta_json(storage, SYNC_HISTORY_KEY, []),
     }
 
@@ -125,13 +135,13 @@ def set_sync_state(
     finished_at: str | None = None,
 ) -> None:
     if status is not None:
-        storage.set_meta(SYNC_STATUS_KEY, status)
+        storage.meta.set(SYNC_STATUS_KEY, status)
     if error is not None:
-        storage.set_meta(SYNC_ERROR_KEY, error)
+        storage.meta.set(SYNC_ERROR_KEY, error)
     if started_at is not None:
-        storage.set_meta(SYNC_STARTED_KEY, started_at)
+        storage.meta.set(SYNC_STARTED_KEY, started_at)
     if finished_at is not None:
-        storage.set_meta(SYNC_FINISHED_KEY, finished_at)
+        storage.meta.set(SYNC_FINISHED_KEY, finished_at)
 
 
 def _utc_now_iso() -> str:
@@ -155,32 +165,23 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
 
 
 def _get_login_updated_at(storage: PostgresStorage) -> datetime | None:
-    row = fetchone_row(
-        storage,
-        "SELECT updated_at FROM login_sessions WHERE is_default = TRUE ORDER BY id DESC LIMIT 1",
-        [],
-    )
-    if not row:
+    updated_at = storage.sessions.get_login_updated_at()
+    if not updated_at:
         return None
-    updated_at = row.get('updated_at')
-    if isinstance(updated_at, str):
-        return _parse_iso_datetime(updated_at)
-    if isinstance(updated_at, datetime):
-        return _to_utc_dt(updated_at)
-    return None
+    return _to_utc_dt(updated_at)
 
 
 def _should_skip_for_login(storage: PostgresStorage) -> bool:
-    if storage.get_meta(SYNC_STATUS_KEY) != 'login_required':
+    if storage.meta.get(SYNC_STATUS_KEY) != 'login_required':
         return False
-    blocked_at = _parse_iso_datetime(storage.get_meta(SYNC_LOGIN_REQUIRED_AT_KEY))
+    blocked_at = _parse_iso_datetime(storage.meta.get(SYNC_LOGIN_REQUIRED_AT_KEY))
     if not blocked_at:
         return False
     last_login = _get_login_updated_at(storage)
     if not last_login or last_login <= blocked_at:
         return True
-    storage.delete_meta(SYNC_LOGIN_REQUIRED_AT_KEY)
-    storage.delete_meta(ALERT_SENT_KEY)
+    storage.meta.delete(SYNC_LOGIN_REQUIRED_AT_KEY)
+    storage.meta.delete(ALERT_SENT_KEY)
     return False
 
 
@@ -201,97 +202,361 @@ def _select_missing_content(
 ) -> list[ArticleRecord]:
     if limit <= 0:
         return []
-    articles = storage.list_articles(biz, limit=limit)
-    get_content_ids = getattr(storage, 'get_article_content_ids', None)
-    if callable(get_content_ids):
-        try:
-            ids = get_content_ids(biz, [article.article_id for article in articles])
-            return [article for article in articles if article.article_id not in ids]
-        except Exception:
-            return articles
+    articles = storage.articles.list_articles(biz, limit=limit)
+    try:
+        ids = storage.articles.get_article_content_ids(biz, [article.article_id for article in articles])
+        return [article for article in articles if article.article_id not in ids]
+    except Exception:
+        return articles
     return articles
 
 
-async def _sync_account_articles(
-    *,
-    storage: PostgresStorage,
-    client: MPClient,
-    downloader: ArticleDownloader,
-    account: AccountCredential,
-    settings: dict[str, Any],
-    group_defaults: dict[int, dict[str, Any]] | None = None,
-) -> tuple[int, int]:
-    page_size = max(int(_DEFAULT_PAGE_SIZE), 1)
-    page_limit = _DEFAULT_PAGE_LIMIT
-    if page_limit is not None:
-        page_limit = max(int(page_limit), 1)
-    group_sync = None
-    if group_defaults and account.group_id is not None:
-        group_sync = group_defaults.get(account.group_id)
-    group_mode = None
-    group_recent_days = None
-    if group_sync:
-        group_mode = group_sync.get('sync_mode')
-        group_recent_days = group_sync.get('sync_recent_days')
-    mode = (account.sync_mode or group_mode or 'incremental').strip().lower()
-    if mode not in _SYNC_MODES:
-        mode = 'incremental'
-    recent_days = account.sync_recent_days
-    if recent_days is None:
-        recent_days = group_recent_days if group_recent_days is not None else _DEFAULT_RECENT_DAYS
-    now = datetime.now(timezone.utc)
-    since_ts: int | None = None
-    until_ts: int | None = None
-    stop_on_existing = False
-    if mode == 'incremental':
-        stop_on_existing = True
-        if account.last_synced_at:
-            since_ts = int(account.last_synced_at.timestamp())
-    elif mode == 'recent':
-        recent_days = max(int(recent_days or 1), 1)
-        since_ts = int((now.timestamp() - recent_days * 86400))
-    elif mode == 'range':
-        since_ts = _parse_date(settings.get('since'))
-        until_ts = _parse_date(settings.get('until'), end_of_day=True)
+def _to_utc_timestamp(value: datetime | None) -> int | None:
+    if not value:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return int(value.timestamp())
 
-    total_saved = 0
-    to_download: list[ArticleRecord] = []
-    async for event, payload in sync_account_core(
-        storage=storage,
-        client=client,
-        account=account,
-        page_size=page_size,
-        pages=page_limit,
-        sleep_seconds=float(settings.get('sleep_seconds') or 0),
-        since_timestamp=since_ts,
-        until_timestamp=until_ts,
-        stop_on_existing=stop_on_existing,
-        collect_existing_ids=True,
-    ):
-        if event == 'page':
-            records = payload.get('records') or []
-            existing_ids = payload.get('existing_ids') or set()
-            if records:
-                new_records = [r for r in records if r.article_id not in existing_ids]
-                to_download.extend(new_records)
-        elif event == 'complete':
-            total_saved = int(payload.get('total_saved', 0))
 
-    downloaded = 0
-    if settings.get('download_content'):
-        content_limit = int(_DEFAULT_CONTENT_LIMIT)
-        candidates = {item.article_id: item for item in to_download}
-        for missing in _select_missing_content(storage, account.biz, limit=content_limit):
-            candidates.setdefault(missing.article_id, missing)
-        if candidates:
-            results, _, _ = await downloader.download_many(
-                candidates.values(),
-                with_images=bool(settings.get('download_images')),
-                record_images_only=not bool(settings.get('download_images')),
-                skip_if_downloaded=True,
+def _today_str() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+class SyncRunError(RuntimeError):
+    def __init__(self, message: str, *, login_required: bool = False) -> None:
+        super().__init__(message)
+        self.login_required = login_required
+
+
+class PageCollector(NullSyncObserver):
+    def __init__(self) -> None:
+        self.records: list[ArticleRecord] = []
+
+    def on_page(self, payload: dict[str, Any]) -> None:
+        records = payload.get('records') or []
+        existing_ids = payload.get('existing_ids') or set()
+        if not records:
+            return
+        if existing_ids:
+            filtered = [record for record in records if record.article_id not in existing_ids]
+            self.records.extend(filtered)
+            return
+        self.records.extend(records)
+
+
+class ArticleSyncService:
+    def __init__(
+        self,
+        *,
+        storage: PostgresStorage,
+        client: MPClient,
+        downloader: ArticleDownloader | None = None,
+        login_flow: Callable[..., Any] | None = None,
+        on_login_required: Callable[[], bool] | None = None,
+    ) -> None:
+        self._storage = storage
+        self._client = client
+        self._downloader = downloader
+        self._login_flow = login_flow
+        self._on_login_required = on_login_required
+
+    def _resolve_shared_window(self, config: SyncConfig) -> tuple[int | None, int | None]:
+        if config.mode == SyncMode.recent:
+            if config.recent_days is None:
+                raise ValueError('--recent-days is required for recent mode.')
+            since = int((datetime.now(timezone.utc) - timedelta(days=config.recent_days)).timestamp())
+            return since, None
+        if config.mode == SyncMode.range:
+            if not config.since_date:
+                raise ValueError('--since is required for range mode.')
+            since = _parse_date(config.since_date)
+            until = _parse_date(config.until_date, end_of_day=True)
+            if until is not None and since is not None and until < since:
+                raise ValueError('--until must be on or after --since.')
+            return since, until
+        return None, None
+
+    def _resolve_account_mode(
+        self,
+        *,
+        account: AccountCredential,
+        config: SyncConfig,
+        group_defaults: dict[int, dict[str, Any]] | None,
+    ) -> tuple[SyncMode, int | None]:
+        if config.mode is not None:
+            return config.mode, config.recent_days
+        group_sync = None
+        if group_defaults and account.group_id is not None:
+            group_sync = group_defaults.get(account.group_id)
+        group_mode = group_sync.get('sync_mode') if group_sync else None
+        group_recent_days = group_sync.get('sync_recent_days') if group_sync else None
+        mode_value = (account.sync_mode or group_mode or SyncMode.incremental.value).strip().lower()
+        try:
+            mode = SyncMode(mode_value)
+        except ValueError:
+            mode = SyncMode.incremental
+        recent_days = account.sync_recent_days
+        if recent_days is None:
+            recent_days = group_recent_days if group_recent_days is not None else _DEFAULT_RECENT_DAYS
+        return mode, recent_days
+
+    def _build_sync_plan(
+        self,
+        *,
+        account: AccountCredential,
+        config: SyncConfig,
+        mode: SyncMode,
+        recent_days: int | None,
+        shared_since: int | None,
+        shared_until: int | None,
+        use_resume: bool,
+        bulk: bool,
+    ) -> SyncPlan:
+        since_timestamp = None
+        until_timestamp = None
+        stop_on_existing = False
+        full_synced_hint = False
+        page_limit = config.page_limit
+        resume_key = None
+        complete_key = None
+
+        if use_resume and bulk:
+            resume_key = f'sync_progress:{account.biz}'
+            complete_key = f'sync_complete:{account.biz}'
+
+        if mode == SyncMode.full:
+            page_limit = None
+            full_synced_hint = self._storage.meta.get(f'sync_complete:{account.biz}') is not None
+        elif mode == SyncMode.incremental:
+            since_timestamp = _to_utc_timestamp(account.last_synced_at)
+            if since_timestamp is None:
+                stop_on_existing = True
+        elif mode == SyncMode.recent:
+            if config.mode is not None:
+                since_timestamp = shared_since
+            else:
+                days = max(int(recent_days or 1), 1)
+                since_timestamp = int((datetime.now(timezone.utc).timestamp() - days * 86400))
+        elif mode == SyncMode.range:
+            if config.mode is not None:
+                since_timestamp = shared_since
+                until_timestamp = shared_until
+            else:
+                since_timestamp = _parse_date(config.since_date)
+                until_timestamp = _parse_date(config.until_date, end_of_day=True)
+
+        if use_resume and bulk and mode != SyncMode.full:
+            resume_key = None
+            full_synced_hint = False
+
+        if mode in (SyncMode.incremental, SyncMode.recent, SyncMode.range):
+            full_synced_hint = False
+
+        return SyncPlan(
+            page_limit=page_limit,
+            since_timestamp=since_timestamp,
+            until_timestamp=until_timestamp,
+            stop_on_existing=stop_on_existing,
+            full_synced_hint=full_synced_hint,
+            resume_key=resume_key if mode == SyncMode.full and use_resume and bulk else None,
+            complete_key=complete_key,
+        )
+
+    async def sync_account(
+        self,
+        *,
+        account: AccountCredential,
+        config: SyncConfig,
+        bulk: bool,
+        use_resume: bool,
+        shared_since: int | None,
+        shared_until: int | None,
+        observer: SyncObserver,
+        group_defaults: dict[int, dict[str, Any]] | None = None,
+        allow_freq_skip: bool = False,
+    ) -> tuple[SyncAccountResult, list[ArticleRecord], SyncSummary | None]:
+        mode, recent_days = self._resolve_account_mode(
+            account=account,
+            config=config,
+            group_defaults=group_defaults,
+        )
+        if config.mode == SyncMode.recent and config.recent_days is None:
+            raise ValueError('--recent-days is required for recent mode.')
+        if config.mode == SyncMode.range and not config.since_date:
+            raise ValueError('--since is required for range mode.')
+
+        if use_resume and bulk and mode == SyncMode.full and config.reset:
+            resume_key = f'sync_progress:{account.biz}'
+            complete_key = f'sync_complete:{account.biz}'
+            self._storage.meta.delete(resume_key)
+            self._storage.meta.delete(complete_key)
+
+        if account.is_disabled:
+            observer.on_skip('disabled')
+            result = SyncAccountResult(
+                biz=account.biz,
+                nickname=account.nickname,
+                saved=0,
+                completed=False,
+                skipped=True,
+                skip_reason='disabled',
             )
-            downloaded = len(results)
-    return total_saved, downloaded
+            return result, [], None
+
+        if (
+            use_resume
+            and bulk
+            and mode == SyncMode.full
+            and config.skip_minutes is None
+            and not config.force
+            and self._storage.meta.get(f'sync_complete:{account.biz}') == _today_str()
+        ):
+            observer.on_skip('completed_today')
+            result = SyncAccountResult(
+                biz=account.biz,
+                nickname=account.nickname,
+                saved=0,
+                completed=True,
+                skipped=True,
+                skip_reason='completed_today',
+            )
+            return result, [], None
+
+        if not config.force and should_skip_by_time(account.last_synced_at, config.skip_minutes):
+            observer.on_skip('recently_synced')
+            result = SyncAccountResult(
+                biz=account.biz,
+                nickname=account.nickname,
+                saved=0,
+                completed=False,
+                skipped=True,
+                skip_reason='recently_synced',
+            )
+            return result, [], None
+
+        plan = self._build_sync_plan(
+            account=account,
+            config=config,
+            mode=mode,
+            recent_days=recent_days,
+            shared_since=shared_since,
+            shared_until=shared_until,
+            use_resume=use_resume,
+            bulk=bulk,
+        )
+
+        collector = PageCollector() if config.download_content else None
+        summary: SyncSummary | None = None
+        try:
+            summary = await sync_account_core(
+                storage=self._storage,
+                client=self._client,
+                account=account,
+                page_size=config.page_size,
+                pages=plan.page_limit,
+                sleep_seconds=config.sleep_seconds,
+                resume_key=plan.resume_key,
+                full_synced_hint=plan.full_synced_hint,
+                since_timestamp=plan.since_timestamp,
+                until_timestamp=plan.until_timestamp,
+                stop_on_existing=plan.stop_on_existing,
+                login_flow=self._login_flow,
+                on_login_required=self._on_login_required,
+                collect_existing_ids=bool(config.download_content),
+                observer=collector or observer,
+            )
+        except RuntimeError as exc:
+            message = str(exc)
+            if is_freq_control(message) and allow_freq_skip:
+                observer.on_skip('freq_control')
+                await asyncio.sleep(15)
+                result = SyncAccountResult(
+                    biz=account.biz,
+                    nickname=account.nickname,
+                    saved=0,
+                    completed=False,
+                    skipped=True,
+                    skip_reason='freq_control',
+                )
+                return result, [], None
+            raise SyncRunError(message, login_required=is_login_error(message)) from exc
+
+        if summary.completed and use_resume and bulk and mode == SyncMode.full and plan.complete_key:
+            self._storage.meta.set(plan.complete_key, _today_str())
+
+        result = SyncAccountResult(
+            biz=account.biz,
+            nickname=account.nickname or account.biz,
+            saved=summary.total_saved,
+            completed=summary.completed,
+            skipped=False,
+            skip_reason=None,
+        )
+        return result, collector.records if collector else [], summary
+
+    async def sync_accounts(
+        self,
+        *,
+        accounts: list[AccountCredential],
+        config: SyncConfig,
+        bulk: bool,
+        use_resume: bool,
+        observer_factory: Callable[[AccountCredential, bool], SyncObserver] | None = None,
+        group_defaults: dict[int, dict[str, Any]] | None = None,
+        allow_freq_skip: bool = False,
+    ) -> SyncReport:
+        shared_since, shared_until = self._resolve_shared_window(config)
+        total_saved = 0
+        total_downloaded = 0
+        summary_rows: list[tuple[str, int]] = []
+        details: list[SyncAccountResult] = []
+
+        for account in accounts:
+            observer = observer_factory(account, bulk) if observer_factory else NullSyncObserver()
+            result, records, summary = await self.sync_account(
+                account=account,
+                config=config,
+                bulk=bulk,
+                use_resume=use_resume,
+                shared_since=shared_since,
+                shared_until=shared_until,
+                observer=observer,
+                group_defaults=group_defaults,
+                allow_freq_skip=allow_freq_skip,
+            )
+            details.append(result)
+            if result.skipped and not bulk:
+                return SyncReport(total_saved=0, summary=[], details=details, downloaded=0)
+            if result.skipped:
+                continue
+
+            if summary:
+                total_saved += summary.total_saved
+                summary_rows.append((result.nickname or result.biz, summary.total_saved))
+
+            if config.download_content and self._downloader and records:
+                content_limit = max(int(config.content_limit or _DEFAULT_CONTENT_LIMIT), 0)
+                candidates = {item.article_id: item for item in records}
+                for missing in _select_missing_content(self._storage, account.biz, limit=content_limit):
+                    candidates.setdefault(missing.article_id, missing)
+                if candidates:
+                    results, _, _ = await self._downloader.download_many(
+                        candidates.values(),
+                        with_images=bool(config.download_images),
+                        record_images_only=not bool(config.download_images),
+                        skip_if_downloaded=True,
+                    )
+                    total_downloaded += len(results)
+
+        return SyncReport(
+            total_saved=total_saved,
+            summary=summary_rows,
+            details=details,
+            downloaded=total_downloaded,
+        )
 
 
 class SyncScheduler:
@@ -358,12 +623,12 @@ class SyncScheduler:
             settings = get_sync_settings(storage)
             set_sync_state(storage, status='running', error='', started_at=started_at)
             try:
-                storage.get_login_session()
+                storage.sessions.get_login_session()
             except Exception as exc:
                 error = str(exc)
                 finished_at = _utc_now_iso()
                 set_sync_state(storage, status='login_required', error=error, finished_at=finished_at)
-                storage.set_meta(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
+                storage.meta.set(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
                 append_sync_history(
                     storage,
                     {
@@ -382,7 +647,7 @@ class SyncScheduler:
                 )
                 return get_sync_status(storage)
 
-            accounts = storage.list_accounts()
+            accounts = storage.accounts.list_accounts()
             if group_id is not None:
                 accounts = [account for account in accounts if account.group_id == group_id]
             group_defaults: dict[int, dict[str, Any]] = {}
@@ -393,57 +658,79 @@ class SyncScheduler:
             )
             for row in group_rows:
                 group_defaults[int(row['id'])] = row
-            total_saved = 0
-            total_downloaded = 0
-            skipped_accounts = 0
             error: str | None = None
-            async with MPClient() as client:
-                async with ArticleDownloader(
-                    client=client,
-                    storage=storage,
-                    enable_image_worker=bool(settings.get('download_images')),
-                ) as downloader:
-                    for account in accounts:
-                        if account.is_disabled:
-                            skipped_accounts += 1
-                            continue
-                        if should_skip_by_time(account.last_synced_at, settings.get('skip_minutes')):
-                            skipped_accounts += 1
-                            continue
+            report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
+            image_store = None
+            if settings.get('download_images'):
+                try:
+                    image_store = DbArticleImageStore(
+                        image_repo=storage.images,
+                        file_storage=S3FileStorage(),
+                    )
+                except FileStorageError as exc:
+                    error = str(exc)
+
+            if error is None:
+                async with MPClient() as client:
+                    async with ArticleDownloader(
+                        client=client,
+                        storage=storage,
+                        image_store=image_store,
+                        enable_image_worker=bool(settings.get('download_images')),
+                    ) as downloader:
+                        config = SyncConfig(
+                            mode=None,
+                            page_size=max(int(settings.get('page_size') or _DEFAULT_PAGE_SIZE), 1),
+                            page_limit=settings.get('page_limit'),
+                            sleep_seconds=float(settings.get('sleep_seconds') or 0),
+                            reset=False,
+                            recent_days=settings.get('recent_days'),
+                            since_date=settings.get('since'),
+                            until_date=settings.get('until'),
+                            force=False,
+                            skip_minutes=settings.get('skip_minutes'),
+                            download_content=bool(settings.get('download_content')),
+                            download_images=bool(settings.get('download_images')),
+                            content_limit=int(settings.get('content_limit') or _DEFAULT_CONTENT_LIMIT),
+                        )
+                        service = ArticleSyncService(
+                            storage=storage,
+                            client=client,
+                            downloader=downloader,
+                        )
                         try:
-                            saved, downloaded = await _sync_account_articles(
-                                storage=storage,
-                                client=client,
-                                downloader=downloader,
-                                account=account,
-                                settings=settings,
+                            report = await service.sync_accounts(
+                                accounts=accounts,
+                                config=config,
+                                bulk=True,
+                                use_resume=False,
                                 group_defaults=group_defaults,
+                                allow_freq_skip=True,
                             )
+                        except SyncRunError as exc:
+                            error = str(exc)
+                            report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
                         except Exception as exc:
-                            message = str(exc)
-                            if is_login_error(message):
-                                error = message
-                                break
-                            if is_freq_control(message):
-                                await asyncio.sleep(15)
-                                continue
-                            error = message
-                            break
-                        total_saved += saved
-                        total_downloaded += downloaded
-                    if settings.get('download_images'):
-                        await downloader.wait_for_images()
+                            error = str(exc)
+                            report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
+                        if settings.get('download_images'):
+                            await downloader.wait_for_images()
 
             finished_at = _utc_now_iso()
             if error:
                 status = 'login_required' if is_login_error(error) else 'failed'
                 set_sync_state(storage, status=status, error=error, finished_at=finished_at)
                 if status == 'login_required':
-                    storage.set_meta(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
+                    storage.meta.set(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
             else:
                 set_sync_state(storage, status='success', error='', finished_at=finished_at)
-                storage.delete_meta(ALERT_SENT_KEY)
-                storage.delete_meta(SYNC_LOGIN_REQUIRED_AT_KEY)
+                storage.meta.delete(ALERT_SENT_KEY)
+                storage.meta.delete(SYNC_LOGIN_REQUIRED_AT_KEY)
+            skipped_accounts = sum(
+                1
+                for item in report.details
+                if item.skipped and item.skip_reason in ('disabled', 'recently_synced')
+            )
             append_sync_history(
                 storage,
                 {
@@ -451,8 +738,8 @@ class SyncScheduler:
                     'finished_at': finished_at,
                     'status': 'login_required' if error and is_login_error(error) else ('failed' if error else 'success'),
                     'error': error or '',
-                    'saved': total_saved,
-                    'downloaded': total_downloaded,
+                    'saved': report.total_saved,
+                    'downloaded': report.downloaded,
                     'skipped_accounts': skipped_accounts,
                 },
             )
@@ -467,6 +754,8 @@ class SyncScheduler:
 
 
 __all__ = [
+    'ArticleSyncService',
+    'SyncRunError',
     'SyncScheduler',
     'append_sync_history',
     'default_sync_settings',

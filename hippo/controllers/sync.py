@@ -2,69 +2,67 @@
 
 from __future__ import annotations
 
-import asyncio
-from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from enum import Enum
 from typing import Awaitable, Callable
 
 import typer
 from tqdm import tqdm
 
 from ..http import MPClient
-from ..models import AccountCredential, LoginSession
+from ..models import AccountCredential
 from ..storage import PostgresStorage, open_storage
-from ..sync_core import SyncInterrupted, is_login_error, sync_account_core
-from ..sync_service import append_sync_history
-from ..utils import format_table, should_skip_by_time
+from ..sync_core import SyncInterrupted
+from ..sync_service import ArticleSyncService, SyncRunError, append_sync_history
+from ..sync_types import SyncConfig, SyncMode, SyncObserver, SyncReport
+from ..utils import format_table
 
 
-class SyncMode(str, Enum):
-    full = 'full'
-    incremental = 'incremental'
-    recent = 'recent'
-    range = 'range'
+class TqdmSyncObserver(NullSyncObserver):
+    def __init__(self, progress: tqdm | None, account: AccountCredential) -> None:
+        self._progress = progress
+        self._account = account
 
-    def __str__(self) -> str:  # pragma: no cover - click displays value
-        return self.value
+    def on_log(self, message: str) -> None:
+        _pbar_write(self._progress, message)
 
+    def on_progress(self, *, current: int | None, total: int | None, delta: int | None) -> None:
+        if self._progress is None:
+            return
+        if total and total > 0 and self._progress.total != total:
+            self._progress.total = total
+        if delta:
+            self._progress.update(delta)
+        elif current is not None:
+            self._progress.n = current
+            self._progress.refresh()
 
-
-@dataclass(frozen=True)
-class SyncOptions:
-    mode: SyncMode
-    page_size: int
-    pages: int | None
-    sleep_seconds: float
-    reset: bool
-    recent_days: int | None
-    since_date: str | None
-    until_date: str | None
-    force: bool
-    skip_time: int | None
-
-
-@dataclass(frozen=True)
-class SyncPlan:
-    page_limit: int | None
-    since_timestamp: int | None
-    until_timestamp: int | None
-    stop_on_existing: bool
-    full_synced_hint: bool
-    resume_key: str | None
-    complete_key: str | None
+    def on_skip(self, reason: str) -> None:
+        if not self._progress:
+            return
+        label = _format_skip_reason(reason, self._account)
+        self._progress.set_postfix_str(label, refresh=True)
 
 
-@dataclass(frozen=True)
-class SyncReport:
-    total_saved: int
-    summary: list[tuple[str, int]]
+def _enforce_exclusive_flags(force: bool, skip_minutes: int | None) -> None:
+    if force and skip_minutes is not None:
+        raise typer.BadParameter('--force 与 --skip-time 不能同时使用')
 
 
-class SyncRunError(RuntimeError):
-    def __init__(self, message: str, *, login_required: bool = False) -> None:
-        super().__init__(message)
-        self.login_required = login_required
+def _format_last_synced(last_synced_at: datetime | None) -> str:
+    return last_synced_at.isoformat(timespec='seconds') if last_synced_at else '-'
+
+
+def _format_skip_reason(reason: str, account: AccountCredential) -> str:
+    if reason == 'disabled':
+        return '跳过(已禁用)'
+    if reason == 'completed_today':
+        return '跳过(今日已完成)'
+    if reason == 'recently_synced':
+        last_synced = _format_last_synced(account.last_synced_at)
+        return f'跳过(近期已同步 {last_synced})'
+    if reason == 'freq_control':
+        return '跳过(频控)'
+    return '跳过'
 
 
 def _parse_sync_date(value: str | None, *, label: str, end_of_day: bool = False) -> int | None:
@@ -80,27 +78,24 @@ def _parse_sync_date(value: str | None, *, label: str, end_of_day: bool = False)
     return int(dt.timestamp())
 
 
-def _enforce_exclusive_flags(force: bool, skip_minutes: int | None) -> None:
-    if force and skip_minutes is not None:
-        raise typer.BadParameter('--force 与 --skip-time 不能同时使用')
+def _validate_cli_config(config: SyncConfig) -> None:
+    if config.mode == SyncMode.recent and config.recent_days is None:
+        raise typer.BadParameter('--recent-days is required for --mode recent.')
+    if config.mode == SyncMode.range:
+        if not config.since_date:
+            raise typer.BadParameter('--since is required for --mode range.')
+        since = _parse_sync_date(config.since_date, label='--since')
+        until = _parse_sync_date(config.until_date, label='--until', end_of_day=True)
+        if until is not None and since is not None and until < since:
+            raise typer.BadParameter('--until must be on or after --since.')
 
 
-def _format_last_synced(last_synced_at: datetime | None) -> str:
-    return last_synced_at.isoformat(timespec='seconds') if last_synced_at else '-'
-
-
-def _to_utc_timestamp(value: datetime | None) -> int | None:
-    if not value:
-        return None
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    else:
-        value = value.astimezone(timezone.utc)
-    return int(value.timestamp())
-
-
-def _today_str() -> str:
-    return date.today().isoformat()
+def _status_label(saved: int, completed: bool) -> str:
+    if completed and saved == 0:
+        return '已是最新'
+    if completed:
+        return '成功'
+    return '未完成'
 
 
 def _utc_now_iso() -> str:
@@ -114,7 +109,7 @@ def _append_cli_sync_history(
     finished_at: str,
     status: str,
     saved: int,
-    error: str = "",
+    error: str = '',
 ) -> None:
     append_sync_history(
         storage,
@@ -141,269 +136,97 @@ def _handle_login_expired() -> bool:
     return False
 
 
-def _get_login_session(storage: PostgresStorage) -> LoginSession:
-    try:
-        return storage.get_login_session()
-    except LookupError as exc:
-        typer.echo(str(exc))
-        raise typer.Exit(code=1)
-
-
-def _resolve_shared_window(options: SyncOptions) -> tuple[int | None, int | None]:
-    if options.mode == SyncMode.recent:
-        if options.recent_days is None:
-            raise typer.BadParameter('--recent-days is required for --mode recent.')
-        since = int((datetime.now(timezone.utc) - timedelta(days=options.recent_days)).timestamp())
-        return since, None
-    if options.mode == SyncMode.range:
-        if not options.since_date:
-            raise typer.BadParameter('--since is required for --mode range.')
-        since = _parse_sync_date(options.since_date, label='--since')
-        until = _parse_sync_date(options.until_date, label='--until', end_of_day=True)
-        if until is not None and since is not None and until < since:
-            raise typer.BadParameter('--until must be on or after --since.')
-        return since, until
-    return None, None
-
-
-def _build_sync_plan(
+def _build_sync_config(
     *,
-    storage: PostgresStorage,
-    account: AccountCredential,
-    options: SyncOptions,
-    shared_since: int | None,
-    shared_until: int | None,
-    bulk: bool,
-) -> SyncPlan:
-    since_timestamp = None
-    until_timestamp = None
-    stop_on_existing = False
-    full_synced_hint = False
-    page_limit = options.pages if not bulk else None
-    resume_key = None
-    complete_key = None
-
-    if bulk:
-        resume_key = f'sync_progress:{account.biz}'
-        complete_key = f'sync_complete:{account.biz}'
-
-    if options.mode == SyncMode.full:
-        page_limit = None
-        full_synced_hint = storage.get_meta(f'sync_complete:{account.biz}') is not None
-    elif options.mode == SyncMode.incremental:
-        since_timestamp = _to_utc_timestamp(account.last_synced_at)
-        if since_timestamp is None:
-            stop_on_existing = True
-    elif options.mode == SyncMode.recent:
-        since_timestamp = shared_since
-    elif options.mode == SyncMode.range:
-        since_timestamp = shared_since
-        until_timestamp = shared_until
-
-    if bulk and options.mode != SyncMode.full:
-        resume_key = None
-        full_synced_hint = False
-
-    if options.mode in (SyncMode.incremental, SyncMode.recent, SyncMode.range):
-        full_synced_hint = False
-
-    return SyncPlan(
-        page_limit=page_limit,
-        since_timestamp=since_timestamp,
-        until_timestamp=until_timestamp,
-        stop_on_existing=stop_on_existing,
-        full_synced_hint=full_synced_hint,
-        resume_key=resume_key if options.mode == SyncMode.full and bulk else None,
-        complete_key=complete_key,
-    )
-
-
-async def _sync_account_pages(
-    *,
-    storage: PostgresStorage,
-    client: MPClient,
-    account: AccountCredential,
+    mode: SyncMode,
     page_size: int,
-    pages: int | None,
+    page_limit: int | None,
     sleep_seconds: float,
-    resume_key: str | None = None,
-    full_synced_hint: bool = False,
-    since_timestamp: int | None = None,
-    until_timestamp: int | None = None,
-    stop_on_existing: bool = False,
-    progress: tqdm | None = None,
-    login_flow: Callable[..., Awaitable[None]] | None = None,
-) -> tuple[int, int, bool]:
-    total_saved = 0
-    page_count = 0
-    completed = False
-    try:
-        async for event, payload in sync_account_core(
-            storage=storage,
-            client=client,
-            account=account,
-            page_size=page_size,
-            pages=pages,
-            sleep_seconds=sleep_seconds,
-            resume_key=resume_key,
-            full_synced_hint=full_synced_hint,
-            since_timestamp=since_timestamp,
-            until_timestamp=until_timestamp,
-            stop_on_existing=stop_on_existing,
-            login_flow=login_flow,
-            on_login_required=_handle_login_expired,
-        ):
-            if event == "log":
-                _pbar_write(progress, str(payload))
-            elif event == "progress" and progress is not None:
-                total = payload.get("total")
-                current = payload.get("current")
-                delta = payload.get("delta", 0)
-                if total and total > 0 and progress.total != total:
-                    progress.total = total
-                if delta:
-                    progress.update(delta)
-                elif current is not None:
-                    progress.n = current
-                    progress.refresh()
-            elif event == "complete":
-                total_saved = int(payload.get("total_saved", 0))
-                page_count = int(payload.get("page_count", 0))
-                completed = bool(payload.get("completed"))
-    except SyncInterrupted:
-        message = f'检测到中断，已保存断点：{account.nickname}'
-        _pbar_write(progress, message)
-        raise
-    return total_saved, page_count, completed
+    reset: bool,
+    recent_days: int | None,
+    since_date: str | None,
+    until_date: str | None,
+    force: bool,
+    skip_minutes: int | None,
+) -> SyncConfig:
+    return SyncConfig(
+        mode=mode,
+        page_size=page_size,
+        page_limit=page_limit,
+        sleep_seconds=sleep_seconds,
+        reset=reset,
+        recent_days=recent_days,
+        since_date=since_date,
+        until_date=until_date,
+        force=force,
+        skip_minutes=skip_minutes,
+        download_content=False,
+        download_images=False,
+        content_limit=0,
+    )
 
 
 async def perform_sync(
     *,
     storage: PostgresStorage,
     accounts: list[AccountCredential],
-    options: SyncOptions,
+    config: SyncConfig,
     bulk: bool,
     login_flow: Callable[..., Awaitable[None]] | None,
 ) -> SyncReport:
-    _enforce_exclusive_flags(options.force, options.skip_time)
-    shared_since, shared_until = _resolve_shared_window(options)
-    total_saved = 0
-    summary: list[tuple[str, int]] = []
+    _enforce_exclusive_flags(config.force, config.skip_minutes)
+    progress_map: dict[str, tqdm] = {}
+    account_map = {account.biz: account for account in accounts}
 
+    def observer_factory(account: AccountCredential, is_bulk: bool) -> SyncObserver:
+        desc = f'同步 {account.nickname}' if not is_bulk else f'同步 {account.nickname} ({account.biz})'
+        progress = tqdm(
+            total=None,
+            desc=desc,
+            unit='msg',
+            dynamic_ncols=True,
+            leave=True,
+        )
+        progress_map[account.biz] = progress
+        return TqdmSyncObserver(progress, account)
+
+    report: SyncReport | None = None
     async with MPClient() as client:
-        for account in accounts:
-            resume_key = f'sync_progress:{account.biz}' if bulk else None
-            complete_key = f'sync_complete:{account.biz}' if bulk else None
-            if bulk and options.mode == SyncMode.full and options.reset:
-                if resume_key:
-                    storage.delete_meta(resume_key)
-                if complete_key:
-                    storage.delete_meta(complete_key)
-
-            if account.is_disabled:
-                if bulk:
-                    progress = tqdm(
-                        total=0,
-                        desc=f'同步 {account.nickname} ({account.biz})',
-                        unit='msg',
-                        dynamic_ncols=True,
-                        leave=True,
-                    )
-                    progress.set_postfix_str('skipped (disabled)', refresh=True)
-                    progress.close()
-                    continue
-                typer.echo(f'Account {account.nickname} ({account.biz}) is disabled. Skipping.')
-                return SyncReport(total_saved=0, summary=[])
-
-            if (
-                bulk
-                and options.mode == SyncMode.full
-                and options.skip_time is None
-                and not options.force
-                and complete_key
-                and storage.get_meta(complete_key) == _today_str()
-            ):
-                progress = tqdm(
-                    total=0,
-                    desc=f'同步 {account.nickname} ({account.biz})',
-                    unit='msg',
-                    dynamic_ncols=True,
-                    leave=True,
-                )
-                progress.set_postfix_str('跳过(今日已完成)', refresh=True)
-                progress.close()
-                continue
-
-            if not options.force and should_skip_by_time(account.last_synced_at, options.skip_time):
-                last_synced = _format_last_synced(account.last_synced_at)
-                if bulk:
-                    progress = tqdm(
-                        total=0,
-                        desc=f'同步 {account.nickname} ({account.biz})',
-                        unit='msg',
-                        dynamic_ncols=True,
-                        leave=True,
-                    )
-                    progress.set_postfix_str(f'跳过(近期已同步 {last_synced})', refresh=True)
-                    progress.close()
-                    continue
-                typer.echo(f'该账号近期已同步，跳过（上次同步 {last_synced}）')
-                return SyncReport(total_saved=0, summary=[])
-
-            plan = _build_sync_plan(
-                storage=storage,
-                account=account,
-                options=options,
-                shared_since=shared_since,
-                shared_until=shared_until,
+        service = ArticleSyncService(
+            storage=storage,
+            client=client,
+            login_flow=login_flow,
+            on_login_required=_handle_login_expired,
+        )
+        try:
+            report = await service.sync_accounts(
+                accounts=accounts,
+                config=config,
                 bulk=bulk,
+                use_resume=bulk,
+                observer_factory=observer_factory,
             )
+        finally:
+            if report:
+                for detail in report.details:
+                    progress = progress_map.get(detail.biz)
+                    if not progress:
+                        continue
+                    if detail.skipped:
+                        account = account_map.get(detail.biz)
+                        if account:
+                            progress.set_postfix_str(_format_skip_reason(detail.skip_reason or '', account), refresh=True)
+                    else:
+                        progress.set_postfix_str(_status_label(detail.saved, detail.completed), refresh=True)
+                    progress.close()
+            else:
+                for progress in progress_map.values():
+                    progress.set_postfix_str('失败', refresh=True)
+                    progress.close()
 
-            progress_desc = f'同步 {account.nickname}' if not bulk else f'同步 {account.nickname} ({account.biz})'
-            progress = tqdm(
-                total=None,
-                desc=progress_desc,
-                unit='msg',
-                dynamic_ncols=True,
-                leave=True,
-            )
-            try:
-                saved, _, completed = await _sync_account_pages(
-                    storage=storage,
-                    client=client,
-                    account=account,
-                    page_size=options.page_size,
-                    pages=plan.page_limit,
-                    sleep_seconds=options.sleep_seconds,
-                    resume_key=plan.resume_key,
-                    full_synced_hint=plan.full_synced_hint,
-                    since_timestamp=plan.since_timestamp,
-                    until_timestamp=plan.until_timestamp,
-                    stop_on_existing=plan.stop_on_existing,
-                    progress=progress,
-                    login_flow=login_flow,
-                )
-                status = '成功' if completed else '未完成'
-                if completed and saved == 0:
-                    status = '已是最新'
-                progress.set_postfix_str(status, refresh=True)
-                if completed and bulk and options.mode == SyncMode.full and plan.complete_key:
-                    storage.set_meta(plan.complete_key, _today_str())
-            except SyncInterrupted:
-                progress.set_postfix_str('未完成', refresh=True)
-                typer.echo('同步中断，断点已保存')
-                raise
-            except RuntimeError as exc:
-                progress.set_postfix_str('失败', refresh=True)
-                typer.echo(f'同步失败：{exc}')
-                raise SyncRunError(str(exc), login_required=is_login_error(str(exc))) from exc
-            finally:
-                progress.close()
-
-            total_saved += saved
-            summary.append((account.nickname or account.biz, saved))
-
-    return SyncReport(total_saved=total_saved, summary=summary)
+    if report is None:
+        raise RuntimeError('Sync report missing')
+    return report
 
 
 async def sync_account_articles(
@@ -419,27 +242,28 @@ async def sync_account_articles(
     skip_time: int | None,
     login_flow: Callable[..., Awaitable[None]] | None,
 ) -> None:
-    options = SyncOptions(
+    config = _build_sync_config(
         mode=mode,
         page_size=page_size,
-        pages=pages,
+        page_limit=pages,
         sleep_seconds=0,
         reset=False,
         recent_days=recent_days,
         since_date=since_date,
         until_date=until_date,
         force=force,
-        skip_time=skip_time,
+        skip_minutes=skip_time,
     )
+    _validate_cli_config(config)
     started_at = _utc_now_iso()
     with open_storage() as storage:
-        account = storage.get_account(biz)
+        account = storage.accounts.get_account(biz)
         typer.echo(f'开始同步 {account.nickname} 的文章')
         try:
             report = await perform_sync(
                 storage=storage,
                 accounts=[account],
-                options=options,
+                config=config,
                 bulk=False,
                 login_flow=login_flow,
             )
@@ -491,21 +315,22 @@ async def sync_all_accounts(
     skip_time: int | None,
     login_flow: Callable[..., Awaitable[None]] | None,
 ) -> None:
-    options = SyncOptions(
+    config = _build_sync_config(
         mode=mode,
         page_size=page_size,
-        pages=None,
+        page_limit=None,
         sleep_seconds=sleep_seconds,
         reset=reset,
         recent_days=recent_days,
         since_date=since_date,
         until_date=until_date,
         force=force,
-        skip_time=skip_time,
+        skip_minutes=skip_time,
     )
+    _validate_cli_config(config)
 
     with open_storage() as storage:
-        accounts = storage.list_accounts()
+        accounts = storage.accounts.list_accounts()
         if not accounts:
             typer.echo('尚未保存任何账号，使用 `account add` 添加')
             return
@@ -522,7 +347,7 @@ async def sync_all_accounts(
             report = await perform_sync(
                 storage=storage,
                 accounts=accounts,
-                options=options,
+                config=config,
                 bulk=True,
                 login_flow=login_flow,
             )
@@ -581,26 +406,27 @@ async def sync_group_accounts(
     skip_time: int | None,
     login_flow: Callable[..., Awaitable[None]] | None,
 ) -> None:
-    options = SyncOptions(
+    config = _build_sync_config(
         mode=mode,
         page_size=page_size,
-        pages=None,
+        page_limit=None,
         sleep_seconds=sleep_seconds,
         reset=reset,
         recent_days=recent_days,
         since_date=since_date,
         until_date=until_date,
         force=force,
-        skip_time=skip_time,
+        skip_minutes=skip_time,
     )
+    _validate_cli_config(config)
 
     with open_storage() as storage:
-        groups = storage.list_groups()
+        groups = storage.groups.list_groups()
         target = next((item for item in groups if item.name == group), None)
         if not target:
             typer.echo('分组不存在，请先创建分组')
             return
-        accounts = storage.list_accounts(group=group)
+        accounts = storage.accounts.list_accounts(group=group)
         if not accounts:
             typer.echo('分组内暂无账号')
             return
@@ -617,7 +443,7 @@ async def sync_group_accounts(
             report = await perform_sync(
                 storage=storage,
                 accounts=accounts,
-                options=options,
+                config=config,
                 bulk=True,
                 login_flow=login_flow,
             )

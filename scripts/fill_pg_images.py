@@ -12,6 +12,8 @@ from typing import Iterable, Iterator, Optional
 import httpx
 from hippo.http import MPClient
 from hippo.env import load_env
+from hippo.file_storage import FileStorageError, S3FileStorage
+from hippo.image_store import DbArticleImageStore
 from hippo.storage import PostgresStorage
 from tqdm import tqdm
 
@@ -109,6 +111,14 @@ def main() -> int:
                     print(f"DRY-RUN {item['orig_url']}")
                     skipped += 1
             else:
+                try:
+                    image_store = DbArticleImageStore(
+                        image_repo=storage.images,
+                        file_storage=S3FileStorage(),
+                    )
+                except FileStorageError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 2
                 worker_count = max(1, args.workers)
 
                 def worker(item: dict) -> tuple[dict, bytes, Optional[str]]:
@@ -131,12 +141,12 @@ def main() -> int:
                             orig_url = str(item["orig_url"])
                             try:
                                 _, data, content_type = future.result()
-                                storage.update_article_image_data(
-                                    item["biz"],
-                                    item["article_id"],
-                                    orig_url,
-                                    content_type,
-                                    data,
+                                image_store.store(
+                                    biz=item["biz"],
+                                    article_id=item["article_id"],
+                                    orig_url=orig_url,
+                                    content_type=content_type,
+                                    data=data,
                                 )
                                 updated += 1
                             except Exception as exc:

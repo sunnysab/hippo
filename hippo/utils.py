@@ -98,7 +98,7 @@ def fetchone_row(
 
 
 def load_meta_json(storage: PostgresStorage, key: str, default: Any) -> Any:
-    raw = storage.get_meta(key)
+    raw = storage.meta.get(key)
     if not raw:
         return default
     try:
@@ -108,7 +108,7 @@ def load_meta_json(storage: PostgresStorage, key: str, default: Any) -> Any:
 
 
 def save_meta_json(storage: PostgresStorage, key: str, value: Any) -> None:
-    storage.set_meta(key, json.dumps(value, ensure_ascii=False))
+    storage.meta.set(key, json.dumps(value, ensure_ascii=False))
 
 
 def should_skip_by_time(last_synced_at: datetime | None, skip_minutes: int | None) -> bool:
@@ -126,10 +126,10 @@ def should_skip_by_time(last_synced_at: datetime | None, skip_minutes: int | Non
 
 
 def ensure_default_group(storage: PostgresStorage, *, name: str = 'Default') -> AccountGroup:
-    groups = storage.list_groups()
+    groups = storage.groups.list_groups()
     default_group = next((g for g in groups if g.name == name), None)
     if default_group is None:
-        default_group = storage.upsert_group(name)
+        default_group = storage.groups.upsert_group(name)
     default_id = default_group.id
     with storage.conn.cursor() as cur:
         cur.execute(

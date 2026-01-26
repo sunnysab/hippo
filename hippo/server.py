@@ -184,7 +184,7 @@ class LoginManager:
                     info = await client.fetch_login_info(session)
                     session.nickname = info.get("nickname") or None
                     session.avatar = info.get("avatar") or None
-                    storage.save_login_session(session)
+                    storage.sessions.save_login_session(session)
                     with self._lock:
                         self._status = "success"
                         self._message = "Login success"
@@ -288,7 +288,7 @@ def _list_groups(storage: PostgresStorage) -> list[dict[str, Any]]:
             'sync_mode': g.sync_mode,
             'sync_recent_days': g.sync_recent_days,
         }
-        for g in storage.list_groups()
+        for g in storage.groups.list_groups()
     ]
 
 
@@ -975,7 +975,7 @@ def create_group(
     name = str(body.get("name", "")).strip()
     if not name:
         raise ApiError("Group name is required")
-    group = storage.upsert_group(name)
+    group = storage.groups.upsert_group(name)
     return {"id": group.id, "name": group.name}
 
 
@@ -1077,8 +1077,8 @@ async def search_account(
         raise ApiError("q is required")
     offset = begin if begin is not None else (max(page, 1) - 1) * page_size
     _ensure_avatar_images_table(storage)
-    existing = {account.biz for account in storage.list_accounts()}
-    session = storage.get_login_session()
+    existing = {account.biz for account in storage.accounts.list_accounts()}
+    session = storage.sessions.get_login_session()
     async with MPClient() as client:
         try:
             payload = await client.search_biz(
@@ -1210,7 +1210,7 @@ def create_account(
         group_id = default_group.id
     sync_mode = _normalize_sync_mode(body.get('sync_mode'))
     sync_recent_days = _normalize_recent_days(body.get('sync_recent_days'))
-    account = storage.upsert_account(
+    account = storage.accounts.upsert_account(
         AccountCredential(
             biz=str(body["biz"]),
             nickname=str(body["nickname"]),

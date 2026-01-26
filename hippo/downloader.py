@@ -16,6 +16,7 @@ from .normalize_html import normalize_html
 
 from .env import load_env
 from .http import MPClient
+from .image_store import ArticleImageStore
 from .logger import get_logger
 from .models import AccountCredential, ArticleRecord, DownloadResult
 from .storage import PostgresStorage
@@ -163,6 +164,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         *,
         client: MPClient | None = None,
         storage: PostgresStorage | None = None,
+        image_store: ArticleImageStore | None = None,
         article_worker: str | None = None,
         article_worker_proxy: str | None = None,
         article_max_connections: int | None = None,
@@ -176,6 +178,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
             article_max_connections=article_max_connections,
         )
         self.storage = storage
+        self._image_store = image_store
         self._enable_image_worker = enable_image_worker
         self._article_workers = (
             article_max_connections if article_max_connections and article_max_connections > 0 else 1
@@ -625,7 +628,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
             else:
                 blocks_with_urls.append(block)
 
-        self.storage.save_article_content(
+        self.storage.articles.save_article_content(
             article,
             url_token=url_token,
             title=title or article.title,
@@ -704,6 +707,23 @@ class ArticleDownloader(AbstractAsyncContextManager):
         async with self._image_lock:
             self._image_done += 1
 
+    def _record_image_failure(self, *, article: ArticleRecord, orig_url: str, reason: str) -> None:
+        if self._image_store and orig_url:
+            self._image_store.mark_failed(
+                biz=article.biz,
+                article_id=article.article_id,
+                orig_url=orig_url,
+                reason=reason,
+            )
+            return
+        if self.storage and orig_url:
+            self.storage.images.mark_article_image_failed(
+                article.biz,
+                article.article_id,
+                orig_url,
+                reason,
+            )
+
     async def _download_one_image(
         self,
         *,
@@ -733,13 +753,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                 resolved_url=resolved_url,
                 referer=referer,
             )
-            if self.storage and orig_url:
-                self.storage.mark_article_image_failed(
-                    article.biz,
-                    article.article_id,
-                    orig_url,
-                    reason,
-                )
+            self._record_image_failure(article=article, orig_url=orig_url, reason=reason)
             await self._mark_image_done()
             return
 
@@ -760,14 +774,19 @@ class ArticleDownloader(AbstractAsyncContextManager):
                     data, content_type = await self.client.download_binary_with_type(
                         resolved_url, referer=referer
                     )
-                    if self.storage and orig_url:
-                        self.storage.update_article_image_data(
-                            article.biz,
-                            article.article_id,
-                            orig_url,
-                            content_type,
-                            data,
+                    if self._image_store and orig_url:
+                        self._image_store.store(
+                            biz=article.biz,
+                            article_id=article.article_id,
+                            orig_url=orig_url,
+                            content_type=content_type,
+                            data=data,
                         )
+                    elif orig_url:
+                        reason = 'Image store not configured'
+                        self._record_image_failure(article=article, orig_url=orig_url, reason=reason)
+                        await self._mark_image_done()
+                        return
                     await self._mark_image_done()
                     return
                 except Exception as exc:
@@ -784,13 +803,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                             resolved_url=resolved_url,
                             referer=referer,
                         )
-                        if self.storage and orig_url:
-                            self.storage.mark_article_image_failed(
-                                article.biz,
-                                article.article_id,
-                                orig_url,
-                                str(exc),
-                            )
+                        self._record_image_failure(article=article, orig_url=orig_url, reason=str(exc))
                         await self._mark_image_done()
                         return
                     await asyncio.sleep(min(2 ** attempt, _RETRY_BACKOFF_MAX))

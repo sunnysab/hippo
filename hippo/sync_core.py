@@ -5,16 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Awaitable, Callable, Literal
+from typing import Any, Awaitable, Callable
 
 import httpx
 
 from .http import MPClient, parse_appmsg_publish
 from .models import AccountCredential, ArticleRecord
 from .storage import PostgresStorage
-
-SyncEventType = Literal["progress", "log", "page", "complete"]
-SyncEvent = tuple[SyncEventType, Any]
+from .sync_types import NullSyncObserver, SyncObserver, SyncSummary
 
 
 class SyncInterrupted(RuntimeError):
@@ -81,16 +79,18 @@ async def sync_account_core(
     login_flow: Callable[..., Awaitable[None]] | None = None,
     on_login_required: Callable[[], bool] | None = None,
     collect_existing_ids: bool = False,
-) -> AsyncGenerator[SyncEvent, None]:
-    session = storage.get_login_session()
+    observer: SyncObserver | None = None,
+) -> SyncSummary:
+    observer = observer or NullSyncObserver()
+    session = storage.sessions.get_login_session()
     offset = 0
     if resume_key:
-        saved_offset = storage.get_meta(resume_key)
+        saved_offset = storage.meta.get(resume_key)
         if saved_offset and saved_offset.isdigit():
             offset = int(saved_offset)
-            yield "log", f"检测到断点进度，继续 {account.nickname} offset={offset}"
+            observer.on_log(f"检测到断点进度，继续 {account.nickname} offset={offset}")
     if offset > 0:
-        yield "progress", {"current": offset, "total": None, "delta": 0}
+        observer.on_progress(current=offset, total=None, delta=0)
 
     total_saved = 0
     page_count = 0
@@ -117,14 +117,14 @@ async def sync_account_core(
                         if login_flow is None:
                             raise
                         await login_flow(timeout=300, poll_interval=2)
-                        session = storage.get_login_session()
+                        session = storage.sessions.get_login_session()
                         continue
                     if is_freq_control(message):
                         freq_attempt += 1
                         if freq_attempt > 10:
                             raise RuntimeError(f"频控重试次数过多 ({freq_attempt})，终止同步") from exc
                         wait_seconds = 15 if freq_attempt == 1 else min(15 + 5 * (freq_attempt - 1), 60)
-                        yield "log", f"触发频率控制，等待 {wait_seconds} 秒后重试"
+                        observer.on_log(f"触发频率控制，等待 {wait_seconds} 秒后重试")
                         await asyncio.sleep(wait_seconds)
                         continue
                     raise
@@ -135,7 +135,7 @@ async def sync_account_core(
                     await asyncio.sleep(min(2**attempt, 5))
             request_count += 1
             if request_count % 60 == 0:
-                yield "log", "达到 60 次请求，等待 15 秒"
+                observer.on_log("达到 60 次请求，等待 15 秒")
                 await asyncio.sleep(15)
             publish_page = extract_publish_page(payload)
             publish_list = publish_page.get("publish_list") or []
@@ -171,7 +171,7 @@ async def sync_account_core(
             should_check_existing = collect_existing_ids or full_synced_hint or stop_on_existing
             if records and should_check_existing:
                 try:
-                    existing_ids = storage.get_existing_article_ids(
+                    existing_ids = storage.articles.get_existing_article_ids(
                         account.biz, [record.article_id for record in records]
                     )
                 except Exception:
@@ -181,8 +181,8 @@ async def sync_account_core(
                 break
             saved = 0
             if records:
-                saved = storage.save_articles(records)
-                storage.update_last_synced(account.biz)
+                saved = storage.articles.save_articles(records)
+                storage.accounts.update_last_synced(account.biz)
                 total_saved += saved
             page_count += 1
             current_completed = offset + publish_list_len
@@ -190,24 +190,26 @@ async def sync_account_core(
                 current_completed = total_count
             offset += page_size
             if resume_key:
-                storage.set_meta(resume_key, str(offset))
+                storage.meta.set(resume_key, str(offset))
             delta = current_completed - current_progress
             current_progress = current_completed
-            yield "page", {
-                "records": records,
-                "existing_ids": existing_ids,
-                "saved": saved,
-                "page_count": page_count,
-                "offset": offset,
-                "total_count": total_count,
-                "current": current_completed,
-                "delta": delta,
-            }
-            yield "progress", {
-                "current": current_completed,
-                "total": total_count,
-                "delta": max(delta, 0),
-            }
+            observer.on_page(
+                {
+                    "records": records,
+                    "existing_ids": existing_ids,
+                    "saved": saved,
+                    "page_count": page_count,
+                    "offset": offset,
+                    "total_count": total_count,
+                    "current": current_completed,
+                    "delta": delta,
+                }
+            )
+            observer.on_progress(
+                current=current_completed,
+                total=total_count,
+                delta=max(delta, 0),
+            )
             if stop_due_to_since:
                 completed = True
                 break
@@ -220,7 +222,9 @@ async def sync_account_core(
             raise SyncInterrupted() from exc
 
     if resume_key and completed:
-        storage.delete_meta(resume_key)
+        storage.meta.delete(resume_key)
     if total_count is not None and completed:
-        yield "progress", {"current": total_count, "total": total_count, "delta": 0}
-    yield "complete", {"total_saved": total_saved, "page_count": page_count, "completed": completed}
+        observer.on_progress(current=total_count, total=total_count, delta=0)
+    summary = SyncSummary(total_saved=total_saved, page_count=page_count, completed=completed)
+    observer.on_complete(summary)
+    return summary
