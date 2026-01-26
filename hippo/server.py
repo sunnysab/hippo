@@ -26,7 +26,8 @@ except Exception:  # pragma: no cover - optional fallback
     jieba = None
 
 from .emailer import get_email_settings, set_email_settings
-from .http import MPClient, SessionExpiredError
+from .http import MPClient
+from .wechat_api import SessionExpiredError, WeChatApiClient
 from .models import AccountCredential
 from .rss import build_rss_xml, query_rss_items
 from .s3 import build_image_key, fetch_object_bytes, get_s3_client, upload_object_bytes
@@ -38,6 +39,7 @@ from .sync_service import (
     set_sync_settings as save_sync_settings,
 )
 from .utils import ensure_default_group, fetchall_rows, fetchone_row, parse_iso_date_to_timestamp
+from .login_service import save_login_session
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
@@ -146,8 +148,9 @@ class LoginManager:
         sid = f"{int(time_module.time() * 1000)}{random.randint(100, 999)}"
         try:
             async with MPClient(timeout=15.0) as client:
-                uuid_cookie = await client.start_login_session(sid)
-                qrcode_bytes = await client.fetch_login_qrcode(uuid_cookie)
+                api_client = WeChatApiClient(client)
+                uuid_cookie = await api_client.start_login_session(sid)
+                qrcode_bytes = await api_client.fetch_login_qrcode(uuid_cookie)
             with self._lock:
                 self._uuid_cookie = uuid_cookie
                 self._qrcode = qrcode_bytes
@@ -175,16 +178,17 @@ class LoginManager:
             raise ApiError("Login not started", status=400)
         try:
             async with MPClient(timeout=15.0) as client:
-                resp = await client.check_login_status(uuid_cookie)
+                api_client = WeChatApiClient(client)
+                resp = await api_client.check_login_status(uuid_cookie)
                 if resp.get("base_resp", {}).get("ret") != 0:
                     raise ApiError("Login status error")
                 status = resp.get("status")
                 if status == 1:
-                    session = await client.finalize_login(uuid_cookie)
-                    info = await client.fetch_login_info(session)
+                    session = await api_client.finalize_login(uuid_cookie)
+                    info = await api_client.fetch_login_info(session)
                     session.nickname = info.get("nickname") or None
                     session.avatar = info.get("avatar") or None
-                    storage.sessions.save_login_session(session)
+                    save_login_session(storage, session)
                     with self._lock:
                         self._status = "success"
                         self._message = "Login success"
@@ -193,7 +197,7 @@ class LoginManager:
                         self._updated_at = _utc_now_iso()
                     return self._snapshot()
                 if status in (2, 3):
-                    qrcode_bytes = await client.fetch_login_qrcode(uuid_cookie)
+                    qrcode_bytes = await api_client.fetch_login_qrcode(uuid_cookie)
                     with self._lock:
                         self._qrcode = qrcode_bytes
                         self._status = "refresh"
@@ -236,20 +240,20 @@ class LoginManager:
 
 
 def _ensure_avatar_images_table(storage: PostgresStorage) -> None:
-    with storage.conn.cursor() as cur:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS avatar_images (
-                biz TEXT PRIMARY KEY,
-                avatar_url TEXT,
-                content_type TEXT,
-                data BYTEA,
-                updated_at TIMESTAMPTZ NOT NULL
+    with storage.transaction():
+        with storage.conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS avatar_images (
+                    biz TEXT PRIMARY KEY,
+                    avatar_url TEXT,
+                    content_type TEXT,
+                    data BYTEA,
+                    updated_at TIMESTAMPTZ NOT NULL
+                )
+                """
             )
-            """
-        )
-    storage.conn.commit()
-    _migrate_legacy_avatar_tables(storage)
+        _migrate_legacy_avatar_tables(storage)
 
 
 def _migrate_legacy_avatar_tables(storage: PostgresStorage) -> None:
@@ -274,7 +278,6 @@ def _migrate_legacy_avatar_tables(storage: PostgresStorage) -> None:
                 ON CONFLICT (biz) DO NOTHING
                 """
             )
-    storage.conn.commit()
 
 
 
@@ -326,15 +329,15 @@ def _update_group(storage: PostgresStorage, group_id: int, updates: dict[str, An
         raise ApiError('No fields to update')
     fields.append('updated_at = NOW()')
     params.append(group_id)
-    with storage.conn.cursor() as cur:
-        cur.execute(
-            f"UPDATE account_groups SET {', '.join(fields)} WHERE id = %s",
-            params,
-        )
-        updated = cur.rowcount
-    storage.conn.commit()
-    if updated == 0:
-        raise ApiError('Group not found', status=404)
+    with storage.transaction():
+        with storage.conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE account_groups SET {', '.join(fields)} WHERE id = %s",
+                params,
+            )
+            updated = cur.rowcount
+            if updated == 0:
+                raise ApiError('Group not found', status=404)
     return _get_group(storage, group_id)
 
 
@@ -343,16 +346,16 @@ def _delete_group(storage: PostgresStorage, group_id: int) -> None:
     default_id = default_group.id
     if group_id == default_id:
         raise ApiError("Default group cannot be deleted", status=400)
-    with storage.conn.cursor() as cur:
-        cur.execute(
-            "UPDATE accounts SET group_id = %s WHERE group_id = %s",
-            (default_id, group_id),
-        )
-        cur.execute("DELETE FROM account_groups WHERE id = %s", (group_id,))
-        deleted = cur.rowcount
-    storage.conn.commit()
-    if deleted == 0:
-        raise ApiError("Group not found", status=404)
+    with storage.transaction():
+        with storage.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE accounts SET group_id = %s WHERE group_id = %s",
+                (default_id, group_id),
+            )
+            cur.execute("DELETE FROM account_groups WHERE id = %s", (group_id,))
+            deleted = cur.rowcount
+            if deleted == 0:
+                raise ApiError("Group not found", status=404)
 
 
 def _build_search_clause(
@@ -510,12 +513,12 @@ def _update_account(storage: PostgresStorage, biz: str, payload: dict[str, Any])
     params.append(biz)
 
     query = f"UPDATE accounts SET {', '.join(fields)} WHERE biz = %s"
-    with storage.conn.cursor() as cur:
-        cur.execute(query, params)
-        updated = cur.rowcount
-    storage.conn.commit()
-    if updated == 0:
-        raise ApiError("Account not found", status=404)
+    with storage.transaction():
+        with storage.conn.cursor() as cur:
+            cur.execute(query, params)
+            updated = cur.rowcount
+            if updated == 0:
+                raise ApiError("Account not found", status=404)
     return _get_account(storage, biz)
 
 
@@ -802,18 +805,18 @@ def _store_image_to_s3_async(
                 content_type=content_type,
             )
             with open_storage() as storage:
-                with storage.conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        UPDATE article_images
-                        SET s3_key = %s,
-                            content_type = %s,
-                            updated_at = %s
-                        WHERE id = %s
-                        """,
-                        (resolved_key, content_type, _utc_now_iso(), image_id),
-                    )
-                storage.conn.commit()
+                with storage.transaction():
+                    with storage.conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            UPDATE article_images
+                            SET s3_key = %s,
+                                content_type = %s,
+                                updated_at = %s
+                            WHERE id = %s
+                            """,
+                            (resolved_key, content_type, _utc_now_iso(), image_id),
+                        )
         except Exception as exc:
             logger.warning('S3 image store failed (id=%s key=%s): %s', image_id, resolved_key, exc)
 
@@ -830,18 +833,18 @@ def _get_avatar_row(storage: PostgresStorage, biz: str) -> dict[str, Any] | None
 
 
 def _upsert_avatar_url(storage: PostgresStorage, biz: str, url: str) -> None:
-    with storage.conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO avatar_images (biz, avatar_url, updated_at)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (biz) DO UPDATE SET
-                avatar_url=EXCLUDED.avatar_url,
-                updated_at=EXCLUDED.updated_at
-            """,
-            (biz, url, _utc_now_iso()),
-        )
-    storage.conn.commit()
+    with storage.transaction():
+        with storage.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO avatar_images (biz, avatar_url, updated_at)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (biz) DO UPDATE SET
+                    avatar_url=EXCLUDED.avatar_url,
+                    updated_at=EXCLUDED.updated_at
+                """,
+                (biz, url, _utc_now_iso()),
+            )
 
 
 def _store_avatar(
@@ -852,20 +855,20 @@ def _store_avatar(
     data: bytes,
     avatar_url: str | None = None,
 ) -> None:
-    with storage.conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO avatar_images (biz, avatar_url, content_type, data, updated_at)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (biz) DO UPDATE SET
-                avatar_url=COALESCE(EXCLUDED.avatar_url, avatar_images.avatar_url),
-                content_type=EXCLUDED.content_type,
-                data=EXCLUDED.data,
-                updated_at=EXCLUDED.updated_at
-            """,
-            (biz, avatar_url, content_type, psycopg.Binary(data), _utc_now_iso()),
-        )
-    storage.conn.commit()
+    with storage.transaction():
+        with storage.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO avatar_images (biz, avatar_url, content_type, data, updated_at)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (biz) DO UPDATE SET
+                    avatar_url=COALESCE(EXCLUDED.avatar_url, avatar_images.avatar_url),
+                    content_type=EXCLUDED.content_type,
+                    data=EXCLUDED.data,
+                    updated_at=EXCLUDED.updated_at
+                """,
+                (biz, avatar_url, content_type, psycopg.Binary(data), _utc_now_iso()),
+            )
 
 
 def _fetch_and_cache_avatar(storage: PostgresStorage, biz: str, url: str) -> tuple[bytes, str] | None:
@@ -975,7 +978,8 @@ def create_group(
     name = str(body.get("name", "")).strip()
     if not name:
         raise ApiError("Group name is required")
-    group = storage.groups.upsert_group(name)
+    with storage.transaction():
+        group = storage.groups.upsert_group(name)
     return {"id": group.id, "name": group.name}
 
 
@@ -1080,8 +1084,9 @@ async def search_account(
     existing = {account.biz for account in storage.accounts.list_accounts()}
     session = storage.sessions.get_login_session()
     async with MPClient() as client:
+        api_client = WeChatApiClient(client)
         try:
-            payload = await client.search_biz(
+            payload = await api_client.search_biz(
                 session,
                 keyword=keyword,
                 begin=offset,
@@ -1210,17 +1215,18 @@ def create_account(
         group_id = default_group.id
     sync_mode = _normalize_sync_mode(body.get('sync_mode'))
     sync_recent_days = _normalize_recent_days(body.get('sync_recent_days'))
-    account = storage.accounts.upsert_account(
-        AccountCredential(
-            biz=str(body["biz"]),
-            nickname=str(body["nickname"]),
-            alias=body.get("alias"),
-            round_head_img=body.get("round_head_img"),
-            group_id=int(group_id) if group_id is not None else None,
-            sync_mode=sync_mode,
-            sync_recent_days=sync_recent_days,
+    with storage.transaction():
+        account = storage.accounts.upsert_account(
+            AccountCredential(
+                biz=str(body["biz"]),
+                nickname=str(body["nickname"]),
+                alias=body.get("alias"),
+                round_head_img=body.get("round_head_img"),
+                group_id=int(group_id) if group_id is not None else None,
+                sync_mode=sync_mode,
+                sync_recent_days=sync_recent_days,
+            )
         )
-    )
     return {
         "biz": account.biz,
         "nickname": account.nickname,
@@ -1251,12 +1257,12 @@ def move_accounts(
     if group_id is None:
         default_group = ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
         group_id = default_group.id
-    with storage.conn.cursor() as cur:
-        cur.execute(
-            "UPDATE accounts SET group_id = %s, updated_at = NOW() WHERE biz = ANY(%s)",
-            (group_id, biz_list),
-        )
-    storage.conn.commit()
+    with storage.transaction():
+        with storage.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE accounts SET group_id = %s, updated_at = NOW() WHERE biz = ANY(%s)",
+                (group_id, biz_list),
+            )
     return {"updated": len(biz_list)}
 
 
@@ -1296,13 +1302,13 @@ def batch_update_accounts(
             params.append(updates[key])
     fields.append('updated_at = NOW()')
     params.append(biz_list)
-    with storage.conn.cursor() as cur:
-        cur.execute(
-            f"UPDATE accounts SET {', '.join(fields)} WHERE biz = ANY(%s)",
-            params,
-        )
-        updated = cur.rowcount
-    storage.conn.commit()
+    with storage.transaction():
+        with storage.conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE accounts SET {', '.join(fields)} WHERE biz = ANY(%s)",
+                params,
+            )
+            updated = cur.rowcount
     return {'updated': updated}
 
 
@@ -1365,7 +1371,8 @@ def delete_account(
     Raises:
         ApiError: 如果公众号未找到。
     """
-    removed = storage.remove_account(biz)
+    with storage.transaction():
+        removed = storage.accounts.remove_account(biz)
     if removed == 0:
         raise ApiError("Account not found", status=404)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -1640,7 +1647,7 @@ def get_sync_settings(storage: PostgresStorage = Depends(_get_storage)) -> dict[
 
 
 @router.patch("/sync/settings")
-def update_sync_settings(
+async def update_sync_settings(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
     scheduler: "SyncScheduler" = Depends(_get_sync_scheduler),
@@ -1713,7 +1720,7 @@ def update_sync_settings(
 
 
 @router.post("/sync/run", status_code=status.HTTP_202_ACCEPTED)
-def run_sync(
+async def run_sync(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
     scheduler: "SyncScheduler" = Depends(_get_sync_scheduler),
@@ -1741,9 +1748,9 @@ def run_sync(
         )
         if not row:
             raise ApiError('Group not found', status=404)
-        threading.Thread(target=scheduler.run_group, args=(group_id,), daemon=True).start()
+        asyncio.create_task(scheduler.run_group(group_id))
         return {'status': 'running', 'group_id': group_id}
-    threading.Thread(target=scheduler.run_once, daemon=True).start()
+    asyncio.create_task(scheduler.run_once())
     return {'status': 'running'}
 
 
@@ -1849,16 +1856,16 @@ def create_app(static_dir: Path | str = "static") -> FastAPI:
     )
 
     @app.on_event("startup")
-    def _startup() -> None:
+    async def _startup() -> None:
         app.state.login_manager = LoginManager()
         app.state.sync_scheduler = SyncScheduler()
         app.state.sync_scheduler.start()
 
     @app.on_event("shutdown")
-    def _shutdown() -> None:
+    async def _shutdown() -> None:
         scheduler = getattr(app.state, "sync_scheduler", None)
         if scheduler:
-            scheduler.stop()
+            await scheduler.stop()
 
     @app.exception_handler(ApiError)
     async def _handle_api_error(request: Request, exc: ApiError) -> JSONResponse:

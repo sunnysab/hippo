@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Callable, Protocol
 
 from .file_storage import FileStorage
 from .repositories import ImageRepository
@@ -31,10 +31,17 @@ class ArticleImageStore(Protocol):
         ...
 
 
-class DbArticleImageStore:
-    def __init__(self, *, image_repo: ImageRepository, file_storage: FileStorage) -> None:
+class ArticleImageService:
+    def __init__(
+        self,
+        *,
+        image_repo: ImageRepository,
+        file_storage: FileStorage,
+        transaction: Callable[[], object] | None = None,
+    ) -> None:
         self._image_repo = image_repo
         self._file_storage = file_storage
+        self._transaction = transaction
 
     def store(
         self,
@@ -45,21 +52,28 @@ class DbArticleImageStore:
         content_type: str | None,
         data: bytes,
     ) -> None:
-        target = self._image_repo.get_article_image_target(biz, article_id, orig_url)
-        if not target:
-            return
-        s3_key = self._file_storage.store_article_image(
-            image_id=target.image_id,
-            content_type=content_type,
-            payload=data,
-            key=target.s3_key,
-        )
-        self._image_repo.update_article_image_metadata(
-            article_pk=target.article_pk,
-            orig_url=orig_url,
-            content_type=content_type,
-            s3_key=s3_key,
-        )
+        def _run() -> None:
+            target = self._image_repo.get_article_image_target(biz, article_id, orig_url)
+            if not target:
+                return
+            s3_key = self._file_storage.store_article_image(
+                image_id=target.image_id,
+                content_type=content_type,
+                payload=data,
+                key=target.s3_key,
+            )
+            self._image_repo.update_article_image_metadata(
+                article_pk=target.article_pk,
+                orig_url=orig_url,
+                content_type=content_type,
+                s3_key=s3_key,
+            )
+
+        if self._transaction:
+            with self._transaction():
+                _run()
+        else:
+            _run()
 
     def mark_failed(
         self,
@@ -69,7 +83,11 @@ class DbArticleImageStore:
         orig_url: str,
         reason: str,
     ) -> None:
-        self._image_repo.mark_article_image_failed(biz, article_id, orig_url, reason)
+        if self._transaction:
+            with self._transaction():
+                self._image_repo.mark_article_image_failed(biz, article_id, orig_url, reason)
+        else:
+            self._image_repo.mark_article_image_failed(biz, article_id, orig_url, reason)
 
 
-__all__ = ['ArticleImageStore', 'DbArticleImageStore']
+__all__ = ['ArticleImageStore', 'ArticleImageService']

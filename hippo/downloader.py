@@ -407,8 +407,12 @@ class ArticleDownloader(AbstractAsyncContextManager):
     def _ensure_adhoc_account(self, biz: str) -> None:
         if biz != 'adhoc' or not self.storage:
             return
-        get_account = getattr(self.storage, 'get_account', None)
-        upsert_account = getattr(self.storage, 'upsert_account', None)
+        account_repo = getattr(self.storage, 'accounts', None)
+        get_account = getattr(account_repo, 'get_account', None) if account_repo else None
+        upsert_account = getattr(account_repo, 'upsert_account', None) if account_repo else None
+        if not callable(upsert_account):
+            upsert_account = getattr(self.storage, 'upsert_account', None)
+            get_account = getattr(self.storage, 'get_account', None)
         if not callable(upsert_account):
             return
         if callable(get_account):
@@ -417,14 +421,18 @@ class ArticleDownloader(AbstractAsyncContextManager):
                 return
             except LookupError:
                 pass
-        upsert_account(
-            AccountCredential(
-                biz=biz,
-                nickname=biz,
-                alias=None,
-                round_head_img=None,
-            )
+        credential = AccountCredential(
+            biz=biz,
+            nickname=biz,
+            alias=None,
+            round_head_img=None,
         )
+        transaction = getattr(self.storage, 'transaction', None)
+        if callable(transaction):
+            with transaction():
+                upsert_account(credential)
+        else:
+            upsert_account(credential)
 
     async def _fetch_with_retry(self, url: str) -> str:
         last_exc: Exception | None = None
@@ -628,20 +636,34 @@ class ArticleDownloader(AbstractAsyncContextManager):
             else:
                 blocks_with_urls.append(block)
 
-        self.storage.articles.save_article_content(
-            article,
-            url_token=url_token,
-            title=title or article.title,
-            clean_html=clean_html,
-            content_markdown=content_markdown,
-            content_blocks=blocks_with_urls,
-            cover_url=cover_url,
-            images=images,
-        )
+        if hasattr(self.storage, 'transaction'):
+            with self.storage.transaction():
+                self.storage.articles.save_article_content(
+                    article,
+                    url_token=url_token,
+                    title=title or article.title,
+                    clean_html=clean_html,
+                    content_markdown=content_markdown,
+                    content_blocks=blocks_with_urls,
+                    cover_url=cover_url,
+                    images=images,
+                )
+        else:
+            self.storage.articles.save_article_content(
+                article,
+                url_token=url_token,
+                title=title or article.title,
+                clean_html=clean_html,
+                content_markdown=content_markdown,
+                content_blocks=blocks_with_urls,
+                cover_url=cover_url,
+                images=images,
+            )
 
     def _is_downloaded(self, article: ArticleRecord) -> bool:
         if self.storage and os.environ.get("HIPPO_PG_DSN"):
-            has_content = getattr(self.storage, "has_article_content", None)
+            repo = getattr(self.storage, 'articles', None)
+            has_content = getattr(repo, 'has_article_content', None) if repo else None
             if callable(has_content):
                 try:
                     return bool(has_content(article.biz, article.article_id))

@@ -126,17 +126,17 @@ def should_skip_by_time(last_synced_at: datetime | None, skip_minutes: int | Non
 
 
 def ensure_default_group(storage: PostgresStorage, *, name: str = 'Default') -> AccountGroup:
-    groups = storage.groups.list_groups()
-    default_group = next((g for g in groups if g.name == name), None)
-    if default_group is None:
-        default_group = storage.groups.upsert_group(name)
-    default_id = default_group.id
-    with storage.conn.cursor() as cur:
-        cur.execute(
-            'UPDATE accounts SET group_id = %s WHERE group_id IS NULL',
-            (default_id,),
-        )
-    storage.conn.commit()
+    with storage.transaction():
+        groups = storage.groups.list_groups()
+        default_group = next((g for g in groups if g.name == name), None)
+        if default_group is None:
+            default_group = storage.groups.upsert_group(name)
+        default_id = default_group.id
+        with storage.conn.cursor() as cur:
+            cur.execute(
+                'UPDATE accounts SET group_id = %s WHERE group_id IS NULL',
+                (default_id,),
+            )
     return default_group
 
 

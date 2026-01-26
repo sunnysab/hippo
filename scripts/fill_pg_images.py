@@ -13,7 +13,7 @@ import httpx
 from hippo.http import MPClient
 from hippo.env import load_env
 from hippo.file_storage import FileStorageError, S3FileStorage
-from hippo.image_store import DbArticleImageStore
+from hippo.image_store import ArticleImageService
 from hippo.storage import PostgresStorage
 from tqdm import tqdm
 
@@ -112,9 +112,10 @@ def main() -> int:
                     skipped += 1
             else:
                 try:
-                    image_store = DbArticleImageStore(
+                    image_store = ArticleImageService(
                         image_repo=storage.images,
                         file_storage=S3FileStorage(),
+                        transaction=storage.transaction,
                     )
                 except FileStorageError as exc:
                     print(str(exc), file=sys.stderr)

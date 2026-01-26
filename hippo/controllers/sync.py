@@ -8,12 +8,12 @@ from typing import Awaitable, Callable
 import typer
 from tqdm import tqdm
 
-from ..http import MPClient
+from ..container import build_sync_container
 from ..models import AccountCredential
 from ..storage import PostgresStorage, open_storage
 from ..sync_core import SyncInterrupted
 from ..sync_service import ArticleSyncService, SyncRunError, append_sync_history
-from ..sync_types import SyncConfig, SyncMode, SyncObserver, SyncReport
+from ..sync_types import NullSyncObserver, SyncConfig, SyncMode, SyncObserver, SyncReport
 from ..utils import format_table
 
 
@@ -191,10 +191,11 @@ async def perform_sync(
         return TqdmSyncObserver(progress, account)
 
     report: SyncReport | None = None
-    async with MPClient() as client:
+    container = build_sync_container(storage=storage, enable_download=False, enable_images=False)
+    async with container as app:
         service = ArticleSyncService(
             storage=storage,
-            client=client,
+            client=app.api_client,
             login_flow=login_flow,
             on_login_required=_handle_login_expired,
         )

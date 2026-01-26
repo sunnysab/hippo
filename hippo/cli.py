@@ -22,11 +22,13 @@ import click
 from tqdm import tqdm
 
 from .config import DEFAULT_PAGE_SIZE
-from .downloader import ArticleDownloader
+from .container import build_downloader_container
 from .env import load_env
-from .http import MPClient, SessionExpiredError
+from .http import MPClient
 from .file_storage import FileStorageError, S3FileStorage
-from .image_store import DbArticleImageStore
+from .image_store import ArticleImageService
+from .wechat_api import SessionExpiredError, WeChatApiClient
+from .login_service import save_login_session
 from .logger import setup_logger
 from .models import AccountCredential, AccountGroup, LoginSession
 from .server import serve as run_server
@@ -257,11 +259,15 @@ def _resolve_pg_dsn() -> str:
     return pg_dsn
 
 
-def _build_image_store(storage: PostgresStorage, *, enabled: bool) -> DbArticleImageStore | None:
+def _build_image_store(storage: PostgresStorage, *, enabled: bool) -> ArticleImageService | None:
     if not enabled:
         return None
     try:
-        return DbArticleImageStore(image_repo=storage.images, file_storage=S3FileStorage())
+        return ArticleImageService(
+            image_repo=storage.images,
+            file_storage=S3FileStorage(),
+            transaction=storage.transaction,
+        )
     except FileStorageError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1)
@@ -317,7 +323,8 @@ def add_account(
         round_head_img=(round_head_img.strip() if round_head_img else None),
     )
     with open_storage() as storage:
-        stored = storage.accounts.upsert_account(credential)
+        with storage.transaction():
+            stored = storage.accounts.upsert_account(credential)
     typer.echo(f"账号 {stored.nickname} ({stored.biz}) 已保存")
 
 
@@ -353,8 +360,9 @@ async def _search_accounts_async(
     while True:
         offset = begin if begin is not None else (current_page - 1) * page_size
         async with MPClient() as client:
+            api_client = WeChatApiClient(client)
             try:
-                payload = await client.search_biz(
+                payload = await api_client.search_biz(
                     session,
                     keyword=keyword,
                     begin=offset,
@@ -404,17 +412,18 @@ async def _search_accounts_async(
                 continue
             with open_storage() as storage:
                 saved = []
-                for idx in indices:
-                    item = records[idx]
-                    fakeid_value = (item.get("fakeid") or "").strip()
-                    credential = AccountCredential(
-                        biz=fakeid_value,
-                        nickname=(item.get("nickname") or "").strip() or "未知公众号",
-                        alias=(item.get("alias") or "").strip() or None,
-                        round_head_img=(item.get("round_head_img") or "").strip() or None,
-                    )
-                    stored = storage.accounts.upsert_account(credential)
-                    saved.append(f"{stored.nickname} ({stored.biz})")
+                with storage.transaction():
+                    for idx in indices:
+                        item = records[idx]
+                        fakeid_value = (item.get("fakeid") or "").strip()
+                        credential = AccountCredential(
+                            biz=fakeid_value,
+                            nickname=(item.get("nickname") or "").strip() or "未知公众号",
+                            alias=(item.get("alias") or "").strip() or None,
+                            round_head_img=(item.get("round_head_img") or "").strip() or None,
+                        )
+                        stored = storage.accounts.upsert_account(credential)
+                        saved.append(f"{stored.nickname} ({stored.biz})")
             typer.echo(f"已保存 {len(saved)} 个账号")
         if begin is not None:
             begin += page_size
@@ -456,7 +465,8 @@ def add_group(
         typer.echo("Please provide a group name.")
         raise typer.Exit(code=2)
     with open_storage() as storage:
-        group = storage.groups.upsert_group(name)
+        with storage.transaction():
+            group = storage.groups.upsert_group(name)
     typer.echo(f"Group {group.name} saved.")
 
 
@@ -529,7 +539,8 @@ def set_account_group(
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
-        storage.accounts.set_account_group(target.biz, group)
+        with storage.transaction():
+            storage.accounts.set_account_group(target.biz, group)
     typer.echo(f"Account {target.nickname} ({target.biz}) assigned to group {group}.")
 
 
@@ -544,7 +555,8 @@ def clear_account_group(
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
-        storage.accounts.set_account_group(target.biz, None)
+        with storage.transaction():
+            storage.accounts.set_account_group(target.biz, None)
     typer.echo(f"Account {target.nickname} ({target.biz}) group cleared.")
 
 
@@ -558,7 +570,8 @@ def remove_account(
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
-        removed = storage.remove_account(target.biz)
+        with storage.transaction():
+            removed = storage.accounts.remove_account(target.biz)
     if removed:
         typer.echo(f"Account {target.nickname} ({target.biz}) removed.")
     else:
@@ -576,7 +589,8 @@ def disable_account(
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
-        storage.accounts.set_account_disabled(target.biz, True)
+        with storage.transaction():
+            storage.accounts.set_account_disabled(target.biz, True)
     typer.echo(f"Account {target.nickname} ({target.biz}) disabled.")
 
 
@@ -591,7 +605,8 @@ def enable_account(
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
-        storage.accounts.set_account_disabled(target.biz, False)
+        with storage.transaction():
+            storage.accounts.set_account_disabled(target.biz, False)
     typer.echo(f"Account {target.nickname} ({target.biz}) enabled.")
 
 
@@ -634,7 +649,8 @@ def set_account_sync_config(
         ):
             raise typer.BadParameter("recent mode requires --recent-days.")
         updated = target.model_copy(update=updates)
-        storage.accounts.upsert_account(updated)
+        with storage.transaction():
+            storage.accounts.upsert_account(updated)
     typer.echo(f"Account {target.nickname} ({target.biz}) sync settings updated.")
 
 
@@ -829,16 +845,19 @@ async def _sync_article_download_async(
             leave=True,
         )
         try:
-            image_store = _build_image_store(storage, enabled=download_images)
-            async with ArticleDownloader(
+            container = build_downloader_container(
                 storage=storage,
-                image_store=image_store,
+                enable_images=download_images,
                 article_worker=worker_prefix,
                 article_worker_proxy=worker_proxy,
                 article_max_connections=workers,
                 image_workers=image_workers,
                 enable_image_worker=not article_only,
-            ) as downloader:
+            )
+            async with container as app:
+                downloader = app.downloader
+                if not downloader:
+                    raise RuntimeError("Downloader not initialized")
                 results, skipped, failed = await downloader.download_many(
                     articles,
                     with_images=download_images,
@@ -915,16 +934,19 @@ async def _sync_all_article_download_async(
         group_defaults = _build_group_defaults(storage)
         download_images = with_images and not article_only
         record_images_only = article_only
-        image_store = _build_image_store(storage, enabled=download_images)
-        async with ArticleDownloader(
+        container = build_downloader_container(
             storage=storage,
-            image_store=image_store,
+            enable_images=download_images,
             article_worker=worker_prefix,
             article_worker_proxy=worker_proxy,
             article_max_connections=workers,
             image_workers=image_workers,
             enable_image_worker=not article_only,
-        ) as downloader:
+        )
+        async with container as app:
+            downloader = app.downloader
+            if not downloader:
+                raise RuntimeError("Downloader not initialized")
             total_skipped = 0
             total_failed = 0
             for account in accounts:
@@ -1020,15 +1042,18 @@ async def _download_article_async(
     _resolve_pg_dsn()
     with open_storage() as storage:
         try:
-            image_store = _build_image_store(storage, enabled=with_images)
-            async with ArticleDownloader(
+            container = build_downloader_container(
                 storage=storage,
-                image_store=image_store,
+                enable_images=with_images,
                 article_worker=worker_prefix,
                 article_worker_proxy=worker_proxy,
                 article_max_connections=workers,
                 image_workers=image_workers,
-            ) as downloader:
+            )
+            async with container as app:
+                downloader = app.downloader
+                if not downloader:
+                    raise RuntimeError("Downloader not initialized")
                 await downloader.download_from_url(
                     url,
                     with_images=with_images,
@@ -1391,14 +1416,15 @@ async def _run_login_flow(*, timeout: int, poll_interval: int) -> None:
     sid = f"{int(time.time() * 1000)}{random.randint(100, 999)}"
     typer.echo("正在获取二维码...")
     async with MPClient(timeout=15.0) as client:
+        api_client = WeChatApiClient(client)
         with open_storage() as storage:
             try:
-                uuid_cookie = await client.start_login_session(sid)
+                uuid_cookie = await api_client.start_login_session(sid)
             except Exception as exc:
                 typer.echo(f"获取登录会话失败：{exc}")
                 raise typer.Exit(code=1)
             try:
-                qrcode_bytes = await client.fetch_login_qrcode(uuid_cookie)
+                qrcode_bytes = await api_client.fetch_login_qrcode(uuid_cookie)
             except Exception as exc:
                 typer.echo(f"获取二维码失败：{exc}")
                 raise typer.Exit(code=1)
@@ -1409,7 +1435,7 @@ async def _run_login_flow(*, timeout: int, poll_interval: int) -> None:
             while True:
                 if time.time() - started > timeout:
                     raise typer.Exit(code=1)
-                resp = await client.check_login_status(uuid_cookie)
+                resp = await api_client.check_login_status(uuid_cookie)
                 if resp.get("base_resp", {}).get("ret") != 0:
                     typer.echo("扫码状态获取失败，请重试")
                     raise typer.Exit(code=1)
@@ -1418,15 +1444,15 @@ async def _run_login_flow(*, timeout: int, poll_interval: int) -> None:
                     await asyncio.sleep(poll_interval)
                     continue
                 if status == 1:
-                    session = await client.finalize_login(uuid_cookie)
-                    info = await client.fetch_login_info(session)
+                    session = await api_client.finalize_login(uuid_cookie)
+                    info = await api_client.fetch_login_info(session)
                     session.nickname = info.get("nickname") or None
                     session.avatar = info.get("avatar") or None
-                    storage.sessions.save_login_session(session)
+                    save_login_session(storage, session)
                     typer.echo(f"登录成功：{session.nickname or '未知账号'}")
                     return
                 if status in (2, 3):
-                    qrcode_bytes = await client.fetch_login_qrcode(uuid_cookie)
+                    qrcode_bytes = await api_client.fetch_login_qrcode(uuid_cookie)
                     if not _render_qr_in_terminal(qrcode_bytes):
                         _emit_qr_data_url(qrcode_bytes)
                     typer.echo("二维码已刷新，请重新扫码")

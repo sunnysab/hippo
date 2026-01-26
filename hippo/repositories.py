@@ -50,12 +50,10 @@ class MetaRepository:
                 'ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
                 (key, value),
             )
-        self._conn.commit()
 
     def delete(self, key: str) -> None:
         with self._conn.cursor() as cur:
             cur.execute('DELETE FROM meta WHERE key = %s', (key,))
-        self._conn.commit()
 
 
 class AccountRepository:
@@ -92,7 +90,6 @@ class AccountRepository:
                     now,
                 ),
             )
-        self._conn.commit()
         return self.get_account(account.biz, fallback_to_default=False)
 
     def list_accounts(self, *, group: str | None = None) -> list[AccountCredential]:
@@ -144,7 +141,6 @@ class AccountRepository:
         with self._conn.cursor() as cur:
             cur.execute('DELETE FROM accounts WHERE biz = %s', (biz,))
             removed = cur.rowcount
-        self._conn.commit()
         return removed
 
     def set_account_group(self, biz: str, group_name: str | None) -> None:
@@ -159,7 +155,6 @@ class AccountRepository:
                     (now, biz),
                 )
                 updated = cur.rowcount
-                self._conn.commit()
                 if updated == 0:
                     raise LookupError(f'Account {biz} not found')
                 return
@@ -170,7 +165,6 @@ class AccountRepository:
                 (group.id, now, biz),
             )
             updated = cur.rowcount
-        self._conn.commit()
         if updated == 0:
             raise LookupError(f'Account {biz} not found')
 
@@ -181,7 +175,6 @@ class AccountRepository:
                 'UPDATE accounts SET last_synced_at = %s, updated_at = %s WHERE biz = %s',
                 (now, now, biz),
             )
-        self._conn.commit()
 
     def set_account_disabled(self, biz: str, is_disabled: bool) -> None:
         now = _utc_now_dt()
@@ -191,7 +184,6 @@ class AccountRepository:
                 (is_disabled, now, biz),
             )
             updated = cur.rowcount
-        self._conn.commit()
         if updated == 0:
             raise LookupError(f'Account {biz} not found')
 
@@ -216,7 +208,6 @@ class GroupRepository:
                 (trimmed, now, now),
             )
             row = cur.fetchone()
-        self._conn.commit()
         if not row:
             raise RuntimeError(f'Failed to create group {trimmed}.')
         return AccountGroup(id=row['id'], name=row['name'])
@@ -266,70 +257,59 @@ class LoginSessionRepository:
                 if _session_identity(row_cookies) == session_identity:
                     match_id = row['id']
                     break
-        for attempt in range(2):
-            try:
-                with self._conn.cursor(row_factory=dict_row) as cur:
-                    if match_id is not None:
-                        cur.execute(
-                            """
-                            UPDATE login_sessions
-                            SET token = %s,
-                                cookies_json = %s,
-                                nickname = %s,
-                                avatar = %s,
-                                is_default = %s,
-                                updated_at = %s
-                            WHERE id = %s
-                            """,
-                            (
-                                session.token,
-                                cookie_json,
-                                session.nickname,
-                                session.avatar,
-                                True if set_default else False,
-                                now,
-                                match_id,
-                            ),
-                        )
-                    else:
-                        cur.execute(
-                            """
-                            INSERT INTO login_sessions
-                                (token, cookies_json, nickname, avatar, is_default, created_at, updated_at)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s)
-                            """,
-                            (
-                                session.token,
-                                cookie_json,
-                                session.nickname,
-                                session.avatar,
-                                True if set_default else False,
-                                now,
-                                now,
-                            ),
-                        )
-                self._conn.commit()
-                return self.get_login_session()
-            except psycopg.errors.UniqueViolation:
-                self._conn.rollback()
-                if attempt == 0:
-                    with self._conn.cursor() as cur:
-                        cur.execute(
-                            """
-                            SELECT setval(
-                                pg_get_serial_sequence('login_sessions', 'id'),
-                                COALESCE((SELECT MAX(id) FROM login_sessions), 1),
-                                (SELECT COUNT(*) FROM login_sessions) > 0
-                            )
-                            """
-                        )
-                    self._conn.commit()
-                    continue
-                raise
-            except Exception:
-                self._conn.rollback()
-                raise
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            if match_id is not None:
+                cur.execute(
+                    """
+                    UPDATE login_sessions
+                    SET token = %s,
+                        cookies_json = %s,
+                        nickname = %s,
+                        avatar = %s,
+                        is_default = %s,
+                        updated_at = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        session.token,
+                        cookie_json,
+                        session.nickname,
+                        session.avatar,
+                        True if set_default else False,
+                        now,
+                        match_id,
+                    ),
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO login_sessions
+                        (token, cookies_json, nickname, avatar, is_default, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        session.token,
+                        cookie_json,
+                        session.nickname,
+                        session.avatar,
+                        True if set_default else False,
+                        now,
+                        now,
+                    ),
+                )
         return self.get_login_session()
+
+    def reset_login_session_sequence(self) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT setval(
+                    pg_get_serial_sequence('login_sessions', 'id'),
+                    COALESCE((SELECT MAX(id) FROM login_sessions), 1),
+                    (SELECT COUNT(*) FROM login_sessions) > 0
+                )
+                """
+            )
 
     def get_login_session(self) -> LoginSession:
         with self._conn.cursor(row_factory=dict_row) as cur:
@@ -408,7 +388,6 @@ class ArticleRepository:
                     ),
                 )
                 inserted += cur.rowcount
-        self._conn.commit()
         return inserted
 
     def save_article_content(
@@ -529,9 +508,7 @@ class ArticleRepository:
                         now,
                     ),
                 )
-            self._conn.commit()
         except Exception:
-            self._conn.rollback()
             raise
 
     def has_article_content(self, biz: str, article_id: str) -> bool:
@@ -670,9 +647,7 @@ class ImageRepository:
                         orig_url,
                     ),
                 )
-            self._conn.commit()
         except Exception:
-            self._conn.rollback()
             raise
 
     def mark_article_image_failed(
@@ -711,9 +686,7 @@ class ImageRepository:
                         orig_url,
                     ),
                 )
-            self._conn.commit()
         except Exception:
-            self._conn.rollback()
             raise
 
 

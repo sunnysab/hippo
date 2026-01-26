@@ -32,7 +32,8 @@ def get_email_settings(storage: PostgresStorage) -> dict[str, Any]:
 def set_email_settings(storage: PostgresStorage, updates: dict[str, Any]) -> dict[str, Any]:
     current = get_email_settings(storage)
     current.update(updates)
-    save_meta_json(storage, _EMAIL_SETTINGS_KEY, current)
+    with storage.transaction():
+        save_meta_json(storage, _EMAIL_SETTINGS_KEY, current)
     return current
 
 

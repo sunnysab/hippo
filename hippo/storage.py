@@ -245,6 +245,15 @@ class PostgresStorage(AbstractContextManager):
         else:
             self.conn.close()
 
+    def commit(self) -> None:
+        self.conn.commit()
+
+    def rollback(self) -> None:
+        self.conn.rollback()
+
+    def transaction(self) -> "StorageTransaction":
+        return StorageTransaction(self.conn)
+
     def _init_db(self) -> None:
         with self.conn.cursor() as cur:
             schema_sql = _load_schema_sql()
@@ -305,3 +314,17 @@ def open_storage(*, auto_init: bool = False) -> PostgresStorage:
     if not dsn:
         raise StorageInitError("Missing HIPPO_PG_DSN for PostgreSQL storage.")
     return PostgresStorage(dsn, auto_init=auto_init)
+
+
+class StorageTransaction(AbstractContextManager):
+    def __init__(self, conn) -> None:
+        self._conn = conn
+
+    def __enter__(self) -> "StorageTransaction":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+        if exc_type:
+            self._conn.rollback()
+        else:
+            self._conn.commit()

@@ -9,10 +9,10 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
-from .http import MPClient, parse_appmsg_publish
+from .wechat_api import WeChatApiClient, parse_appmsg_publish
 from .models import AccountCredential, ArticleRecord
 from .storage import PostgresStorage
-from .sync_types import NullSyncObserver, SyncObserver, SyncSummary
+from .sync_types import NullSyncObserver, SyncConfig, SyncObserver, SyncPlan, SyncSummary
 
 
 class SyncInterrupted(RuntimeError):
@@ -66,22 +66,24 @@ def is_freq_control(message: str) -> bool:
 async def sync_account_core(
     *,
     storage: PostgresStorage,
-    client: MPClient,
+    client: WeChatApiClient,
     account: AccountCredential,
-    page_size: int,
-    pages: int | None,
-    sleep_seconds: float,
-    resume_key: str | None = None,
-    full_synced_hint: bool = False,
-    since_timestamp: int | None = None,
-    until_timestamp: int | None = None,
-    stop_on_existing: bool = False,
+    config: SyncConfig,
+    plan: SyncPlan,
     login_flow: Callable[..., Awaitable[None]] | None = None,
     on_login_required: Callable[[], bool] | None = None,
     collect_existing_ids: bool = False,
     observer: SyncObserver | None = None,
 ) -> SyncSummary:
     observer = observer or NullSyncObserver()
+    page_size = config.page_size
+    pages = plan.page_limit
+    sleep_seconds = config.sleep_seconds
+    resume_key = plan.resume_key
+    full_synced_hint = plan.full_synced_hint
+    since_timestamp = plan.since_timestamp
+    until_timestamp = plan.until_timestamp
+    stop_on_existing = plan.stop_on_existing
     session = storage.sessions.get_login_session()
     offset = 0
     if resume_key:
@@ -180,17 +182,20 @@ async def sync_account_core(
                 completed = True
                 break
             saved = 0
-            if records:
-                saved = storage.articles.save_articles(records)
-                storage.accounts.update_last_synced(account.biz)
-                total_saved += saved
             page_count += 1
             current_completed = offset + publish_list_len
             if total_count is not None and current_completed > total_count:
                 current_completed = total_count
-            offset += page_size
-            if resume_key:
-                storage.meta.set(resume_key, str(offset))
+            next_offset = offset + page_size
+            if records or resume_key:
+                with storage.transaction():
+                    if records:
+                        saved = storage.articles.save_articles(records)
+                        storage.accounts.update_last_synced(account.biz)
+                        total_saved += saved
+                    if resume_key:
+                        storage.meta.set(resume_key, str(next_offset))
+            offset = next_offset
             delta = current_completed - current_progress
             current_progress = current_completed
             observer.on_page(
@@ -222,7 +227,8 @@ async def sync_account_core(
             raise SyncInterrupted() from exc
 
     if resume_key and completed:
-        storage.meta.delete(resume_key)
+        with storage.transaction():
+            storage.meta.delete(resume_key)
     if total_count is not None and completed:
         observer.on_progress(current=total_count, total=total_count, delta=0)
     summary = SyncSummary(total_saved=total_saved, page_count=page_count, completed=completed)

@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from .downloader import ArticleDownloader
+from .container import build_sync_container
 from .emailer import get_email_settings, send_email
-from .file_storage import FileStorageError, S3FileStorage
-from .http import MPClient
-from .image_store import DbArticleImageStore
+from .file_storage import FileStorageError
+from .wechat_api import WeChatApiClient
 from .models import AccountCredential, ArticleRecord
 from .storage import PostgresStorage, open_storage
 from .sync_core import is_freq_control, is_login_error, sync_account_core
@@ -80,7 +78,8 @@ def get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
 def set_sync_settings(storage: PostgresStorage, updates: dict[str, Any]) -> dict[str, Any]:
     current = get_sync_settings(storage)
     current.update(updates)
-    save_meta_json(storage, SYNC_SETTINGS_KEY, current)
+    with storage.transaction():
+        save_meta_json(storage, SYNC_SETTINGS_KEY, current)
     return current
 
 
@@ -90,7 +89,8 @@ def append_sync_history(storage: PostgresStorage, entry: dict[str, Any]) -> None
         history = []
     history.insert(0, entry)
     history = history[:50]
-    save_meta_json(storage, SYNC_HISTORY_KEY, history)
+    with storage.transaction():
+        save_meta_json(storage, SYNC_HISTORY_KEY, history)
 
 
 def _send_sync_alert(
@@ -111,7 +111,8 @@ def _send_sync_alert(
     try:
         email_settings = get_email_settings(storage)
         send_email(email_settings, to_email=str(sync_settings.get('alert_email')), subject=subject, body=body)
-        storage.meta.set(ALERT_SENT_KEY, '1')
+        with storage.transaction():
+            storage.meta.set(ALERT_SENT_KEY, '1')
     except Exception as exc:
         _logger.warning('Failed to send alert email: %s', exc)
 
@@ -134,14 +135,15 @@ def set_sync_state(
     started_at: str | None = None,
     finished_at: str | None = None,
 ) -> None:
-    if status is not None:
-        storage.meta.set(SYNC_STATUS_KEY, status)
-    if error is not None:
-        storage.meta.set(SYNC_ERROR_KEY, error)
-    if started_at is not None:
-        storage.meta.set(SYNC_STARTED_KEY, started_at)
-    if finished_at is not None:
-        storage.meta.set(SYNC_FINISHED_KEY, finished_at)
+    with storage.transaction():
+        if status is not None:
+            storage.meta.set(SYNC_STATUS_KEY, status)
+        if error is not None:
+            storage.meta.set(SYNC_ERROR_KEY, error)
+        if started_at is not None:
+            storage.meta.set(SYNC_STARTED_KEY, started_at)
+        if finished_at is not None:
+            storage.meta.set(SYNC_FINISHED_KEY, finished_at)
 
 
 def _utc_now_iso() -> str:
@@ -180,8 +182,9 @@ def _should_skip_for_login(storage: PostgresStorage) -> bool:
     last_login = _get_login_updated_at(storage)
     if not last_login or last_login <= blocked_at:
         return True
-    storage.meta.delete(SYNC_LOGIN_REQUIRED_AT_KEY)
-    storage.meta.delete(ALERT_SENT_KEY)
+    with storage.transaction():
+        storage.meta.delete(SYNC_LOGIN_REQUIRED_AT_KEY)
+        storage.meta.delete(ALERT_SENT_KEY)
     return False
 
 
@@ -252,7 +255,7 @@ class ArticleSyncService:
         self,
         *,
         storage: PostgresStorage,
-        client: MPClient,
+        client: WeChatApiClient,
         downloader: ArticleDownloader | None = None,
         login_flow: Callable[..., Any] | None = None,
         on_login_required: Callable[[], bool] | None = None,
@@ -391,8 +394,9 @@ class ArticleSyncService:
         if use_resume and bulk and mode == SyncMode.full and config.reset:
             resume_key = f'sync_progress:{account.biz}'
             complete_key = f'sync_complete:{account.biz}'
-            self._storage.meta.delete(resume_key)
-            self._storage.meta.delete(complete_key)
+            with self._storage.transaction():
+                self._storage.meta.delete(resume_key)
+                self._storage.meta.delete(complete_key)
 
         if account.is_disabled:
             observer.on_skip('disabled')
@@ -455,14 +459,8 @@ class ArticleSyncService:
                 storage=self._storage,
                 client=self._client,
                 account=account,
-                page_size=config.page_size,
-                pages=plan.page_limit,
-                sleep_seconds=config.sleep_seconds,
-                resume_key=plan.resume_key,
-                full_synced_hint=plan.full_synced_hint,
-                since_timestamp=plan.since_timestamp,
-                until_timestamp=plan.until_timestamp,
-                stop_on_existing=plan.stop_on_existing,
+                config=config,
+                plan=plan,
                 login_flow=self._login_flow,
                 on_login_required=self._on_login_required,
                 collect_existing_ids=bool(config.download_content),
@@ -485,7 +483,8 @@ class ArticleSyncService:
             raise SyncRunError(message, login_required=is_login_error(message)) from exc
 
         if summary.completed and use_resume and bulk and mode == SyncMode.full and plan.complete_key:
-            self._storage.meta.set(plan.complete_key, _today_str())
+            with self._storage.transaction():
+                self._storage.meta.set(plan.complete_key, _today_str())
 
         result = SyncAccountResult(
             biz=account.biz,
@@ -561,59 +560,61 @@ class ArticleSyncService:
 
 class SyncScheduler:
     def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._thread: threading.Thread | None = None
-        self._stop = threading.Event()
-        self._trigger = threading.Event()
+        self._lock = asyncio.Lock()
+        self._stop = asyncio.Event()
+        self._trigger = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def start(self) -> None:
-        if self._thread and self._thread.is_alive():
+        if self._task and not self._task.done():
             return
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
+        self._stop.clear()
+        self._trigger.clear()
+        self._loop = asyncio.get_running_loop()
+        self._task = self._loop.create_task(self._loop_sync())
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         self._stop.set()
         self._trigger.set()
-        if self._thread:
-            self._thread.join(timeout=5)
+        if self._task:
+            await self._task
+        self._task = None
 
     def trigger(self) -> None:
-        self._trigger.set()
+        if self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._trigger.set)
+        else:
+            self._trigger.set()
 
-    def _loop(self) -> None:
+    async def _wait(self, timeout: float) -> None:
+        try:
+            await asyncio.wait_for(self._trigger.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            pass
+        self._trigger.clear()
+
+    async def _loop_sync(self) -> None:
         while not self._stop.is_set():
             with open_storage() as storage:
                 settings = get_sync_settings(storage)
             if not settings.get('enabled'):
-                self._trigger.wait(timeout=10)
-                self._trigger.clear()
+                await self._wait(10)
                 continue
             interval = max(int(settings.get('interval_minutes') or 1), 1) * 60
-            self._trigger.wait(timeout=interval)
-            self._trigger.clear()
+            await self._wait(interval)
             if self._stop.is_set():
                 break
-            self.run_once()
+            await self.run_once()
 
-    def run_once(self) -> dict[str, Any]:
-        if not self._lock.acquire(blocking=False):
+    async def run_once(self, *, group_id: int | None = None) -> dict[str, Any]:
+        if self._lock.locked():
             return {'status': 'running'}
-        try:
-            return self._run_sync()
-        finally:
-            self._lock.release()
+        async with self._lock:
+            return await self._run_sync_async(group_id=group_id)
 
-    def run_group(self, group_id: int) -> dict[str, Any]:
-        if not self._lock.acquire(blocking=False):
-            return {'status': 'running'}
-        try:
-            return self._run_sync(group_id=group_id)
-        finally:
-            self._lock.release()
-
-    def _run_sync(self, *, group_id: int | None = None) -> dict[str, Any]:
-        return asyncio.run(self._run_sync_async(group_id=group_id))
+    async def run_group(self, group_id: int) -> dict[str, Any]:
+        return await self.run_once(group_id=group_id)
 
     async def _run_sync_async(self, *, group_id: int | None = None) -> dict[str, Any]:
         started_at = _utc_now_iso()
@@ -628,7 +629,8 @@ class SyncScheduler:
                 error = str(exc)
                 finished_at = _utc_now_iso()
                 set_sync_state(storage, status='login_required', error=error, finished_at=finished_at)
-                storage.meta.set(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
+                with storage.transaction():
+                    storage.meta.set(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
                 append_sync_history(
                     storage,
                     {
@@ -660,72 +662,69 @@ class SyncScheduler:
                 group_defaults[int(row['id'])] = row
             error: str | None = None
             report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
-            image_store = None
-            if settings.get('download_images'):
+            container = None
+            if error is None:
                 try:
-                    image_store = DbArticleImageStore(
-                        image_repo=storage.images,
-                        file_storage=S3FileStorage(),
+                    container = build_sync_container(
+                        storage=storage,
+                        enable_download=bool(settings.get('download_content')),
+                        enable_images=bool(settings.get('download_images')),
                     )
                 except FileStorageError as exc:
                     error = str(exc)
 
-            if error is None:
-                async with MPClient() as client:
-                    async with ArticleDownloader(
-                        client=client,
+            if error is None and container:
+                async with container as app:
+                    config = SyncConfig(
+                        mode=None,
+                        page_size=max(int(settings.get('page_size') or _DEFAULT_PAGE_SIZE), 1),
+                        page_limit=settings.get('page_limit'),
+                        sleep_seconds=float(settings.get('sleep_seconds') or 0),
+                        reset=False,
+                        recent_days=settings.get('recent_days'),
+                        since_date=settings.get('since'),
+                        until_date=settings.get('until'),
+                        force=False,
+                        skip_minutes=settings.get('skip_minutes'),
+                        download_content=bool(settings.get('download_content')),
+                        download_images=bool(settings.get('download_images')),
+                        content_limit=int(settings.get('content_limit') or _DEFAULT_CONTENT_LIMIT),
+                    )
+                    service = ArticleSyncService(
                         storage=storage,
-                        image_store=image_store,
-                        enable_image_worker=bool(settings.get('download_images')),
-                    ) as downloader:
-                        config = SyncConfig(
-                            mode=None,
-                            page_size=max(int(settings.get('page_size') or _DEFAULT_PAGE_SIZE), 1),
-                            page_limit=settings.get('page_limit'),
-                            sleep_seconds=float(settings.get('sleep_seconds') or 0),
-                            reset=False,
-                            recent_days=settings.get('recent_days'),
-                            since_date=settings.get('since'),
-                            until_date=settings.get('until'),
-                            force=False,
-                            skip_minutes=settings.get('skip_minutes'),
-                            download_content=bool(settings.get('download_content')),
-                            download_images=bool(settings.get('download_images')),
-                            content_limit=int(settings.get('content_limit') or _DEFAULT_CONTENT_LIMIT),
+                        client=app.api_client,
+                        downloader=app.downloader,
+                    )
+                    try:
+                        report = await service.sync_accounts(
+                            accounts=accounts,
+                            config=config,
+                            bulk=True,
+                            use_resume=False,
+                            group_defaults=group_defaults,
+                            allow_freq_skip=True,
                         )
-                        service = ArticleSyncService(
-                            storage=storage,
-                            client=client,
-                            downloader=downloader,
-                        )
-                        try:
-                            report = await service.sync_accounts(
-                                accounts=accounts,
-                                config=config,
-                                bulk=True,
-                                use_resume=False,
-                                group_defaults=group_defaults,
-                                allow_freq_skip=True,
-                            )
-                        except SyncRunError as exc:
-                            error = str(exc)
-                            report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
-                        except Exception as exc:
-                            error = str(exc)
-                            report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
-                        if settings.get('download_images'):
-                            await downloader.wait_for_images()
+                    except SyncRunError as exc:
+                        error = str(exc)
+                        report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
+                    except Exception as exc:
+                        error = str(exc)
+                        report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
+                    if settings.get('download_images') and app.downloader:
+                        await app.downloader.wait_for_images()
 
             finished_at = _utc_now_iso()
             if error:
                 status = 'login_required' if is_login_error(error) else 'failed'
                 set_sync_state(storage, status=status, error=error, finished_at=finished_at)
                 if status == 'login_required':
-                    storage.meta.set(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
+                    with storage.transaction():
+                        storage.meta.set(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
             else:
                 set_sync_state(storage, status='success', error='', finished_at=finished_at)
-                storage.meta.delete(ALERT_SENT_KEY)
-                storage.meta.delete(SYNC_LOGIN_REQUIRED_AT_KEY)
+                with storage.transaction():
+                    storage.meta.delete(ALERT_SENT_KEY)
+                    storage.meta.delete(SYNC_LOGIN_REQUIRED_AT_KEY)
             skipped_accounts = sum(
                 1
                 for item in report.details
