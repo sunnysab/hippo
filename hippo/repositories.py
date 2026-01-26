@@ -349,6 +349,88 @@ class ArticleRepository:
     def __init__(self, conn: psycopg.Connection) -> None:
         self._conn = conn
 
+    def _ensure_cover_image(
+        self,
+        cur: psycopg.Cursor,
+        *,
+        article_pk: int,
+        cover_url: str | None,
+        now: datetime,
+    ) -> int | None:
+        if not cover_url:
+            return None
+        cur.execute(
+            """
+            SELECT id, kind
+            FROM article_images
+            WHERE article_pk = %s AND orig_url = %s
+            LIMIT 1
+            """,
+            (article_pk, cover_url),
+        )
+        row = cur.fetchone()
+        if row:
+            image_id, kind = row[0], row[1]
+            if kind != 'cover':
+                cur.execute(
+                    """
+                    UPDATE article_images
+                    SET kind = 'cover',
+                        position = 0,
+                        updated_at = %s
+                    WHERE id = %s
+                    """,
+                    (now, image_id),
+                )
+            return int(image_id)
+        cur.execute(
+            """
+            SELECT id
+            FROM article_images
+            WHERE article_pk = %s AND kind = 'cover'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (article_pk,),
+        )
+        row = cur.fetchone()
+        if row:
+            image_id = int(row[0])
+            cur.execute(
+                """
+                UPDATE article_images
+                SET orig_url = %s,
+                    position = 0,
+                    content_type = NULL,
+                    s3_key = NULL,
+                    failed_at = NULL,
+                    failed_reason = NULL,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (cover_url, now, image_id),
+            )
+            return image_id
+        cur.execute(
+            """
+            INSERT INTO article_images
+                (article_pk, position, kind, orig_url, content_type, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (article_pk, 0, 'cover', cover_url, None, now),
+        )
+        return int(cur.fetchone()[0])
+
+    def _normalize_cover_id(self, cover: str | int | None) -> int | None:
+        if cover is None:
+            return None
+        if isinstance(cover, int):
+            return cover
+        if isinstance(cover, str) and cover.isdigit():
+            return int(cover)
+        return None
+
     def save_articles(self, articles: Iterable[ArticleRecord]) -> int:
         now = _utc_now_dt()
         inserted = 0
@@ -365,12 +447,12 @@ class ArticleRepository:
                         title=EXCLUDED.title,
                         author=EXCLUDED.author,
                         digest=EXCLUDED.digest,
-                        cover=EXCLUDED.cover,
                         link=EXCLUDED.link,
                         source_url=EXCLUDED.source_url,
                         publish_at=EXCLUDED.publish_at,
                         raw_json=EXCLUDED.raw_json,
                         updated_at=EXCLUDED.updated_at
+                    RETURNING id
                     """,
                     (
                         article.biz,
@@ -378,7 +460,7 @@ class ArticleRepository:
                         article.title,
                         article.author,
                         article.digest,
-                        article.cover,
+                        None,
                         article.link,
                         article.source_url,
                         article.publish_at,
@@ -387,7 +469,21 @@ class ArticleRepository:
                         now,
                     ),
                 )
-                inserted += cur.rowcount
+                article_pk = int(cur.fetchone()[0])
+                cover_id = self._normalize_cover_id(article.cover)
+                if cover_id is None:
+                    cover_id = self._ensure_cover_image(
+                        cur,
+                        article_pk=article_pk,
+                        cover_url=str(article.cover) if article.cover else None,
+                        now=now,
+                    )
+                if cover_id is not None:
+                    cur.execute(
+                        "UPDATE articles SET cover = %s, updated_at = %s WHERE id = %s",
+                        (cover_id, now, article_pk),
+                    )
+                inserted += 1
         return inserted
 
     def save_article_content(
@@ -403,6 +499,23 @@ class ArticleRepository:
         images: list[dict],
     ) -> None:
         now = _utc_now_dt()
+        normalized_cover = cover_url.strip() if cover_url else None
+        if normalized_cover:
+            has_cover = any(
+                image.get('kind') == 'cover' and str(image.get('orig_url') or '') == normalized_cover
+                for image in images
+            )
+            if not has_cover:
+                images = [
+                    {
+                        'orig_url': normalized_cover,
+                        'kind': 'cover',
+                        'position': 0,
+                        'content_type': None,
+                        'data': None,
+                    },
+                    *images,
+                ]
         try:
             with self._conn.cursor() as cur:
                 cur.execute(
@@ -419,7 +532,6 @@ class ArticleRepository:
                         title=EXCLUDED.title,
                         author=EXCLUDED.author,
                         digest=EXCLUDED.digest,
-                        cover=EXCLUDED.cover,
                         link=EXCLUDED.link,
                         source_url=EXCLUDED.source_url,
                         publish_at=EXCLUDED.publish_at,
@@ -433,7 +545,7 @@ class ArticleRepository:
                         title,
                         article.author,
                         article.digest,
-                        cover_url,
+                        None,
                         article.link,
                         article.source_url,
                         article.publish_at,
@@ -447,6 +559,7 @@ class ArticleRepository:
                 cur.execute('DELETE FROM article_images WHERE article_pk = %s', (article_pk,))
                 image_id_map: dict[str, int] = {}
                 seen_orig_urls: set[str] = set()
+                cover_id: int | None = None
                 for image in images:
                     orig_url = image.get('orig_url')
                     if orig_url:
@@ -473,6 +586,8 @@ class ArticleRepository:
                     image_id = cur.fetchone()[0]
                     if orig_url:
                         image_id_map[orig_url] = image_id
+                    if image.get('kind') == 'cover' and cover_id is None:
+                        cover_id = int(image_id)
 
                 updated_blocks: list[dict] = []
                 for block in content_blocks:
@@ -508,6 +623,16 @@ class ArticleRepository:
                         now,
                     ),
                 )
+                if cover_id is not None:
+                    cur.execute(
+                        "UPDATE articles SET cover = %s, updated_at = %s WHERE id = %s",
+                        (cover_id, now, article_pk),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE articles SET cover = NULL, updated_at = %s WHERE id = %s",
+                        (now, article_pk),
+                    )
         except Exception:
             raise
 

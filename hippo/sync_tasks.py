@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .models import AccountCredential, ArticleRecord
-from .sync_service import SyncJobResult, run_sync_job
+from .sync_service import SYNC_RUN_LOCK, SyncJobResult, run_sync_job
 from .sync_types import SyncAccountResult, SyncObserver, SyncSummary
 
 
@@ -232,6 +232,7 @@ class SyncTaskManager:
                 on_account_start=on_account_start,
                 on_account_done=on_account_done,
                 on_accounts_loaded=on_accounts_loaded,
+                lock=SYNC_RUN_LOCK,
             )
             with self._lock:
                 state.report = {

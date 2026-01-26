@@ -47,6 +47,7 @@ _DEFAULT_RECENT_DAYS = 7
 _DEFAULT_PAGE_SIZE = 10
 _DEFAULT_PAGE_LIMIT = 2
 _DEFAULT_CONTENT_LIMIT = 20
+SYNC_RUN_LOCK = asyncio.Lock()
 
 
 @dataclass(frozen=True)
@@ -597,7 +598,24 @@ async def run_sync_job(
     on_account_start: Callable[[AccountCredential], None] | None = None,
     on_account_done: Callable[[SyncAccountResult, SyncSummary | None], None] | None = None,
     on_accounts_loaded: Callable[[list[AccountCredential]], None] | None = None,
+    lock: asyncio.Lock | None = None,
+    on_lock_acquired: Callable[[], None] | None = None,
 ) -> SyncJobResult:
+    if lock:
+        async with lock:
+            if on_lock_acquired:
+                on_lock_acquired()
+            return await run_sync_job(
+                group_id=group_id,
+                observer_factory=observer_factory,
+                on_account_start=on_account_start,
+                on_account_done=on_account_done,
+                on_accounts_loaded=on_accounts_loaded,
+                lock=None,
+                on_lock_acquired=None,
+            )
+    if on_lock_acquired:
+        on_lock_acquired()
     started_at = _utc_now_iso()
     empty_report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
     with open_storage() as storage:
@@ -787,7 +805,7 @@ class SyncScheduler:
         return await self.run_once(group_id=group_id)
 
     async def _run_sync_async(self, *, group_id: int | None = None) -> dict[str, Any]:
-        result = await run_sync_job(group_id=group_id)
+        result = await run_sync_job(group_id=group_id, lock=SYNC_RUN_LOCK)
         return result.status
 
 

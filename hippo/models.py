@@ -42,7 +42,7 @@ class ArticleRecord(HippoBaseModel):
     title: str
     author: str | None
     digest: str | None
-    cover: str | None
+    cover: str | int | None
     link: str
     source_url: str | None
     publish_at: int | None

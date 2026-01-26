@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS articles (
     title TEXT NOT NULL,
     author TEXT,
     digest TEXT,
-    cover TEXT,
+    cover INTEGER,
     link TEXT NOT NULL,
     source_url TEXT,
     publish_at BIGINT,
