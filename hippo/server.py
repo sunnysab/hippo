@@ -38,6 +38,7 @@ from .sync_service import (
     get_sync_status as load_sync_status,
     set_sync_settings as save_sync_settings,
 )
+from .sync_tasks import SyncTaskManager
 from .utils import ensure_default_group, fetchall_rows, fetchone_row, parse_iso_date_to_timestamp
 from .login_service import save_login_session
 
@@ -940,6 +941,10 @@ def _get_sync_scheduler(request: Request) -> SyncScheduler:
     return request.app.state.sync_scheduler
 
 
+def _get_sync_task_manager(request: Request) -> SyncTaskManager:
+    return request.app.state.sync_tasks
+
+
 router = APIRouter(prefix="/api")
 
 
@@ -1633,6 +1638,35 @@ def sync_status(storage: PostgresStorage = Depends(_get_storage)) -> dict[str, A
     return load_sync_status(storage)
 
 
+@router.get("/sync/tasks")
+def list_sync_tasks(
+    limit: int = 20,
+    task_manager: "SyncTaskManager" = Depends(_get_sync_task_manager),
+) -> dict[str, Any]:
+    """
+    获取同步任务列表。
+    """
+    tasks = task_manager.list_tasks()
+    tasks.sort(key=lambda item: item.created_at, reverse=True)
+    return {
+        "tasks": [task.to_dict() for task in tasks[: max(int(limit), 1)]],
+    }
+
+
+@router.get("/sync/tasks/{task_id}")
+def get_sync_task(
+    task_id: str,
+    task_manager: "SyncTaskManager" = Depends(_get_sync_task_manager),
+) -> dict[str, Any]:
+    """
+    获取指定同步任务的进度与状态。
+    """
+    state = task_manager.get_task(task_id)
+    if not state:
+        raise ApiError("Task not found", status=404)
+    return state.to_dict()
+
+
 @router.get("/sync/settings")
 def get_sync_settings(storage: PostgresStorage = Depends(_get_storage)) -> dict[str, Any]:
     """
@@ -1723,7 +1757,7 @@ async def update_sync_settings(
 async def run_sync(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
-    scheduler: "SyncScheduler" = Depends(_get_sync_scheduler),
+    task_manager: "SyncTaskManager" = Depends(_get_sync_task_manager),
 ) -> dict[str, Any]:
     """
     手动触发同步操作。
@@ -1748,10 +1782,10 @@ async def run_sync(
         )
         if not row:
             raise ApiError('Group not found', status=404)
-        asyncio.create_task(scheduler.run_group(group_id))
-        return {'status': 'running', 'group_id': group_id}
-    asyncio.create_task(scheduler.run_once())
-    return {'status': 'running'}
+        task_id = task_manager.create_sync_task(group_id=group_id)
+        return {'status': 'running', 'group_id': group_id, 'task_id': task_id}
+    task_id = task_manager.create_sync_task()
+    return {'status': 'running', 'task_id': task_id}
 
 
 @router.get("/feed/mixed", response_model=None)
@@ -1859,6 +1893,7 @@ def create_app(static_dir: Path | str = "static") -> FastAPI:
     async def _startup() -> None:
         app.state.login_manager = LoginManager()
         app.state.sync_scheduler = SyncScheduler()
+        app.state.sync_tasks = SyncTaskManager()
         app.state.sync_scheduler.start()
 
     @app.on_event("shutdown")

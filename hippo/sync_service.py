@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -46,6 +47,13 @@ _DEFAULT_RECENT_DAYS = 7
 _DEFAULT_PAGE_SIZE = 10
 _DEFAULT_PAGE_LIMIT = 2
 _DEFAULT_CONTENT_LIMIT = 20
+
+
+@dataclass(frozen=True)
+class SyncJobResult:
+    status: dict[str, Any]
+    report: SyncReport
+    error: str | None
 
 
 def default_sync_settings() -> dict[str, Any]:
@@ -506,6 +514,8 @@ class ArticleSyncService:
         observer_factory: Callable[[AccountCredential, bool], SyncObserver] | None = None,
         group_defaults: dict[int, dict[str, Any]] | None = None,
         allow_freq_skip: bool = False,
+        on_account_start: Callable[[AccountCredential], None] | None = None,
+        on_account_done: Callable[[SyncAccountResult, SyncSummary | None], None] | None = None,
     ) -> SyncReport:
         shared_since, shared_until = self._resolve_shared_window(config)
         total_saved = 0
@@ -514,6 +524,8 @@ class ArticleSyncService:
         details: list[SyncAccountResult] = []
 
         for account in accounts:
+            if on_account_start:
+                on_account_start(account)
             observer = observer_factory(account, bulk) if observer_factory else NullSyncObserver()
             result, records, summary = await self.sync_account(
                 account=account,
@@ -527,6 +539,8 @@ class ArticleSyncService:
                 allow_freq_skip=allow_freq_skip,
             )
             details.append(result)
+            if on_account_done:
+                on_account_done(result, summary)
             if result.skipped and not bulk:
                 return SyncReport(total_saved=0, summary=[], details=details, downloaded=0)
             if result.skipped:
@@ -556,6 +570,162 @@ class ArticleSyncService:
             details=details,
             downloaded=total_downloaded,
         )
+
+
+def _build_sync_config(settings: dict[str, Any]) -> SyncConfig:
+    return SyncConfig(
+        mode=None,
+        page_size=max(int(settings.get('page_size') or _DEFAULT_PAGE_SIZE), 1),
+        page_limit=settings.get('page_limit'),
+        sleep_seconds=float(settings.get('sleep_seconds') or 0),
+        reset=False,
+        recent_days=settings.get('recent_days'),
+        since_date=settings.get('since'),
+        until_date=settings.get('until'),
+        force=False,
+        skip_minutes=settings.get('skip_minutes'),
+        download_content=bool(settings.get('download_content')),
+        download_images=bool(settings.get('download_images')),
+        content_limit=int(settings.get('content_limit') or _DEFAULT_CONTENT_LIMIT),
+    )
+
+
+async def run_sync_job(
+    *,
+    group_id: int | None = None,
+    observer_factory: Callable[[AccountCredential, bool], SyncObserver] | None = None,
+    on_account_start: Callable[[AccountCredential], None] | None = None,
+    on_account_done: Callable[[SyncAccountResult, SyncSummary | None], None] | None = None,
+    on_accounts_loaded: Callable[[list[AccountCredential]], None] | None = None,
+) -> SyncJobResult:
+    started_at = _utc_now_iso()
+    empty_report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
+    with open_storage() as storage:
+        if _should_skip_for_login(storage):
+            status = get_sync_status(storage)
+            error = status.get('last_error') or 'login_required'
+            return SyncJobResult(status=status, report=empty_report, error=error)
+        settings = get_sync_settings(storage)
+        set_sync_state(storage, status='running', error='', started_at=started_at)
+        try:
+            storage.sessions.get_login_session()
+        except Exception as exc:
+            error = str(exc)
+            finished_at = _utc_now_iso()
+            set_sync_state(storage, status='login_required', error=error, finished_at=finished_at)
+            with storage.transaction():
+                storage.meta.set(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
+            append_sync_history(
+                storage,
+                {
+                    'started_at': started_at,
+                    'finished_at': finished_at,
+                    'status': 'login_required',
+                    'error': error,
+                },
+            )
+            _send_sync_alert(
+                storage,
+                status='login_required',
+                error=error,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+            return SyncJobResult(status=get_sync_status(storage), report=empty_report, error=error)
+
+        accounts = storage.accounts.list_accounts()
+        if group_id is not None:
+            accounts = [account for account in accounts if account.group_id == group_id]
+        if on_accounts_loaded:
+            on_accounts_loaded(accounts)
+        group_defaults: dict[int, dict[str, Any]] = {}
+        group_rows = fetchall_rows(
+            storage,
+            'SELECT id, sync_mode, sync_recent_days FROM account_groups',
+            [],
+        )
+        for row in group_rows:
+            group_defaults[int(row['id'])] = row
+
+        error: str | None = None
+        report = empty_report
+        container = None
+        try:
+            container = build_sync_container(
+                storage=storage,
+                enable_download=bool(settings.get('download_content')),
+                enable_images=bool(settings.get('download_images')),
+            )
+        except FileStorageError as exc:
+            error = str(exc)
+
+        if error is None and container:
+            async with container as app:
+                config = _build_sync_config(settings)
+                service = ArticleSyncService(
+                    storage=storage,
+                    client=app.api_client,
+                    downloader=app.downloader,
+                )
+                try:
+                    report = await service.sync_accounts(
+                        accounts=accounts,
+                        config=config,
+                        bulk=True,
+                        use_resume=False,
+                        group_defaults=group_defaults,
+                        allow_freq_skip=True,
+                        observer_factory=observer_factory,
+                        on_account_start=on_account_start,
+                        on_account_done=on_account_done,
+                    )
+                except SyncRunError as exc:
+                    error = str(exc)
+                    report = empty_report
+                except Exception as exc:
+                    error = str(exc)
+                    report = empty_report
+                if settings.get('download_images') and app.downloader:
+                    await app.downloader.wait_for_images()
+
+        finished_at = _utc_now_iso()
+        if error:
+            status = 'login_required' if is_login_error(error) else 'failed'
+            set_sync_state(storage, status=status, error=error, finished_at=finished_at)
+            if status == 'login_required':
+                with storage.transaction():
+                    storage.meta.set(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
+        else:
+            status = 'success'
+            set_sync_state(storage, status='success', error='', finished_at=finished_at)
+            with storage.transaction():
+                storage.meta.delete(ALERT_SENT_KEY)
+                storage.meta.delete(SYNC_LOGIN_REQUIRED_AT_KEY)
+        skipped_accounts = sum(
+            1
+            for item in report.details
+            if item.skipped and item.skip_reason in ('disabled', 'recently_synced')
+        )
+        append_sync_history(
+            storage,
+            {
+                'started_at': started_at,
+                'finished_at': finished_at,
+                'status': 'login_required' if error and is_login_error(error) else ('failed' if error else 'success'),
+                'error': error or '',
+                'saved': report.total_saved,
+                'downloaded': report.downloaded,
+                'skipped_accounts': skipped_accounts,
+            },
+        )
+        _send_sync_alert(
+            storage,
+            status=status,
+            error=error or '',
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+        return SyncJobResult(status=get_sync_status(storage), report=report, error=error)
 
 
 class SyncScheduler:
@@ -617,149 +787,20 @@ class SyncScheduler:
         return await self.run_once(group_id=group_id)
 
     async def _run_sync_async(self, *, group_id: int | None = None) -> dict[str, Any]:
-        started_at = _utc_now_iso()
-        with open_storage() as storage:
-            if _should_skip_for_login(storage):
-                return get_sync_status(storage)
-            settings = get_sync_settings(storage)
-            set_sync_state(storage, status='running', error='', started_at=started_at)
-            try:
-                storage.sessions.get_login_session()
-            except Exception as exc:
-                error = str(exc)
-                finished_at = _utc_now_iso()
-                set_sync_state(storage, status='login_required', error=error, finished_at=finished_at)
-                with storage.transaction():
-                    storage.meta.set(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
-                append_sync_history(
-                    storage,
-                    {
-                        'started_at': started_at,
-                        'finished_at': finished_at,
-                        'status': 'login_required',
-                        'error': error,
-                    },
-                )
-                _send_sync_alert(
-                    storage,
-                    status='login_required',
-                    error=error,
-                    started_at=started_at,
-                    finished_at=finished_at,
-                )
-                return get_sync_status(storage)
-
-            accounts = storage.accounts.list_accounts()
-            if group_id is not None:
-                accounts = [account for account in accounts if account.group_id == group_id]
-            group_defaults: dict[int, dict[str, Any]] = {}
-            group_rows = fetchall_rows(
-                storage,
-                'SELECT id, sync_mode, sync_recent_days FROM account_groups',
-                [],
-            )
-            for row in group_rows:
-                group_defaults[int(row['id'])] = row
-            error: str | None = None
-            report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
-            container = None
-            if error is None:
-                try:
-                    container = build_sync_container(
-                        storage=storage,
-                        enable_download=bool(settings.get('download_content')),
-                        enable_images=bool(settings.get('download_images')),
-                    )
-                except FileStorageError as exc:
-                    error = str(exc)
-
-            if error is None and container:
-                async with container as app:
-                    config = SyncConfig(
-                        mode=None,
-                        page_size=max(int(settings.get('page_size') or _DEFAULT_PAGE_SIZE), 1),
-                        page_limit=settings.get('page_limit'),
-                        sleep_seconds=float(settings.get('sleep_seconds') or 0),
-                        reset=False,
-                        recent_days=settings.get('recent_days'),
-                        since_date=settings.get('since'),
-                        until_date=settings.get('until'),
-                        force=False,
-                        skip_minutes=settings.get('skip_minutes'),
-                        download_content=bool(settings.get('download_content')),
-                        download_images=bool(settings.get('download_images')),
-                        content_limit=int(settings.get('content_limit') or _DEFAULT_CONTENT_LIMIT),
-                    )
-                    service = ArticleSyncService(
-                        storage=storage,
-                        client=app.api_client,
-                        downloader=app.downloader,
-                    )
-                    try:
-                        report = await service.sync_accounts(
-                            accounts=accounts,
-                            config=config,
-                            bulk=True,
-                            use_resume=False,
-                            group_defaults=group_defaults,
-                            allow_freq_skip=True,
-                        )
-                    except SyncRunError as exc:
-                        error = str(exc)
-                        report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
-                    except Exception as exc:
-                        error = str(exc)
-                        report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
-                    if settings.get('download_images') and app.downloader:
-                        await app.downloader.wait_for_images()
-
-            finished_at = _utc_now_iso()
-            if error:
-                status = 'login_required' if is_login_error(error) else 'failed'
-                set_sync_state(storage, status=status, error=error, finished_at=finished_at)
-                if status == 'login_required':
-                    with storage.transaction():
-                        storage.meta.set(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
-            else:
-                set_sync_state(storage, status='success', error='', finished_at=finished_at)
-                with storage.transaction():
-                    storage.meta.delete(ALERT_SENT_KEY)
-                    storage.meta.delete(SYNC_LOGIN_REQUIRED_AT_KEY)
-            skipped_accounts = sum(
-                1
-                for item in report.details
-                if item.skipped and item.skip_reason in ('disabled', 'recently_synced')
-            )
-            append_sync_history(
-                storage,
-                {
-                    'started_at': started_at,
-                    'finished_at': finished_at,
-                    'status': 'login_required' if error and is_login_error(error) else ('failed' if error else 'success'),
-                    'error': error or '',
-                    'saved': report.total_saved,
-                    'downloaded': report.downloaded,
-                    'skipped_accounts': skipped_accounts,
-                },
-            )
-            _send_sync_alert(
-                storage,
-                status=status if error else 'success',
-                error=error or '',
-                started_at=started_at,
-                finished_at=finished_at,
-            )
-            return get_sync_status(storage)
+        result = await run_sync_job(group_id=group_id)
+        return result.status
 
 
 __all__ = [
     'ArticleSyncService',
+    'SyncJobResult',
     'SyncRunError',
     'SyncScheduler',
     'append_sync_history',
     'default_sync_settings',
     'get_sync_settings',
     'get_sync_status',
+    'run_sync_job',
     'set_sync_settings',
     'set_sync_state',
 ]
