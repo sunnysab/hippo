@@ -11,6 +11,8 @@ const state = {
   selectedArticleId: null,
   syncStatus: null,
   syncSettings: null,
+  syncTasks: null,
+  syncPollTimer: null,
   loginStatus: null,
   loginPollTimer: null,
   accountTimer: null,

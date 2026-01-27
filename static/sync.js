@@ -6,9 +6,46 @@
     if (!list) return;
     list.innerHTML = '';
     const history = state.syncStatus?.history || [];
-    if (!history.length) {
+    const tasks = state.syncTasks || [];
+    const runningTask = tasks.find((task) => task.status === 'running');
+    if (!history.length && !runningTask) {
       list.innerHTML = `<div class="empty-state">${t('sync.historyEmpty', 'No sync history.')}</div>`;
       return;
+    }
+    if (runningTask) {
+      const item = document.createElement('div');
+      item.className = 'list-item is-running';
+      const currentAccount = runningTask.current_account || {};
+      const accountName =
+        currentAccount.nickname ||
+        currentAccount.biz ||
+        t('sync.runningUnknown', 'Unknown account');
+      const startedAt = runningTask.started_at || runningTask.created_at;
+      const minutes = startedAt
+        ? Math.max(1, Math.floor((Date.now() - new Date(startedAt).getTime()) / 60000))
+        : 0;
+      const progressBadge =
+        runningTask.accounts_total > 0
+          ? `${runningTask.accounts_done || 0}/${runningTask.accounts_total}`
+          : '';
+      const phase =
+        runningTask.last_log === 'downloading_images' || (runningTask.last_log && runningTask.last_log.includes('图片'))
+          ? t('sync.runningImages', 'Downloading images')
+          : runningTask.current_article?.title
+            ? t('sync.runningArticle', 'Processing {title}').replace(
+                '{title}',
+                runningTask.current_article.title
+              )
+            : null;
+      item.innerHTML = `
+        <div>
+          <div class="account-name">${t('sync.runningTitle', 'Syncing {name}').replace('{name}', accountName)}</div>
+          <div class="account-sub">${t('sync.runningSince', 'Started {n} minutes ago').replace('{n}', minutes)}</div>
+          ${phase ? `<div class="account-sub">${phase}</div>` : ''}
+        </div>
+        ${progressBadge ? `<span class="badge">${progressBadge}</span>` : ''}
+      `;
+      list.appendChild(item);
     }
     history.forEach((entry) => {
       const item = document.createElement('div');
@@ -91,6 +128,12 @@
     renderSyncStatus();
   };
 
+  const loadSyncTasks = async () => {
+    const payload = await apiGet('/api/sync/tasks?limit=5');
+    state.syncTasks = payload.tasks || [];
+    renderSyncHistory();
+  };
+
   const renderSyncSettings = (settings) => {
     if (!settings) return;
     $('#sync-enabled').checked = Boolean(settings.enabled);
@@ -143,7 +186,10 @@
 
   const triggerSyncRun = async () => {
     await apiSend('/api/sync/run', 'POST', {});
-    setTimeout(loadSyncStatus, 1000);
+    setTimeout(async () => {
+      await loadSyncTasks();
+      await loadSyncStatus();
+    }, 1000);
   };
 
   const renderLoginStatus = (payload) => {
@@ -234,10 +280,29 @@
     });
   };
 
+  const isSyncActive = () => $('#view-sync')?.classList.contains('is-active');
+
+  const startSyncPoll = () => {
+    if (state.syncPollTimer) {
+      clearInterval(state.syncPollTimer);
+    }
+    state.syncPollTimer = setInterval(async () => {
+      if (!isSyncActive()) return;
+      try {
+        await loadSyncTasks();
+        await loadSyncStatus();
+      } catch (err) {
+        console.warn('Sync poll failed', err);
+      }
+    }, 1000);
+  };
+
   const refresh = async () => {
+    await loadSyncTasks();
     await loadSyncStatus();
     await loadSyncSettings();
     await loadLoginStatus();
+    startSyncPoll();
   };
 
   const init = async () => {
@@ -249,6 +314,7 @@
     init,
     refresh,
     loadSyncStatus,
+    loadSyncTasks,
     loadSyncSettings,
     loadLoginStatus,
   };

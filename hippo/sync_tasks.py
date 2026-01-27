@@ -233,6 +233,8 @@ class SyncTaskManager:
                 on_account_done=on_account_done,
                 on_accounts_loaded=on_accounts_loaded,
                 lock=SYNC_RUN_LOCK,
+                on_images_start=lambda: self._set_task_log(state, "downloading_images"),
+                on_images_done=lambda: self._set_task_log(state, None),
             )
             with self._lock:
                 state.report = {
@@ -251,6 +253,10 @@ class SyncTaskManager:
                 state.error = str(exc)
                 state.finished_at = _utc_now_iso()
                 state.current_account = None
+
+    def _set_task_log(self, state: SyncTaskState, message: str | None) -> None:
+        with self._lock:
+            state.last_log = message
 
 
 __all__ = ["SyncTaskManager"]

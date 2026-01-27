@@ -600,6 +600,8 @@ async def run_sync_job(
     on_accounts_loaded: Callable[[list[AccountCredential]], None] | None = None,
     lock: asyncio.Lock | None = None,
     on_lock_acquired: Callable[[], None] | None = None,
+    on_images_start: Callable[[], None] | None = None,
+    on_images_done: Callable[[], None] | None = None,
 ) -> SyncJobResult:
     if lock:
         async with lock:
@@ -613,6 +615,8 @@ async def run_sync_job(
                 on_accounts_loaded=on_accounts_loaded,
                 lock=None,
                 on_lock_acquired=None,
+                on_images_start=on_images_start,
+                on_images_done=on_images_done,
             )
     if on_lock_acquired:
         on_lock_acquired()
@@ -704,7 +708,11 @@ async def run_sync_job(
                     error = str(exc)
                     report = empty_report
                 if settings.get('download_images') and app.downloader:
+                    if on_images_start:
+                        on_images_start()
                     await app.downloader.wait_for_images()
+                    if on_images_done:
+                        on_images_done()
 
         finished_at = _utc_now_iso()
         if error:
