@@ -12,6 +12,16 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _is_numeric_cover(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, int):
+        return True
+    if isinstance(value, str):
+        return value.strip().isdigit()
+    return False
+
+
 def _ensure_cover_image(cur, *, article_pk: int, cover_url: str, now: datetime) -> int:
     cur.execute(
         """
@@ -89,7 +99,6 @@ def migrate(*, batch_size: int, alter_type: bool) -> None:
                     FROM articles
                     WHERE cover IS NOT NULL
                       AND cover <> ''
-                      AND cover !~ '^[0-9]+$'
                       AND id > %s
                     ORDER BY id ASC
                     LIMIT %s
@@ -103,6 +112,8 @@ def migrate(*, batch_size: int, alter_type: bool) -> None:
             with storage.transaction():
                 with storage.conn.cursor() as cur:
                     for article_pk, cover_url in rows:
+                        if _is_numeric_cover(cover_url):
+                            continue
                         cover_id = _ensure_cover_image(
                             cur,
                             article_pk=int(article_pk),
@@ -116,6 +127,38 @@ def migrate(*, batch_size: int, alter_type: bool) -> None:
                         total += 1
             last_id = rows[-1][0]
         if alter_type:
+            remaining = []
+            last_id = 0
+            while True:
+                with storage.conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT id, cover
+                        FROM articles
+                        WHERE cover IS NOT NULL
+                          AND cover <> ''
+                          AND id > %s
+                        ORDER BY id ASC
+                        LIMIT %s
+                        """,
+                        (last_id, batch_size),
+                    )
+                    rows = cur.fetchall()
+                if not rows:
+                    break
+                for article_pk, cover_url in rows:
+                    if not _is_numeric_cover(cover_url):
+                        remaining.append((article_pk, cover_url))
+                        if len(remaining) >= 5:
+                            break
+                if remaining:
+                    break
+                last_id = rows[-1][0]
+            if remaining:
+                sample = ", ".join(str(item[0]) for item in remaining[:5])
+                raise RuntimeError(
+                    f"Non-numeric cover still exists. sample_article_ids=[{sample}]"
+                )
             with storage.transaction():
                 with storage.conn.cursor() as cur:
                     cur.execute(
