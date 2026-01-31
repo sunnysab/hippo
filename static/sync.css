@@ -1,6 +1,6 @@
 #view-sync {
   height: calc(100vh - 140px);
-  overflow: hidden;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
 }
@@ -11,7 +11,6 @@
   gap: 24px;
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
   padding-bottom: 24px;
 }
 
