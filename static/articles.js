@@ -229,6 +229,7 @@
     url.searchParams.set('page_size', '200');
     const payload = await apiGet(url.pathname + url.search);
     const select = $('#article-account-filter');
+    const currentValue = select.value;
     select.innerHTML = '';
     const allOption = document.createElement('option');
     allOption.value = '';
@@ -240,6 +241,61 @@
       opt.textContent = account.nickname;
       select.appendChild(opt);
     });
+    // Restore selected value if still valid
+    if (currentValue && Array.from(select.options).some(opt => opt.value === currentValue)) {
+      select.value = currentValue;
+    }
+  };
+
+  const updateArticleUrlParams = () => {
+    const groupId = $('#article-group-filter')?.value;
+    const accountBiz = $('#article-account-filter')?.value;
+    const search = $('#article-search')?.value.trim();
+
+    const url = new URL(window.location);
+    if (groupId) url.searchParams.set('group', groupId);
+    else url.searchParams.delete('group');
+    if (accountBiz) url.searchParams.set('account', accountBiz);
+    else url.searchParams.delete('account');
+    if (search) url.searchParams.set('q', search);
+    else url.searchParams.delete('q');
+
+    window.history.replaceState({}, '', url);
+  };
+
+  const applyArticleUrlParams = async () => {
+    const url = new URL(window.location);
+    const groupId = url.searchParams.get('group');
+    const accountBiz = url.searchParams.get('account');
+    const search = url.searchParams.get('q');
+
+    const groupFilter = $('#article-group-filter');
+    const accountFilter = $('#article-account-filter');
+    const searchInput = $('#article-search');
+
+    // Apply group filter first (affects account options)
+    if (groupId && groupFilter) {
+      groupFilter.value = groupId;
+    }
+    // Always populate account filter (needed for account selection)
+    await populateArticleAccountFilter();
+
+    // Apply account filter
+    if (accountBiz && accountFilter) {
+      // Check if value exists in options
+      const optionExists = Array.from(accountFilter.options).some(opt => opt.value === accountBiz);
+      if (optionExists) {
+        accountFilter.value = accountBiz;
+      }
+    }
+
+    // Apply search
+    if (search && searchInput) {
+      searchInput.value = search;
+    }
+
+    // Load articles with applied filters
+    await loadArticles(true);
   };
 
   const parseWechatUrl = (urlStr) => {
@@ -632,11 +688,18 @@
     $('#article-group-filter').addEventListener('change', async () => {
       await populateArticleAccountFilter();
       await loadArticles(true);
+      updateArticleUrlParams();
     });
-    $('#article-account-filter').addEventListener('change', () => loadArticles(true));
+    $('#article-account-filter').addEventListener('change', () => {
+      loadArticles(true);
+      updateArticleUrlParams();
+    });
     $('#article-search').addEventListener('input', () => {
       clearTimeout(state.articleTimer);
-      state.articleTimer = setTimeout(() => loadArticles(true), 300);
+      state.articleTimer = setTimeout(() => {
+        loadArticles(true);
+        updateArticleUrlParams();
+      }, 300);
     });
 
     const openBtn = $('#article-menu-open');
@@ -694,7 +757,13 @@
     initReaderControls();
     initArticleLayout();
     bindEvents();
-    await refresh();
+    // Check if there are URL params to apply
+    const url = new URL(window.location);
+    if (url.searchParams.has('group') || url.searchParams.has('account') || url.searchParams.has('q')) {
+      await applyArticleUrlParams();
+    } else {
+      await refresh();
+    }
   };
 
   window.HippoArticles = {
@@ -702,5 +771,7 @@
     refresh,
     loadArticles,
     populateArticleAccountFilter,
+    updateArticleUrlParams,
+    applyArticleUrlParams,
   };
 })();
