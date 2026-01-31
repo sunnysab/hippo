@@ -1,16 +1,12 @@
 #view-sync {
   height: calc(100vh - 140px);
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
 }
 
 .panel-grid {
   display: grid;
   grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.1fr) minmax(0, 1.1fr);
   gap: 24px;
-  flex: 1;
-  min-height: 0;
   padding-bottom: 24px;
 }
 
