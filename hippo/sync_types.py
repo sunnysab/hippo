@@ -21,7 +21,6 @@ class SyncMode(str, Enum):
 class SyncConfig:
     mode: SyncMode | None
     page_size: int
-    page_limit: int | None
     sleep_seconds: float
     reset: bool
     recent_days: int | None
@@ -36,7 +35,6 @@ class SyncConfig:
 
 @dataclass(frozen=True)
 class SyncPlan:
-    page_limit: int | None
     since_timestamp: int | None
     until_timestamp: int | None
     stop_on_existing: bool

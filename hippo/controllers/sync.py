@@ -140,7 +140,6 @@ def _build_sync_config(
     *,
     mode: SyncMode,
     page_size: int,
-    page_limit: int | None,
     sleep_seconds: float,
     reset: bool,
     recent_days: int | None,
@@ -152,7 +151,6 @@ def _build_sync_config(
     return SyncConfig(
         mode=mode,
         page_size=page_size,
-        page_limit=page_limit,
         sleep_seconds=sleep_seconds,
         reset=reset,
         recent_days=recent_days,
@@ -246,7 +244,6 @@ async def sync_account_articles(
     config = _build_sync_config(
         mode=mode,
         page_size=page_size,
-        page_limit=pages,
         sleep_seconds=0,
         reset=False,
         recent_days=recent_days,
@@ -319,7 +316,6 @@ async def sync_all_accounts(
     config = _build_sync_config(
         mode=mode,
         page_size=page_size,
-        page_limit=None,
         sleep_seconds=sleep_seconds,
         reset=reset,
         recent_days=recent_days,
@@ -410,7 +406,6 @@ async def sync_group_accounts(
     config = _build_sync_config(
         mode=mode,
         page_size=page_size,
-        page_limit=None,
         sleep_seconds=sleep_seconds,
         reset=reset,
         recent_days=recent_days,

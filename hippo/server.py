@@ -1706,12 +1706,6 @@ async def update_sync_settings(
         updates["recent_days"] = max(int(body["recent_days"]), 1)
     if "page_size" in body:
         updates["page_size"] = max(int(body["page_size"]), 1)
-    if "page_limit" in body:
-        value = body["page_limit"]
-        if value in ("", None):
-            updates["page_limit"] = None
-        else:
-            updates["page_limit"] = max(int(value), 1)
     if "sleep_seconds" in body:
         updates["sleep_seconds"] = float(body["sleep_seconds"])
     if "download_content" in body:

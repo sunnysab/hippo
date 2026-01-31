@@ -45,7 +45,6 @@ SYNC_LOGIN_REQUIRED_AT_KEY = 'sync:login_required_at'
 _logger = logging.getLogger('hippo.sync')
 _DEFAULT_RECENT_DAYS = 7
 _DEFAULT_PAGE_SIZE = 10
-_DEFAULT_PAGE_LIMIT = 2
 _DEFAULT_CONTENT_LIMIT = 20
 SYNC_RUN_LOCK = asyncio.Lock()
 
@@ -64,7 +63,6 @@ def default_sync_settings() -> dict[str, Any]:
         'mode': 'incremental',
         'recent_days': 7,
         'page_size': 10,
-        'page_limit': 2,
         'sleep_seconds': 0.05,
         'download_content': True,
         'download_images': True,
@@ -75,11 +73,28 @@ def default_sync_settings() -> dict[str, Any]:
     }
 
 
+def _build_sync_config(settings: dict[str, Any]) -> SyncConfig:
+    return SyncConfig(
+        mode=None,
+        page_size=max(int(settings.get('page_size') or _DEFAULT_PAGE_SIZE), 1),
+        sleep_seconds=float(settings.get('sleep_seconds') or 0),
+        reset=False,
+        recent_days=settings.get('recent_days'),
+        since_date=settings.get('since'),
+        until_date=settings.get('until'),
+        force=False,
+        skip_minutes=settings.get('skip_minutes'),
+        download_content=bool(settings.get('download_content')),
+        download_images=bool(settings.get('download_images')),
+        content_limit=int(settings.get('content_limit') or _DEFAULT_CONTENT_LIMIT),
+    )
+
+
 def get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
     settings = load_meta_json(storage, SYNC_SETTINGS_KEY, default_sync_settings())
     defaults = default_sync_settings()
     merged = {**defaults, **(settings or {})}
-    for key in ('mode', 'recent_days', 'page_size', 'page_limit', 'content_limit'):
+    for key in ('mode', 'recent_days', 'page_size', 'content_limit'):
         merged[key] = defaults[key]
     return merged
 
@@ -331,7 +346,6 @@ class ArticleSyncService:
         until_timestamp = None
         stop_on_existing = False
         full_synced_hint = False
-        page_limit = config.page_limit
         resume_key = None
         complete_key = None
 
@@ -340,7 +354,6 @@ class ArticleSyncService:
             complete_key = f'sync_complete:{account.biz}'
 
         if mode == SyncMode.full:
-            page_limit = None
             full_synced_hint = self._storage.meta.get(f'sync_complete:{account.biz}') is not None
         elif mode == SyncMode.incremental:
             since_timestamp = _to_utc_timestamp(account.last_synced_at)
@@ -368,7 +381,6 @@ class ArticleSyncService:
             full_synced_hint = False
 
         return SyncPlan(
-            page_limit=page_limit,
             since_timestamp=since_timestamp,
             until_timestamp=until_timestamp,
             stop_on_existing=stop_on_existing,
@@ -577,7 +589,6 @@ def _build_sync_config(settings: dict[str, Any]) -> SyncConfig:
     return SyncConfig(
         mode=None,
         page_size=max(int(settings.get('page_size') or _DEFAULT_PAGE_SIZE), 1),
-        page_limit=settings.get('page_limit'),
         sleep_seconds=float(settings.get('sleep_seconds') or 0),
         reset=False,
         recent_days=settings.get('recent_days'),

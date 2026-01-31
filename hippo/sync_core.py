@@ -77,7 +77,6 @@ async def sync_account_core(
 ) -> SyncSummary:
     observer = observer or NullSyncObserver()
     page_size = config.page_size
-    pages = plan.page_limit
     sleep_seconds = config.sleep_seconds
     resume_key = plan.resume_key
     full_synced_hint = plan.full_synced_hint
@@ -217,9 +216,6 @@ async def sync_account_core(
             )
             if stop_due_to_since:
                 completed = True
-                break
-            if pages is not None and page_count >= pages:
-                completed = False
                 break
             if sleep_seconds > 0:
                 await asyncio.sleep(sleep_seconds)
