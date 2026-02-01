@@ -503,6 +503,12 @@ class ArticleSyncService:
                 return result, [], None
             raise SyncRunError(message, login_required=is_login_error(message)) from exc
 
+        if summary:
+            # Mark account as synced even when no new articles were saved, so subsequent
+            # runs within skip window can be skipped correctly.
+            with self._storage.transaction():
+                self._storage.accounts.update_last_synced(account.biz)
+
         if summary.completed and use_resume and bulk and mode == SyncMode.full and plan.complete_key:
             with self._storage.transaction():
                 self._storage.meta.set(plan.complete_key, _today_str())
