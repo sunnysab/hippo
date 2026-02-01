@@ -1700,26 +1700,14 @@ async def update_sync_settings(
         updates["enabled"] = bool(body["enabled"])
     if "interval_minutes" in body:
         updates["interval_minutes"] = max(int(body["interval_minutes"]), 1)
-    if "mode" in body:
-        updates["mode"] = body["mode"]
-    if "recent_days" in body:
-        updates["recent_days"] = max(int(body["recent_days"]), 1)
-    if "page_size" in body:
-        updates["page_size"] = max(int(body["page_size"]), 1)
     if "sleep_seconds" in body:
         updates["sleep_seconds"] = float(body["sleep_seconds"])
     if "download_content" in body:
         updates["download_content"] = bool(body["download_content"])
     if "download_images" in body:
         updates["download_images"] = bool(body["download_images"])
-    if "content_limit" in body:
-        updates["content_limit"] = max(int(body["content_limit"]), 0)
     if "skip_minutes" in body:
         updates["skip_minutes"] = max(int(body["skip_minutes"]), 0)
-    if "since" in body:
-        updates["since"] = body["since"]
-    if "until" in body:
-        updates["until"] = body["until"]
     if "alert_enabled" in body:
         updates["alert_enabled"] = bool(body["alert_enabled"])
     if "alert_email" in body:

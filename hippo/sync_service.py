@@ -76,13 +76,9 @@ def default_sync_settings() -> dict[str, Any]:
     return {
         'enabled': False,
         'interval_minutes': 60,
-        'mode': 'incremental',
-        'recent_days': 7,
-        'page_size': 10,
         'sleep_seconds': 0.05,
         'download_content': True,
         'download_images': True,
-        'content_limit': None,
         'skip_minutes': 30,
         'alert_enabled': False,
         'alert_email': '',
@@ -92,21 +88,17 @@ def default_sync_settings() -> dict[str, Any]:
 def _build_sync_config(settings: dict[str, Any]) -> SyncConfig:
     return SyncConfig(
         mode=None,
-        page_size=max(int(settings.get('page_size') or _DEFAULT_PAGE_SIZE), 1),
+        page_size=_DEFAULT_PAGE_SIZE,
         sleep_seconds=float(settings.get('sleep_seconds') or 0),
         reset=False,
-        recent_days=settings.get('recent_days'),
-        since_date=settings.get('since'),
-        until_date=settings.get('until'),
+        recent_days=None,
+        since_date=None,
+        until_date=None,
         force=False,
         skip_minutes=settings.get('skip_minutes'),
         download_content=bool(settings.get('download_content')),
         download_images=bool(settings.get('download_images')),
-        content_limit=(
-            None
-            if settings.get('content_limit') in (None, '', 0, '0')
-            else max(int(settings.get('content_limit')), 1)
-        ),
+        content_limit=None,
     )
 
 
@@ -114,8 +106,9 @@ def get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
     settings = load_meta_json(storage, SYNC_SETTINGS_KEY, default_sync_settings())
     defaults = default_sync_settings()
     merged = {**defaults, **(settings or {})}
-    for key in ('mode', 'recent_days', 'page_size', 'content_limit'):
-        merged[key] = defaults[key]
+    # Remove legacy fields that are no longer supported by the settings UI.
+    for key in ('mode', 'recent_days', 'page_size', 'content_limit', 'since', 'until'):
+        merged.pop(key, None)
     return merged
 
 
@@ -618,21 +611,17 @@ class ArticleSyncService:
 def _build_sync_config(settings: dict[str, Any]) -> SyncConfig:
     return SyncConfig(
         mode=None,
-        page_size=max(int(settings.get('page_size') or _DEFAULT_PAGE_SIZE), 1),
+        page_size=_DEFAULT_PAGE_SIZE,
         sleep_seconds=float(settings.get('sleep_seconds') or 0),
         reset=False,
-        recent_days=settings.get('recent_days'),
-        since_date=settings.get('since'),
-        until_date=settings.get('until'),
+        recent_days=None,
+        since_date=None,
+        until_date=None,
         force=False,
         skip_minutes=settings.get('skip_minutes'),
         download_content=bool(settings.get('download_content')),
         download_images=bool(settings.get('download_images')),
-        content_limit=(
-            None
-            if settings.get('content_limit') in (None, '', 0, '0')
-            else max(int(settings.get('content_limit')), 1)
-        ),
+        content_limit=None,
     )
 
 
@@ -739,7 +728,7 @@ async def run_sync_job(
                         accounts=accounts,
                         config=config,
                         bulk=True,
-                        use_resume=False,
+                        use_resume=True,
                         group_defaults=group_defaults,
                         allow_freq_skip=True,
                         observer_factory=observer_factory,
@@ -760,11 +749,12 @@ async def run_sync_job(
                         on_images_done()
 
         # Fire-and-forget image backfill to ensure missing images are picked up
-        try:
-            asyncio.create_task(_run_backfill_images())
-        except RuntimeError:
-            loop = asyncio.get_event_loop()
-            loop.create_task(_run_backfill_images())
+        if settings.get('download_images'):
+            try:
+                asyncio.create_task(_run_backfill_images())
+            except RuntimeError:
+                loop = asyncio.get_event_loop()
+                loop.create_task(_run_backfill_images())
 
         finished_at = _utc_now_iso()
         if error:
