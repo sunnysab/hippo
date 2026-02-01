@@ -15,6 +15,22 @@ from .wechat_api import WeChatApiClient
 from .models import AccountCredential, ArticleRecord
 from .storage import PostgresStorage, open_storage
 from .sync_core import is_freq_control, is_login_error, sync_account_core
+
+# Optional background image backfill after scheduled sync
+async def _run_backfill_images() -> None:
+    try:
+        from .cli import _backfill_article_images_async
+    except Exception:
+        return
+    await _backfill_article_images_async(
+        pg_dsn=None,
+        limit=None,
+        workers=4,
+        retries=3,
+        sleep_base=0.5,
+        retry_failed=False,
+        dry_run=False,
+    )
 from .sync_types import (
     NullSyncObserver,
     SyncAccountResult,
@@ -742,6 +758,13 @@ async def run_sync_job(
                     await app.downloader.wait_for_images()
                     if on_images_done:
                         on_images_done()
+
+        # Fire-and-forget image backfill to ensure missing images are picked up
+        try:
+            asyncio.create_task(_run_backfill_images())
+        except RuntimeError:
+            loop = asyncio.get_event_loop()
+            loop.create_task(_run_backfill_images())
 
         finished_at = _utc_now_iso()
         if error:
