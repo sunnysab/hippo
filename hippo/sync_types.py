@@ -30,7 +30,7 @@ class SyncConfig:
     skip_minutes: int | None
     download_content: bool
     download_images: bool
-    content_limit: int
+    content_limit: int | None
 
 
 @dataclass(frozen=True)

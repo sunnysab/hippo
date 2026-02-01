@@ -66,7 +66,7 @@ def default_sync_settings() -> dict[str, Any]:
         'sleep_seconds': 0.05,
         'download_content': True,
         'download_images': True,
-        'content_limit': 20,
+        'content_limit': None,
         'skip_minutes': 30,
         'alert_enabled': False,
         'alert_email': '',
@@ -86,7 +86,11 @@ def _build_sync_config(settings: dict[str, Any]) -> SyncConfig:
         skip_minutes=settings.get('skip_minutes'),
         download_content=bool(settings.get('download_content')),
         download_images=bool(settings.get('download_images')),
-        content_limit=int(settings.get('content_limit') or _DEFAULT_CONTENT_LIMIT),
+        content_limit=(
+            None
+            if settings.get('content_limit') in (None, '', 0, '0')
+            else max(int(settings.get('content_limit')), 1)
+        ),
     )
 
 
@@ -570,9 +574,13 @@ class ArticleSyncService:
                 summary_rows.append((result.nickname or result.biz, summary.total_saved))
 
             if config.download_content and self._downloader and records:
-                content_limit = max(int(config.content_limit or _DEFAULT_CONTENT_LIMIT), 0)
                 candidates = {item.article_id: item for item in records}
-                for missing in _select_missing_content(self._storage, account.biz, limit=content_limit):
+                missing_articles = _select_missing_content(
+                    self._storage,
+                    account.biz,
+                    limit=config.content_limit or 0,
+                )
+                for missing in missing_articles:
                     candidates.setdefault(missing.article_id, missing)
                 if candidates:
                     results, _, _ = await self._downloader.download_many(
@@ -604,7 +612,11 @@ def _build_sync_config(settings: dict[str, Any]) -> SyncConfig:
         skip_minutes=settings.get('skip_minutes'),
         download_content=bool(settings.get('download_content')),
         download_images=bool(settings.get('download_images')),
-        content_limit=int(settings.get('content_limit') or _DEFAULT_CONTENT_LIMIT),
+        content_limit=(
+            None
+            if settings.get('content_limit') in (None, '', 0, '0')
+            else max(int(settings.get('content_limit')), 1)
+        ),
     )
 
 
