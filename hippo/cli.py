@@ -1254,12 +1254,11 @@ async def _backfill_article_images_async(
                             if not batch:
                                 break
                             
-                            tasks = {asyncio.create_task(run(item)): item for item in batch}
-                            for task in asyncio.as_completed(tasks):
-                                item = tasks[task]
+                            tasks = [asyncio.create_task(run(item)) for item in batch]
+                            for task_coro in asyncio.as_completed(tasks):
+                                item, data, content_type, error = await task_coro
                                 _, biz, article_id, _, orig_url = item
                                 try:
-                                    _, data, content_type, error = await task
                                     if error:
                                         raise RuntimeError(error)
                                     image_store.store(
