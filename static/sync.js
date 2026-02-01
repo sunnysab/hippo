@@ -1,6 +1,8 @@
 (() => {
   const { state, $, apiGet, apiSend, t, activateTab } = window.Hippo;
 
+  const HISTORY_PAGE_SIZE = 5;
+
   const renderSyncHistory = () => {
     const list = $('#sync-history');
     if (!list) return;
@@ -47,7 +49,10 @@
       `;
       list.appendChild(item);
     }
-    history.forEach((entry) => {
+    const page = state.historyPage || 1;
+    const start = (page - 1) * HISTORY_PAGE_SIZE;
+    const paged = history.slice(start, start + HISTORY_PAGE_SIZE);
+    paged.forEach((entry) => {
       const item = document.createElement('div');
       item.className = 'list-item';
       const status = entry.status || 'unknown';
@@ -62,6 +67,14 @@
       `;
       list.appendChild(item);
     });
+
+    const totalPages = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
+    const prevBtn = $('#btn-history-prev');
+    const nextBtn = $('#btn-history-next');
+    if (prevBtn && nextBtn) {
+      prevBtn.disabled = page <= 1;
+      nextBtn.disabled = page >= totalPages;
+    }
   };
 
   const formatRelativeTime = (isoString) => {
@@ -125,12 +138,14 @@
   const loadSyncStatus = async () => {
     const payload = await apiGet('/api/sync');
     state.syncStatus = payload;
+    state.historyPage = 1;
     renderSyncStatus();
   };
 
   const loadSyncTasks = async () => {
     const payload = await apiGet('/api/sync/tasks?limit=5');
     state.syncTasks = payload.tasks || [];
+    state.historyPage = state.historyPage || 1;
     renderSyncHistory();
   };
 
@@ -266,6 +281,20 @@
     $('#btn-login-refresh').addEventListener('click', startLogin);
     $('#btn-sync-save').addEventListener('click', saveSyncSettings);
     $('#btn-sync-run').addEventListener('click', triggerSyncRun);
+    const prev = $('#btn-history-prev');
+    const next = $('#btn-history-next');
+    if (prev && next) {
+      prev.addEventListener('click', () => {
+        state.historyPage = Math.max(1, (state.historyPage || 1) - 1);
+        renderSyncHistory();
+      });
+      next.addEventListener('click', () => {
+        const history = state.syncStatus?.history || [];
+        const totalPages = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
+        state.historyPage = Math.min(totalPages, (state.historyPage || 1) + 1);
+        renderSyncHistory();
+      });
+    }
     const emailTls = $('#email-tls');
     if (emailTls) {
       emailTls.addEventListener('change', () => {
