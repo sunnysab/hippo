@@ -1120,21 +1120,23 @@ async def _backfill_article_images_async(
         return parsed.scheme in ("http", "https")
 
     async def download_with_retry(url: str, *, referer: Optional[str]) -> tuple[bytes, Optional[str]]:
-        last_exc: Optional[Exception] = None
-        for attempt in range(retries):
+        for attempt in range(1, retries + 1):
             try:
                 return await client.download_binary_with_type(
                     normalize_image_url(url), referer=referer
                 )
             except httpx.HTTPStatusError as exc:
-                last_exc = exc
-                if exc.response is not None and exc.response.status_code in (400, 404):
+                status_code = exc.response.status_code if exc.response is not None else None
+                if status_code in (400, 404) or attempt >= retries:
                     raise
-                await asyncio.sleep(min(sleep_base * (2**attempt), 5.0))
-            except Exception as exc:
-                last_exc = exc
-                await asyncio.sleep(min(sleep_base * (2**attempt), 5.0))
-        raise RuntimeError(str(last_exc)) from last_exc
+                await asyncio.sleep(min(sleep_base * (2 ** (attempt - 1)), 5.0))
+            except httpx.RequestError as exc:
+                if attempt >= retries:
+                    raise
+                await asyncio.sleep(min(sleep_base * (2 ** (attempt - 1)), 5.0))
+            except Exception:
+                raise
+        raise RuntimeError('Download retry loop exited unexpectedly.')
 
     def format_error(exc: Exception) -> str:
         if isinstance(exc, httpx.HTTPStatusError):
