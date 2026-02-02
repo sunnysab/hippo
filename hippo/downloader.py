@@ -580,7 +580,9 @@ class ArticleDownloader(AbstractAsyncContextManager):
     ) -> None:
         if not self.storage:
             return
-        if not hasattr(self.storage, "save_article_content"):
+        repo = getattr(self.storage, 'articles', None)
+        save_article_content = getattr(repo, 'save_article_content', None) if repo else None
+        if not callable(save_article_content):
             return
         title, cover_local, blocks, body_markdown = _parse_markdown_blocks(markdown_content)
         base_url = article.link or "https://mp.weixin.qq.com/"
@@ -638,7 +640,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
 
         if hasattr(self.storage, 'transaction'):
             with self.storage.transaction():
-                self.storage.articles.save_article_content(
+                save_article_content(
                     article,
                     url_token=url_token,
                     title=title or article.title,
@@ -649,7 +651,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                     images=images,
                 )
         else:
-            self.storage.articles.save_article_content(
+            save_article_content(
                 article,
                 url_token=url_token,
                 title=title or article.title,
