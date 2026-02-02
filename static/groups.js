@@ -42,19 +42,6 @@
     recent_days: 7,
   };
 
-  const ensureSyncSettings = async () => {
-    if (state.syncSettings) return state.syncSettings;
-    try {
-      const payload = await apiGet('/api/sync/settings');
-      state.syncSettings = payload;
-      return payload;
-    } catch (err) {
-      console.warn('Failed to load sync settings', err);
-      state.syncSettings = syncDefaults;
-      return syncDefaults;
-    }
-  };
-
   const getSyncModeLabel = (mode) => {
     if (mode === 'incremental') return t('sync.modeIncremental', 'Incremental');
     if (mode === 'recent') return t('sync.modeRecent', 'Recent');
@@ -62,9 +49,7 @@
     return mode || '';
   };
 
-  const getDefaultRecentDays = () => {
-    return state.syncSettings?.recent_days ?? syncDefaults.recent_days;
-  };
+  const getDefaultRecentDays = () => syncDefaults.recent_days;
 
   const buildSyncModeOptions = (select, { includeInherit, inheritLabel, selected }) => {
     if (!select) return;
@@ -238,7 +223,7 @@
     if (renameBtn) renameBtn.disabled = false;
     if (deleteBtn) deleteBtn.disabled = false;
     if (syncModeSelect && syncDaysInput) {
-      const defaultMode = state.syncSettings?.mode || syncDefaults.mode;
+      const defaultMode = syncDefaults.mode;
       const inheritLabel = t('groups.syncModeInherit', 'Follow global ({mode})').replace(
         '{mode}',
         getSyncModeLabel(defaultMode),
@@ -286,7 +271,7 @@
     if (batchSyncMode) {
       const activeGroup = state.groups.find((item) => item.id === state.selectedGroupId);
       const groupMode = activeGroup?.sync_mode || '';
-      const defaultMode = groupMode || state.syncSettings?.mode || syncDefaults.mode;
+      const defaultMode = groupMode || syncDefaults.mode;
       const inheritLabel = groupMode
         ? t('accounts.syncModeInheritGroup', 'Follow group ({mode})').replace(
             '{mode}',
@@ -325,7 +310,7 @@
       const articleCountText = t('accounts.articleCount', '{n} articles').replace('{n}', articleCount);
       const storedMode = account.sync_mode || '';
       const groupMode = activeGroup?.sync_mode || '';
-      const defaultMode = groupMode || state.syncSettings?.mode || syncDefaults.mode;
+      const defaultMode = groupMode || syncDefaults.mode;
       const inheritLabel = groupMode
         ? t('accounts.syncModeInheritGroup', 'Follow group ({mode})').replace(
             '{mode}',
@@ -648,7 +633,6 @@
   };
 
   const loadAccounts = async () => {
-    await ensureSyncSettings();
     const groupId = state.selectedGroupId;
     const searchInput = $('#account-search');
     const search = searchInput ? searchInput.value.trim() : '';
@@ -934,7 +918,6 @@
   };
 
   const refresh = async () => {
-    await ensureSyncSettings();
     await loadGroups();
     await loadAccounts();
   };
