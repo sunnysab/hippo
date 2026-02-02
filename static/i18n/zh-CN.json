@@ -114,8 +114,6 @@
   "sync.modeRecent": "最近",
   "sync.modeFull": "全量",
   "sync.recentDays": "最近天数",
-  "sync.pageSize": "每页数量",
-  "sync.pageLimit": "最大页数",
   "sync.sleepSeconds": "翻页间隔（秒）",
   "sync.contentLimit": "内容拉取数量",
   "sync.skipMinutes": "跳过间隔（分钟）",

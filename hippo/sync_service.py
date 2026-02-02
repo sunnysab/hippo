@@ -61,7 +61,6 @@ SYNC_LOGIN_REQUIRED_AT_KEY = 'sync:login_required_at'
 _logger = logging.getLogger('hippo.sync')
 _DEFAULT_RECENT_DAYS = 7
 _DEFAULT_PAGE_SIZE = 10
-_DEFAULT_CONTENT_LIMIT = 20
 SYNC_RUN_LOCK = asyncio.Lock()
 
 
@@ -238,9 +237,9 @@ def _select_missing_content(
     storage: PostgresStorage,
     biz: str,
     *,
-    limit: int,
+    limit: int | None,
 ) -> list[ArticleRecord]:
-    if limit <= 0:
+    if limit is not None and limit <= 0:
         return []
     articles = storage.articles.list_articles(biz, limit=limit)
     try:
@@ -587,7 +586,7 @@ class ArticleSyncService:
                 missing_articles = _select_missing_content(
                     self._storage,
                     account.biz,
-                    limit=config.content_limit or 0,
+                    limit=config.content_limit,
                 )
                 for missing in missing_articles:
                     candidates.setdefault(missing.article_id, missing)
