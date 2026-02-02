@@ -499,25 +499,38 @@ class ArticleRepository:
         images: list[dict],
     ) -> None:
         now = _utc_now_dt()
-        normalized_cover = str(cover_url).strip() if cover_url is not None else None
-        if normalized_cover:
-            has_cover = any(
-                image.get('kind') == 'cover' and str(image.get('orig_url') or '') == normalized_cover
-                for image in images
-            )
-            if not has_cover:
-                images = [
-                    {
-                        'orig_url': normalized_cover,
-                        'kind': 'cover',
-                        'position': 0,
-                        'content_type': None,
-                        'data': None,
-                    },
-                    *images,
-                ]
+        normalized_cover: str | None = None
         try:
             with self._conn.cursor() as cur:
+                if cover_url is not None:
+                    cover_id = self._normalize_cover_id(cover_url)
+                    if cover_id is not None:
+                        cur.execute(
+                            'SELECT orig_url FROM article_images WHERE id = %s',
+                            (cover_id,),
+                        )
+                        row = cur.fetchone()
+                        if row and row[0]:
+                            normalized_cover = str(row[0]).strip()
+                    else:
+                        normalized_cover = str(cover_url).strip()
+                if normalized_cover:
+                    has_cover = any(
+                        image.get('kind') == 'cover'
+                        and str(image.get('orig_url') or '') == normalized_cover
+                        for image in images
+                    )
+                    if not has_cover:
+                        images = [
+                            {
+                                'orig_url': normalized_cover,
+                                'kind': 'cover',
+                                'position': 0,
+                                'content_type': None,
+                                'data': None,
+                            },
+                            *images,
+                        ]
                 cur.execute(
                     """
                     INSERT INTO articles (
