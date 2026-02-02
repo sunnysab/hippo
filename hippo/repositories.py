@@ -499,7 +499,7 @@ class ArticleRepository:
         images: list[dict],
     ) -> None:
         now = _utc_now_dt()
-        normalized_cover = cover_url.strip() if cover_url else None
+        normalized_cover = str(cover_url).strip() if cover_url is not None else None
         if normalized_cover:
             has_cover = any(
                 image.get('kind') == 'cover' and str(image.get('orig_url') or '') == normalized_cover
