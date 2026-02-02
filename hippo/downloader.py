@@ -591,6 +591,8 @@ class ArticleDownloader(AbstractAsyncContextManager):
         def resolve_url(value: str | None) -> str | None:
             if not value:
                 return None
+            if not isinstance(value, str):
+                return None
             if value in resolved_map:
                 return resolved_map[value]
             return _resolve_asset_url(value, base=base_url) or value
