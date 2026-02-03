@@ -37,7 +37,7 @@ class TqdmSyncObserver(NullSyncObserver):
             self._progress.refresh()
 
     def on_skip(self, reason: str) -> None:
-        if not self._progress:
+        if self._progress is None:
             return
         label = _format_skip_reason(reason, self._account)
         self._progress.set_postfix_str(label, refresh=True)
@@ -209,7 +209,7 @@ async def perform_sync(
             if report:
                 for detail in report.details:
                     progress = progress_map.get(detail.biz)
-                    if not progress:
+                    if progress is None:
                         continue
                     if detail.skipped:
                         account = account_map.get(detail.biz)
