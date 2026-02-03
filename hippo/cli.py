@@ -1125,18 +1125,17 @@ async def _backfill_article_images_async(
                 return await client.download_binary_with_type(
                     normalize_image_url(url), referer=referer
                 )
-            except httpx.HTTPStatusError as exc:
-                status_code = exc.response.status_code if exc.response is not None else None
-                if status_code in (400, 404) or attempt >= retries:
+            except httpx.HTTPStatusError:
+                if attempt >= retries:
                     raise
                 await asyncio.sleep(min(sleep_base * (2 ** (attempt - 1)), 5.0))
-            except httpx.RequestError as exc:
+            except httpx.RequestError:
                 if attempt >= retries:
                     raise
                 await asyncio.sleep(min(sleep_base * (2 ** (attempt - 1)), 5.0))
             except Exception:
                 raise
-        raise RuntimeError('Download retry loop exited unexpectedly.')
+        raise RuntimeError("Download retry loop exited unexpectedly.")
 
     def format_error(exc: Exception) -> str:
         if isinstance(exc, httpx.HTTPStatusError):
@@ -1230,7 +1229,10 @@ async def _backfill_article_images_async(
 
                     async def run(item: tuple) -> tuple[tuple, Optional[bytes], Optional[str], Optional[str]]:
                         async with sem:
-                            return await worker(item)
+                            try:
+                                return await worker(item)
+                            except Exception as exc:
+                                return item, None, None, format_error(exc)
 
                     progress = tqdm(
                         total=total_count,
