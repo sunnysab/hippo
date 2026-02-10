@@ -13,27 +13,47 @@ from ..models import AccountCredential
 from ..storage import PostgresStorage, open_storage
 from ..sync_core import SyncInterrupted
 from ..sync_service import ArticleSyncService, SyncRunError, append_sync_history
-from ..sync_types import NullSyncObserver, SyncConfig, SyncMode, SyncObserver, SyncReport
-from ..utils import format_table
+from ..sync_types import (
+    NullSyncObserver,
+    SyncAccountResult,
+    SyncConfig,
+    SyncMode,
+    SyncObserver,
+    SyncReport,
+    SyncSummary,
+)
 
 
 class TqdmSyncObserver(NullSyncObserver):
     def __init__(self, progress: tqdm | None, account: AccountCredential) -> None:
         self._progress = progress
         self._account = account
+        self._saved = 0
 
     def on_log(self, message: str) -> None:
         _pbar_write(self._progress, message)
 
     def on_progress(self, *, current: int | None, total: int | None, delta: int | None) -> None:
+        return None
+
+    def on_page(self, payload: dict[str, object]) -> None:
         if self._progress is None:
             return
-        if total and total > 0 and self._progress.total != total:
-            self._progress.total = total
-        if delta:
-            self._progress.update(delta)
-        elif current is not None:
-            self._progress.n = current
+        saved = int(payload.get('saved') or 0)
+        if saved <= 0:
+            return
+        self._saved += saved
+        self._progress.total = self._saved
+        self._progress.n = self._saved
+        self._progress.refresh()
+
+    def on_complete(self, summary: SyncSummary) -> None:
+        if self._progress is None:
+            return
+        self._saved = summary.total_saved
+        if self._saved > 0:
+            self._progress.total = self._saved
+            self._progress.n = self._saved
             self._progress.refresh()
 
     def on_skip(self, reason: str) -> None:
@@ -174,7 +194,39 @@ async def perform_sync(
 ) -> SyncReport:
     _enforce_exclusive_flags(config.force, config.skip_minutes)
     progress_map: dict[str, tqdm] = {}
+    closed_progress_biz: set[str] = set()
     account_map = {account.biz: account for account in accounts}
+
+    def close_account_progress(
+        *,
+        biz: str,
+        detail: SyncAccountResult | None = None,
+        failed: bool = False,
+    ) -> None:
+        if not biz or biz in closed_progress_biz:
+            return
+        progress = progress_map.get(biz)
+        if progress is None:
+            return
+        if failed:
+            progress.set_postfix_str('失败', refresh=True)
+            progress.close()
+            closed_progress_biz.add(biz)
+            return
+        if detail is None:
+            return
+        skipped = detail.skipped
+        skip_reason = detail.skip_reason
+        saved = detail.saved
+        completed = detail.completed
+        if skipped:
+            account = account_map.get(biz)
+            if account:
+                progress.set_postfix_str(_format_skip_reason(str(skip_reason or ''), account), refresh=True)
+        else:
+            progress.set_postfix_str(_status_label(saved, completed), refresh=True)
+        progress.close()
+        closed_progress_biz.add(biz)
 
     def observer_factory(account: AccountCredential, is_bulk: bool) -> SyncObserver:
         desc = f'同步 {account.nickname}' if not is_bulk else f'同步 {account.nickname} ({account.biz})'
@@ -204,24 +256,15 @@ async def perform_sync(
                 bulk=bulk,
                 use_resume=bulk,
                 observer_factory=observer_factory,
+                on_account_done=lambda result, _: close_account_progress(biz=result.biz, detail=result),
             )
         finally:
             if report:
                 for detail in report.details:
-                    progress = progress_map.get(detail.biz)
-                    if progress is None:
-                        continue
-                    if detail.skipped:
-                        account = account_map.get(detail.biz)
-                        if account:
-                            progress.set_postfix_str(_format_skip_reason(detail.skip_reason or '', account), refresh=True)
-                    else:
-                        progress.set_postfix_str(_status_label(detail.saved, detail.completed), refresh=True)
-                    progress.close()
+                    close_account_progress(biz=detail.biz, detail=detail)
             else:
-                for progress in progress_map.values():
-                    progress.set_postfix_str('失败', refresh=True)
-                    progress.close()
+                for biz in progress_map:
+                    close_account_progress(biz=biz, failed=True)
 
     if report is None:
         raise RuntimeError('Sync report missing')
@@ -297,7 +340,7 @@ async def sync_account_articles(
             )
             raise typer.Exit(code=130)
     if report.summary:
-        typer.echo(f'同步完成，共写入 {report.total_saved} 条记录')
+        typer.echo(f'同步完成，共新增 {report.total_saved} 条记录')
 
 
 async def sync_all_accounts(
@@ -380,13 +423,7 @@ async def sync_all_accounts(
             )
             raise typer.Exit(code=130)
 
-    if report.summary:
-        headers = ['账号', '新增/更新']
-        rows = [[name, str(saved)] for name, saved in report.summary]
-        table_text = format_table(headers, rows)
-        if table_text:
-            typer.echo(table_text)
-    typer.echo(f'全部账号同步完成，共写入 {report.total_saved} 条记录')
+    typer.echo(f'全部账号同步完成，共新增 {report.total_saved} 条记录')
 
 
 async def sync_group_accounts(
@@ -475,13 +512,7 @@ async def sync_group_accounts(
             )
             raise typer.Exit(code=130)
 
-    if report.summary:
-        headers = ['账号', '新增/更新']
-        rows = [[name, str(saved)] for name, saved in report.summary]
-        table_text = format_table(headers, rows)
-        if table_text:
-            typer.echo(table_text)
-    typer.echo(f'分组 {group} 同步完成，共写入 {report.total_saved} 条记录')
+    typer.echo(f'分组 {group} 同步完成，共新增 {report.total_saved} 条记录')
 
 
 __all__ = ['SyncMode', 'sync_account_articles', 'sync_all_accounts', 'sync_group_accounts']

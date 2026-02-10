@@ -433,7 +433,7 @@ class ArticleRepository:
 
     def save_articles(self, articles: Iterable[ArticleRecord]) -> int:
         now = _utc_now_dt()
-        inserted = 0
+        inserted_count = 0
         with self._conn.cursor() as cur:
             for article in articles:
                 cur.execute(
@@ -452,7 +452,7 @@ class ArticleRepository:
                         publish_at=EXCLUDED.publish_at,
                         raw_json=EXCLUDED.raw_json,
                         updated_at=EXCLUDED.updated_at
-                    RETURNING id
+                    RETURNING id, (xmax = 0) AS inserted
                     """,
                     (
                         article.biz,
@@ -469,7 +469,9 @@ class ArticleRepository:
                         now,
                     ),
                 )
-                article_pk = int(cur.fetchone()[0])
+                row = cur.fetchone()
+                article_pk = int(row[0])
+                is_inserted = bool(row[1])
                 cover_id = self._normalize_cover_id(article.cover)
                 if cover_id is None:
                     cover_id = self._ensure_cover_image(
@@ -483,8 +485,9 @@ class ArticleRepository:
                         "UPDATE articles SET cover = %s, updated_at = %s WHERE id = %s",
                         (cover_id, now, article_pk),
                     )
-                inserted += 1
-        return inserted
+                if is_inserted:
+                    inserted_count += 1
+        return inserted_count
 
     def save_article_content(
         self,
