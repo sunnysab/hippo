@@ -133,7 +133,7 @@ def query_rss_items(
             " JOIN accounts acc ON acc.biz = a.biz"
             " LEFT JOIN article_content c ON c.article_pk = a.id"
             f" {where_sql}"
-            " ORDER BY a.publish_at IS NULL, a.publish_at DESC, a.id DESC"
+            " ORDER BY a.publish_at DESC NULLS LAST, a.id DESC"
         )
         if limit:
             query = f"{query} {limit_sql}"

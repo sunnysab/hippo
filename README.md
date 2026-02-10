@@ -218,6 +218,8 @@ hippo -v account sync-all
 | 配置项 | 说明 |
 | --- | --- |
 | `HIPPO_PG_DSN` | PostgreSQL DSN |
+| `HIPPO_PG_JIEBA_WARMUP` | 是否在新建 PG 连接时预热 `jiebaqry`（默认 `1`） |
+| `HIPPO_PG_JIEBA_WARMUP_TEXT` | 预热分词使用的文本（默认 `hippo`） |
 | `HIPPO_ARTICLE_WORKER` | 文章 HTML worker 前缀或模板 |
 | `HIPPO_ARTICLE_WORKER_PROXY` | worker 访问代理 |
 | `HIPPO_ARTICLE_MAX_CONNECTIONS` | worker 最大并发连接数 |

@@ -1,4 +1,5 @@
 CREATE EXTENSION IF NOT EXISTS pg_jieba;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -85,9 +86,6 @@ CREATE TABLE IF NOT EXISTS article_content (
     updated_at TIMESTAMPTZ NOT NULL,
     UNIQUE (article_pk)
 );
-
-CREATE INDEX IF NOT EXISTS idx_article_content_article_pk
-ON article_content (article_pk);
 
 ALTER TABLE articles
 ADD COLUMN IF NOT EXISTS search_vector tsvector;
@@ -180,6 +178,15 @@ ON articles USING GIN (search_vector);
 CREATE INDEX IF NOT EXISTS idx_articles_biz_publish
 ON articles (biz, publish_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_articles_biz_publish_id
+ON articles (biz, publish_at DESC NULLS LAST, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_articles_publish_id
+ON articles (publish_at DESC NULLS LAST, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_articles_article_id
+ON articles (article_id);
+
 CREATE TABLE IF NOT EXISTS article_images (
     id SERIAL PRIMARY KEY,
     article_pk INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
@@ -204,6 +211,20 @@ CREATE INDEX IF NOT EXISTS idx_article_images_pending
 ON article_images (id)
 WHERE (s3_key IS NULL OR s3_key = '') AND orig_url IS NOT NULL;
 
+CREATE INDEX IF NOT EXISTS idx_article_images_article_pk_position
+ON article_images (article_pk, position);
+
+DROP INDEX IF EXISTS idx_article_content_article_pk;
+
+CREATE INDEX IF NOT EXISTS idx_accounts_nickname_trgm
+ON accounts USING GIN (nickname gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_accounts_alias_trgm
+ON accounts USING GIN (alias gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_accounts_biz_trgm
+ON accounts USING GIN (biz gin_trgm_ops);
+
 CREATE TABLE IF NOT EXISTS login_sessions (
     id SERIAL PRIMARY KEY,
     token TEXT NOT NULL,
@@ -214,3 +235,6 @@ CREATE TABLE IF NOT EXISTS login_sessions (
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_login_sessions_default_id_desc
+ON login_sessions (is_default, id DESC);

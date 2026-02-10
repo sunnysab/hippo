@@ -706,7 +706,7 @@ class ArticleRepository:
             query_parts.append('AND (a.publish_at IS NULL OR a.publish_at >= %s)')
             params.append(since_timestamp)
 
-        query_parts.append('ORDER BY a.publish_at IS NULL, a.publish_at DESC, a.id DESC')
+        query_parts.append('ORDER BY a.publish_at DESC NULLS LAST, a.id DESC')
 
         if limit is not None:
             query_parts.append('LIMIT %s')

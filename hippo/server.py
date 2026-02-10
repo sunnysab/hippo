@@ -430,25 +430,31 @@ def _list_accounts(
     offset = max(page - 1, 0) * page_size
     query_sql = (
         ""
-        "SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,"
-        " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,"
-        " COALESCE(ac.article_count, 0) AS article_count,"
-        " (ai.data IS NOT NULL) AS avatar_ready"
+        "WITH filtered_accounts AS ("
+        " SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,"
+        " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days"
         " FROM accounts a"
-        " LEFT JOIN account_groups g ON g.id = a.group_id"
-        " LEFT JOIN (SELECT biz, COUNT(*) AS article_count FROM articles GROUP BY biz) ac"
-        "   ON ac.biz = a.biz"
-        " LEFT JOIN avatar_images ai ON ai.biz = a.biz"
         f" {where_sql}"
         " ORDER BY a.nickname ASC"
         f" {limit_sql}"
+        ")"
+        " SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,"
+        " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,"
+        " COALESCE(ac.article_count, 0) AS article_count,"
+        " (ai.data IS NOT NULL) AS avatar_ready"
+        " FROM filtered_accounts a"
+        " LEFT JOIN account_groups g ON g.id = a.group_id"
+        " LEFT JOIN LATERAL ("
+        "   SELECT COUNT(*) AS article_count FROM articles ar WHERE ar.biz = a.biz"
+        " ) ac ON TRUE"
+        " LEFT JOIN avatar_images ai ON ai.biz = a.biz"
+        " ORDER BY a.nickname ASC"
     )
     rows = fetchall_rows(storage, query_sql, params + [page_size, offset], normalize=_normalize_record)
     for row in rows:
         row["avatar_url"] = f"/api/account/{row['biz']}/avatar"
     count_sql = (
         "SELECT COUNT(*) AS total FROM accounts a"
-        " LEFT JOIN account_groups g ON g.id = a.group_id"
         f" {where_sql}"
     )
     total_row = fetchone_row(storage, count_sql, params, normalize=_normalize_record)
@@ -467,8 +473,9 @@ def _get_account(storage: PostgresStorage, biz: str) -> dict[str, Any]:
             " (ai.data IS NOT NULL) AS avatar_ready"
             " FROM accounts a"
             " LEFT JOIN account_groups g ON g.id = a.group_id"
-            " LEFT JOIN (SELECT biz, COUNT(*) AS article_count FROM articles GROUP BY biz) ac"
-            "   ON ac.biz = a.biz"
+            " LEFT JOIN LATERAL ("
+            "   SELECT COUNT(*) AS article_count FROM articles ar WHERE ar.biz = a.biz"
+            " ) ac ON TRUE"
             " LEFT JOIN avatar_images ai ON ai.biz = a.biz"
             " WHERE a.biz = %s"
         ),
@@ -540,7 +547,7 @@ def _build_article_query(
     params: list[Any] = []
     select_params: list[Any] = []
     rank_select = ""
-    order_sql = "ORDER BY a.publish_at IS NULL, a.publish_at DESC, a.id DESC"
+    order_sql = "ORDER BY a.publish_at DESC NULLS LAST, a.id DESC"
 
     if article_id:
         where.append("a.article_id = %s")
@@ -559,7 +566,7 @@ def _build_article_query(
             params.append(query_text)
             rank_select = ", ts_rank(a.search_vector, plainto_tsquery('jiebaqry', %s)) AS rank"
             select_params.append(query_text)
-            order_sql = "ORDER BY rank DESC, a.publish_at IS NULL, a.publish_at DESC, a.id DESC"
+            order_sql = "ORDER BY rank DESC, a.publish_at DESC NULLS LAST, a.id DESC"
     if since_ts is not None:
         where.append("a.publish_at >= %s")
         params.append(since_ts)
@@ -928,8 +935,6 @@ def _binary_response(payload: bytes, content_type: str) -> Response:
 
 def _get_storage() -> Generator[PostgresStorage, None, None]:
     with open_storage() as storage:
-        ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
-        _ensure_avatar_images_table(storage)
         yield storage
 
 
@@ -1085,7 +1090,6 @@ async def search_account(
     if not keyword:
         raise ApiError("q is required")
     offset = begin if begin is not None else (max(page, 1) - 1) * page_size
-    _ensure_avatar_images_table(storage)
     existing = {account.biz for account in storage.accounts.list_accounts()}
     session = storage.sessions.get_login_session()
     async with MPClient() as client:
@@ -1145,7 +1149,6 @@ def get_search_avatar(
     Returns:
         Response: 包含正确 Content-Type 的图片数据。
     """
-    _ensure_avatar_images_table(storage)
     avatar = _get_avatar_row(storage, biz)
     if not avatar:
         raise ApiError("Avatar not found", status=404)
@@ -1873,6 +1876,9 @@ def create_app(static_dir: Path | str = "static") -> FastAPI:
 
     @app.on_event("startup")
     async def _startup() -> None:
+        with open_storage() as storage:
+            ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
+            _ensure_avatar_images_table(storage)
         app.state.login_manager = LoginManager()
         app.state.sync_scheduler = SyncScheduler()
         app.state.sync_tasks = SyncTaskManager()

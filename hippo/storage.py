@@ -21,7 +21,7 @@ from .repositories import (
 
 load_env()
 
-SCHEMA_VERSION = '12'
+SCHEMA_VERSION = '13'
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'schema' / 'postgres.sql'
 
@@ -84,6 +84,8 @@ ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
 _PG_POOL: ConnectionPool | None = None
 _PG_POOL_DSN: str | None = None
 _DB_INIT_LOG_VALUES = {'1', 'true', 'yes', 'on'}
+_PG_JIEBA_WARMUP_VALUES = {'1', 'true', 'yes', 'on'}
+_DEFAULT_JIEBA_WARMUP_TEXT = 'hippo'
 
 
 def _db_init_log_enabled() -> bool:
@@ -94,6 +96,38 @@ def _log_db_init(message: str) -> None:
     if not _db_init_log_enabled():
         return
     print(f'[db init] {message}', file=sys.stderr, flush=True)
+
+
+def _jieba_warmup_enabled() -> bool:
+    return (
+        os.environ.get('HIPPO_PG_JIEBA_WARMUP', '1').strip().lower()
+        in _PG_JIEBA_WARMUP_VALUES
+    )
+
+
+def _rollback_quietly(conn) -> None:
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+
+
+def _warmup_jieba_parser(conn) -> None:
+    if not _jieba_warmup_enabled():
+        return
+    warmup_text = os.environ.get(
+        'HIPPO_PG_JIEBA_WARMUP_TEXT', _DEFAULT_JIEBA_WARMUP_TEXT
+    ).strip()
+    if not warmup_text:
+        warmup_text = _DEFAULT_JIEBA_WARMUP_TEXT
+    try:
+        with conn.cursor() as cur:
+            cur.execute('SELECT plainto_tsquery(\'jiebaqry\', %s)', (warmup_text,))
+            cur.fetchone()
+    except Exception as exc:
+        _log_db_init(f'jieba warmup skipped: {exc}')
+    finally:
+        _rollback_quietly(conn)
 
 
 def _get_pool(dsn: str) -> ConnectionPool:
@@ -111,6 +145,7 @@ def _get_pool(dsn: str) -> ConnectionPool:
         min_size=min_conn,
         max_size=max_conn,
         kwargs={"options": "-c timezone=Asia/Shanghai"},
+        configure=_warmup_jieba_parser,
     )
     _PG_POOL_DSN = dsn
     return _PG_POOL
