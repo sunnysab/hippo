@@ -12,7 +12,7 @@ from ..container import build_sync_container
 from ..models import AccountCredential
 from ..storage import PostgresStorage, open_storage
 from ..sync_core import SyncInterrupted
-from ..sync_service import ArticleSyncService, SyncRunError, append_sync_history
+from ..sync_service import ArticleSyncService, SyncRunError, append_sync_history, set_sync_state
 from ..sync_types import (
     NullSyncObserver,
     SyncAccountResult,
@@ -131,6 +131,13 @@ def _append_cli_sync_history(
     saved: int,
     error: str = '',
 ) -> None:
+    set_sync_state(
+        storage,
+        status=status,
+        error=error,
+        started_at=started_at,
+        finished_at=finished_at,
+    )
     append_sync_history(
         storage,
         {
