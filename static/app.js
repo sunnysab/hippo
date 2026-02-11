@@ -128,8 +128,10 @@ const TAB_MODULES = {
 
 const initializedTabs = new Set();
 const tabInitPromises = new Map();
+const routeEnterTimestamps = new Map();
 let activeTab = null;
 let routeToken = 0;
+const ROUTE_ENTER_THROTTLE_MS = 500;
 
 const normalizeTab = (tab) => {
   const options = availableTabs();
@@ -185,6 +187,20 @@ const runModuleHook = async (tab, hookName) => {
   }
 };
 
+const shouldRunRouteEnter = (tab, previousTab) => {
+  const now = Date.now();
+  if (previousTab !== tab) {
+    routeEnterTimestamps.set(tab, now);
+    return true;
+  }
+  const last = routeEnterTimestamps.get(tab) || 0;
+  if (now - last < ROUTE_ENTER_THROTTLE_MS) {
+    return false;
+  }
+  routeEnterTimestamps.set(tab, now);
+  return true;
+};
+
 const setHash = (tab, replace = false) => {
   const target = `#/${tab}`;
   if (replace) {
@@ -212,7 +228,7 @@ const handleRoute = async (replace = false) => {
   if (currentToken !== routeToken) {
     return;
   }
-  if (!initializedNow) {
+  if (!initializedNow && shouldRunRouteEnter(tab, previousTab)) {
     await runModuleHook(tab, 'onRouteEnter');
   }
 };
