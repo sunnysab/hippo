@@ -18,3 +18,5 @@ dist/
 AGENTS.md
 mpcli.txt
 deploy.sh
+
+logs/
