@@ -1768,9 +1768,13 @@ async def run_sync(
         if not row:
             raise ApiError('Group not found', status=404)
         task_id = task_manager.create_sync_task(group_id=group_id)
-        return {'status': 'running', 'group_id': group_id, 'task_id': task_id}
+        task_state = task_manager.get_task(task_id)
+        task_status = task_state.status if task_state else 'pending'
+        return {'status': task_status, 'group_id': group_id, 'task_id': task_id}
     task_id = task_manager.create_sync_task()
-    return {'status': 'running', 'task_id': task_id}
+    task_state = task_manager.get_task(task_id)
+    task_status = task_state.status if task_state else 'pending'
+    return {'status': task_status, 'task_id': task_id}
 
 
 @router.get("/feed/mixed", response_model=None)

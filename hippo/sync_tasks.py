@@ -180,8 +180,16 @@ class SyncTaskManager:
 
     async def _run_task(self, state: SyncTaskState) -> None:
         with self._lock:
-            state.status = "running"
-            state.started_at = _utc_now_iso()
+            state.status = "pending"
+            state.started_at = None
+            state.last_log = "waiting_for_slot"
+
+        def on_lock_acquired() -> None:
+            with self._lock:
+                state.status = "running"
+                if not state.started_at:
+                    state.started_at = _utc_now_iso()
+                state.last_log = None
 
         def on_accounts_loaded(accounts: list[AccountCredential]) -> None:
             with self._lock:
@@ -233,6 +241,7 @@ class SyncTaskManager:
                 on_account_done=on_account_done,
                 on_accounts_loaded=on_accounts_loaded,
                 lock=SYNC_RUN_LOCK,
+                on_lock_acquired=on_lock_acquired,
                 on_images_start=lambda: self._set_task_log(state, "downloading_images"),
                 on_images_done=lambda: self._set_task_log(state, None),
             )

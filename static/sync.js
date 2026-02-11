@@ -9,40 +9,47 @@
     list.innerHTML = '';
     const history = state.syncStatus?.history || [];
     const tasks = state.syncTasks || [];
-    const runningTask = tasks.find((task) => task.status === 'running');
-    if (!history.length && !runningTask) {
+    const activeTask =
+      tasks.find((task) => task.status === 'running') ||
+      tasks.find((task) => task.status === 'pending');
+    if (!history.length && !activeTask) {
       list.innerHTML = `<div class="empty-state">${t('sync.historyEmpty', 'No sync history.')}</div>`;
       return;
     }
-    if (runningTask) {
+    if (activeTask) {
       const item = document.createElement('div');
       item.className = 'list-item is-running';
-      const currentAccount = runningTask.current_account || {};
+      const isPending = activeTask.status === 'pending';
+      const currentAccount = activeTask.current_account || {};
       const accountName =
         currentAccount.nickname ||
         currentAccount.biz ||
-        t('sync.runningUnknown', 'Unknown account');
-      const startedAt = runningTask.started_at || runningTask.created_at;
+        (isPending
+          ? t('sync.pendingUnknown', 'Waiting for current sync to finish')
+          : t('sync.runningUnknown', 'Unknown account'));
+      const startedAt = activeTask.started_at || activeTask.created_at;
       const minutes = startedAt
         ? Math.max(1, Math.floor((Date.now() - new Date(startedAt).getTime()) / 60000))
         : 0;
       const progressBadge =
-        runningTask.accounts_total > 0
-          ? `${runningTask.accounts_done || 0}/${runningTask.accounts_total}`
+        activeTask.accounts_total > 0
+          ? `${activeTask.accounts_done || 0}/${activeTask.accounts_total}`
           : '';
       const phase =
-        runningTask.last_log === 'downloading_images' || (runningTask.last_log && runningTask.last_log.includes('图片'))
+        isPending
+          ? t('sync.pendingHint', 'Waiting for running sync slot')
+          : activeTask.last_log === 'downloading_images' || (activeTask.last_log && activeTask.last_log.includes('图片'))
           ? t('sync.runningImages', 'Downloading images')
-          : runningTask.current_article?.title
+          : activeTask.current_article?.title
             ? t('sync.runningArticle', 'Processing {title}').replace(
                 '{title}',
-                runningTask.current_article.title
+                activeTask.current_article.title
               )
             : null;
       item.innerHTML = `
         <div>
-          <div class="account-name">${t('sync.runningTitle', 'Syncing {name}').replace('{name}', accountName)}</div>
-          <div class="account-sub">${t('sync.runningSince', 'Started {n} minutes ago').replace('{n}', minutes)}</div>
+          <div class="account-name">${t(isPending ? 'sync.pendingTitle' : 'sync.runningTitle', isPending ? 'Queued {name}' : 'Syncing {name}').replace('{name}', accountName)}</div>
+          <div class="account-sub">${t(isPending ? 'sync.pendingSince' : 'sync.runningSince', isPending ? 'Queued for {n} minutes' : 'Started {n} minutes ago').replace('{n}', minutes)}</div>
           ${phase ? `<div class="account-sub">${phase}</div>` : ''}
         </div>
         ${progressBadge ? `<span class="badge">${progressBadge}</span>` : ''}
