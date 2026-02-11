@@ -222,6 +222,38 @@
     }
   };
 
+  const populateArticleGroupFilter = async () => {
+    const select = $('#article-group-filter');
+    if (!select) return;
+    const currentValue = select.value;
+    let groups = Array.isArray(state.groups) ? state.groups : [];
+    try {
+      const payload = await apiGet('/api/group');
+      groups = payload.groups || [];
+      state.groups = groups;
+      state.defaultGroupId = payload.default_group_id || state.defaultGroupId;
+    } catch (err) {
+      console.warn('Failed to load group options for articles', err);
+    }
+
+    select.innerHTML = '';
+    const allOption = document.createElement('option');
+    allOption.value = '';
+    allOption.textContent = t('filters.allGroups', 'All Groups');
+    select.appendChild(allOption);
+
+    groups.forEach((group) => {
+      const opt = document.createElement('option');
+      opt.value = String(group.id);
+      opt.textContent = group.name;
+      select.appendChild(opt);
+    });
+
+    if (currentValue && Array.from(select.options).some((opt) => opt.value === currentValue)) {
+      select.value = currentValue;
+    }
+  };
+
   const populateArticleAccountFilter = async () => {
     const groupId = $('#article-group-filter')?.value;
     const url = new URL('/api/account', window.location.origin);
@@ -272,6 +304,8 @@
     const groupFilter = $('#article-group-filter');
     const accountFilter = $('#article-account-filter');
     const searchInput = $('#article-search');
+
+    await populateArticleGroupFilter();
 
     // Apply group filter first (affects account options)
     if (groupId && groupFilter) {
@@ -749,6 +783,7 @@
   };
 
   const refresh = async () => {
+    await populateArticleGroupFilter();
     await populateArticleAccountFilter();
     await loadArticles(true);
   };
@@ -770,6 +805,7 @@
     init,
     refresh,
     loadArticles,
+    populateArticleGroupFilter,
     populateArticleAccountFilter,
     updateArticleUrlParams,
     applyArticleUrlParams,
