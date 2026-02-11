@@ -120,6 +120,17 @@ const availableTabs = () =>
     .map((btn) => btn.dataset.tab)
     .filter(Boolean);
 
+const TAB_MODULES = {
+  groups: () => window.HippoGroups,
+  articles: () => window.HippoArticles,
+  sync: () => window.HippoSync,
+};
+
+const initializedTabs = new Set();
+const tabInitPromises = new Map();
+let activeTab = null;
+let routeToken = 0;
+
 const normalizeTab = (tab) => {
   const options = availableTabs();
   if (!tab || options.length === 0) return null;
@@ -130,6 +141,48 @@ const getTabFromHash = () => {
   const hash = window.location.hash || '';
   const cleaned = hash.replace(/^#\/?/, '').trim();
   return cleaned || null;
+};
+
+const getCurrentTab = () => normalizeTab(getTabFromHash()) || 'groups';
+
+const getTabModule = (tab) => {
+  const resolver = TAB_MODULES[tab];
+  return resolver ? resolver() : null;
+};
+
+const ensureTabInitialized = async (tab) => {
+  if (initializedTabs.has(tab)) {
+    return false;
+  }
+  const existing = tabInitPromises.get(tab);
+  if (existing) {
+    await existing;
+    return false;
+  }
+  const module = getTabModule(tab);
+  if (!module?.init) {
+    initializedTabs.add(tab);
+    return true;
+  }
+  const initPromise = (async () => {
+    await module.init();
+    initializedTabs.add(tab);
+  })();
+  tabInitPromises.set(tab, initPromise);
+  try {
+    await initPromise;
+    return true;
+  } finally {
+    tabInitPromises.delete(tab);
+  }
+};
+
+const runModuleHook = async (tab, hookName) => {
+  const module = getTabModule(tab);
+  const hook = module?.[hookName];
+  if (typeof hook === 'function') {
+    await hook();
+  }
 };
 
 const setHash = (tab, replace = false) => {
@@ -143,11 +196,24 @@ const setHash = (tab, replace = false) => {
   }
 };
 
-const handleRoute = (replace = false) => {
-  const tab = normalizeTab(getTabFromHash()) || 'groups';
+const handleRoute = async (replace = false) => {
+  const tab = getCurrentTab();
   activateTab(tab);
   if (getTabFromHash() !== tab) {
     setHash(tab, replace);
+  }
+  const previousTab = activeTab;
+  activeTab = tab;
+  if (previousTab && previousTab !== tab && initializedTabs.has(previousTab)) {
+    await runModuleHook(previousTab, 'onRouteLeave');
+  }
+  const currentToken = ++routeToken;
+  const initializedNow = await ensureTabInitialized(tab);
+  if (currentToken !== routeToken) {
+    return;
+  }
+  if (!initializedNow) {
+    await runModuleHook(tab, 'onRouteEnter');
   }
 };
 
@@ -169,6 +235,7 @@ const initTabs = () => {
       const targetHash = `#/${normalized}`;
       if (window.location.hash === targetHash) {
         activateTab(normalized);
+        void handleRoute(false);
         return;
       }
       setHash(normalized);
@@ -192,25 +259,23 @@ const loadViewFragments = async () => {
   root.innerHTML = html.join('\n');
 };
 
-const refreshAll = async () => {
-  const tasks = [];
-  if (window.HippoGroups?.refresh) {
-    tasks.push(window.HippoGroups.refresh());
+const refreshCurrent = async () => {
+  const tab = getCurrentTab();
+  const initializedNow = await ensureTabInitialized(tab);
+  if (initializedNow) {
+    return;
   }
-  if (window.HippoArticles?.refresh) {
-    tasks.push(window.HippoArticles.refresh());
+  const module = getTabModule(tab);
+  if (module?.refresh) {
+    await module.refresh();
   }
-  if (window.HippoSync?.refresh) {
-    tasks.push(window.HippoSync.refresh());
-  }
-  await Promise.all(tasks);
 };
 
 const bindGlobalEvents = () => {
   const refreshBtn = $('#btn-refresh');
   if (refreshBtn) {
     refreshBtn.addEventListener('click', async () => {
-      await refreshAll();
+      await refreshCurrent();
     });
   }
 };
@@ -232,18 +297,11 @@ window.Hippo = {
 const init = async () => {
   await loadViewFragments();
   initTabs();
-  handleRoute(true);
-  window.addEventListener('hashchange', () => handleRoute(false));
+  window.addEventListener('hashchange', () => {
+    void handleRoute(false);
+  });
   await loadI18n();
-  if (window.HippoGroups?.init) {
-    await window.HippoGroups.init();
-  }
-  if (window.HippoArticles?.init) {
-    await window.HippoArticles.init();
-  }
-  if (window.HippoSync?.init) {
-    await window.HippoSync.init();
-  }
+  await handleRoute(true);
   bindGlobalEvents();
 };
 

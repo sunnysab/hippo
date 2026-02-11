@@ -326,6 +326,12 @@
     }, 1000);
   };
 
+  const stopSyncPoll = () => {
+    if (!state.syncPollTimer) return;
+    clearInterval(state.syncPollTimer);
+    state.syncPollTimer = null;
+  };
+
   const refresh = async () => {
     await loadSyncTasks();
     await loadSyncStatus();
@@ -339,9 +345,21 @@
     await refresh();
   };
 
+  const onRouteEnter = async () => {
+    await loadSyncTasks();
+    await loadSyncStatus();
+    startSyncPoll();
+  };
+
+  const onRouteLeave = async () => {
+    stopSyncPoll();
+  };
+
   window.HippoSync = {
     init,
     refresh,
+    onRouteEnter,
+    onRouteLeave,
     loadSyncStatus,
     loadSyncTasks,
     loadSyncSettings,
