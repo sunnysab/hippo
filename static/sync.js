@@ -110,6 +110,19 @@
     return t('time.hoursAgo', '{n} hours ago').replace('{n}', hours);
   };
 
+  const loginActionStatuses = ['starting', 'waiting', 'scanned', 'refresh'];
+
+  const updateLoginActions = (status) => {
+    const startBtn = $('#btn-login-start');
+    const cancelBtn = $('#btn-login-cancel');
+    if (!startBtn || !cancelBtn) return;
+    const inProgress = loginActionStatuses.includes(status);
+    startBtn.textContent = inProgress
+      ? t('login.refresh', 'Refresh Login')
+      : t('login.start', 'Start Login');
+    cancelBtn.classList.toggle('is-hidden', !inProgress);
+  };
+
   const renderSyncStatus = () => {
     const banner = $('#status-banner');
     const text = $('#banner-text');
@@ -220,10 +233,13 @@
     const statusText = t(`login.status.${status}`, payload.message || status);
     $('#login-status').textContent = statusText;
     const qr = $('#login-qr');
+    updateLoginActions(status);
     if (payload.qrcode_url) {
       qr.src = `${payload.qrcode_url}?ts=${Date.now()}`;
+      qr.classList.remove('is-hidden');
     } else {
       qr.removeAttribute('src');
+      qr.classList.add('is-hidden');
     }
     const info = payload.last_login;
     if (info && info.nickname) {
@@ -285,7 +301,6 @@
   const bindEvents = () => {
     $('#btn-login-start').addEventListener('click', startLogin);
     $('#btn-login-cancel').addEventListener('click', cancelLogin);
-    $('#btn-login-refresh').addEventListener('click', startLogin);
     $('#btn-sync-save').addEventListener('click', saveSyncSettings);
     $('#btn-sync-run').addEventListener('click', triggerSyncRun);
     const prev = $('#btn-history-prev');

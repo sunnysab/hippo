@@ -3,11 +3,16 @@
   overflow-y: auto;
 }
 
-.panel-grid {
-  display: grid;
-  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.1fr) minmax(0, 1.1fr);
-  gap: 24px;
+.sync-page-shell {
+  width: min(100%, clamp(640px, 50vw, 980px));
+  margin: 0 auto;
   padding-bottom: 24px;
+}
+
+.panel-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
 
 .login-card {
@@ -62,14 +67,8 @@
   font-size: 14px;
 }
 
-@media (max-width: 1200px) {
-  .panel-grid {
-    grid-template-columns: minmax(240px, 1fr) minmax(0, 1fr);
-  }
-}
-
-@media (max-width: 1100px) {
-  .panel-grid {
-    grid-template-columns: 1fr;
+@media (max-width: 760px) {
+  .sync-page-shell {
+    width: 100%;
   }
 }
