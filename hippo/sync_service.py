@@ -832,17 +832,23 @@ class SyncScheduler:
         self._trigger.clear()
 
     async def _loop_sync(self) -> None:
+        last_run_duration = 0.0
         while not self._stop.is_set():
             with open_storage() as storage:
                 settings = get_sync_settings(storage)
             if not settings.get('enabled'):
+                last_run_duration = 0.0
                 await self._wait(10)
                 continue
             interval = max(int(settings.get('interval_minutes') or 1), 1) * 60
-            await self._wait(interval)
+            wait_seconds = max(interval - last_run_duration, 0)
+            await self._wait(wait_seconds)
             if self._stop.is_set():
                 break
+            loop = self._loop or asyncio.get_running_loop()
+            started_at = loop.time()
             await self.run_once()
+            last_run_duration = max(loop.time() - started_at, 0.0)
 
     async def run_once(self, *, group_id: int | None = None) -> dict[str, Any]:
         if self._lock.locked():
