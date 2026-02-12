@@ -95,6 +95,22 @@ class SyncTaskState:
             "accounts": [progress.to_dict() for progress in self.accounts.values()],
         }
 
+    def to_summary_dict(self) -> dict[str, Any]:
+        return {
+            'task_id': self.task_id,
+            'status': self.status,
+            'created_at': self.created_at,
+            'started_at': self.started_at,
+            'finished_at': self.finished_at,
+            'error': self.error,
+            'group_id': self.group_id,
+            'accounts_total': self.accounts_total,
+            'accounts_done': self.accounts_done,
+            'current_account': self.current_account,
+            'current_article': self.current_article,
+            'last_log': self.last_log,
+        }
+
 
 class SyncTaskObserver(SyncObserver):
     def __init__(self, *, state: SyncTaskState, account: AccountCredential, lock: threading.Lock) -> None:

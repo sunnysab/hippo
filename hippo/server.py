@@ -1652,6 +1652,7 @@ def sync_status(
 @router.get("/sync/tasks")
 def list_sync_tasks(
     limit: int = 5,
+    detail: bool = False,
     task_manager: "SyncTaskManager" = Depends(_get_sync_task_manager),
 ) -> dict[str, Any]:
     """
@@ -1659,8 +1660,9 @@ def list_sync_tasks(
     """
     tasks = task_manager.list_tasks()
     tasks.sort(key=lambda item: item.created_at, reverse=True)
+    formatter = (lambda task: task.to_dict()) if detail else (lambda task: task.to_summary_dict())
     return {
-        "tasks": [task.to_dict() for task in tasks[: max(int(limit), 1)]],
+        "tasks": [formatter(task) for task in tasks[: max(int(limit), 1)]],
     }
 
 
