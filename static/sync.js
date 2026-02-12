@@ -2,6 +2,8 @@
   const { state, $, apiGet, apiSend, t, activateTab } = window.Hippo;
 
   const HISTORY_PAGE_SIZE = 5;
+  const SYNC_POLL_FAST_MS = 1000;
+  const SYNC_POLL_IDLE_MS = 10000;
   let lastSyncStatusFingerprint = '';
   let lastSyncTasksFingerprint = '';
 
@@ -441,24 +443,42 @@
 
   const isSyncActive = () => $('#view-sync')?.classList.contains('is-active');
 
-  const startSyncPoll = () => {
-    if (state.syncPollTimer) {
-      clearInterval(state.syncPollTimer);
+  const hasActiveSyncTask = () => {
+    const tasks = state.syncTasks || [];
+    if (tasks.some((task) => task?.status === 'running' || task?.status === 'pending')) {
+      return true;
     }
-    state.syncPollTimer = setInterval(async () => {
-      if (!isSyncActive()) return;
+    return state.syncStatus?.status === 'running' || state.syncStatus?.status === 'pending';
+  };
+
+  const getSyncPollDelay = () => (hasActiveSyncTask() ? SYNC_POLL_FAST_MS : SYNC_POLL_IDLE_MS);
+
+  const scheduleNextSyncPoll = (delay) => {
+    if (state.syncPollTimer) {
+      clearTimeout(state.syncPollTimer);
+    }
+    state.syncPollTimer = setTimeout(async () => {
+      if (!isSyncActive()) {
+        scheduleNextSyncPoll(SYNC_POLL_IDLE_MS);
+        return;
+      }
       try {
         await loadSyncTasks();
         await loadSyncStatus();
       } catch (err) {
         console.warn('Sync poll failed', err);
       }
-    }, 1000);
+      scheduleNextSyncPoll(getSyncPollDelay());
+    }, Math.max(delay, 500));
+  };
+
+  const startSyncPoll = () => {
+    scheduleNextSyncPoll(getSyncPollDelay());
   };
 
   const stopSyncPoll = () => {
     if (!state.syncPollTimer) return;
-    clearInterval(state.syncPollTimer);
+    clearTimeout(state.syncPollTimer);
     state.syncPollTimer = null;
   };
 
