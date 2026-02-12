@@ -39,6 +39,15 @@
             <input type="number" id="sync-interval" min="1" />
           </label>
           <label>
+            <span data-i18n="sync.windowStart">Sync window start (hour)</span>
+            <input type="number" id="sync-window-start" min="0" max="23" />
+          </label>
+          <label>
+            <span data-i18n="sync.windowEnd">Sync window end (hour)</span>
+            <input type="number" id="sync-window-end" min="0" max="24" />
+          </label>
+          <p class="muted" id="sync-window-note" data-i18n="sync.windowHintRange">Current window: 06:00 - 24:00</p>
+          <label>
             <span data-i18n="sync.sleepSeconds">Sleep (seconds)</span>
             <input type="number" id="sync-sleep" min="0" step="0.01" />
           </label>

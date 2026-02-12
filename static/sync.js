@@ -3,6 +3,43 @@
 
   const HISTORY_PAGE_SIZE = 5;
 
+  const normalizeWindowStartHour = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return 6;
+    return Math.min(Math.max(Math.trunc(numeric), 0), 23);
+  };
+
+  const normalizeWindowEndHour = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return 24;
+    return Math.min(Math.max(Math.trunc(numeric), 0), 24);
+  };
+
+  const formatHour = (value) => `${String(value).padStart(2, '0')}:00`;
+
+  const renderWindowHint = (startHour, endHour) => {
+    const note = $('#sync-window-note');
+    if (!note) return;
+    if (startHour === endHour) {
+      note.textContent = t('sync.windowHintAllDay', 'Current window: all day');
+      return;
+    }
+    note.textContent = t('sync.windowHintRange', 'Current window: {start} - {end}')
+      .replace('{start}', formatHour(startHour))
+      .replace('{end}', formatHour(endHour));
+  };
+
+  const syncWindowInputs = (startValue, endValue) => {
+    const startHour = normalizeWindowStartHour(startValue);
+    const endHour = normalizeWindowEndHour(endValue);
+    const startInput = $('#sync-window-start');
+    const endInput = $('#sync-window-end');
+    if (startInput) startInput.value = startHour;
+    if (endInput) endInput.value = endHour;
+    renderWindowHint(startHour, endHour);
+    return { startHour, endHour };
+  };
+
   const renderSyncHistory = () => {
     const list = $('#sync-history');
     if (!list) return;
@@ -173,6 +210,7 @@
     if (!settings) return;
     $('#sync-enabled').checked = Boolean(settings.enabled);
     $('#sync-interval').value = settings.interval_minutes ?? 60;
+    syncWindowInputs(settings.window_start_hour ?? 6, settings.window_end_hour ?? 24);
     $('#sync-sleep').value = settings.sleep_seconds ?? 0.05;
     $('#sync-skip-minutes').value = settings.skip_minutes ?? 30;
     $('#sync-download-content').checked = Boolean(settings.download_content);
@@ -196,9 +234,15 @@
   };
 
   const saveSyncSettings = async () => {
+    const { startHour, endHour } = syncWindowInputs(
+      $('#sync-window-start').value,
+      $('#sync-window-end').value,
+    );
     const body = {
       enabled: $('#sync-enabled').checked,
       interval_minutes: Number($('#sync-interval').value),
+      window_start_hour: startHour,
+      window_end_hour: endHour,
       sleep_seconds: Number($('#sync-sleep').value),
       skip_minutes: Number($('#sync-skip-minutes').value),
       download_content: $('#sync-download-content').checked,
@@ -323,6 +367,16 @@
         const port = $('#email-smtp-port');
         if (!port) return;
         port.value = emailTls.checked ? '587' : '25';
+      });
+    }
+    const startInput = $('#sync-window-start');
+    const endInput = $('#sync-window-end');
+    if (startInput && endInput) {
+      startInput.addEventListener('change', () => {
+        syncWindowInputs(startInput.value, endInput.value);
+      });
+      endInput.addEventListener('change', () => {
+        syncWindowInputs(startInput.value, endInput.value);
       });
     }
     $('#btn-banner-login').addEventListener('click', async () => {

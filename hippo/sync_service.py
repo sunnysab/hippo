@@ -61,6 +61,8 @@ SYNC_LOGIN_REQUIRED_AT_KEY = 'sync:login_required_at'
 _logger = logging.getLogger('hippo.sync')
 _DEFAULT_RECENT_DAYS = 7
 _DEFAULT_PAGE_SIZE = 10
+_DEFAULT_WINDOW_START_HOUR = 6
+_DEFAULT_WINDOW_END_HOUR = 24
 SYNC_RUN_LOCK = asyncio.Lock()
 
 
@@ -75,6 +77,8 @@ def default_sync_settings() -> dict[str, Any]:
     return {
         'enabled': False,
         'interval_minutes': 60,
+        'window_start_hour': _DEFAULT_WINDOW_START_HOUR,
+        'window_end_hour': _DEFAULT_WINDOW_END_HOUR,
         'sleep_seconds': 0.05,
         'download_content': True,
         'download_images': True,
@@ -82,6 +86,50 @@ def default_sync_settings() -> dict[str, Any]:
         'alert_enabled': False,
         'alert_email': '',
     }
+
+
+def _normalize_window_start_hour(value: Any) -> int:
+    try:
+        hour = int(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_WINDOW_START_HOUR
+    return min(max(hour, 0), 23)
+
+
+def _normalize_window_end_hour(value: Any) -> int:
+    try:
+        hour = int(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_WINDOW_END_HOUR
+    return min(max(hour, 0), 24)
+
+
+def _get_window_hours(settings: dict[str, Any]) -> tuple[int, int]:
+    return (
+        _normalize_window_start_hour(settings.get('window_start_hour')),
+        _normalize_window_end_hour(settings.get('window_end_hour')),
+    )
+
+
+def _is_within_sync_window(now: datetime, *, start_hour: int, end_hour: int) -> bool:
+    current_minute = now.hour * 60 + now.minute
+    start_minute = (start_hour % 24) * 60
+    end_minute = 24 * 60 if end_hour == 24 else (end_hour % 24) * 60
+    if start_minute == end_minute:
+        return True
+    if start_minute < end_minute:
+        return start_minute <= current_minute < end_minute
+    return current_minute >= start_minute or current_minute < end_minute
+
+
+def _seconds_until_window_start(now: datetime, *, start_hour: int, end_hour: int) -> float:
+    if _is_within_sync_window(now, start_hour=start_hour, end_hour=end_hour):
+        return 0.0
+    target_hour = start_hour % 24
+    target = now.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return max((target - now).total_seconds(), 1.0)
 
 
 def _build_sync_config(settings: dict[str, Any]) -> SyncConfig:
@@ -105,6 +153,9 @@ def get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
     settings = load_meta_json(storage, SYNC_SETTINGS_KEY, default_sync_settings())
     defaults = default_sync_settings()
     merged = {**defaults, **(settings or {})}
+    start_hour, end_hour = _get_window_hours(merged)
+    merged['window_start_hour'] = start_hour
+    merged['window_end_hour'] = end_hour
     # Remove legacy fields that are no longer supported by the settings UI.
     for key in ('mode', 'recent_days', 'page_size', 'content_limit', 'since', 'until'):
         merged.pop(key, None)
@@ -840,11 +891,21 @@ class SyncScheduler:
                 last_run_duration = 0.0
                 await self._wait(10)
                 continue
+            start_hour, end_hour = _get_window_hours(settings)
+            now = datetime.now()
+            if not _is_within_sync_window(now, start_hour=start_hour, end_hour=end_hour):
+                last_run_duration = 0.0
+                await self._wait(_seconds_until_window_start(now, start_hour=start_hour, end_hour=end_hour))
+                continue
             interval = max(int(settings.get('interval_minutes') or 1), 1) * 60
             wait_seconds = max(interval - last_run_duration, 0)
             await self._wait(wait_seconds)
             if self._stop.is_set():
                 break
+            now = datetime.now()
+            if not _is_within_sync_window(now, start_hour=start_hour, end_hour=end_hour):
+                last_run_duration = 0.0
+                continue
             loop = self._loop or asyncio.get_running_loop()
             started_at = loop.time()
             await self.run_once()

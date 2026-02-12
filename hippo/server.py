@@ -1703,6 +1703,10 @@ async def update_sync_settings(
         updates["enabled"] = bool(body["enabled"])
     if "interval_minutes" in body:
         updates["interval_minutes"] = max(int(body["interval_minutes"]), 1)
+    if "window_start_hour" in body:
+        updates["window_start_hour"] = min(max(int(body["window_start_hour"]), 0), 23)
+    if "window_end_hour" in body:
+        updates["window_end_hour"] = min(max(int(body["window_end_hour"]), 0), 24)
     if "sleep_seconds" in body:
         updates["sleep_seconds"] = float(body["sleep_seconds"])
     if "download_content" in body:
