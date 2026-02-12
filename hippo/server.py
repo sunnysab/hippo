@@ -1651,7 +1651,7 @@ def sync_status(
 
 @router.get("/sync/tasks")
 def list_sync_tasks(
-    limit: int = 20,
+    limit: int = 5,
     task_manager: "SyncTaskManager" = Depends(_get_sync_task_manager),
 ) -> dict[str, Any]:
     """

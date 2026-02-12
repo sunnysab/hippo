@@ -107,6 +107,18 @@ python -m hippo account sync-all --skip-time 30
 - 断点进度：保存在 meta 表，key 为 `sync_progress:<biz>`
 - 当页为空时判定“已完成”，写入 `sync_complete:<biz>`（当天有效）
 
+### Web 同步接口说明
+
+- `GET /api/sync`
+  - 返回全局同步状态与最近同步历史。
+  - 默认仅返回最近 `5` 条 `history`（可通过 `limit` 参数调整，范围 `1~50`）。
+- `GET /api/sync/tasks`
+  - 返回任务实例列表（含 `pending/running` 任务的细粒度进度，如当前账号、当前文章、已完成账号数等）。
+  - 默认返回最近 `5` 个任务（可通过 `limit` 参数调整）。
+- `GET /api/sync/settings` / `PATCH /api/sync/settings`
+  - 同步设置包含 `window_start_hour` 与 `window_end_hour`（默认 `6` 到 `24`）。
+  - 自动调度只会在该时间段内触发执行。
+
 ---
 
 ## Download Articles
