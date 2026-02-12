@@ -1631,14 +1631,22 @@ def login_qrcode(
 
 
 @router.get("/sync")
-def sync_status(storage: PostgresStorage = Depends(_get_storage)) -> dict[str, Any]:
+def sync_status(
+    limit: int = 5,
+    storage: PostgresStorage = Depends(_get_storage),
+) -> dict[str, Any]:
     """
     获取后台同步任务的状态。
 
     Returns:
         dict: 同步状态详情。
     """
-    return load_sync_status(storage)
+    payload = load_sync_status(storage)
+    history = payload.get('history')
+    if isinstance(history, list):
+        normalized_limit = min(max(int(limit), 1), 50)
+        payload['history'] = history[:normalized_limit]
+    return payload
 
 
 @router.get("/sync/tasks")

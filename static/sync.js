@@ -2,6 +2,49 @@
   const { state, $, apiGet, apiSend, t, activateTab } = window.Hippo;
 
   const HISTORY_PAGE_SIZE = 5;
+  let lastSyncStatusFingerprint = '';
+  let lastSyncTasksFingerprint = '';
+
+  const buildSyncStatusFingerprint = (payload) => {
+    if (!payload || typeof payload !== 'object') return '';
+    const history = Array.isArray(payload.history) ? payload.history : [];
+    const compactHistory = history.map((item) => ({
+      started_at: item?.started_at || '',
+      finished_at: item?.finished_at || '',
+      status: item?.status || '',
+      saved: Number(item?.saved || 0),
+      downloaded: Number(item?.downloaded || 0),
+      skipped_accounts: Number(item?.skipped_accounts || 0),
+      error: item?.error || '',
+    }));
+    return JSON.stringify({
+      status: payload.status || '',
+      last_started_at: payload.last_started_at || '',
+      last_finished_at: payload.last_finished_at || '',
+      last_error: payload.last_error || '',
+      history: compactHistory,
+    });
+  };
+
+  const buildSyncTasksFingerprint = (tasks) => {
+    if (!Array.isArray(tasks)) return '';
+    const compactTasks = tasks.map((task) => ({
+      task_id: task?.task_id || '',
+      status: task?.status || '',
+      created_at: task?.created_at || '',
+      started_at: task?.started_at || '',
+      finished_at: task?.finished_at || '',
+      error: task?.error || '',
+      accounts_total: Number(task?.accounts_total || 0),
+      accounts_done: Number(task?.accounts_done || 0),
+      last_log: task?.last_log || '',
+      current_account_biz: task?.current_account?.biz || '',
+      current_account_nickname: task?.current_account?.nickname || '',
+      current_article_id: task?.current_article?.article_id || '',
+      current_article_title: task?.current_article?.title || '',
+    }));
+    return JSON.stringify(compactTasks);
+  };
 
   const normalizeWindowStartHour = (value) => {
     const numeric = Number(value);
@@ -194,6 +237,11 @@
 
   const loadSyncStatus = async () => {
     const payload = await apiGet('/api/sync');
+    const fingerprint = buildSyncStatusFingerprint(payload);
+    if (fingerprint === lastSyncStatusFingerprint) {
+      return;
+    }
+    lastSyncStatusFingerprint = fingerprint;
     state.syncStatus = payload;
     state.historyPage = 1;
     renderSyncStatus();
@@ -201,7 +249,13 @@
 
   const loadSyncTasks = async () => {
     const payload = await apiGet('/api/sync/tasks?limit=5');
-    state.syncTasks = payload.tasks || [];
+    const tasks = payload.tasks || [];
+    const fingerprint = buildSyncTasksFingerprint(tasks);
+    if (fingerprint === lastSyncTasksFingerprint) {
+      return;
+    }
+    lastSyncTasksFingerprint = fingerprint;
+    state.syncTasks = tasks;
     state.historyPage = state.historyPage || 1;
     renderSyncHistory();
   };
