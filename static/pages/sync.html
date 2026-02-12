@@ -38,15 +38,16 @@
             <span data-i18n="sync.interval">Interval (minutes)</span>
             <input type="number" id="sync-interval" min="1" />
           </label>
-          <label>
-            <span data-i18n="sync.windowStart">Sync window start (hour)</span>
-            <input type="number" id="sync-window-start" min="0" max="23" />
+          <label class="sync-window-field">
+            <span data-i18n="sync.windowRange">Sync window</span>
+            <div class="sync-window-inputs">
+              <input type="number" id="sync-window-start" min="0" max="23" />
+              <span class="sync-window-unit" data-i18n="sync.windowHour">h</span>
+              <span class="sync-window-separator" data-i18n="sync.windowTo">to</span>
+              <input type="number" id="sync-window-end" min="0" max="24" />
+              <span class="sync-window-unit" data-i18n="sync.windowHour">h</span>
+            </div>
           </label>
-          <label>
-            <span data-i18n="sync.windowEnd">Sync window end (hour)</span>
-            <input type="number" id="sync-window-end" min="0" max="24" />
-          </label>
-          <p class="muted" id="sync-window-note" data-i18n="sync.windowHintRange">Current window: 06:00 - 24:00</p>
           <label>
             <span data-i18n="sync.sleepSeconds">Sleep (seconds)</span>
             <input type="number" id="sync-sleep" min="0" step="0.01" />
@@ -63,6 +64,7 @@
             <span data-i18n="sync.downloadImages">Download images</span>
             <input type="checkbox" id="sync-download-images" />
           </label>
+          <p class="muted sync-window-note" id="sync-window-note" data-i18n="sync.windowHintRange">Current window: 06:00 - 24:00</p>
         </div>
       </div>
       <div class="panel sync-email">
