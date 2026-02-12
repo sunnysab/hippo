@@ -142,7 +142,12 @@ const normalizeTab = (tab) => {
 const getTabFromHash = () => {
   const hash = window.location.hash || '';
   const cleaned = hash.replace(/^#\/?/, '').trim();
-  return cleaned || null;
+  if (!cleaned) return null;
+  const queryIndex = cleaned.indexOf('?');
+  if (queryIndex === -1) {
+    return cleaned;
+  }
+  return cleaned.slice(0, queryIndex).trim() || null;
 };
 
 const getCurrentTab = () => normalizeTab(getTabFromHash()) || 'groups';
@@ -248,8 +253,7 @@ const initTabs = () => {
       const tab = btn.dataset.tab;
       const normalized = normalizeTab(tab);
       if (!normalized) return;
-      const targetHash = `#/${normalized}`;
-      if (window.location.hash === targetHash) {
+      if (getCurrentTab() === normalized) {
         activateTab(normalized);
         void handleRoute(false);
         return;

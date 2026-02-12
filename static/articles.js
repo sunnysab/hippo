@@ -1,5 +1,6 @@
 (() => {
   const { state, $, apiGet, t, copyToClipboard, showToast } = window.Hippo;
+  const ARTICLE_FILTER_PARAM_KEYS = ['group', 'account', 'q'];
 
   const setArticleSearchLoading = (isLoading) => {
     const loading = $('#article-search-loading');
@@ -279,27 +280,60 @@
     }
   };
 
+  const getArticleHashRoute = () => {
+    const hash = window.location.hash || '';
+    const cleaned = hash.replace(/^#\/?/, '').trim();
+    if (!cleaned) {
+      return { tab: null, params: new URLSearchParams() };
+    }
+    const queryIndex = cleaned.indexOf('?');
+    if (queryIndex === -1) {
+      return { tab: cleaned, params: new URLSearchParams() };
+    }
+    return {
+      tab: cleaned.slice(0, queryIndex).trim() || null,
+      params: new URLSearchParams(cleaned.slice(queryIndex + 1)),
+    };
+  };
+
+  const hasArticleFilterParams = (params) =>
+    ARTICLE_FILTER_PARAM_KEYS.some((key) => params.has(key));
+
+  const getArticleUrlParams = () => {
+    const { tab, params } = getArticleHashRoute();
+    if (tab === 'articles') {
+      return new URLSearchParams(params);
+    }
+    return new URLSearchParams();
+  };
+
   const updateArticleUrlParams = () => {
     const groupId = $('#article-group-filter')?.value;
     const accountBiz = $('#article-account-filter')?.value;
     const search = $('#article-search')?.value.trim();
 
-    const url = new URL(window.location);
-    if (groupId) url.searchParams.set('group', groupId);
-    else url.searchParams.delete('group');
-    if (accountBiz) url.searchParams.set('account', accountBiz);
-    else url.searchParams.delete('account');
-    if (search) url.searchParams.set('q', search);
-    else url.searchParams.delete('q');
+    const params = getArticleUrlParams();
+    if (groupId) params.set('group', groupId);
+    else params.delete('group');
+    if (accountBiz) params.set('account', accountBiz);
+    else params.delete('account');
+    if (search) params.set('q', search);
+    else params.delete('q');
 
-    window.history.replaceState({}, '', url);
+    const url = new URL(window.location);
+    ARTICLE_FILTER_PARAM_KEYS.forEach((key) => {
+      url.searchParams.delete(key);
+    });
+    const query = params.toString();
+    const target = `${url.pathname}${url.search}#/articles${query ? `?${query}` : ''}`;
+    window.history.replaceState({}, '', target);
   };
 
   const applyArticleUrlParams = async () => {
-    const url = new URL(window.location);
-    const groupId = url.searchParams.get('group');
-    const accountBiz = url.searchParams.get('account');
-    const search = url.searchParams.get('q');
+    const params = getArticleUrlParams();
+    const groupId = params.get('group');
+    const accountBiz = params.get('account');
+    const search = params.get('q');
 
     const groupFilter = $('#article-group-filter');
     const accountFilter = $('#article-account-filter');
@@ -330,6 +364,7 @@
 
     // Load articles with applied filters
     await loadArticles(true);
+    updateArticleUrlParams();
   };
 
   const parseWechatUrl = (urlStr) => {
@@ -638,6 +673,7 @@
     const resizer = $('#article-resizer');
     if (resizer) {
       const root = document.documentElement;
+      const listPanel = $('.article-list');
       const saved = localStorage.getItem('hippo-article-width');
       if (saved) {
         root.style.setProperty('--article-list-width', saved);
@@ -662,16 +698,25 @@
           localStorage.setItem('hippo-article-width', current);
         }
       };
+      const getStartWidth = () => {
+        if (listPanel) {
+          const rect = listPanel.getBoundingClientRect();
+          if (rect.width > 0) return rect.width;
+        }
+        const current = getComputedStyle(root).getPropertyValue('--article-list-width').trim();
+        const parsed = parseFloat(current);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : 300;
+      };
       resizer.addEventListener('mousedown', (event) => {
         startX = event.clientX;
-        startWidth = parseFloat(getComputedStyle(root).getPropertyValue('--article-list-width'));
+        startWidth = getStartWidth();
         document.body.style.cursor = 'col-resize';
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
       });
       resizer.addEventListener('touchstart', (event) => {
         startX = event.touches[0].clientX;
-        startWidth = parseFloat(getComputedStyle(root).getPropertyValue('--article-list-width'));
+        startWidth = getStartWidth();
         document.addEventListener('touchmove', onMove);
         document.addEventListener('touchend', onUp);
       });
@@ -792,9 +837,8 @@
     initReaderControls();
     initArticleLayout();
     bindEvents();
-    // Check if there are URL params to apply
-    const url = new URL(window.location);
-    if (url.searchParams.has('group') || url.searchParams.has('account') || url.searchParams.has('q')) {
+    const params = getArticleUrlParams();
+    if (hasArticleFilterParams(params)) {
       await applyArticleUrlParams();
     } else {
       await refresh();
