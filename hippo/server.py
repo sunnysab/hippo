@@ -67,6 +67,9 @@ def _parse_int(value: str | None) -> int | None:
 
 
 _SYNC_MODES = {'incremental', 'recent', 'full', 'range'}
+ARTICLE_SORT_PUBLISH_AT_DESC = 'publish_at_desc'
+ARTICLE_SORT_RELEVANCE_DESC = 'relevance_desc'
+_ARTICLE_SORT_VALUES = {ARTICLE_SORT_PUBLISH_AT_DESC, ARTICLE_SORT_RELEVANCE_DESC}
 
 
 def _normalize_sync_mode(value: Any) -> str | None:
@@ -90,6 +93,17 @@ def _normalize_recent_days(value: Any) -> int | None:
     if days < 1:
         raise ApiError('Invalid recent days', status=400)
     return days
+
+
+def _normalize_article_sort(value: str | None, *, has_query: bool) -> str:
+    if value in (None, ''):
+        return ARTICLE_SORT_RELEVANCE_DESC if has_query else ARTICLE_SORT_PUBLISH_AT_DESC
+    sort = value.strip().lower()
+    if sort not in _ARTICLE_SORT_VALUES:
+        raise ApiError('Invalid sort', status=400)
+    if sort == ARTICLE_SORT_RELEVANCE_DESC and not has_query:
+        return ARTICLE_SORT_PUBLISH_AT_DESC
+    return sort
 
 
 def _parse_date(value: str | None, *, end_of_day: bool = False) -> int | None:
@@ -539,6 +553,7 @@ def _build_article_query(
     since_ts: int | None,
     until_ts: int | None,
     content_only: bool,
+    sort_mode: str,
     limit: int,
     offset: int,
     article_id: str | None = None,
@@ -559,14 +574,14 @@ def _build_article_query(
     if biz:
         where.append("a.biz = %s")
         params.append(biz)
-    if query:
-        query_text = query.strip()
-        if query_text:
-            where.append("a.search_vector @@ plainto_tsquery('jiebaqry', %s)")
-            params.append(query_text)
-            rank_select = ", ts_rank(a.search_vector, plainto_tsquery('jiebaqry', %s)) AS rank"
-            select_params.append(query_text)
-            order_sql = "ORDER BY rank DESC, a.publish_at DESC NULLS LAST, a.id DESC"
+    query_text = query.strip() if query else ''
+    if query_text:
+        where.append("a.search_vector @@ plainto_tsquery('jiebaqry', %s)")
+        params.append(query_text)
+    if sort_mode == ARTICLE_SORT_RELEVANCE_DESC and query_text:
+        rank_select = ", ts_rank(a.search_vector, plainto_tsquery('jiebaqry', %s)) AS rank"
+        select_params.append(query_text)
+        order_sql = "ORDER BY rank DESC, a.publish_at DESC NULLS LAST, a.id DESC"
     if since_ts is not None:
         where.append("a.publish_at >= %s")
         params.append(since_ts)
@@ -618,6 +633,7 @@ def _list_articles(
     since_ts: int | None,
     until_ts: int | None,
     content_only: bool,
+    sort_mode: str,
     page: int,
     page_size: int,
     article_id: str | None = None,
@@ -631,6 +647,7 @@ def _list_articles(
         since_ts=since_ts,
         until_ts=until_ts,
         content_only=content_only,
+        sort_mode=sort_mode,
         limit=page_size,
         offset=offset,
         article_id=article_id,
@@ -909,14 +926,17 @@ def _list_feed(
     until_ts: int | None,
     limit: int,
 ) -> list[dict[str, Any]]:
+    query_text = (query or '').strip()
+    sort_mode = _normalize_article_sort(None, has_query=bool(query_text))
     query_sql, params = _build_article_query(
         storage=storage,
         group_id=group_id,
         biz=biz,
-        query=query,
+        query=query_text or None,
         since_ts=since_ts,
         until_ts=until_ts,
         content_only=False,
+        sort_mode=sort_mode,
         limit=limit,
         offset=0,
     )
@@ -1436,6 +1456,7 @@ def list_articles(
     biz: str | None = None,
     article_id: str | None = None,
     q: str | None = None,
+    sort: str | None = None,
     page: int = 1,
     page_size: int = 20,
     content: str = "",
@@ -1463,14 +1484,17 @@ def list_articles(
     content_only = (content or "").lower() in {"1", "true", "yes"}
     since_ts = _parse_date(since)
     until_ts = _parse_date(until, end_of_day=True)
+    query_text = (q or '').strip()
+    sort_mode = _normalize_article_sort(sort, has_query=bool(query_text))
     return _list_articles(
         storage,
         group_id=group_id,
         biz=biz or None,
-        query=q or None,
+        query=query_text or None,
         since_ts=since_ts,
         until_ts=until_ts,
         content_only=content_only,
+        sort_mode=sort_mode,
         page=max(page, 1),
         page_size=min(max(page_size, 1), 200),
         article_id=article_id or None,

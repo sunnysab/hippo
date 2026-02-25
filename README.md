@@ -201,7 +201,9 @@ python -m hippo db init
 实现细节：
 - 使用 `jiebaqry` 配置生成 `tsvector`，标题权重 A、摘要/正文权重 B、作者权重 C。
 - 为避免超大文档导致 `tsvector` 过大，正文仅取前 50,000 字符参与索引。
-- 查询入口为 HTTP API：`/api/article?q=关键词`（按相关度排序）。
+- 查询入口为 HTTP API：`/api/article?q=关键词`。
+  - 支持 `sort` 参数：`publish_at_desc`（发布时间新到旧）与 `relevance_desc`（相关度高到低）。
+  - 未传 `sort` 时保持兼容：`q` 非空默认 `relevance_desc`，否则默认 `publish_at_desc`。
 
 ---
 

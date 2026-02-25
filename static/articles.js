@@ -1,6 +1,9 @@
 (() => {
   const { state, $, apiGet, t, copyToClipboard, showToast } = window.Hippo;
-  const ARTICLE_FILTER_PARAM_KEYS = ['group', 'account', 'q'];
+  const ARTICLE_FILTER_PARAM_KEYS = ['group', 'account', 'q', 'sort'];
+  const ARTICLE_SORT_PUBLISH_AT_DESC = 'publish_at_desc';
+  const ARTICLE_SORT_RELEVANCE_DESC = 'relevance_desc';
+  const ARTICLE_SORT_VALUES = new Set([ARTICLE_SORT_PUBLISH_AT_DESC, ARTICLE_SORT_RELEVANCE_DESC]);
 
   const setArticleSearchLoading = (isLoading) => {
     const loading = $('#article-search-loading');
@@ -180,6 +183,7 @@
     const groupId = $('#article-group-filter')?.value;
     const accountBiz = $('#article-account-filter')?.value;
     const search = $('#article-search')?.value.trim();
+    const sort = resolveArticleSort(Boolean(search));
     const shouldShowLoading = Boolean(search);
     const shouldShowListLoading = reset && !search;
     setArticleSearchLoading(shouldShowLoading);
@@ -192,6 +196,7 @@
     if (groupId) url.searchParams.set('group_id', groupId);
     if (accountBiz) url.searchParams.set('biz', accountBiz);
     if (search) url.searchParams.set('q', search);
+    url.searchParams.set('sort', sort);
     url.searchParams.set('content', '1');
     url.searchParams.set('page', state.articlePage.toString());
     url.searchParams.set('page_size', state.articlePageSize.toString());
@@ -307,10 +312,44 @@
     return new URLSearchParams();
   };
 
+  const getDefaultArticleSort = (hasSearch) =>
+    hasSearch ? ARTICLE_SORT_RELEVANCE_DESC : ARTICLE_SORT_PUBLISH_AT_DESC;
+
+  const normalizeArticleSort = (value, hasSearch) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!ARTICLE_SORT_VALUES.has(normalized)) {
+      return getDefaultArticleSort(hasSearch);
+    }
+    if (normalized === ARTICLE_SORT_RELEVANCE_DESC && !hasSearch) {
+      return ARTICLE_SORT_PUBLISH_AT_DESC;
+    }
+    return normalized;
+  };
+
+  const resolveArticleSort = (hasSearch) => {
+    const params = getArticleUrlParams();
+    const sortSelect = $('#article-sort');
+    const selectedSort = sortSelect ? sortSelect.value : '';
+    const resolvedSort = params.has('sort')
+      ? normalizeArticleSort(selectedSort, hasSearch)
+      : getDefaultArticleSort(hasSearch);
+    if (sortSelect && sortSelect.value !== resolvedSort) {
+      sortSelect.value = resolvedSort;
+    }
+    return resolvedSort;
+  };
+
   const updateArticleUrlParams = () => {
     const groupId = $('#article-group-filter')?.value;
     const accountBiz = $('#article-account-filter')?.value;
     const search = $('#article-search')?.value.trim();
+    const hasSearch = Boolean(search);
+    const sortFilter = $('#article-sort');
+    const currentSort = normalizeArticleSort(sortFilter?.value || '', hasSearch);
+    const defaultSort = getDefaultArticleSort(hasSearch);
+    if (sortFilter && sortFilter.value !== currentSort) {
+      sortFilter.value = currentSort;
+    }
 
     const params = getArticleUrlParams();
     if (groupId) params.set('group', groupId);
@@ -319,6 +358,8 @@
     else params.delete('account');
     if (search) params.set('q', search);
     else params.delete('q');
+    if (currentSort !== defaultSort) params.set('sort', currentSort);
+    else params.delete('sort');
 
     const url = new URL(window.location);
     ARTICLE_FILTER_PARAM_KEYS.forEach((key) => {
@@ -334,10 +375,12 @@
     const groupId = params.get('group');
     const accountBiz = params.get('account');
     const search = params.get('q');
+    const sort = params.get('sort');
 
     const groupFilter = $('#article-group-filter');
     const accountFilter = $('#article-account-filter');
     const searchInput = $('#article-search');
+    const sortFilter = $('#article-sort');
 
     await populateArticleGroupFilter();
 
@@ -360,6 +403,10 @@
     // Apply search
     if (search && searchInput) {
       searchInput.value = search;
+    }
+    const hasSearch = Boolean(search && search.trim());
+    if (sortFilter) {
+      sortFilter.value = normalizeArticleSort(sort, hasSearch);
     }
 
     // Load articles with applied filters
@@ -772,6 +819,10 @@
     $('#article-account-filter').addEventListener('change', () => {
       loadArticles(true);
       updateArticleUrlParams();
+    });
+    $('#article-sort').addEventListener('change', () => {
+      updateArticleUrlParams();
+      loadArticles(true);
     });
     $('#article-search').addEventListener('input', () => {
       clearTimeout(state.articleTimer);
