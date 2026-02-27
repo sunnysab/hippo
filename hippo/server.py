@@ -154,12 +154,16 @@ class LoginManager:
             "has_qrcode": self._qrcode is not None,
         }
 
-    async def start(self) -> dict[str, Any]:
+    async def start(self, *, force: bool = False) -> dict[str, Any]:
         with self._lock:
-            if self._status in ("starting", "waiting", "scanned", "refresh"):
+            if not force and self._status in ("starting", "waiting", "scanned", "refresh"):
                 return self._snapshot()
+            if force:
+                self._uuid_cookie = None
+                self._qrcode = None
             self._status = "starting"
             self._message = "Requesting QR code"
+            self._updated_at = _utc_now_iso()
         sid = f"{int(time_module.time() * 1000)}{random.randint(100, 999)}"
         try:
             async with MPClient(timeout=15.0) as client:
@@ -189,7 +193,11 @@ class LoginManager:
     async def poll(self, storage: PostgresStorage) -> dict[str, Any]:
         with self._lock:
             uuid_cookie = self._uuid_cookie
+            status = self._status
         if not uuid_cookie:
+            if status == "starting":
+                with self._lock:
+                    return self._snapshot()
             raise ApiError("Login not started", status=400)
         try:
             async with MPClient(timeout=15.0) as client:
@@ -1580,6 +1588,7 @@ def login_status(
 
 @router.post("/login/start")
 async def login_start(
+    body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
     manager: "LoginManager" = Depends(_get_login_manager),
 ) -> dict[str, Any]:
@@ -1589,7 +1598,8 @@ async def login_start(
     Returns:
         dict: 登录状态，包含二维码 URL 是否可用。
     """
-    snapshot = await manager.start()
+    force = bool(body.get('force'))
+    snapshot = await manager.start(force=force)
     info = _get_login_info(storage)
     return {
         **snapshot,

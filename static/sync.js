@@ -376,7 +376,9 @@
   };
 
   const startLogin = async () => {
-    const payload = await apiSend('/api/login/start', 'POST', {});
+    const currentStatus = state.loginStatus?.status || 'idle';
+    const force = loginActionStatuses.includes(currentStatus);
+    const payload = await apiSend('/api/login/start', 'POST', { force });
     renderLoginStatus(payload);
     scheduleLoginPoll(payload.status);
   };
