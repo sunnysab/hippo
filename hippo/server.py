@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import random
 import re
 import threading
@@ -45,6 +46,14 @@ from .login_service import save_login_session
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 DEFAULT_GROUP_NAME = "Default"
+DEFAULT_LOG_LEVEL = "WARNING"
+_LOG_LEVEL_MAP = {
+    "CRITICAL": logging.CRITICAL,
+    "ERROR": logging.ERROR,
+    "WARNING": logging.WARNING,
+    "INFO": logging.INFO,
+    "DEBUG": logging.DEBUG,
+}
 
 logger = logging.getLogger("hippo.serve")
 
@@ -53,6 +62,13 @@ class ApiError(RuntimeError):
     def __init__(self, message: str, *, status: int = 400) -> None:
         super().__init__(message)
         self.status = status
+
+
+def _resolve_log_level() -> tuple[int, str]:
+    level_name = str(os.environ.get("HIPPO_LOG_LEVEL") or DEFAULT_LOG_LEVEL).strip().upper()
+    if level_name not in _LOG_LEVEL_MAP:
+        level_name = DEFAULT_LOG_LEVEL
+    return _LOG_LEVEL_MAP[level_name], level_name.lower()
 
 
 
@@ -1971,7 +1987,8 @@ def list_feed(
 
 
 def create_app(static_dir: Path | str = "static") -> FastAPI:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    log_level, _ = _resolve_log_level()
+    logging.basicConfig(level=log_level, format="%(levelname)s: %(message)s", force=True)
     static_path = Path(static_dir).expanduser().resolve()
     if not static_path.exists():
         raise RuntimeError(f"Static directory not found: {static_path}")
@@ -2025,4 +2042,5 @@ def serve(
     import uvicorn
 
     app = create_app(static_dir=static_dir)
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    _, uvicorn_log_level = _resolve_log_level()
+    uvicorn.run(app, host=host, port=port, log_level=uvicorn_log_level)

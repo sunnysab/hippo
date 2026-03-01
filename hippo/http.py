@@ -79,7 +79,7 @@ class MPClient(AbstractAsyncContextManager):
                 transport=wrapped_transport,
             )
 
-        logger.info(
+        logger.debug(
             "MPClient initialized: worker=%s, proxy=%s, max_conn=%s",
             self.article_worker or "None",
             article_worker_proxy or "None",
@@ -135,7 +135,7 @@ class MPClient(AbstractAsyncContextManager):
         try:
             resp = await client.get(final_url)
             resp.raise_for_status()
-            logger.info("Successfully fetched article: %s (size=%d bytes)", final_url, len(resp.text))
+            logger.debug("Successfully fetched article: %s (size=%d bytes)", final_url, len(resp.text))
             return resp.text
         except Exception as exc:
             logger.error("Failed to fetch article %s: %s", final_url, exc)
