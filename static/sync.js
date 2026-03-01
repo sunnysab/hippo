@@ -1,5 +1,5 @@
 (() => {
-  const { state, $, apiGet, apiSend, t, activateTab } = window.Hippo;
+  const { state, $, apiGet, apiSend, t, activateTab, showToast } = window.Hippo;
 
   const HISTORY_PAGE_SIZE = 5;
   const SYNC_POLL_FAST_MS = 1000;
@@ -278,6 +278,15 @@
     renderSyncSettings(payload);
   };
 
+  const getEmailFormData = () => ({
+    smtp_host: $('#email-smtp-host').value.trim(),
+    smtp_port: Number($('#email-smtp-port').value),
+    smtp_user: $('#email-smtp-user').value.trim(),
+    smtp_password: $('#email-smtp-password').value,
+    smtp_tls: $('#email-tls').checked,
+    from_email: $('#email-from').value.trim(),
+  });
+
   const saveSyncSettings = async () => {
     const { startHour, endHour } = syncWindowInputs(
       $('#sync-window-start').value,
@@ -294,18 +303,31 @@
       download_images: $('#sync-download-images').checked,
       alert_enabled: $('#sync-alert-enabled').checked,
       alert_email: $('#sync-alert-email').value.trim(),
-      email: {
-        smtp_host: $('#email-smtp-host').value.trim(),
-        smtp_port: Number($('#email-smtp-port').value),
-        smtp_user: $('#email-smtp-user').value.trim(),
-        smtp_password: $('#email-smtp-password').value,
-        smtp_tls: $('#email-tls').checked,
-        from_email: $('#email-from').value.trim(),
-      },
+      email: getEmailFormData(),
     };
     const payload = await apiSend('/api/sync/settings', 'PATCH', body);
     state.syncSettings = payload;
     renderSyncSettings(payload);
+  };
+
+  const triggerTestEmail = async () => {
+    const btn = $('#btn-email-test');
+    if (btn) btn.disabled = true;
+    try {
+      const payload = await apiSend('/api/sync/test-email', 'POST', {
+        to_email: $('#sync-alert-email').value.trim(),
+        email: getEmailFormData(),
+      });
+      const toEmail = payload?.to_email || $('#sync-alert-email').value.trim();
+      showToast(
+        t('email.testSuccess', 'Test email sent to {email}.').replace('{email}', toEmail || '-'),
+      );
+    } catch (err) {
+      console.warn('Failed to send test email', err);
+      showToast(err?.message || t('email.testFailed', 'Failed to send test email.'));
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   };
 
   const triggerSyncRun = async () => {
@@ -394,6 +416,10 @@
     $('#btn-login-cancel').addEventListener('click', cancelLogin);
     $('#btn-sync-save').addEventListener('click', saveSyncSettings);
     $('#btn-sync-run').addEventListener('click', triggerSyncRun);
+    const emailTestBtn = $('#btn-email-test');
+    if (emailTestBtn) {
+      emailTestBtn.addEventListener('click', triggerTestEmail);
+    }
     const emailTls = $('#email-tls');
     if (emailTls) {
       emailTls.addEventListener('change', () => {

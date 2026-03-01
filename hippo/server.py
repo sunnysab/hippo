@@ -25,7 +25,7 @@ try:
 except Exception:  # pragma: no cover - optional fallback
     jieba = None
 
-from .emailer import get_email_settings, set_email_settings
+from .emailer import get_email_settings, send_email, set_email_settings
 from .http import MPClient
 from .wechat_api import SessionExpiredError, WeChatApiClient
 from .models import AccountCredential
@@ -1784,6 +1784,64 @@ async def update_sync_settings(
     if settings.get("enabled"):
         scheduler.trigger()
     return settings
+
+
+@router.post('/sync/test-email')
+def send_sync_test_email(
+    body: dict[str, Any] = Body(default={}),
+    storage: PostgresStorage = Depends(_get_storage),
+) -> dict[str, Any]:
+    """
+    发送测试邮件，使用当前或传入的 SMTP 配置。
+    """
+    to_email = str(body.get('to_email') or '').strip()
+    if not to_email:
+        settings = load_sync_settings(storage)
+        to_email = str(settings.get('alert_email') or '').strip()
+    if not to_email:
+        raise ApiError('to_email is required')
+
+    email_settings = get_email_settings(storage)
+    email_body = body.get('email')
+    if isinstance(email_body, dict):
+        if 'smtp_host' in email_body:
+            email_settings['smtp_host'] = str(email_body.get('smtp_host') or '').strip()
+        if 'smtp_port' in email_body:
+            try:
+                email_settings['smtp_port'] = max(int(email_body.get('smtp_port')), 1)
+            except (TypeError, ValueError) as exc:
+                raise ApiError('Invalid smtp_port') from exc
+        if 'smtp_user' in email_body:
+            email_settings['smtp_user'] = str(email_body.get('smtp_user') or '').strip()
+        if 'smtp_password' in email_body:
+            email_settings['smtp_password'] = str(email_body.get('smtp_password') or '')
+        if 'smtp_tls' in email_body:
+            email_settings['smtp_tls'] = bool(email_body.get('smtp_tls'))
+        if 'from_email' in email_body:
+            email_settings['from_email'] = str(email_body.get('from_email') or '').strip()
+
+    smtp_host = str(email_settings.get('smtp_host') or '').strip()
+    if not smtp_host:
+        raise ApiError('smtp_host is required')
+
+    sent_at = datetime.now(timezone.utc).isoformat()
+    subject = 'Hippo test email'
+    message = (
+        'This is a test email from Hippo.\n\n'
+        f'Sent at (UTC): {sent_at}\n'
+        f'To: {to_email}\n'
+    )
+    try:
+        send_email(
+            email_settings,
+            to_email=to_email,
+            subject=subject,
+            body=message,
+        )
+    except Exception as exc:
+        raise ApiError(f'Failed to send test email: {exc}') from exc
+
+    return {'status': 'sent', 'to_email': to_email}
 
 
 @router.post("/sync/run", status_code=status.HTTP_202_ACCEPTED)
