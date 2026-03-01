@@ -52,8 +52,10 @@ def send_email(settings: dict[str, Any], *, to_email: str, subject: str, body: s
     smtp_user = settings.get('smtp_user')
     smtp_password = settings.get('smtp_password')
     use_tls = bool(settings.get('smtp_tls'))
-    with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as smtp:
-        if use_tls:
+    use_ssl = use_tls and smtp_port == 465
+    smtp_client = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
+    with smtp_client(smtp_host, smtp_port, timeout=15) as smtp:
+        if use_tls and not use_ssl:
             smtp.starttls()
         if smtp_user:
             smtp.login(smtp_user, smtp_password or '')
