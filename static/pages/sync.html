@@ -75,7 +75,10 @@
           </div>
           <div class="toolbar">
             <button class="btn" id="btn-email-save" type="button" data-i18n="email.save">Save</button>
-            <button class="btn ghost" id="btn-email-test" type="button" data-i18n="email.test">Test</button>
+            <button class="btn ghost" id="btn-email-test" type="button">
+              <span class="loading-spinner is-hidden" id="email-test-spinner" aria-hidden="true"></span>
+              <span id="email-test-label" data-i18n="email.test">Test</span>
+            </button>
           </div>
         </div>
         <div class="form-grid">

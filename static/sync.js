@@ -4,6 +4,7 @@
   const HISTORY_PAGE_SIZE = 5;
   const SYNC_POLL_FAST_MS = 1000;
   const SYNC_POLL_IDLE_MS = 10000;
+  const TEST_EMAIL_TIMEOUT_MS = 10000;
   let lastSyncStatusFingerprint = '';
   let lastSyncTasksFingerprint = '';
 
@@ -332,23 +333,39 @@
     }
   };
 
-  const triggerTestEmail = async () => {
+  const setEmailTestButtonLoading = (isLoading) => {
     const btn = $('#btn-email-test');
-    if (btn) btn.disabled = true;
+    const spinner = $('#email-test-spinner');
+    const label = $('#email-test-label');
+    if (btn) btn.disabled = isLoading;
+    if (spinner) spinner.classList.toggle('is-hidden', !isLoading);
+    if (label) {
+      label.textContent = isLoading
+        ? t('email.testing', 'Sending...')
+        : t('email.test', 'Test');
+    }
+  };
+
+  const triggerTestEmail = async () => {
+    setEmailTestButtonLoading(true);
     try {
       const payload = await apiSend('/api/sync/test-email', 'POST', {
         to_email: $('#sync-alert-email').value.trim(),
         email: getEmailFormData(),
-      });
+      }, { timeoutMs: TEST_EMAIL_TIMEOUT_MS });
       const toEmail = payload?.to_email || $('#sync-alert-email').value.trim();
       showToast(
         t('email.testSuccess', 'Test email sent to {email}.').replace('{email}', toEmail || '-'),
       );
     } catch (err) {
       console.warn('Failed to send test email', err);
-      showToast(err?.message || t('email.testFailed', 'Failed to send test email.'));
+      if (err?.code === 'TIMEOUT') {
+        showToast(t('email.testTimeout', 'Timed out while sending test email.'));
+      } else {
+        showToast(err?.message || t('email.testFailed', 'Failed to send test email.'));
+      }
     } finally {
-      if (btn) btn.disabled = false;
+      setEmailTestButtonLoading(false);
     }
   };
 

@@ -44,12 +44,35 @@ const apiGet = async (path) => {
   return res.json();
 };
 
-const apiSend = async (path, method, body) => {
-  const res = await fetch(path, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body || {}),
-  });
+const apiSend = async (path, method, body, options = {}) => {
+  const timeoutMs = Number(options.timeoutMs);
+  const withTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0;
+  const controller = withTimeout ? new AbortController() : null;
+  const timeoutId = withTimeout
+    ? setTimeout(() => {
+        controller.abort();
+      }, Math.trunc(timeoutMs))
+    : null;
+  let res;
+  try {
+    res = await fetch(path, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+      signal: controller?.signal,
+    });
+  } catch (err) {
+    if (withTimeout && err?.name === 'AbortError') {
+      const timeoutErr = new Error('Request timeout');
+      timeoutErr.code = 'TIMEOUT';
+      throw timeoutErr;
+    }
+    throw err;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
   if (!res.ok && res.status !== 204) {
     const payload = await res.json().catch(() => ({}));
     if (res.status === 401) {
