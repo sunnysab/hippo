@@ -287,6 +287,12 @@
     from_email: $('#email-from').value.trim(),
   });
 
+  const getEmailSettingsBody = () => ({
+    alert_enabled: $('#sync-alert-enabled').checked,
+    alert_email: $('#sync-alert-email').value.trim(),
+    email: getEmailFormData(),
+  });
+
   const saveSyncSettings = async () => {
     const { startHour, endHour } = syncWindowInputs(
       $('#sync-window-start').value,
@@ -308,6 +314,22 @@
     const payload = await apiSend('/api/sync/settings', 'PATCH', body);
     state.syncSettings = payload;
     renderSyncSettings(payload);
+  };
+
+  const saveEmailSettings = async () => {
+    const btn = $('#btn-email-save');
+    if (btn) btn.disabled = true;
+    try {
+      const payload = await apiSend('/api/sync/settings', 'PATCH', getEmailSettingsBody());
+      state.syncSettings = payload;
+      renderSyncSettings(payload);
+      showToast(t('email.saveSuccess', 'Email settings saved.'));
+    } catch (err) {
+      console.warn('Failed to save email settings', err);
+      showToast(err?.message || t('email.saveFailed', 'Failed to save email settings.'));
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   };
 
   const triggerTestEmail = async () => {
@@ -416,6 +438,10 @@
     $('#btn-login-cancel').addEventListener('click', cancelLogin);
     $('#btn-sync-save').addEventListener('click', saveSyncSettings);
     $('#btn-sync-run').addEventListener('click', triggerSyncRun);
+    const emailSaveBtn = $('#btn-email-save');
+    if (emailSaveBtn) {
+      emailSaveBtn.addEventListener('click', saveEmailSettings);
+    }
     const emailTestBtn = $('#btn-email-test');
     if (emailTestBtn) {
       emailTestBtn.addEventListener('click', triggerTestEmail);
