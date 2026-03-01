@@ -1803,7 +1803,7 @@ async def update_sync_settings(
 
 
 @router.post('/sync/test-email')
-def send_sync_test_email(
+async def send_sync_test_email(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
@@ -1847,15 +1847,51 @@ def send_sync_test_email(
         f'Sent at (UTC): {sent_at}\n'
         f'To: {to_email}\n'
     )
+    started_at = time_module.monotonic()
+    logger.info(
+        'Sending test email: to=%s smtp_host=%s smtp_port=%s smtp_tls=%s',
+        to_email,
+        smtp_host,
+        email_settings.get('smtp_port'),
+        bool(email_settings.get('smtp_tls')),
+    )
     try:
-        send_email(
-            email_settings,
-            to_email=to_email,
-            subject=subject,
-            body=message,
+        await asyncio.wait_for(
+            asyncio.to_thread(
+                send_email,
+                email_settings,
+                to_email=to_email,
+                subject=subject,
+                body=message,
+            ),
+            timeout=20,
         )
+    except TimeoutError as exc:
+        elapsed_ms = int((time_module.monotonic() - started_at) * 1000)
+        logger.warning(
+            'Test email timeout: to=%s smtp_host=%s elapsed_ms=%s',
+            to_email,
+            smtp_host,
+            elapsed_ms,
+        )
+        raise ApiError('Test email timed out. Please verify SMTP host/port/TLS.') from exc
     except Exception as exc:
+        elapsed_ms = int((time_module.monotonic() - started_at) * 1000)
+        logger.warning(
+            'Failed to send test email: to=%s smtp_host=%s elapsed_ms=%s error=%s',
+            to_email,
+            smtp_host,
+            elapsed_ms,
+            exc,
+        )
         raise ApiError(f'Failed to send test email: {exc}') from exc
+    elapsed_ms = int((time_module.monotonic() - started_at) * 1000)
+    logger.info(
+        'Test email sent: to=%s smtp_host=%s elapsed_ms=%s',
+        to_email,
+        smtp_host,
+        elapsed_ms,
+    )
 
     return {'status': 'sent', 'to_email': to_email}
 
@@ -2019,6 +2055,13 @@ def create_app(static_dir: Path | str = "static") -> FastAPI:
 
     @app.exception_handler(ApiError)
     async def _handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
+        logger.warning(
+            'API error: path=%s method=%s status=%s message=%s',
+            request.url.path,
+            request.method,
+            exc.status,
+            str(exc),
+        )
         return JSONResponse(status_code=exc.status, content={"error": str(exc)})
 
     @app.exception_handler(Exception)
