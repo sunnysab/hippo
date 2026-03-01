@@ -818,6 +818,7 @@
         group_id: Number(groupId),
         biz_list: Array.from(state.selectedAccounts),
       });
+      await loadGroups();
       await loadAccounts();
     });
     $('#batch-sync-mode').addEventListener('change', () => {
