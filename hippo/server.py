@@ -122,6 +122,33 @@ def _normalize_article_sort(value: str | None, *, has_query: bool) -> str:
     return sort
 
 
+def _split_article_query_terms(query: str | None) -> list[str]:
+    if not query:
+        return []
+    terms = [part.strip() for part in re.split(r'\s+', query) if part.strip()]
+    if not terms:
+        return []
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        if term in seen:
+            continue
+        seen.add(term)
+        deduped.append(term)
+    return deduped
+
+
+def _build_article_search_tsquery(query: str | None) -> tuple[str, list[str]]:
+    query_text = query.strip() if query else ''
+    if not query_text:
+        return '', []
+    terms = _split_article_query_terms(query_text)
+    if len(terms) <= 1:
+        return "plainto_tsquery('jiebaqry', %s)", [query_text]
+    tsquery_sql = ' || '.join(["plainto_tsquery('jiebaqry', %s)"] * len(terms))
+    return f'({tsquery_sql})', terms
+
+
 def _parse_date(value: str | None, *, end_of_day: bool = False) -> int | None:
     try:
         return parse_iso_date_to_timestamp(value, end_of_day=end_of_day)
@@ -587,6 +614,8 @@ def _build_article_query(
     select_params: list[Any] = []
     rank_select = ""
     order_sql = "ORDER BY a.publish_at DESC NULLS LAST, a.id DESC"
+    query_text = query.strip() if query else ''
+    query_tsquery_sql, query_tsquery_params = _build_article_search_tsquery(query_text)
 
     if article_id:
         where.append("a.article_id = %s")
@@ -598,13 +627,12 @@ def _build_article_query(
     if biz:
         where.append("a.biz = %s")
         params.append(biz)
-    query_text = query.strip() if query else ''
-    if query_text:
-        where.append("a.search_vector @@ plainto_tsquery('jiebaqry', %s)")
-        params.append(query_text)
-    if sort_mode == ARTICLE_SORT_RELEVANCE_DESC and query_text:
-        rank_select = ", ts_rank(a.search_vector, plainto_tsquery('jiebaqry', %s)) AS rank"
-        select_params.append(query_text)
+    if query_tsquery_sql:
+        where.append(f"a.search_vector @@ {query_tsquery_sql}")
+        params.extend(query_tsquery_params)
+    if sort_mode == ARTICLE_SORT_RELEVANCE_DESC and query_tsquery_sql:
+        rank_select = f", ts_rank(a.search_vector, {query_tsquery_sql}) AS rank"
+        select_params.extend(query_tsquery_params)
         order_sql = "ORDER BY rank DESC, a.publish_at DESC NULLS LAST, a.id DESC"
     if since_ts is not None:
         where.append("a.publish_at >= %s")
@@ -682,6 +710,8 @@ def _list_articles(
 
     where: list[str] = []
     count_params: list[Any] = []
+    query_text = query.strip() if query else ''
+    query_tsquery_sql, query_tsquery_params = _build_article_search_tsquery(query_text)
 
     if article_id:
         where.append("a.article_id = %s")
@@ -693,11 +723,9 @@ def _list_articles(
     if biz:
         where.append("a.biz = %s")
         count_params.append(biz)
-    if query:
-        query_text = query.strip()
-        if query_text:
-            where.append("a.search_vector @@ plainto_tsquery('jiebaqry', %s)")
-            count_params.append(query_text)
+    if query_tsquery_sql:
+        where.append(f"a.search_vector @@ {query_tsquery_sql}")
+        count_params.extend(query_tsquery_params)
     if since_ts is not None:
         where.append("a.publish_at >= %s")
         count_params.append(since_ts)
