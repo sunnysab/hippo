@@ -92,25 +92,38 @@
     menu.dataset.groupId = '';
   };
 
-  const triggerGroupSync = async (groupId) => {
+  const openSyncView = () => {
+    window.location.hash = '#/sync';
+  };
+
+  const triggerSync = async (payload, { successMessage, errorMessage }) => {
     try {
-      await apiSend('/api/sync/run', 'POST', { group_id: groupId });
-      showToast(t('groups.syncTriggered', 'Group sync triggered.'));
+      await apiSend('/api/sync/run', 'POST', payload);
+      openSyncView();
+      showToast(successMessage);
     } catch (err) {
-      console.warn('Failed to trigger group sync', err);
-      showToast(t('groups.syncTriggerFailed', 'Failed to trigger group sync.'));
+      console.warn('Failed to trigger sync', err);
+      showToast(errorMessage);
     }
   };
 
-  const resolveSelectedGroupId = () => {
-    if (state.selectedGroupId) {
-      return state.selectedGroupId;
-    }
-    const firstBiz = state.selectedAccounts.values().next().value;
-    if (!firstBiz) return null;
-    const account = state.accounts.find((item) => item.biz === firstBiz);
-    return account?.group_id || null;
-  };
+  const triggerGroupSync = async (groupId) =>
+    triggerSync(
+      { group_id: groupId },
+      {
+        successMessage: t('groups.syncTriggered', 'Group sync triggered.'),
+        errorMessage: t('groups.syncTriggerFailed', 'Failed to trigger group sync.'),
+      },
+    );
+
+  const triggerSelectedSync = async (bizList) =>
+    triggerSync(
+      { biz_list: bizList },
+      {
+        successMessage: t('accounts.syncTriggered', 'Selected accounts sync started.'),
+        errorMessage: t('accounts.syncTriggerFailed', 'Failed to start selected accounts sync.'),
+      },
+    );
 
   const openAccountSearchModal = async () => {
     const modal = $('#account-search-modal');
@@ -867,12 +880,7 @@
         alert(t('accounts.moveSelectAccounts', 'Select accounts to move.'));
         return;
       }
-      const groupId = resolveSelectedGroupId();
-      if (!groupId) {
-        showToast(t('groups.syncTriggerFailed', 'Failed to trigger group sync.'));
-        return;
-      }
-      await triggerGroupSync(groupId);
+      await triggerSelectedSync(Array.from(state.selectedAccounts));
     });
 
     $('#btn-account-add').addEventListener('click', openAccountSearchModal);

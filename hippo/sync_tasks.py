@@ -69,6 +69,7 @@ class SyncTaskState:
     finished_at: str | None = None
     error: str | None = None
     group_id: int | None = None
+    biz_list: tuple[str, ...] | None = None
     accounts_total: int = 0
     accounts_done: int = 0
     current_account: dict[str, Any] | None = None
@@ -169,9 +170,18 @@ class SyncTaskManager:
         self._max_tasks = max_tasks
         self._lock = threading.Lock()
 
-    def create_sync_task(self, *, group_id: int | None = None) -> str:
+    def create_sync_task(
+        self,
+        *,
+        group_id: int | None = None,
+        biz_list: list[str] | None = None,
+    ) -> str:
         task_id = uuid.uuid4().hex
-        state = SyncTaskState(task_id=task_id, group_id=group_id)
+        state = SyncTaskState(
+            task_id=task_id,
+            group_id=group_id,
+            biz_list=tuple(biz_list) if biz_list else None,
+        )
         with self._lock:
             self._tasks[task_id] = state
             self._trim()
@@ -252,6 +262,7 @@ class SyncTaskManager:
         try:
             result: SyncJobResult = await run_sync_job(
                 group_id=state.group_id,
+                biz_list=list(state.biz_list) if state.biz_list else None,
                 observer_factory=observer_factory,
                 on_account_start=on_account_start,
                 on_account_done=on_account_done,

@@ -89,8 +89,71 @@
   margin: 0;
 }
 
+.sync-active-body {
+  display: grid;
+  gap: 16px;
+}
+
+.sync-active-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sync-progress-list {
+  display: grid;
+  gap: 10px;
+}
+
+.sync-progress-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.sync-progress-item.is-running {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.sync-progress-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.sync-progress-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sync-progress-status {
+  flex: none;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sync-progress-more {
+  font-size: 12px;
+}
+
 @media (max-width: 760px) {
   .sync-page-shell {
     width: 100%;
+  }
+
+  .sync-progress-item,
+  .sync-active-summary,
+  .sync-progress-title-row {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

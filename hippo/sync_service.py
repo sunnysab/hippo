@@ -678,6 +678,7 @@ def _build_sync_config(settings: dict[str, Any]) -> SyncConfig:
 async def run_sync_job(
     *,
     group_id: int | None = None,
+    biz_list: list[str] | None = None,
     observer_factory: Callable[[AccountCredential, bool], SyncObserver] | None = None,
     on_account_start: Callable[[AccountCredential], None] | None = None,
     on_account_done: Callable[[SyncAccountResult, SyncSummary | None], None] | None = None,
@@ -693,6 +694,7 @@ async def run_sync_job(
                 on_lock_acquired()
             return await run_sync_job(
                 group_id=group_id,
+                biz_list=biz_list,
                 observer_factory=observer_factory,
                 on_account_start=on_account_start,
                 on_account_done=on_account_done,
@@ -742,6 +744,9 @@ async def run_sync_job(
         accounts = storage.accounts.list_accounts()
         if group_id is not None:
             accounts = [account for account in accounts if account.group_id == group_id]
+        if biz_list is not None:
+            allowed_biz = set(biz_list)
+            accounts = [account for account in accounts if account.biz in allowed_biz]
         if on_accounts_loaded:
             on_accounts_loaded(accounts)
         group_defaults: dict[int, dict[str, Any]] = {}

@@ -1940,6 +1940,8 @@ async def run_sync(
         dict: 触发操作的状态。
     """
     group_id = body.get('group_id')
+    raw_biz_list = body.get('biz_list')
+    biz_list: list[str] | None = None
     if group_id is not None:
         try:
             group_id = int(group_id)
@@ -1953,10 +1955,34 @@ async def run_sync(
         )
         if not row:
             raise ApiError('Group not found', status=404)
-        task_id = task_manager.create_sync_task(group_id=group_id)
+    if raw_biz_list is not None:
+        if not isinstance(raw_biz_list, list):
+            raise ApiError('Invalid biz_list')
+        normalized_biz_list: list[str] = []
+        seen_biz: set[str] = set()
+        for value in raw_biz_list:
+            biz = str(value or '').strip()
+            if not biz or biz in seen_biz:
+                continue
+            normalized_biz_list.append(biz)
+            seen_biz.add(biz)
+        if not normalized_biz_list:
+            raise ApiError('Invalid biz_list')
+        known_biz = {account.biz for account in storage.accounts.list_accounts()}
+        missing_biz = [biz for biz in normalized_biz_list if biz not in known_biz]
+        if missing_biz:
+            raise ApiError(f'Account not found: {missing_biz[0]}', status=404)
+        biz_list = normalized_biz_list
+    if group_id is not None or biz_list is not None:
+        task_id = task_manager.create_sync_task(group_id=group_id, biz_list=biz_list)
         task_state = task_manager.get_task(task_id)
         task_status = task_state.status if task_state else 'pending'
-        return {'status': task_status, 'group_id': group_id, 'task_id': task_id}
+        response: dict[str, Any] = {'status': task_status, 'task_id': task_id}
+        if group_id is not None:
+            response['group_id'] = group_id
+        if biz_list is not None:
+            response['biz_list'] = biz_list
+        return response
     task_id = task_manager.create_sync_task()
     task_state = task_manager.get_task(task_id)
     task_status = task_state.status if task_state else 'pending'
