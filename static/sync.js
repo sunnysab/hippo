@@ -119,14 +119,25 @@
     return tasks.find((task) => task.status === 'running') || tasks.find((task) => task.status === 'pending') || null;
   };
 
-  const getActiveTaskPhase = (task) => {
+  const getPhaseLabel = (phase) => {
+    if (!phase) return '';
+    return t(`sync.phase.${phase}`, phase);
+  };
+
+  const getActiveTaskStage = (task) => {
     if (!task) return null;
     if (task.status === 'pending') {
       return t('sync.pendingHint', 'Waiting for running sync slot');
     }
-    if (task.last_log === 'downloading_images' || (task.last_log && task.last_log.includes('图片'))) {
-      return t('sync.runningImages', 'Downloading images');
-    }
+    const phase = task.phase || (task.last_log === 'downloading_images' ? 'images' : null);
+    if (!phase) return null;
+    return t('sync.phaseLine', 'Stage: {stage}').replace('{stage}', getPhaseLabel(phase));
+  };
+
+  const getActiveTaskDetail = (task) => {
+    if (!task) return null;
+    if (task.status === 'pending') return null;
+    if (task.phase === 'images') return null;
     if (task.current_article?.title) {
       return t('sync.runningArticle', 'Processing {title}').replace('{title}', task.current_article.title);
     }
@@ -170,9 +181,9 @@
     const minutes = startedAt
       ? Math.max(1, Math.floor((Date.now() - new Date(startedAt).getTime()) / 60000))
       : 0;
-    const progressBadge =
-      activeTask.accounts_total > 0 ? `${activeTask.accounts_done || 0}/${activeTask.accounts_total}` : '';
-    const phase = getActiveTaskPhase(activeTask);
+    const progressBadge = activeTask.accounts_total > 0 ? `${activeTask.accounts_done || 0}/${activeTask.accounts_total}` : '';
+    const stage = getActiveTaskStage(activeTask);
+    const detail = getActiveTaskDetail(activeTask);
     const accounts = Array.isArray(activeTask.accounts) ? [...activeTask.accounts] : [];
     accounts.sort((left, right) => {
       const currentBiz = activeTask.current_account?.biz || '';
@@ -195,6 +206,9 @@
               ? `${account.article_current}`
               : '';
         const meta = [];
+        if (account.status === 'running' && account.phase) {
+          meta.push(t('sync.phaseLine', 'Stage: {stage}').replace('{stage}', getPhaseLabel(account.phase)));
+        }
         if (account.saved) {
           meta.push(t('sync.accountSaved', 'Saved {n} articles').replace('{n}', account.saved));
         }
@@ -239,7 +253,8 @@
               isPending ? 'Queued for {n} minutes' : 'Started {n} minutes ago'
             ).replace('{n}', minutes)
           )}</div>
-          ${phase ? `<div class="account-sub">${escapeHtml(phase)}</div>` : ''}
+          ${stage ? `<div class="account-sub">${escapeHtml(stage)}</div>` : ''}
+          ${detail ? `<div class="account-sub">${escapeHtml(detail)}</div>` : ''}
         </div>
         ${progressBadge ? `<span class="badge">${escapeHtml(progressBadge)}</span>` : ''}
       </div>
@@ -284,12 +299,14 @@
         activeTask.accounts_total > 0
           ? `${activeTask.accounts_done || 0}/${activeTask.accounts_total}`
           : '';
-      const phase = getActiveTaskPhase(activeTask);
+      const stage = getActiveTaskStage(activeTask);
+      const detail = getActiveTaskDetail(activeTask);
       item.innerHTML = `
         <div>
           <div class="account-name">${escapeHtml(t(isPending ? 'sync.pendingTitle' : 'sync.runningTitle', isPending ? 'Queued {name}' : 'Syncing {name}').replace('{name}', accountName))}</div>
           <div class="account-sub">${escapeHtml(t(isPending ? 'sync.pendingSince' : 'sync.runningSince', isPending ? 'Queued for {n} minutes' : 'Started {n} minutes ago').replace('{n}', minutes))}</div>
-          ${phase ? `<div class="account-sub">${escapeHtml(phase)}</div>` : ''}
+          ${stage ? `<div class="account-sub">${escapeHtml(stage)}</div>` : ''}
+          ${detail ? `<div class="account-sub">${escapeHtml(detail)}</div>` : ''}
         </div>
         ${progressBadge ? `<span class="badge">${escapeHtml(progressBadge)}</span>` : ''}
       `;

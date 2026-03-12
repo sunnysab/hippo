@@ -34,6 +34,7 @@ class AccountProgress:
     biz: str
     nickname: str
     status: str = "pending"
+    phase: str | None = None
     saved: int = 0
     page_count: int = 0
     article_current: int | None = None
@@ -50,6 +51,7 @@ class AccountProgress:
             "biz": self.biz,
             "nickname": self.nickname,
             "status": self.status,
+            "phase": self.phase,
             "saved": self.saved,
             "page_count": self.page_count,
             "article_current": self.article_current,
@@ -70,6 +72,7 @@ class SyncTaskState:
     error: str | None = None
     group_id: int | None = None
     biz_list: tuple[str, ...] | None = None
+    phase: str | None = None
     accounts_total: int = 0
     accounts_done: int = 0
     current_account: dict[str, Any] | None = None
@@ -87,6 +90,7 @@ class SyncTaskState:
             "finished_at": self.finished_at,
             "error": self.error,
             "group_id": self.group_id,
+            "phase": self.phase,
             "accounts_total": self.accounts_total,
             "accounts_done": self.accounts_done,
             "current_account": self.current_account,
@@ -105,6 +109,7 @@ class SyncTaskState:
             'finished_at': self.finished_at,
             'error': self.error,
             'group_id': self.group_id,
+            'phase': self.phase,
             'accounts_total': self.accounts_total,
             'accounts_done': self.accounts_done,
             'current_account': self.current_account,
@@ -151,7 +156,6 @@ class SyncTaskObserver(SyncObserver):
     def on_complete(self, summary: SyncSummary) -> None:
         with self._lock:
             progress = self._progress()
-            progress.status = "completed" if summary.completed else "stopped"
             progress.page_count = summary.page_count
             progress.saved = summary.total_saved
             progress.touch()
@@ -160,6 +164,7 @@ class SyncTaskObserver(SyncObserver):
         with self._lock:
             progress = self._progress()
             progress.status = "skipped"
+            progress.phase = None
             progress.skip_reason = reason
             progress.touch()
 
@@ -209,6 +214,7 @@ class SyncTaskManager:
             state.status = "pending"
             state.started_at = None
             state.last_log = "waiting_for_slot"
+            state.phase = None
 
         def on_lock_acquired() -> None:
             with self._lock:
@@ -232,12 +238,25 @@ class SyncTaskManager:
                     "biz": account.biz,
                     "nickname": account.nickname or account.biz,
                 }
+                state.phase = 'listing'
+                state.current_article = None
                 progress = state.accounts.setdefault(
                     account.biz,
                     AccountProgress(biz=account.biz, nickname=account.nickname or account.biz),
                 )
                 progress.status = "running"
+                progress.phase = 'listing'
                 progress.touch()
+
+        def on_account_stage(account: AccountCredential, stage: str) -> None:
+            with self._lock:
+                if state.current_account and state.current_account.get('biz') != account.biz:
+                    return
+                state.phase = stage
+                progress = state.accounts.get(account.biz)
+                if progress and progress.status == 'running':
+                    progress.phase = stage
+                    progress.touch()
 
         def on_account_done(result: SyncAccountResult, summary: SyncSummary | None) -> None:
             with self._lock:
@@ -250,11 +269,14 @@ class SyncTaskManager:
                     progress.skip_reason = result.skip_reason
                 else:
                     progress.status = "completed" if result.completed else "stopped"
+                progress.phase = None
                 progress.saved = result.saved
                 if summary:
                     progress.page_count = summary.page_count
                 progress.touch()
                 state.accounts_done += 1
+                if state.current_account and state.current_account.get('biz') == result.biz:
+                    state.phase = None
 
         def observer_factory(account: AccountCredential, _: bool) -> SyncObserver:
             return SyncTaskObserver(state=state, account=account, lock=self._lock)
@@ -267,10 +289,11 @@ class SyncTaskManager:
                 on_account_start=on_account_start,
                 on_account_done=on_account_done,
                 on_accounts_loaded=on_accounts_loaded,
+                on_account_stage=on_account_stage,
                 lock=SYNC_RUN_LOCK,
                 on_lock_acquired=on_lock_acquired,
-                on_images_start=lambda: self._set_task_log(state, "downloading_images"),
-                on_images_done=lambda: self._set_task_log(state, None),
+                on_images_start=lambda: self._set_task_phase(state, 'images', "downloading_images"),
+                on_images_done=lambda: self._set_task_phase(state, None, None),
             )
             with self._lock:
                 state.report = {
@@ -283,16 +306,19 @@ class SyncTaskManager:
                 state.error = result.error
                 state.finished_at = _utc_now_iso()
                 state.current_account = None
+                state.phase = None
         except Exception as exc:
             with self._lock:
                 state.status = "failed"
                 state.error = str(exc)
                 state.finished_at = _utc_now_iso()
                 state.current_account = None
+                state.phase = None
 
-    def _set_task_log(self, state: SyncTaskState, message: str | None) -> None:
+    def _set_task_phase(self, state: SyncTaskState, phase: str | None, log: str | None) -> None:
         with self._lock:
-            state.last_log = message
+            state.phase = phase
+            state.last_log = log
 
 
 __all__ = ["SyncTaskManager"]
