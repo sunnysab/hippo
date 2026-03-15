@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS meta (
 CREATE TABLE IF NOT EXISTS account_groups (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
+    article_count BIGINT NOT NULL DEFAULT 0,
     sync_mode TEXT,
     sync_recent_days INTEGER,
     created_at TIMESTAMPTZ NOT NULL,
@@ -22,6 +23,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     round_head_img TEXT,
     group_id INTEGER REFERENCES account_groups(id) ON DELETE SET NULL,
     is_disabled BOOLEAN NOT NULL DEFAULT FALSE,
+    article_count BIGINT NOT NULL DEFAULT 0,
     sync_mode TEXT,
     sync_recent_days INTEGER,
     last_synced_at TIMESTAMPTZ,
@@ -40,6 +42,12 @@ ADD COLUMN IF NOT EXISTS sync_mode TEXT;
 
 ALTER TABLE accounts
 ADD COLUMN IF NOT EXISTS sync_recent_days INTEGER;
+
+ALTER TABLE accounts
+ADD COLUMN IF NOT EXISTS article_count BIGINT NOT NULL DEFAULT 0;
+
+ALTER TABLE account_groups
+ADD COLUMN IF NOT EXISTS article_count BIGINT NOT NULL DEFAULT 0;
 
 ALTER TABLE accounts
 DROP COLUMN IF EXISTS is_default;
@@ -238,3 +246,138 @@ CREATE TABLE IF NOT EXISTS login_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_login_sessions_default_id_desc
 ON login_sessions (is_default, id DESC);
+
+CREATE OR REPLACE FUNCTION hippo_articles_account_count_trigger()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        UPDATE accounts
+        SET article_count = article_count + 1,
+            updated_at = NOW()
+        WHERE biz = NEW.biz;
+        RETURN NEW;
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+        UPDATE accounts
+        SET article_count = GREATEST(article_count - 1, 0),
+            updated_at = NOW()
+        WHERE biz = OLD.biz;
+        RETURN OLD;
+    END IF;
+
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_articles_account_count_insert ON articles;
+CREATE TRIGGER trg_articles_account_count_insert
+AFTER INSERT ON articles
+FOR EACH ROW EXECUTE FUNCTION hippo_articles_account_count_trigger();
+
+DROP TRIGGER IF EXISTS trg_articles_account_count_delete ON articles;
+CREATE TRIGGER trg_articles_account_count_delete
+AFTER DELETE ON articles
+FOR EACH ROW EXECUTE FUNCTION hippo_articles_account_count_trigger();
+
+CREATE OR REPLACE FUNCTION hippo_accounts_group_article_count_trigger()
+RETURNS trigger AS $$
+DECLARE
+    delta BIGINT;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.group_id IS NOT NULL THEN
+            UPDATE account_groups
+            SET article_count = GREATEST(article_count - COALESCE(OLD.article_count, 0), 0),
+                updated_at = NOW()
+            WHERE id = OLD.group_id;
+        END IF;
+        RETURN OLD;
+    END IF;
+
+    IF NEW.group_id IS DISTINCT FROM OLD.group_id THEN
+        IF OLD.group_id IS NOT NULL THEN
+            UPDATE account_groups
+            SET article_count = GREATEST(article_count - COALESCE(OLD.article_count, 0), 0),
+                updated_at = NOW()
+            WHERE id = OLD.group_id;
+        END IF;
+        IF NEW.group_id IS NOT NULL THEN
+            UPDATE account_groups
+            SET article_count = article_count + COALESCE(NEW.article_count, 0),
+                updated_at = NOW()
+            WHERE id = NEW.group_id;
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    IF NEW.article_count IS DISTINCT FROM OLD.article_count THEN
+        delta := COALESCE(NEW.article_count, 0) - COALESCE(OLD.article_count, 0);
+        IF delta <> 0 AND NEW.group_id IS NOT NULL THEN
+            UPDATE account_groups
+            SET article_count = GREATEST(article_count + delta, 0),
+                updated_at = NOW()
+            WHERE id = NEW.group_id;
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_accounts_group_article_count_update ON accounts;
+CREATE TRIGGER trg_accounts_group_article_count_update
+AFTER UPDATE OF group_id, article_count ON accounts
+FOR EACH ROW EXECUTE FUNCTION hippo_accounts_group_article_count_trigger();
+
+DROP TRIGGER IF EXISTS trg_accounts_group_article_count_delete ON accounts;
+CREATE TRIGGER trg_accounts_group_article_count_delete
+BEFORE DELETE ON accounts
+FOR EACH ROW EXECUTE FUNCTION hippo_accounts_group_article_count_trigger();
+
+CREATE OR REPLACE FUNCTION hippo_rebuild_article_counts()
+RETURNS void AS $$
+BEGIN
+    UPDATE accounts a
+    SET article_count = COALESCE(x.cnt, 0),
+        updated_at = NOW()
+    FROM (
+        SELECT biz, COUNT(*)::bigint AS cnt
+        FROM articles
+        GROUP BY biz
+    ) x
+    WHERE a.biz = x.biz;
+
+    UPDATE accounts a
+    SET article_count = 0,
+        updated_at = NOW()
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM articles ar
+        WHERE ar.biz = a.biz
+    );
+
+    UPDATE account_groups g
+    SET article_count = COALESCE(s.sum_cnt, 0),
+        updated_at = NOW()
+    FROM (
+        SELECT group_id, SUM(article_count)::bigint AS sum_cnt
+        FROM accounts
+        WHERE group_id IS NOT NULL
+        GROUP BY group_id
+    ) s
+    WHERE g.id = s.group_id;
+
+    UPDATE account_groups g
+    SET article_count = 0,
+        updated_at = NOW()
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM accounts a
+        WHERE a.group_id = g.id
+    );
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT hippo_rebuild_article_counts();

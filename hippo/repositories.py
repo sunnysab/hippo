@@ -216,10 +216,16 @@ class GroupRepository:
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
-                SELECT g.id, g.name, g.sync_mode, g.sync_recent_days, COUNT(a.biz) AS account_count
+                SELECT
+                    g.id,
+                    g.name,
+                    g.sync_mode,
+                    g.sync_recent_days,
+                    COUNT(a.biz) AS account_count,
+                    COALESCE(g.article_count, 0) AS article_count
                 FROM account_groups g
                 LEFT JOIN accounts a ON a.group_id = g.id
-                GROUP BY g.id, g.name, g.sync_mode, g.sync_recent_days
+                GROUP BY g.id, g.name, g.sync_mode, g.sync_recent_days, g.article_count
                 ORDER BY g.name ASC
                 """
             )
@@ -229,6 +235,7 @@ class GroupRepository:
                 id=row['id'],
                 name=row['name'],
                 account_count=row['account_count'],
+                article_count=row.get('article_count') or 0,
                 sync_mode=row.get('sync_mode'),
                 sync_recent_days=row.get('sync_recent_days'),
             )

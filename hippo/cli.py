@@ -170,6 +170,22 @@ def init_db(
         pass
     typer.echo("PostgreSQL schema initialized.")
 
+@db_app.command("rebuild-counts")
+def rebuild_counts(
+    pg_dsn: Optional[str] = typer.Option(
+        None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'
+    ),
+) -> None:
+    resolved_dsn = pg_dsn or os.environ.get('HIPPO_PG_DSN')
+    if not resolved_dsn:
+        typer.echo('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
+        raise typer.Exit(code=2)
+    with PostgresStorage(resolved_dsn, auto_init=False) as storage:
+        with storage.transaction():
+            with storage.conn.cursor() as cur:
+                cur.execute('SELECT hippo_rebuild_article_counts()')
+    typer.echo('Rebuilt cached article counts.')
+
 
 app.add_typer(accounts_app, name="account")
 accounts_app.add_typer(groups_app, name="group")
