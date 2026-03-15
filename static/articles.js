@@ -198,7 +198,6 @@
     if (accountBiz) url.searchParams.set('biz', accountBiz);
     if (search) url.searchParams.set('q', search);
     url.searchParams.set('sort', sort);
-    url.searchParams.set('content', '1');
     url.searchParams.set('page', state.articlePage.toString());
     url.searchParams.set('page_size', state.articlePageSize.toString());
     
