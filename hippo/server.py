@@ -354,6 +354,7 @@ def _list_groups(storage: PostgresStorage) -> list[dict[str, Any]]:
             'id': g.id,
             'name': g.name,
             'account_count': g.account_count,
+            'article_count': g.article_count,
             'sync_mode': g.sync_mode,
             'sync_recent_days': g.sync_recent_days,
         }
@@ -365,11 +366,17 @@ def _get_group(storage: PostgresStorage, group_id: int) -> dict[str, Any]:
     row = fetchone_row(
         storage,
         """
-        SELECT g.id, g.name, g.sync_mode, g.sync_recent_days, COUNT(a.biz) AS account_count
+        SELECT
+            g.id,
+            g.name,
+            g.sync_mode,
+            g.sync_recent_days,
+            COALESCE(g.article_count, 0) AS article_count,
+            COUNT(a.biz) AS account_count
         FROM account_groups g
         LEFT JOIN accounts a ON a.group_id = g.id
         WHERE g.id = %s
-        GROUP BY g.id, g.name, g.sync_mode, g.sync_recent_days
+        GROUP BY g.id, g.name, g.sync_mode, g.sync_recent_days, g.article_count
         """,
         [group_id],
         normalize=_normalize_record,
@@ -497,7 +504,8 @@ def _list_accounts(
         ""
         "WITH filtered_accounts AS ("
         " SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,"
-        " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days"
+        " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days,"
+        " a.article_count"
         " FROM accounts a"
         f" {where_sql}"
         " ORDER BY a.nickname ASC"
@@ -505,13 +513,10 @@ def _list_accounts(
         ")"
         " SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,"
         " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,"
-        " COALESCE(ac.article_count, 0) AS article_count,"
+        " COALESCE(a.article_count, 0) AS article_count,"
         " (ai.data IS NOT NULL) AS avatar_ready"
         " FROM filtered_accounts a"
         " LEFT JOIN account_groups g ON g.id = a.group_id"
-        " LEFT JOIN LATERAL ("
-        "   SELECT COUNT(*) AS article_count FROM articles ar WHERE ar.biz = a.biz"
-        " ) ac ON TRUE"
         " LEFT JOIN avatar_images ai ON ai.biz = a.biz"
         " ORDER BY a.nickname ASC"
     )
@@ -534,13 +539,10 @@ def _get_account(storage: PostgresStorage, biz: str) -> dict[str, Any]:
             ""
             "SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,"
             " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,"
-            " COALESCE(ac.article_count, 0) AS article_count,"
+            " COALESCE(a.article_count, 0) AS article_count,"
             " (ai.data IS NOT NULL) AS avatar_ready"
             " FROM accounts a"
             " LEFT JOIN account_groups g ON g.id = a.group_id"
-            " LEFT JOIN LATERAL ("
-            "   SELECT COUNT(*) AS article_count FROM articles ar WHERE ar.biz = a.biz"
-            " ) ac ON TRUE"
             " LEFT JOIN avatar_images ai ON ai.biz = a.biz"
             " WHERE a.biz = %s"
         ),
@@ -603,7 +605,6 @@ def _build_article_query(
     query: str | None,
     since_ts: int | None,
     until_ts: int | None,
-    content_only: bool,
     sort_mode: str,
     limit: int,
     offset: int,
@@ -654,7 +655,6 @@ def _build_article_query(
     )
     image_select = "img.id AS image_id"
 
-    content_join = " JOIN article_content ac ON ac.article_pk = a.id" if content_only else ""
     query_sql = (
         "SELECT a.id, a.biz, a.article_id, a.title, a.author, a.digest, a.cover, a.link,"
         " a.source_url, a.publish_at, a.created_at,"
@@ -665,7 +665,6 @@ def _build_article_query(
         f"{rank_select}"
         " FROM articles a"
         " JOIN accounts acc ON acc.biz = a.biz"
-        f"{content_join}"
         " LEFT JOIN account_groups g ON g.id = acc.group_id"
         f" {image_sql}"
         f" {where_sql}"
@@ -676,6 +675,41 @@ def _build_article_query(
     return query_sql, params
 
 
+def _get_cached_article_total(
+    storage: PostgresStorage,
+    *,
+    group_id: int | None,
+    biz: str | None,
+) -> int:
+    if biz:
+        row = fetchone_row(
+            storage,
+            'SELECT group_id, article_count FROM accounts WHERE biz = %s',
+            [biz],
+            normalize=_normalize_record,
+        )
+        if not row:
+            return 0
+        if group_id is not None and row.get('group_id') != group_id:
+            return 0
+        return int(row.get('article_count') or 0)
+    if group_id is not None:
+        row = fetchone_row(
+            storage,
+            'SELECT article_count FROM account_groups WHERE id = %s',
+            [group_id],
+            normalize=_normalize_record,
+        )
+        return int(row.get('article_count') or 0) if row else 0
+    row = fetchone_row(
+        storage,
+        'SELECT COALESCE(SUM(article_count), 0) AS total FROM accounts',
+        [],
+        normalize=_normalize_record,
+    )
+    return int(row.get('total') or 0) if row else 0
+
+
 def _list_articles(
     storage: PostgresStorage,
     *,
@@ -684,7 +718,6 @@ def _list_articles(
     query: str | None,
     since_ts: int | None,
     until_ts: int | None,
-    content_only: bool,
     sort_mode: str,
     page: int,
     page_size: int,
@@ -698,7 +731,6 @@ def _list_articles(
         query=query,
         since_ts=since_ts,
         until_ts=until_ts,
-        content_only=content_only,
         sort_mode=sort_mode,
         limit=page_size,
         offset=offset,
@@ -707,43 +739,8 @@ def _list_articles(
     rows = fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
     for row in rows:
         row["account_avatar_url"] = f"/api/account/{row['biz']}/avatar"
-
-    where: list[str] = []
-    count_params: list[Any] = []
-    query_text = query.strip() if query else ''
-    query_tsquery_sql, query_tsquery_params = _build_article_search_tsquery(query_text)
-
-    if article_id:
-        where.append("a.article_id = %s")
-        count_params.append(article_id)
-        
-    if group_id is not None:
-        where.append("acc.group_id = %s")
-        count_params.append(group_id)
-    if biz:
-        where.append("a.biz = %s")
-        count_params.append(biz)
-    if query_tsquery_sql:
-        where.append(f"a.search_vector @@ {query_tsquery_sql}")
-        count_params.extend(query_tsquery_params)
-    if since_ts is not None:
-        where.append("a.publish_at >= %s")
-        count_params.append(since_ts)
-    if until_ts is not None:
-        where.append("a.publish_at <= %s")
-        count_params.append(until_ts)
-
-    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
-    count_sql = (
-        "SELECT COUNT(*) AS total"
-        " FROM articles a"
-        " JOIN accounts acc ON acc.biz = a.biz"
-        + (" JOIN article_content ac ON ac.article_pk = a.id" if content_only else "")
-        + f" {where_sql}"
-    )
-    total_row = fetchone_row(storage, count_sql, count_params, normalize=_normalize_record)
-    total = int(total_row["total"]) if total_row else 0
-    return {"articles": rows, "page": page, "page_size": page_size, "total": total}
+    total = _get_cached_article_total(storage, group_id=group_id, biz=biz)
+    return {'articles': rows, 'page': page, 'page_size': page_size, 'total': total}
 
 
 def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
@@ -987,7 +984,6 @@ def _list_feed(
         query=query_text or None,
         since_ts=since_ts,
         until_ts=until_ts,
-        content_only=False,
         sort_mode=sort_mode,
         limit=limit,
         offset=0,
@@ -1533,7 +1529,6 @@ def list_articles(
     Returns:
         dict: 文章列表和分页信息。
     """
-    content_only = (content or "").lower() in {"1", "true", "yes"}
     since_ts = _parse_date(since)
     until_ts = _parse_date(until, end_of_day=True)
     query_text = (q or '').strip()
@@ -1545,7 +1540,6 @@ def list_articles(
         query=query_text or None,
         since_ts=since_ts,
         until_ts=until_ts,
-        content_only=content_only,
         sort_mode=sort_mode,
         page=max(page, 1),
         page_size=min(max(page_size, 1), 200),
