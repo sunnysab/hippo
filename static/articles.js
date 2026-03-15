@@ -653,7 +653,7 @@
       root.style.setProperty('--reader-font', `${font}px`);
       root.style.setProperty('--reader-line', lineHeight);
       root.style.setProperty('--reader-letter', `${letter}px`);
-      root.style.setProperty('--reader-family', serif ? '"Source Serif 4", Georgia, serif' : '"Source Sans 3", sans-serif');
+      root.style.setProperty('--reader-family', serif ? 'var(--font-serif)' : 'var(--font-sans)');
       const snapshot = {
         width,
         font,

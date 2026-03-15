@@ -30,7 +30,7 @@
   border: none;
   padding: 0;
   background: transparent;
-  font-family: "Space Grotesk", sans-serif;
+  font-family: var(--font-display);
   font-size: 20px;
   font-weight: 600;
   color: var(--text);
@@ -355,7 +355,7 @@
   border-radius: 10px;
   padding: 6px 10px;
   font-size: 12px;
-  font-family: "Source Sans 3", sans-serif;
+  font-family: var(--font-sans);
   background: #fff;
 }
 
@@ -401,7 +401,7 @@
 }
 
 .modal-title {
-  font-family: "Space Grotesk", sans-serif;
+  font-family: var(--font-display);
   font-size: 18px;
   font-weight: 600;
 }
