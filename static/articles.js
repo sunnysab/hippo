@@ -4,6 +4,7 @@
   const ARTICLE_SORT_PUBLISH_AT_DESC = 'publish_at_desc';
   const ARTICLE_SORT_RELEVANCE_DESC = 'relevance_desc';
   const ARTICLE_SORT_VALUES = new Set([ARTICLE_SORT_PUBLISH_AT_DESC, ARTICLE_SORT_RELEVANCE_DESC]);
+  const articleAccountCache = new Map();
 
   const setArticleSearchLoading = (isLoading) => {
     const loading = $('#article-search-loading');
@@ -260,29 +261,52 @@
     }
   };
 
-  const populateArticleAccountFilter = async () => {
-    const groupId = $('#article-group-filter')?.value;
+  const populateArticleAccountFilter = async (options = {}) => {
+    const select = $('#article-account-filter');
+    if (!select) return;
+    const force = Boolean(options?.force);
+    const groupId = $('#article-group-filter')?.value || '';
+    const cacheKey = String(groupId || '');
+    const currentValue = select.value;
+
+    const applyOptions = (accounts) => {
+      select.innerHTML = '';
+      const allOption = document.createElement('option');
+      allOption.value = '';
+      allOption.textContent = t('filters.allAccounts', 'All Accounts');
+      select.appendChild(allOption);
+      (Array.isArray(accounts) ? accounts : []).forEach((account) => {
+        const opt = document.createElement('option');
+        opt.value = account.biz;
+        opt.textContent = account.nickname;
+        select.appendChild(opt);
+      });
+      if (currentValue && Array.from(select.options).some((opt) => opt.value === currentValue)) {
+        select.value = currentValue;
+      }
+    };
+
+    const cached = articleAccountCache.get(cacheKey);
+    if (!force && cached?.accounts) {
+      applyOptions(cached.accounts);
+      return;
+    }
+
     const url = new URL('/api/account', window.location.origin);
     if (groupId) url.searchParams.set('group_id', groupId);
     url.searchParams.set('page_size', '200');
-    const payload = await apiGet(url.pathname + url.search);
-    const select = $('#article-account-filter');
-    const currentValue = select.value;
-    select.innerHTML = '';
-    const allOption = document.createElement('option');
-    allOption.value = '';
-    allOption.textContent = t('filters.allAccounts', 'All Accounts');
-    select.appendChild(allOption);
-    payload.accounts.forEach((account) => {
-      const opt = document.createElement('option');
-      opt.value = account.biz;
-      opt.textContent = account.nickname;
-      select.appendChild(opt);
-    });
-    // Restore selected value if still valid
-    if (currentValue && Array.from(select.options).some(opt => opt.value === currentValue)) {
-      select.value = currentValue;
+    let payload;
+    try {
+      payload = await apiGet(url.pathname + url.search);
+    } catch (err) {
+      console.warn('Failed to load account options for articles', err);
+      applyOptions([]);
+      return;
     }
+
+    const accounts = Array.isArray(payload?.accounts) ? payload.accounts : [];
+    articleAccountCache.set(cacheKey, { accounts });
+    applyOptions(accounts);
   };
 
   const getArticleHashRoute = () => {
@@ -880,7 +904,7 @@
 
   const refresh = async () => {
     await populateArticleGroupFilter();
-    await populateArticleAccountFilter();
+    await populateArticleAccountFilter({ force: true });
     await loadArticles(true);
   };
 
