@@ -504,7 +504,27 @@
     if (!Array.isArray(payload.content)) {
       const empty = document.createElement('div');
       empty.className = 'empty-state';
-      empty.textContent = t('articles.empty', 'Select an article to preview.');
+      const status = String(payload?.content_status || '').trim().toLowerCase();
+      if (status === 'invalid') {
+        empty.textContent = t(
+          'articles.contentInvalid',
+          'Failed to parse article content. Please try syncing again.',
+        );
+      } else {
+        empty.textContent = t(
+          'articles.contentMissing',
+          'Article content is not available yet. Please wait for sync to finish or sync again.',
+        );
+      }
+      reader.appendChild(empty);
+      container.appendChild(reader);
+      return;
+    }
+
+    if (payload.content.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.textContent = t('articles.contentEmpty', 'This article has no content.');
       reader.appendChild(empty);
       container.appendChild(reader);
       return;

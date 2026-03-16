@@ -765,20 +765,34 @@ def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
 
     content_row = fetchone_row(
         storage,
-        "SELECT content_json, clean_html FROM article_content WHERE article_pk = %s",
+        "SELECT content_json, clean_html, updated_at FROM article_content WHERE article_pk = %s",
         [article_id],
         normalize=_normalize_record,
     )
     content_json = None
     clean_html = None
+    content_updated_at: str | None = None
+    decode_failed = False
     if content_row:
         content_json = content_row.get("content_json")
         clean_html = content_row.get("clean_html")
+        content_updated_at = content_row.get('updated_at')
         if isinstance(content_json, str):
             try:
                 content_json = json.loads(content_json)
             except json.JSONDecodeError:
+                decode_failed = True
                 content_json = None
+    if content_row is None:
+        content_status = 'missing'
+    elif decode_failed:
+        content_status = 'invalid'
+    elif content_json is None:
+        content_status = 'empty'
+    elif isinstance(content_json, list):
+        content_status = 'ok'
+    else:
+        content_status = 'invalid'
 
     images = fetchall_rows(
         storage,
@@ -789,6 +803,8 @@ def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
     return {
         "article": article,
         "content": content_json,
+        "content_status": content_status,
+        "content_updated_at": content_updated_at,
         "images": images,
     }
 
