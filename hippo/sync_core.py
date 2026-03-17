@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
+from .logger import get_logger
 from .wechat_api import WeChatApiClient, parse_appmsg_publish
 from .models import AccountCredential, ArticleRecord
 from .storage import PostgresStorage
@@ -17,6 +18,9 @@ from .sync_types import NullSyncObserver, SyncConfig, SyncObserver, SyncPlan, Sy
 
 class SyncInterrupted(RuntimeError):
     pass
+
+
+logger = get_logger(__name__)
 
 
 def extract_publish_total(payload: dict[str, Any]) -> int | None:
@@ -175,7 +179,16 @@ async def sync_account_core(
                     existing_ids = storage.articles.get_existing_article_ids(
                         account.biz, [record.article_id for record in records]
                     )
-                except Exception:
+                except Exception as exc:
+                    try:
+                        storage.rollback()
+                    except Exception:
+                        pass
+                    logger.warning(
+                        'Failed to query existing article IDs (biz=%s): %s',
+                        account.biz,
+                        exc,
+                    )
                     existing_ids = set()
             if (full_synced_hint or stop_on_existing) and records and existing_ids and len(existing_ids) == len(records):
                 completed = True

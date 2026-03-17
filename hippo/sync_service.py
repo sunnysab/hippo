@@ -233,6 +233,54 @@ def set_sync_state(
             storage.meta.set(SYNC_FINISHED_KEY, finished_at)
 
 
+def _persist_sync_outcome(
+    storage: PostgresStorage,
+    *,
+    started_at: str,
+    finished_at: str,
+    error: str | None,
+    report: SyncReport,
+) -> dict[str, Any]:
+    if error:
+        status = 'login_required' if is_login_error(error) else 'failed'
+        set_sync_state(storage, status=status, error=error, finished_at=finished_at)
+        if status == 'login_required':
+            with storage.transaction():
+                storage.meta.set(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
+    else:
+        status = 'success'
+        set_sync_state(storage, status='success', error='', finished_at=finished_at)
+        with storage.transaction():
+            storage.meta.delete(ALERT_SENT_KEY)
+            storage.meta.delete(SYNC_LOGIN_REQUIRED_AT_KEY)
+
+    skipped_accounts = sum(
+        1
+        for item in report.details
+        if item.skipped and item.skip_reason in ('disabled', 'recently_synced')
+    )
+    append_sync_history(
+        storage,
+        {
+            'started_at': started_at,
+            'finished_at': finished_at,
+            'status': 'login_required' if error and is_login_error(error) else ('failed' if error else 'success'),
+            'error': error or '',
+            'saved': report.total_saved,
+            'downloaded': report.downloaded,
+            'skipped_accounts': skipped_accounts,
+        },
+    )
+    _send_sync_alert(
+        storage,
+        status=status,
+        error=error or '',
+        started_at=started_at,
+        finished_at=finished_at,
+    )
+    return get_sync_status(storage)
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -296,7 +344,12 @@ def _select_missing_content(
     try:
         ids = storage.articles.get_article_content_ids(biz, [article.article_id for article in articles])
         return [article for article in articles if article.article_id not in ids]
-    except Exception:
+    except Exception as exc:
+        try:
+            storage.rollback()
+        except Exception:
+            pass
+        _logger.warning('Failed to query article content IDs (biz=%s): %s', biz, exc)
         return articles
     return articles
 
@@ -752,68 +805,74 @@ async def run_sync_job(
             )
             return SyncJobResult(status=get_sync_status(storage), report=empty_report, error=error)
 
-        accounts = storage.accounts.list_accounts()
-        if group_id is not None:
-            accounts = [account for account in accounts if account.group_id == group_id]
-        if biz_list is not None:
-            allowed_biz = set(biz_list)
-            accounts = [account for account in accounts if account.biz in allowed_biz]
-        if on_accounts_loaded:
-            on_accounts_loaded(accounts)
-        group_defaults: dict[int, dict[str, Any]] = {}
-        group_rows = fetchall_rows(
-            storage,
-            'SELECT id, sync_mode, sync_recent_days FROM account_groups',
-            [],
-        )
-        for row in group_rows:
-            group_defaults[int(row['id'])] = row
-
         error: str | None = None
         report = empty_report
-        container = None
+        accounts: list[AccountCredential] = []
+        group_defaults: dict[int, dict[str, Any]] = {}
         try:
-            container = build_sync_container(
-                storage=storage,
-                enable_download=bool(settings.get('download_content')),
-                enable_images=bool(settings.get('download_images')),
-            )
-        except FileStorageError as exc:
-            error = str(exc)
+            accounts = storage.accounts.list_accounts()
+            if group_id is not None:
+                accounts = [account for account in accounts if account.group_id == group_id]
+            if biz_list is not None:
+                allowed_biz = set(biz_list)
+                accounts = [account for account in accounts if account.biz in allowed_biz]
+            if on_accounts_loaded:
+                on_accounts_loaded(accounts)
 
-        if error is None and container:
-            async with container as app:
-                config = _build_sync_config(settings)
-                service = ArticleSyncService(
+            group_rows = fetchall_rows(
+                storage,
+                'SELECT id, sync_mode, sync_recent_days FROM account_groups',
+                [],
+            )
+            for row in group_rows:
+                group_defaults[int(row['id'])] = row
+
+            container = None
+            try:
+                container = build_sync_container(
                     storage=storage,
-                    client=app.api_client,
-                    downloader=app.downloader,
+                    enable_download=bool(settings.get('download_content')),
+                    enable_images=bool(settings.get('download_images')),
                 )
-                try:
-                    report = await service.sync_accounts(
-                        accounts=accounts,
-                        config=config,
-                        bulk=True,
-                        use_resume=True,
-                        group_defaults=group_defaults,
-                        allow_freq_skip=True,
-                        observer_factory=observer_factory,
-                        on_account_start=on_account_start,
-                        on_account_done=on_account_done,
-                        on_account_stage=on_account_stage,
+            except FileStorageError as exc:
+                error = str(exc)
+
+            if error is None and container:
+                async with container as app:
+                    config = _build_sync_config(settings)
+                    service = ArticleSyncService(
+                        storage=storage,
+                        client=app.api_client,
+                        downloader=app.downloader,
                     )
-                except SyncRunError as exc:
-                    error = str(exc)
-                    report = empty_report
-                except Exception as exc:
-                    error = str(exc)
-                    report = empty_report
-                if settings.get('download_images') and app.downloader:
-                    if on_images_start:
-                        on_images_start()
-                    await app.downloader.wait_for_images()
-                    if on_images_done:
-                        on_images_done()
+                    try:
+                        report = await service.sync_accounts(
+                            accounts=accounts,
+                            config=config,
+                            bulk=True,
+                            use_resume=True,
+                            group_defaults=group_defaults,
+                            allow_freq_skip=True,
+                            observer_factory=observer_factory,
+                            on_account_start=on_account_start,
+                            on_account_done=on_account_done,
+                            on_account_stage=on_account_stage,
+                        )
+                    except SyncRunError as exc:
+                        error = str(exc)
+                        report = empty_report
+                    except Exception as exc:
+                        error = str(exc)
+                        report = empty_report
+                    if settings.get('download_images') and app.downloader:
+                        if on_images_start:
+                            on_images_start()
+                        await app.downloader.wait_for_images()
+                        if on_images_done:
+                            on_images_done()
+        except Exception as exc:
+            error = str(exc)
+            report = empty_report
 
         # Fire-and-forget image backfill to ensure missing images are picked up
         if settings.get('download_images'):
@@ -823,44 +882,40 @@ async def run_sync_job(
                 loop = asyncio.get_event_loop()
                 loop.create_task(_run_backfill_images())
 
+        try:
+            storage.rollback()
+        except Exception as exc:
+            _logger.warning('Failed to rollback storage connection: %s', exc)
+
         finished_at = _utc_now_iso()
-        if error:
-            status = 'login_required' if is_login_error(error) else 'failed'
-            set_sync_state(storage, status=status, error=error, finished_at=finished_at)
-            if status == 'login_required':
-                with storage.transaction():
-                    storage.meta.set(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
-        else:
-            status = 'success'
-            set_sync_state(storage, status='success', error='', finished_at=finished_at)
-            with storage.transaction():
-                storage.meta.delete(ALERT_SENT_KEY)
-                storage.meta.delete(SYNC_LOGIN_REQUIRED_AT_KEY)
-        skipped_accounts = sum(
-            1
-            for item in report.details
-            if item.skipped and item.skip_reason in ('disabled', 'recently_synced')
-        )
-        append_sync_history(
-            storage,
-            {
-                'started_at': started_at,
-                'finished_at': finished_at,
-                'status': 'login_required' if error and is_login_error(error) else ('failed' if error else 'success'),
-                'error': error or '',
-                'saved': report.total_saved,
-                'downloaded': report.downloaded,
-                'skipped_accounts': skipped_accounts,
-            },
-        )
-        _send_sync_alert(
-            storage,
-            status=status,
-            error=error or '',
-            started_at=started_at,
-            finished_at=finished_at,
-        )
-        return SyncJobResult(status=get_sync_status(storage), report=report, error=error)
+        try:
+            status = _persist_sync_outcome(
+                storage,
+                started_at=started_at,
+                finished_at=finished_at,
+                error=error,
+                report=report,
+            )
+            return SyncJobResult(status=status, report=report, error=error)
+        except Exception:
+            _logger.exception('Failed to persist sync outcome; retrying with a fresh connection.')
+            try:
+                with open_storage() as retry_storage:
+                    try:
+                        retry_storage.rollback()
+                    except Exception:
+                        pass
+                    status = _persist_sync_outcome(
+                        retry_storage,
+                        started_at=started_at,
+                        finished_at=finished_at,
+                        error=error or 'failed_to_persist_sync_outcome',
+                        report=report,
+                    )
+                return SyncJobResult(status=status, report=report, error=error)
+            except Exception:
+                _logger.exception('Failed to persist sync outcome with a fresh connection.')
+                return SyncJobResult(status=get_sync_status(storage), report=report, error=error or 'failed')
 
 
 class SyncScheduler:
