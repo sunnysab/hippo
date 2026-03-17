@@ -984,7 +984,7 @@ class SyncScheduler:
             last_run_duration = max(loop.time() - started_at, 0.0)
 
     async def run_once(self, *, group_id: int | None = None) -> dict[str, Any]:
-        if self._lock.locked():
+        if self._lock.locked() or SYNC_RUN_LOCK.locked():
             return {'status': 'running'}
         async with self._lock:
             return await self._run_sync_async(group_id=group_id)
