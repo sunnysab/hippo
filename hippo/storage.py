@@ -85,6 +85,7 @@ _PG_POOL: ConnectionPool | None = None
 _PG_POOL_DSN: str | None = None
 _DB_INIT_LOG_VALUES = {'1', 'true', 'yes', 'on'}
 _PG_JIEBA_WARMUP_VALUES = {'1', 'true', 'yes', 'on'}
+_PG_DISABLE_JIT_VALUES = {'1', 'true', 'yes', 'on'}
 _DEFAULT_JIEBA_WARMUP_TEXT = 'hippo'
 
 
@@ -102,6 +103,13 @@ def _jieba_warmup_enabled() -> bool:
     return (
         os.environ.get('HIPPO_PG_JIEBA_WARMUP', '1').strip().lower()
         in _PG_JIEBA_WARMUP_VALUES
+    )
+
+
+def _pg_disable_jit_enabled() -> bool:
+    return (
+        os.environ.get('HIPPO_PG_DISABLE_JIT', '1').strip().lower()
+        in _PG_DISABLE_JIT_VALUES
     )
 
 
@@ -140,11 +148,14 @@ def _get_pool(dsn: str) -> ConnectionPool:
     max_conn = int(os.environ.get("HIPPO_PG_POOL_MAX", "8") or "8")
     if max_conn < min_conn:
         max_conn = min_conn
+    options = ['-c timezone=Asia/Shanghai']
+    if _pg_disable_jit_enabled():
+        options.append('-c jit=off')
     _PG_POOL = ConnectionPool(
         conninfo=dsn,
         min_size=min_conn,
         max_size=max_conn,
-        kwargs={"options": "-c timezone=Asia/Shanghai"},
+        kwargs={'options': ' '.join(options)},
         configure=_warmup_jieba_parser,
     )
     _PG_POOL_DSN = dsn
