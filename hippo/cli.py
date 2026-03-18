@@ -54,6 +54,15 @@ _ARTICLE_CONTENT_PRESENT_SQL = """
 )
 """
 
+_ARTICLE_ITEM_SHOW_TYPE_FROM_RAW_SQL = """
+CASE
+    WHEN jsonb_typeof(a.raw_json::jsonb -> 'appmsgex') = 'object'
+     AND COALESCE(a.raw_json::jsonb -> 'appmsgex' ->> 'item_show_type', '') ~ '^-?[0-9]+$'
+    THEN (a.raw_json::jsonb -> 'appmsgex' ->> 'item_show_type')::integer
+    ELSE NULL
+END
+"""
+
 app = typer.Typer(
     help="Hippo WeChat article exporter CLI",
     no_args_is_help=True,
@@ -230,39 +239,71 @@ def backfill_item_show_type(
         typer.echo('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
         raise typer.Exit(code=2)
 
-    limited_ids_sql = f"""
-    SELECT a.id
+    inferred_item_show_type_sql = f"""
+    COALESCE(
+        {_ARTICLE_ITEM_SHOW_TYPE_FROM_RAW_SQL},
+        CASE WHEN {_ARTICLE_CONTENT_PRESENT_SQL} THEN 0 ELSE NULL END
+    )
+    """
+    raw_limited_ids_sql = f"""
+    SELECT a.id, {_ARTICLE_ITEM_SHOW_TYPE_FROM_RAW_SQL} AS inferred_item_show_type
     FROM articles a
-    JOIN article_content c ON c.article_pk = a.id
     WHERE a.item_show_type IS NULL
-      AND {_ARTICLE_CONTENT_PRESENT_SQL}
+      AND {_ARTICLE_ITEM_SHOW_TYPE_FROM_RAW_SQL} IS NOT NULL
     ORDER BY a.id ASC
     LIMIT %s
     """
-    update_sql = f"""
+    raw_limited_update_sql = f"""
     UPDATE articles a
-    SET item_show_type = 0,
+    SET item_show_type = candidate.inferred_item_show_type,
         updated_at = NOW()
     FROM (
-        {limited_ids_sql}
+        {raw_limited_ids_sql}
     ) AS candidate
     WHERE a.id = candidate.id
     """
-    unlimited_update_sql = f"""
+    fallback_limited_ids_sql = f"""
+    SELECT a.id, {inferred_item_show_type_sql} AS inferred_item_show_type
+    FROM articles a
+    LEFT JOIN article_content c ON c.article_pk = a.id
+    WHERE a.item_show_type IS NULL
+      AND {_ARTICLE_ITEM_SHOW_TYPE_FROM_RAW_SQL} IS NULL
+      AND {inferred_item_show_type_sql} IS NOT NULL
+    ORDER BY a.id ASC
+    LIMIT %s
+    """
+    fallback_limited_update_sql = f"""
+    UPDATE articles a
+    SET item_show_type = candidate.inferred_item_show_type,
+        updated_at = NOW()
+    FROM (
+        {fallback_limited_ids_sql}
+    ) AS candidate
+    WHERE a.id = candidate.id
+    """
+    raw_only_update_sql = f"""
+    UPDATE articles a
+    SET item_show_type = {_ARTICLE_ITEM_SHOW_TYPE_FROM_RAW_SQL},
+        updated_at = NOW()
+    WHERE a.item_show_type IS NULL
+      AND {_ARTICLE_ITEM_SHOW_TYPE_FROM_RAW_SQL} IS NOT NULL
+    """
+    fallback_only_update_sql = f"""
     UPDATE articles a
     SET item_show_type = 0,
         updated_at = NOW()
     FROM article_content c
-    WHERE c.article_pk = a.id
+    WHERE a.item_show_type IS NULL
+      AND c.article_pk = a.id
       AND a.item_show_type IS NULL
       AND {_ARTICLE_CONTENT_PRESENT_SQL}
     """
     candidate_sql = f"""
     SELECT COUNT(*)
     FROM articles a
-    JOIN article_content c ON c.article_pk = a.id
+    LEFT JOIN article_content c ON c.article_pk = a.id
     WHERE a.item_show_type IS NULL
-      AND {_ARTICLE_CONTENT_PRESENT_SQL}
+      AND {inferred_item_show_type_sql} IS NOT NULL
     """
 
     with PostgresStorage(resolved_dsn, auto_init=False) as storage:
@@ -271,21 +312,31 @@ def backfill_item_show_type(
                 cur.execute(candidate_sql)
                 total_candidates = int(cur.fetchone()[0] or 0)
             if total_candidates == 0:
-                typer.echo('No NULL item_show_type rows with present content were found.')
+                typer.echo('No NULL item_show_type rows could be inferred.')
                 return
             typer.echo(f'Found {total_candidates} candidate articles.')
             return
         with storage.transaction():
             with storage.conn.cursor() as cur:
                 if limit is None:
-                    cur.execute(unlimited_update_sql)
+                    cur.execute(raw_only_update_sql)
+                    raw_updated = cur.rowcount
+                    cur.execute(fallback_only_update_sql)
+                    fallback_updated = cur.rowcount
+                    updated = raw_updated + fallback_updated
                 else:
-                    cur.execute(update_sql, (limit,))
-                updated = cur.rowcount
+                    cur.execute(raw_limited_update_sql, (limit,))
+                    raw_updated = cur.rowcount
+                    remaining = max(limit - raw_updated, 0)
+                    fallback_updated = 0
+                    if remaining > 0:
+                        cur.execute(fallback_limited_update_sql, (remaining,))
+                        fallback_updated = cur.rowcount
+                    updated = raw_updated + fallback_updated
     if updated == 0:
-        typer.echo('No NULL item_show_type rows with present content were found.')
+        typer.echo('No NULL item_show_type rows could be inferred.')
         return
-    typer.echo(f'Backfilled item_show_type=0 for {updated} articles.')
+    typer.echo(f'Backfilled item_show_type for {updated} articles.')
 
 
 app.add_typer(accounts_app, name="account")
