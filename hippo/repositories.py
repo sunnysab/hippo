@@ -747,6 +747,93 @@ class ImageRepository:
     def __init__(self, conn: psycopg.Connection) -> None:
         self._conn = conn
 
+    def get_image_hash(self, image_id: int) -> dict[str, Any] | None:
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT id, article_pk, hash_algo, content_hash
+                FROM article_images
+                WHERE id = %s
+                """,
+                (image_id,),
+            )
+            row = cur.fetchone()
+        return dict(row) if row else None
+
+    def save_image_hash(
+        self,
+        *,
+        image_id: int,
+        hash_algo: str,
+        content_hash: str,
+    ) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE article_images
+                SET hash_algo = %s,
+                    content_hash = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (hash_algo, content_hash, _utc_now_dt(), image_id),
+            )
+            if cur.rowcount == 0:
+                raise LookupError(f'Image {image_id} not found')
+
+    def block_image_hash(
+        self,
+        *,
+        hash_algo: str,
+        content_hash: str,
+        source_image_id: int | None,
+    ) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO blocked_image_hashes (hash_algo, content_hash, source_image_id, created_at)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (hash_algo, content_hash) DO UPDATE SET
+                    source_image_id = COALESCE(blocked_image_hashes.source_image_id, EXCLUDED.source_image_id)
+                """,
+                (hash_algo, content_hash, source_image_id, _utc_now_dt()),
+            )
+
+    def has_blocked_hashes(self) -> bool:
+        with self._conn.cursor() as cur:
+            cur.execute('SELECT 1 FROM blocked_image_hashes LIMIT 1')
+            return cur.fetchone() is not None
+
+    def get_article_images(self, article_pk: int) -> list[dict[str, Any]]:
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT id, position, kind, content_type, hash_algo, content_hash
+                FROM article_images
+                WHERE article_pk = %s
+                ORDER BY position ASC
+                """,
+                (article_pk,),
+            )
+            rows = cur.fetchall()
+        return [dict(row) for row in rows]
+
+    def list_blocked_image_ids(self, article_pk: int) -> set[int]:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT i.id
+                FROM article_images i
+                JOIN blocked_image_hashes b
+                  ON b.hash_algo = i.hash_algo
+                 AND b.content_hash = i.content_hash
+                WHERE i.article_pk = %s
+                """,
+                (article_pk,),
+            )
+            rows = cur.fetchall()
+        return {int(row[0]) for row in rows}
+
     def get_article_image_target(self, biz: str, article_id: str, orig_url: str) -> ArticleImageTarget | None:
         with self._conn.cursor() as cur:
             cur.execute(

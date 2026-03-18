@@ -1,5 +1,5 @@
 (() => {
-  const { state, $, apiGet, t, copyToClipboard, showToast } = window.Hippo;
+  const { state, $, apiGet, apiSend, t, copyToClipboard, showToast } = window.Hippo;
   const ARTICLE_FILTER_PARAM_KEYS = ['group', 'account', 'q', 'sort'];
   const ARTICLE_SORT_PUBLISH_AT_DESC = 'publish_at_desc';
   const ARTICLE_SORT_RELEVANCE_DESC = 'relevance_desc';
@@ -21,6 +21,7 @@
   const showArticleContextMenu = (article, x, y) => {
     const menu = $('#article-context-menu');
     if (!menu) return;
+    hideArticleImageContextMenu();
     const link = article?.source_url || article?.link || '';
     menu.dataset.link = link;
     menu.dataset.articleId = String(article?.id || '');
@@ -40,6 +41,28 @@
     menu.classList.add('is-hidden');
     menu.dataset.link = '';
     menu.dataset.articleId = '';
+  };
+
+  const showArticleImageContextMenu = (imageId, x, y) => {
+    const menu = $('#article-image-context-menu');
+    if (!menu || !imageId) return;
+    hideArticleContextMenu();
+    menu.dataset.imageId = String(imageId);
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+    menu.classList.remove('is-hidden');
+  };
+
+  const hideArticleImageContextMenu = () => {
+    const menu = $('#article-image-context-menu');
+    if (!menu) return;
+    menu.classList.add('is-hidden');
+    menu.dataset.imageId = '';
+  };
+
+  const hideAllArticleContextMenus = () => {
+    hideArticleContextMenu();
+    hideArticleImageContextMenu();
   };
 
   const formatDate = (value) => {
@@ -557,12 +580,19 @@
         // Actually, we can check image dimensions on load.
         
         const figure = document.createElement('figure');
+        figure.dataset.imageId = String(block.image_id);
         const img = document.createElement('img');
         if (block.image_id) {
           img.src = `/api/image/${block.image_id}`;
         }
         img.alt = block.alt || '';
         img.loading = 'lazy';
+        img.dataset.imageId = String(block.image_id);
+        img.addEventListener('contextmenu', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          showArticleImageContextMenu(block.image_id, event.clientX, event.clientY);
+        });
         
         if (hideSmall) {
             img.onload = function() {
@@ -653,11 +683,28 @@
 
   const selectArticle = async (id) => {
     state.selectedArticleId = id;
+    hideAllArticleContextMenus();
     renderArticleList();
     const payload = await apiGet(`/api/article/${id}`);
     state.currentArticlePayload = payload;
     renderArticleContent(payload);
     resetArticlePreviewScroll();
+  };
+
+  const blockArticleImage = async (imageId) => {
+    if (!imageId) return;
+    const container = $('#article-preview');
+    const scrollTop = container ? container.scrollTop : 0;
+    await apiSend(`/api/image/${imageId}/block`, 'POST', {});
+    if (state.selectedArticleId) {
+      const payload = await apiGet(`/api/article/${state.selectedArticleId}`);
+      state.currentArticlePayload = payload;
+      renderArticleContent(payload);
+      if (container) {
+        container.scrollTop = scrollTop;
+      }
+    }
+    showToast(t('articles.imageBlocked', 'Image blocked.'));
   };
 
   const initReaderControls = () => {
@@ -882,7 +929,7 @@
         const link = menu?.dataset.link;
         if (!link) return;
         window.open(link, '_blank', 'noopener,noreferrer');
-        hideArticleContextMenu();
+        hideAllArticleContextMenus();
       });
     }
     const copyBtn = $('#article-menu-copy');
@@ -897,25 +944,56 @@
         } catch (err) {
           showToast(link);
         }
-        hideArticleContextMenu();
+        hideAllArticleContextMenus();
+      });
+    }
+
+    const blockImageBtn = $('#article-image-menu-block');
+    if (blockImageBtn) {
+      blockImageBtn.addEventListener('click', async () => {
+        const menu = $('#article-image-context-menu');
+        const imageId = Number(menu?.dataset.imageId || 0);
+        if (!imageId) return;
+        blockImageBtn.disabled = true;
+        try {
+          await blockArticleImage(imageId);
+          hideAllArticleContextMenus();
+        } catch (err) {
+          showToast(err?.message || t('articles.imageBlockFailed', 'Failed to block image.'));
+        } finally {
+          blockImageBtn.disabled = false;
+        }
       });
     }
 
     document.addEventListener('click', (event) => {
       const menu = $('#article-context-menu');
-      if (!menu || menu.classList.contains('is-hidden')) return;
-      if (menu.contains(event.target)) return;
-      hideArticleContextMenu();
+      const imageMenu = $('#article-image-context-menu');
+      if (
+        menu
+        && !menu.classList.contains('is-hidden')
+        && menu.contains(event.target)
+      ) {
+        return;
+      }
+      if (
+        imageMenu
+        && !imageMenu.classList.contains('is-hidden')
+        && imageMenu.contains(event.target)
+      ) {
+        return;
+      }
+      hideAllArticleContextMenus();
     });
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
-        hideArticleContextMenu();
+        hideAllArticleContextMenus();
       }
     });
     window.addEventListener(
       'scroll',
       () => {
-        hideArticleContextMenu();
+        hideAllArticleContextMenus();
       },
       true,
     );

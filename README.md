@@ -175,7 +175,14 @@ export HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname"
   - `clean_html`（清理后的正文 HTML，图片仍为原始 URL）
   - `content_markdown`（正文 Markdown，不含封面图与标题）
   - `content_json`（图文混排的 blocks）
-- `article_images` 表保存图片二进制（`BYTEA`），PG 会自动 TOAST 压缩
+- `article_images` 表保存图片元数据、远端地址、存储键，以及可选的内容哈希（`sha256`）
+- `blocked_image_hashes` 表保存被用户屏蔽的图片内容哈希，文章预览会自动过滤命中的正文图片
+
+升级包含图片屏蔽功能的版本后，需要重新执行一次数据库初始化以应用新 schema：
+
+```bash
+python -m hippo db init
+```
 
 `content_json` 的 block 结构示例：
 

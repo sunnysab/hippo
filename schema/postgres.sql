@@ -201,6 +201,8 @@ CREATE TABLE IF NOT EXISTS article_images (
     position INTEGER NOT NULL,
     kind TEXT NOT NULL,
     orig_url TEXT,
+    hash_algo TEXT,
+    content_hash TEXT,
     content_type TEXT,
     s3_key TEXT,
     failed_at TIMESTAMPTZ,
@@ -210,6 +212,8 @@ CREATE TABLE IF NOT EXISTS article_images (
 );
 
 ALTER TABLE article_images
+ADD COLUMN IF NOT EXISTS hash_algo TEXT,
+ADD COLUMN IF NOT EXISTS content_hash TEXT,
 ADD COLUMN IF NOT EXISTS s3_key TEXT,
 ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ,
 ADD COLUMN IF NOT EXISTS failed_reason TEXT,
@@ -221,6 +225,19 @@ WHERE (s3_key IS NULL OR s3_key = '') AND orig_url IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_article_images_article_pk_position
 ON article_images (article_pk, position);
+
+CREATE INDEX IF NOT EXISTS idx_article_images_content_hash
+ON article_images (content_hash)
+WHERE content_hash IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS blocked_image_hashes (
+    id SERIAL PRIMARY KEY,
+    hash_algo TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    source_image_id INTEGER REFERENCES article_images(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    UNIQUE (hash_algo, content_hash)
+);
 
 DROP INDEX IF EXISTS idx_article_content_article_pk;
 

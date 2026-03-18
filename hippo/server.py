@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -86,6 +87,7 @@ _SYNC_MODES = {'incremental', 'recent', 'full', 'range'}
 ARTICLE_SORT_PUBLISH_AT_DESC = 'publish_at_desc'
 ARTICLE_SORT_RELEVANCE_DESC = 'relevance_desc'
 _ARTICLE_SORT_VALUES = {ARTICLE_SORT_PUBLISH_AT_DESC, ARTICLE_SORT_RELEVANCE_DESC}
+IMAGE_HASH_ALGO = 'sha256'
 
 
 def _normalize_sync_mode(value: Any) -> str | None:
@@ -794,12 +796,9 @@ def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
     else:
         content_status = 'invalid'
 
-    images = fetchall_rows(
-        storage,
-        "SELECT id, position, kind, content_type FROM article_images WHERE article_pk = %s ORDER BY position ASC",
-        [article_id],
-        normalize=_normalize_record,
-    )
+    images, blocked_image_ids = _get_visible_article_images(storage, article_id)
+    if isinstance(content_json, list) and blocked_image_ids:
+        content_json = _filter_blocked_content_blocks(content_json, blocked_image_ids)
     return {
         "article": article,
         "content": content_json,
@@ -810,12 +809,110 @@ def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
 
 
 def _list_article_images(storage: PostgresStorage, article_id: int) -> list[dict[str, Any]]:
-    return fetchall_rows(
-        storage,
-        "SELECT id, position, kind, content_type FROM article_images WHERE article_pk = %s ORDER BY position ASC",
-        [article_id],
-        normalize=_normalize_record,
-    )
+    images, _blocked_image_ids = _get_visible_article_images(storage, article_id)
+    return images
+
+
+def _compute_image_content_hash(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _ensure_image_hash(storage: PostgresStorage, image_id: int) -> dict[str, Any]:
+    row = storage.images.get_image_hash(image_id)
+    if not row:
+        raise ApiError('Image not found', status=404)
+    if row.get('hash_algo') == IMAGE_HASH_ALGO and row.get('content_hash'):
+        return {
+            'image_id': image_id,
+            'hash_algo': str(row['hash_algo']),
+            'content_hash': str(row['content_hash']),
+        }
+    payload, _content_type = _fetch_image(storage, image_id)
+    content_hash = _compute_image_content_hash(payload)
+    with storage.transaction():
+        storage.images.save_image_hash(
+            image_id=image_id,
+            hash_algo=IMAGE_HASH_ALGO,
+            content_hash=content_hash,
+        )
+    return {
+        'image_id': image_id,
+        'hash_algo': IMAGE_HASH_ALGO,
+        'content_hash': content_hash,
+    }
+
+
+def _ensure_article_image_hashes(
+    storage: PostgresStorage,
+    article_id: int,
+    images: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not storage.images.has_blocked_hashes():
+        return images
+    missing_ids = [
+        int(image['id'])
+        for image in images
+        if image.get('hash_algo') != IMAGE_HASH_ALGO or not image.get('content_hash')
+    ]
+    if not missing_ids:
+        return images
+    for image_id in missing_ids:
+        try:
+            _ensure_image_hash(storage, image_id)
+        except ApiError as exc:
+            logger.warning('Image hash hydration failed (id=%s): %s', image_id, exc)
+    return storage.images.get_article_images(article_id)
+
+
+def _filter_blocked_content_blocks(
+    content_blocks: list[dict[str, Any]],
+    blocked_image_ids: set[int],
+) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for block in content_blocks:
+        image_id = None
+        if isinstance(block, dict):
+            raw_image_id = block.get('image_id')
+            if raw_image_id not in (None, ''):
+                try:
+                    image_id = int(raw_image_id)
+                except (TypeError, ValueError):
+                    image_id = None
+        if (
+            isinstance(block, dict)
+            and block.get('type') == 'image'
+            and image_id in blocked_image_ids
+        ):
+            continue
+        filtered.append(block)
+    return filtered
+
+
+def _get_visible_article_images(
+    storage: PostgresStorage,
+    article_id: int,
+) -> tuple[list[dict[str, Any]], set[int]]:
+    images = storage.images.get_article_images(article_id)
+    images = _ensure_article_image_hashes(storage, article_id, images)
+    blocked_image_ids = storage.images.list_blocked_image_ids(article_id)
+    visible_images = [image for image in images if int(image['id']) not in blocked_image_ids]
+    return visible_images, blocked_image_ids
+
+
+def _block_image(storage: PostgresStorage, image_id: int) -> dict[str, Any]:
+    hash_record = _ensure_image_hash(storage, image_id)
+    with storage.transaction():
+        storage.images.block_image_hash(
+            hash_algo=hash_record['hash_algo'],
+            content_hash=hash_record['content_hash'],
+            source_image_id=image_id,
+        )
+    return {
+        'image_id': image_id,
+        'hash_algo': hash_record['hash_algo'],
+        'content_hash': hash_record['content_hash'],
+        'blocked': True,
+    }
 
 
 def _fetch_image(storage: PostgresStorage, image_id: int) -> tuple[bytes, str]:
@@ -1618,6 +1715,23 @@ def get_image(
     """
     payload, content_type = _fetch_image(storage, image_id)
     return _binary_response(payload, content_type)
+
+
+@router.post("/image/{image_id}/block")
+def block_image(
+    image_id: int,
+    storage: PostgresStorage = Depends(_get_storage),
+) -> dict[str, Any]:
+    """
+    Block an image globally by its binary content hash.
+
+    Args:
+        image_id (int): Image ID.
+
+    Returns:
+        dict: Blocking result and resolved hash.
+    """
+    return _block_image(storage, image_id)
 
 
 @router.get("/login")
