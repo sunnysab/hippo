@@ -446,12 +446,13 @@ class ArticleRepository:
                 cur.execute(
                     """
                     INSERT INTO articles
-                        (biz, article_id, title, author, digest, cover, link, source_url,
+                        (biz, article_id, title, item_show_type, author, digest, cover, link, source_url,
                          publish_at, raw_json, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s,
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
                             %s, %s, %s, %s, %s)
                     ON CONFLICT (biz, article_id) DO UPDATE SET
                         title=EXCLUDED.title,
+                        item_show_type=COALESCE(EXCLUDED.item_show_type, articles.item_show_type),
                         author=EXCLUDED.author,
                         digest=EXCLUDED.digest,
                         link=EXCLUDED.link,
@@ -465,6 +466,7 @@ class ArticleRepository:
                         article.biz,
                         article.article_id,
                         article.title,
+                        article.item_show_type,
                         article.author,
                         article.digest,
                         None,
@@ -502,6 +504,7 @@ class ArticleRepository:
         *,
         url_token: str | None,
         title: str,
+        item_show_type: int | None,
         clean_html: str,
         content_markdown: str,
         content_blocks: list[dict],
@@ -544,15 +547,16 @@ class ArticleRepository:
                 cur.execute(
                     """
                     INSERT INTO articles (
-                        biz, article_id, title, author, digest, cover, link, source_url,
+                        biz, article_id, title, item_show_type, author, digest, cover, link, source_url,
                         publish_at, raw_json, created_at, updated_at
                     )
                     VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s
                     )
                     ON CONFLICT (biz, article_id) DO UPDATE SET
                         title=EXCLUDED.title,
+                        item_show_type=COALESCE(EXCLUDED.item_show_type, articles.item_show_type),
                         author=EXCLUDED.author,
                         digest=EXCLUDED.digest,
                         link=EXCLUDED.link,
@@ -566,6 +570,7 @@ class ArticleRepository:
                         article.biz,
                         article.article_id,
                         title,
+                        item_show_type,
                         article.author,
                         article.digest,
                         None,
@@ -953,6 +958,7 @@ def _row_to_article(row: dict[str, Any]) -> ArticleRecord:
         biz=row['biz'],
         article_id=row['article_id'],
         title=row['title'],
+        item_show_type=row.get('item_show_type'),
         author=row['author'],
         digest=row['digest'],
         cover=row['cover'],

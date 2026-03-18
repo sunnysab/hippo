@@ -24,6 +24,7 @@ def _article_snapshot(record: ArticleRecord | None) -> dict[str, Any] | None:
     return {
         "article_id": record.article_id,
         "title": record.title,
+        "item_show_type": record.item_show_type,
         "link": record.link,
         "publish_at": record.publish_at,
     }

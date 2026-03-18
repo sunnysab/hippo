@@ -41,6 +41,7 @@ class ArticleRecord(HippoBaseModel):
     biz: str
     article_id: str
     title: str
+    item_show_type: int | None = None
     author: str | None
     digest: str | None
     cover: str | int | None

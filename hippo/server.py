@@ -654,7 +654,7 @@ def _build_article_query(
     image_select = "img.id AS image_id"
 
     query_sql = (
-        "SELECT a.id, a.biz, a.article_id, a.title, a.author, a.digest, a.cover, a.link,"
+        "SELECT a.id, a.biz, a.article_id, a.title, a.item_show_type, a.author, a.digest, a.cover, a.link,"
         " a.source_url, a.publish_at, a.created_at,"
         " acc.nickname AS account_nickname, acc.alias AS account_alias,"
         " acc.round_head_img AS account_avatar,"
@@ -745,7 +745,7 @@ def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
     article = fetchone_row(
         storage,
         (
-            "SELECT a.id, a.biz, a.article_id, a.title, a.author, a.digest, a.cover, a.link,"
+            "SELECT a.id, a.biz, a.article_id, a.title, a.item_show_type, a.author, a.digest, a.cover, a.link,"
             " a.source_url, a.publish_at, a.created_at,"
             " acc.nickname AS account_nickname, acc.alias AS account_alias,"
             " acc.round_head_img AS account_avatar, acc.group_id, g.name AS group_name"

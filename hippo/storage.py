@@ -21,7 +21,7 @@ from .repositories import (
 
 load_env()
 
-SCHEMA_VERSION = '15'
+SCHEMA_VERSION = '16'
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'schema' / 'postgres.sql'
 

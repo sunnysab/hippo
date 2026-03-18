@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS articles (
     biz TEXT NOT NULL REFERENCES accounts(biz) ON DELETE CASCADE,
     article_id TEXT NOT NULL,
     title TEXT NOT NULL,
+    item_show_type INTEGER,
     author TEXT,
     digest TEXT,
     cover INTEGER,
@@ -82,6 +83,9 @@ CREATE TABLE IF NOT EXISTS articles (
     updated_at TIMESTAMPTZ NOT NULL,
     UNIQUE (biz, article_id)
 );
+
+ALTER TABLE articles
+ADD COLUMN IF NOT EXISTS item_show_type INTEGER;
 
 CREATE TABLE IF NOT EXISTS article_content (
     id SERIAL PRIMARY KEY,

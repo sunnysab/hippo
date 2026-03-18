@@ -387,6 +387,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
             biz="adhoc",
             article_id=token or slugify(inferred_title),
             title=inferred_title,
+            item_show_type=None,
             author=None,
             digest=None,
             cover=None,
@@ -525,6 +526,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
             article_url=article.link,
             fallback_title=article.title,
         )
+        article.item_show_type = parsed_article.item_show_type
         clean_html = parsed_article.clean_html
         asset_count = 0
         url_map: dict[str, str] = {}
@@ -542,6 +544,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                 markdown_content=markdown_content,
                 url_map=url_map,
                 content_title=parsed_article.title,
+                item_show_type=parsed_article.item_show_type,
             )
         except Exception as exc:
             pg_error = exc
@@ -564,6 +567,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         markdown_content: str,
         url_map: dict[str, str],
         content_title: str | None = None,
+        item_show_type: int | None = None,
     ) -> None:
         if not self.storage:
             return
@@ -633,6 +637,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                     article,
                     url_token=url_token,
                     title=content_title or title or article.title,
+                    item_show_type=item_show_type,
                     clean_html=clean_html,
                     content_markdown=content_markdown,
                     content_blocks=blocks_with_urls,
@@ -644,6 +649,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                 article,
                 url_token=url_token,
                 title=content_title or title or article.title,
+                item_show_type=item_show_type,
                 clean_html=clean_html,
                 content_markdown=content_markdown,
                 content_blocks=blocks_with_urls,
