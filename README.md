@@ -190,6 +190,12 @@ python -m hippo db init
 python -m hippo article backfill-image-hashes
 ```
 
+该命令只处理已经写入对象存储的图片，不会回源抓取原图；如果还有未入库图片，先执行：
+
+```bash
+python -m hippo article backfill-images
+```
+
 也可以在初始化 schema 后直接联动执行：
 
 ```bash

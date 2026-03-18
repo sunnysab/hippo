@@ -21,7 +21,12 @@ def compute_image_content_hash(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def fetch_image_bytes(storage: PostgresStorage, image_id: int) -> tuple[bytes, str]:
+def fetch_image_bytes(
+    storage: PostgresStorage,
+    image_id: int,
+    *,
+    allow_origin_fetch: bool = True,
+) -> tuple[bytes, str]:
     row = fetchone_row(
         storage,
         (
@@ -50,6 +55,10 @@ def fetch_image_bytes(storage: PostgresStorage, image_id: int) -> tuple[bytes, s
                 return payload, resolved_type
             except Exception as exc:
                 logger.warning('S3 image fetch failed (id=%s key=%s): %s', image_id, s3_key, exc)
+                if not allow_origin_fetch:
+                    raise RuntimeError(f'Stored image fetch failed for {image_id}') from exc
+    if not allow_origin_fetch:
+        raise RuntimeError(f'Image {image_id} is not stored yet')
     orig_url = row.get('orig_url')
     if not orig_url:
         raise LookupError(f'Image {image_id} data missing')
@@ -69,7 +78,12 @@ def fetch_image_bytes(storage: PostgresStorage, image_id: int) -> tuple[bytes, s
     return payload, resolved_type
 
 
-def ensure_image_hash(storage: PostgresStorage, image_id: int) -> dict[str, Any]:
+def ensure_image_hash(
+    storage: PostgresStorage,
+    image_id: int,
+    *,
+    allow_origin_fetch: bool = True,
+) -> dict[str, Any]:
     row = storage.images.get_image_hash(image_id)
     if not row:
         raise LookupError(f'Image {image_id} not found')
@@ -79,7 +93,11 @@ def ensure_image_hash(storage: PostgresStorage, image_id: int) -> dict[str, Any]
             'hash_algo': str(row['hash_algo']),
             'content_hash': str(row['content_hash']),
         }
-    payload, _content_type = fetch_image_bytes(storage, image_id)
+    payload, _content_type = fetch_image_bytes(
+        storage,
+        image_id,
+        allow_origin_fetch=allow_origin_fetch,
+    )
     content_hash = compute_image_content_hash(payload)
     storage.images.save_image_hash(
         image_id=image_id,
@@ -93,10 +111,19 @@ def ensure_image_hash(storage: PostgresStorage, image_id: int) -> dict[str, Any]
     }
 
 
-def ensure_image_hash_by_id(pg_dsn: str, image_id: int) -> dict[str, Any]:
+def ensure_image_hash_by_id(
+    pg_dsn: str,
+    image_id: int,
+    *,
+    allow_origin_fetch: bool = True,
+) -> dict[str, Any]:
     with PostgresStorage(pg_dsn) as storage:
         with storage.transaction():
-            return ensure_image_hash(storage, image_id)
+            return ensure_image_hash(
+                storage,
+                image_id,
+                allow_origin_fetch=allow_origin_fetch,
+            )
 
 
 def _download_image_from_origin(

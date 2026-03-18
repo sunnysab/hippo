@@ -1337,7 +1337,11 @@ async def backfill_article_image_hashes(
     pg_dsn: Optional[str] = typer.Option(
         None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'
     ),
-    limit: Optional[int] = typer.Option(None, min=1, help='Max images to hash per run'),
+    limit: Optional[int] = typer.Option(
+        None,
+        min=1,
+        help='Max stored images to hash per run',
+    ),
     workers: int = typer.Option(8, min=1, help='Concurrent image hash workers'),
     batch_size: Optional[int] = typer.Option(
         None,
@@ -1398,13 +1402,17 @@ async def _backfill_article_image_hashes_async(
     count_query = """
         SELECT COUNT(*)
         FROM article_images i
-        WHERE i.orig_url IS NOT NULL
+        WHERE i.s3_key IS NOT NULL
+          AND i.s3_key <> ''
+          AND i.orig_url IS NOT NULL
           AND (i.hash_algo IS NULL OR i.hash_algo = '' OR i.content_hash IS NULL OR i.content_hash = '')
     """
     base_query = """
         SELECT i.id, i.orig_url
         FROM article_images i
-        WHERE i.orig_url IS NOT NULL
+        WHERE i.s3_key IS NOT NULL
+          AND i.s3_key <> ''
+          AND i.orig_url IS NOT NULL
           AND (i.hash_algo IS NULL OR i.hash_algo = '' OR i.content_hash IS NULL OR i.content_hash = '')
     """
     order_clause = 'ORDER BY i.id DESC'
@@ -1452,6 +1460,7 @@ async def _backfill_article_image_hashes_async(
                                         ensure_image_hash_by_id,
                                         resolved_dsn,
                                         int(image_id),
+                                        allow_origin_fetch=False,
                                     )
                                 return int(image_id), str(orig_url), None
                             except Exception as exc:
