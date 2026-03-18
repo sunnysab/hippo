@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from hippo.repositories import _row_to_article
-from hippo.server import ApiError, _build_article_query, _get_article, _normalize_item_show_type
+from hippo.server import (
+    ApiError,
+    _build_article_query,
+    _count_article_item_show_type_facets,
+    _get_article,
+    _list_articles,
+    _normalize_item_show_type,
+)
 from hippo.sync_tasks import _article_snapshot
 
 
@@ -102,6 +109,92 @@ class ArticleItemShowTypeTest(unittest.TestCase):
 
         self.assertIn('a.item_show_type = %s', query_sql)
         self.assertEqual(params, ['demo', 8, 20, 0])
+
+    def test_count_article_item_show_type_facets_filters_invalid_rows(self) -> None:
+        rows = [
+            {'item_show_type': 8, 'total': 5},
+            {'item_show_type': '0', 'total': '12'},
+            {'item_show_type': 99, 'total': 7},
+            {'item_show_type': 17, 'total': 0},
+            {'item_show_type': None, 'total': 9},
+            {'item_show_type': 6, 'total': 3},
+        ]
+
+        with patch('hippo.server.fetchall_rows', return_value=rows) as fetchall_rows:
+            facets = _count_article_item_show_type_facets(
+                storage=object(),
+                group_id=42,
+                biz='demo',
+                query='picture',
+                since_ts=1710000000,
+                until_ts=1710086400,
+                article_id='100-1',
+            )
+
+        self.assertEqual(
+            facets,
+            [
+                {'item_show_type': 0, 'count': 12},
+                {'item_show_type': 6, 'count': 3},
+                {'item_show_type': 8, 'count': 5},
+            ],
+        )
+        _, query_sql, params = fetchall_rows.call_args.args
+        self.assertIn('GROUP BY a.item_show_type', query_sql)
+        self.assertIn('ORDER BY a.item_show_type ASC', query_sql)
+        self.assertNotIn('a.item_show_type = %s', query_sql)
+        self.assertEqual(params[0], '100-1')
+        self.assertIn(42, params)
+        self.assertIn('demo', params)
+        self.assertIn(1710000000, params)
+        self.assertIn(1710086400, params)
+
+    def test_list_articles_includes_item_show_type_facets(self) -> None:
+        storage = object()
+        article_rows = [{'id': 1, 'biz': 'demo', 'article_id': '100-1', 'title': 'Picture Story'}]
+        facets = [
+            {'item_show_type': 0, 'count': 12},
+            {'item_show_type': 8, 'count': 5},
+        ]
+
+        with (
+            patch('hippo.server._build_article_query', return_value=('SELECT 1', ['demo'])) as build_query,
+            patch('hippo.server.fetchall_rows', return_value=article_rows) as fetchall_rows,
+            patch('hippo.server._count_articles', return_value=17) as count_articles,
+            patch(
+                'hippo.server._count_article_item_show_type_facets',
+                return_value=facets,
+            ) as count_facets,
+        ):
+            payload = _list_articles(
+                storage=storage,
+                group_id=3,
+                biz='demo',
+                item_show_type=8,
+                query='picture',
+                since_ts=None,
+                until_ts=None,
+                sort_mode='publish_at_desc',
+                page=2,
+                page_size=20,
+                article_id=None,
+            )
+
+        self.assertEqual(payload['articles'][0]['account_avatar_url'], '/api/account/demo/avatar')
+        self.assertEqual(payload['total'], 17)
+        self.assertEqual(payload['item_show_type_facets'], facets)
+        build_query.assert_called_once()
+        fetchall_rows.assert_called_once_with(storage, 'SELECT 1', ['demo'], normalize=ANY)
+        count_articles.assert_called_once()
+        count_facets.assert_called_once_with(
+            storage=storage,
+            group_id=3,
+            biz='demo',
+            query='picture',
+            since_ts=None,
+            until_ts=None,
+            article_id=None,
+        )
 
     def test_normalize_item_show_type_rejects_unknown_value(self) -> None:
         with self.assertRaises(ApiError):
