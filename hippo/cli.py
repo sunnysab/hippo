@@ -24,7 +24,7 @@ from tqdm import tqdm
 from .config import DEFAULT_PAGE_SIZE
 from .container import build_downloader_container
 from .env import load_env
-from .image_hashes import ensure_image_hash
+from .image_hashes import ensure_image_hash_by_id
 from .http import MPClient
 from .file_storage import FileStorageError, S3FileStorage
 from .image_store import ArticleImageService
@@ -1332,16 +1332,25 @@ async def _backfill_article_images_async(
 
 
 @articles_app.command('backfill-image-hashes')
-def backfill_article_image_hashes(
+@coro
+async def backfill_article_image_hashes(
     pg_dsn: Optional[str] = typer.Option(
         None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'
     ),
     limit: Optional[int] = typer.Option(None, min=1, help='Max images to hash per run'),
+    workers: int = typer.Option(8, min=1, help='Concurrent image hash workers'),
+    batch_size: Optional[int] = typer.Option(
+        None,
+        min=1,
+        help='Batch size per fetch cycle (defaults to workers * 4)',
+    ),
     dry_run: bool = typer.Option(False, is_flag=True, help='List targets without writing'),
 ) -> None:
-    _backfill_article_image_hashes(
+    await _backfill_article_image_hashes_async(
         pg_dsn=pg_dsn,
         limit=limit,
+        workers=workers,
+        batch_size=batch_size,
         dry_run=dry_run,
     )
 
@@ -1350,6 +1359,27 @@ def _backfill_article_image_hashes(
     *,
     pg_dsn: Optional[str],
     limit: Optional[int],
+    workers: int = 8,
+    batch_size: Optional[int] = None,
+    dry_run: bool,
+) -> None:
+    asyncio.run(
+        _backfill_article_image_hashes_async(
+            pg_dsn=pg_dsn,
+            limit=limit,
+            workers=workers,
+            batch_size=batch_size,
+            dry_run=dry_run,
+        )
+    )
+
+
+async def _backfill_article_image_hashes_async(
+    *,
+    pg_dsn: Optional[str],
+    limit: Optional[int],
+    workers: int,
+    batch_size: Optional[int],
     dry_run: bool,
 ) -> None:
     resolved_dsn = pg_dsn or os.environ.get('HIPPO_PG_DSN')
@@ -1361,48 +1391,98 @@ def _backfill_article_image_hashes(
     skipped = 0
     failed = 0
     interrupted = False
-    query = """
+    worker_count = max(1, workers)
+    fetch_size = batch_size if batch_size is not None else worker_count * 4
+    fetch_size = max(fetch_size, worker_count)
+    sem = asyncio.Semaphore(worker_count)
+    count_query = """
+        SELECT COUNT(*)
+        FROM article_images i
+        WHERE i.orig_url IS NOT NULL
+          AND (i.hash_algo IS NULL OR i.hash_algo = '' OR i.content_hash IS NULL OR i.content_hash = '')
+    """
+    base_query = """
         SELECT i.id, i.orig_url
         FROM article_images i
         WHERE i.orig_url IS NOT NULL
           AND (i.hash_algo IS NULL OR i.hash_algo = '' OR i.content_hash IS NULL OR i.content_hash = '')
-        ORDER BY i.id DESC
     """
-    params: list[Any] = []
-    if limit is not None:
-        query += ' LIMIT %s'
-        params.append(limit)
-
+    order_clause = 'ORDER BY i.id DESC'
     with PostgresStorage(resolved_dsn) as storage:
         with storage.conn.cursor() as cur:
-            cur.execute(query, params)
-            rows = cur.fetchall()
+            cur.execute(count_query)
+            total_count = int(cur.fetchone()[0])
+        if limit is not None:
+            total_count = min(total_count, limit)
         progress = tqdm(
-            total=len(rows),
+            total=total_count,
             desc='Backfill image hashes',
             unit='img',
             dynamic_ncols=True,
             leave=True,
         )
         try:
-            for image_id, orig_url in rows:
-                try:
+            try:
+                last_id: Optional[int] = None
+                remaining = total_count
+                while remaining > 0:
+                    with storage.conn.cursor() as cur:
+                        current_limit = min(fetch_size, remaining)
+                        if last_id is None:
+                            query = f'{base_query} {order_clause} LIMIT %s'
+                            params = (current_limit,)
+                        else:
+                            query = f'{base_query} AND i.id < %s {order_clause} LIMIT %s'
+                            params = (last_id, current_limit)
+                        cur.execute(query, params)
+                        rows = cur.fetchall()
+                    if not rows:
+                        break
                     if dry_run:
-                        typer.echo(f'DRY-RUN {image_id} {orig_url}')
-                        skipped += 1
+                        for image_id, orig_url in rows:
+                            typer.echo(f'DRY-RUN {image_id} {orig_url}')
+                            skipped += 1
+                            progress.update(1)
                     else:
-                        with storage.transaction():
-                            ensure_image_hash(storage, int(image_id))
-                        updated += 1
-                except KeyboardInterrupt:
-                    interrupted = True
-                    typer.echo('Interrupted. Exiting.')
-                    break
-                except Exception as exc:
-                    failed += 1
-                    typer.echo(f'FAILED {image_id} {orig_url}: {exc}')
-                finally:
-                    progress.update(1)
+                        async def run_hash_job(item: tuple[Any, Any]) -> tuple[int, str, Exception | None]:
+                            image_id, orig_url = item
+                            try:
+                                async with sem:
+                                    await asyncio.to_thread(
+                                        ensure_image_hash_by_id,
+                                        resolved_dsn,
+                                        int(image_id),
+                                    )
+                                return int(image_id), str(orig_url), None
+                            except Exception as exc:
+                                return int(image_id), str(orig_url), exc
+
+                        tasks = [
+                            asyncio.create_task(run_hash_job((image_id, orig_url)))
+                            for image_id, orig_url in rows
+                        ]
+                        try:
+                            for task in asyncio.as_completed(tasks):
+                                image_id, orig_url, error = await task
+                                try:
+                                    if error is not None:
+                                        raise error
+                                    updated += 1
+                                except Exception as exc:
+                                    failed += 1
+                                    typer.echo(f'FAILED {image_id} {orig_url}: {exc}')
+                                progress.update(1)
+                        except KeyboardInterrupt:
+                            interrupted = True
+                            for task in tasks:
+                                task.cancel()
+                            typer.echo('Interrupted. Exiting.')
+                            break
+                    remaining -= len(rows)
+                    last_id = int(rows[-1][0])
+            except KeyboardInterrupt:
+                interrupted = True
+                typer.echo('Interrupted. Exiting.')
         finally:
             progress.close()
 

@@ -93,6 +93,12 @@ def ensure_image_hash(storage: PostgresStorage, image_id: int) -> dict[str, Any]
     }
 
 
+def ensure_image_hash_by_id(pg_dsn: str, image_id: int) -> dict[str, Any]:
+    with PostgresStorage(pg_dsn) as storage:
+        with storage.transaction():
+            return ensure_image_hash(storage, image_id)
+
+
 def _download_image_from_origin(
     orig_url: str,
     *,
@@ -149,5 +155,6 @@ __all__ = [
     'IMAGE_HASH_ALGO',
     'compute_image_content_hash',
     'ensure_image_hash',
+    'ensure_image_hash_by_id',
     'fetch_image_bytes',
 ]
