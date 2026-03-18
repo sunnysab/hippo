@@ -12,8 +12,6 @@ from urllib.parse import parse_qs, urljoin, urlparse
 from bs4 import BeautifulSoup
 import httpx
 
-from .normalize_html import normalize_html
-
 from .env import load_env
 from .http import MPClient
 from .image_store import ArticleImageStore
@@ -21,6 +19,7 @@ from .logger import get_logger
 from .models import AccountCredential, ArticleRecord, DownloadResult
 from .storage import PostgresStorage
 from .utils import slugify
+from .wechat_parser import parse_wechat_article
 
 load_env()
 
@@ -521,7 +520,12 @@ class ArticleDownloader(AbstractAsyncContextManager):
         record_images_only: bool,
     ) -> DownloadResult:
 
-        clean_html = normalize_html(raw_html, fmt="html")
+        parsed_article = parse_wechat_article(
+            raw_html,
+            article_url=article.link,
+            fallback_title=article.title,
+        )
+        clean_html = parsed_article.clean_html
         asset_count = 0
         url_map: dict[str, str] = {}
         referer = article.link or "https://mp.weixin.qq.com/"
@@ -529,26 +533,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
             asset_count, url_map = self._collect_image_urls(
                 clean_html, referer=referer
             )
-
-        try:
-            markdown_content = normalize_html(
-                raw_html, fmt="markdown", markdown_image_map=url_map
-            )
-        except RecursionError as exc:
-            logger.warning(
-                "Markdown conversion hit recursion limit: %s - %s",
-                article.article_id,
-                exc,
-            )
-            try:
-                markdown_content = normalize_html(raw_html, fmt="text")
-            except Exception as text_exc:
-                logger.warning(
-                    "Markdown fallback failed: %s - %s",
-                    article.article_id,
-                    text_exc,
-                )
-                markdown_content = ""
+        markdown_content = parsed_article.markdown
         pg_error: Exception | None = None
         try:
             self._store_article_pg(
@@ -556,6 +541,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                 clean_html=clean_html,
                 markdown_content=markdown_content,
                 url_map=url_map,
+                content_title=parsed_article.title,
             )
         except Exception as exc:
             pg_error = exc
@@ -577,6 +563,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         clean_html: str,
         markdown_content: str,
         url_map: dict[str, str],
+        content_title: str | None = None,
     ) -> None:
         if not self.storage:
             return
@@ -645,7 +632,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                 save_article_content(
                     article,
                     url_token=url_token,
-                    title=title or article.title,
+                    title=content_title or title or article.title,
                     clean_html=clean_html,
                     content_markdown=content_markdown,
                     content_blocks=blocks_with_urls,
@@ -656,7 +643,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
             save_article_content(
                 article,
                 url_token=url_token,
-                title=title or article.title,
+                title=content_title or title or article.title,
                 clean_html=clean_html,
                 content_markdown=content_markdown,
                 content_blocks=blocks_with_urls,
