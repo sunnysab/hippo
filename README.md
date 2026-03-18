@@ -184,6 +184,18 @@ export HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname"
 python -m hippo db init
 ```
 
+如需给历史图片批量回填内容哈希，可执行：
+
+```bash
+python -m hippo article backfill-image-hashes
+```
+
+也可以在初始化 schema 后直接联动执行：
+
+```bash
+python -m hippo db init --backfill-image-hashes
+```
+
 `content_json` 的 block 结构示例：
 
 ```json

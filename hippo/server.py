@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -28,11 +27,11 @@ except Exception:  # pragma: no cover - optional fallback
     jieba = None
 
 from .emailer import get_email_settings, send_email, set_email_settings
+from .image_hashes import IMAGE_HASH_ALGO, ensure_image_hash, fetch_image_bytes
 from .http import MPClient
 from .wechat_api import SessionExpiredError, WeChatApiClient
 from .models import AccountCredential
 from .rss import build_rss_xml, query_rss_items
-from .s3 import build_image_key, fetch_object_bytes, get_s3_client, upload_object_bytes
 from .storage import PostgresStorage, open_storage
 from .sync_service import (
     SyncScheduler,
@@ -87,9 +86,6 @@ _SYNC_MODES = {'incremental', 'recent', 'full', 'range'}
 ARTICLE_SORT_PUBLISH_AT_DESC = 'publish_at_desc'
 ARTICLE_SORT_RELEVANCE_DESC = 'relevance_desc'
 _ARTICLE_SORT_VALUES = {ARTICLE_SORT_PUBLISH_AT_DESC, ARTICLE_SORT_RELEVANCE_DESC}
-IMAGE_HASH_ALGO = 'sha256'
-
-
 def _normalize_sync_mode(value: Any) -> str | None:
     if value in (None, ""):
         return None
@@ -813,33 +809,14 @@ def _list_article_images(storage: PostgresStorage, article_id: int) -> list[dict
     return images
 
 
-def _compute_image_content_hash(payload: bytes) -> str:
-    return hashlib.sha256(payload).hexdigest()
-
-
 def _ensure_image_hash(storage: PostgresStorage, image_id: int) -> dict[str, Any]:
-    row = storage.images.get_image_hash(image_id)
-    if not row:
-        raise ApiError('Image not found', status=404)
-    if row.get('hash_algo') == IMAGE_HASH_ALGO and row.get('content_hash'):
-        return {
-            'image_id': image_id,
-            'hash_algo': str(row['hash_algo']),
-            'content_hash': str(row['content_hash']),
-        }
-    payload, _content_type = _fetch_image(storage, image_id)
-    content_hash = _compute_image_content_hash(payload)
-    with storage.transaction():
-        storage.images.save_image_hash(
-            image_id=image_id,
-            hash_algo=IMAGE_HASH_ALGO,
-            content_hash=content_hash,
-        )
-    return {
-        'image_id': image_id,
-        'hash_algo': IMAGE_HASH_ALGO,
-        'content_hash': content_hash,
-    }
+    try:
+        with storage.transaction():
+            return ensure_image_hash(storage, image_id)
+    except LookupError as exc:
+        raise ApiError(str(exc), status=404) from exc
+    except RuntimeError as exc:
+        raise ApiError(str(exc), status=502) from exc
 
 
 def _ensure_article_image_hashes(
@@ -916,98 +893,12 @@ def _block_image(storage: PostgresStorage, image_id: int) -> dict[str, Any]:
 
 
 def _fetch_image(storage: PostgresStorage, image_id: int) -> tuple[bytes, str]:
-    row = fetchone_row(
-        storage,
-        (
-            "SELECT i.content_type, i.s3_key, i.orig_url, a.link AS referer"
-            " FROM article_images i"
-            " JOIN articles a ON a.id = i.article_pk"
-            " WHERE i.id = %s"
-        ),
-        [image_id],
-        normalize=_normalize_record,
-    )
-    if not row:
-        raise ApiError("Image not found", status=404)
-    content_type = row.get('content_type')
-    s3_key = row.get('s3_key')
-    if s3_key:
-        bundle = get_s3_client()
-        if bundle:
-            config, client = bundle
-            try:
-                payload, s3_content_type = fetch_object_bytes(
-                    client,
-                    bucket=config.bucket,
-                    key=str(s3_key),
-                )
-                resolved_type = s3_content_type or content_type or 'application/octet-stream'
-                return payload, resolved_type
-            except Exception as exc:
-                logger.warning('S3 image fetch failed (id=%s key=%s): %s', image_id, s3_key, exc)
-    orig_url = row.get('orig_url')
-    if not orig_url:
-        raise ApiError('Image data missing', status=404)
-    referer = row.get('referer')
     try:
-        payload, fetched_type = _download_image_from_origin(str(orig_url), referer=referer)
-    except Exception as exc:
-        logger.warning('Origin image fetch failed (id=%s url=%s): %s', image_id, orig_url, exc)
-        raise ApiError('Image fetch failed', status=502) from exc
-    resolved_type = fetched_type or content_type or 'application/octet-stream'
-    _store_image_to_s3_async(
-        image_id=image_id,
-        payload=payload,
-        content_type=resolved_type,
-        s3_key=str(s3_key) if s3_key else None,
-    )
-    return payload, resolved_type
-
-
-def _download_image_from_origin(
-    orig_url: str, *, referer: str | None
-) -> tuple[bytes, str | None]:
-    async def _run() -> tuple[bytes, str | None]:
-        async with MPClient() as client:
-            return await client.download_binary_with_type(orig_url, referer=referer)
-
-    return asyncio.run(_run())
-
-
-def _store_image_to_s3_async(
-    *, image_id: int, payload: bytes, content_type: str | None, s3_key: str | None
-) -> None:
-    def _worker() -> None:
-        bundle = get_s3_client()
-        if not bundle:
-            return
-        config, client = bundle
-        resolved_key = s3_key or build_image_key(config.prefix, image_id, content_type)
-        try:
-            upload_object_bytes(
-                client,
-                bucket=config.bucket,
-                key=resolved_key,
-                payload=payload,
-                content_type=content_type,
-            )
-            with open_storage() as storage:
-                with storage.transaction():
-                    with storage.conn.cursor() as cur:
-                        cur.execute(
-                            """
-                            UPDATE article_images
-                            SET s3_key = %s,
-                                content_type = %s,
-                                updated_at = %s
-                            WHERE id = %s
-                            """,
-                            (resolved_key, content_type, _utc_now_iso(), image_id),
-                        )
-        except Exception as exc:
-            logger.warning('S3 image store failed (id=%s key=%s): %s', image_id, resolved_key, exc)
-
-    threading.Thread(target=_worker, daemon=True).start()
+        return fetch_image_bytes(storage, image_id)
+    except LookupError as exc:
+        raise ApiError(str(exc), status=404) from exc
+    except RuntimeError as exc:
+        raise ApiError(str(exc), status=502) from exc
 
 
 def _get_avatar_row(storage: PostgresStorage, biz: str) -> dict[str, Any] | None:

@@ -24,6 +24,7 @@ from tqdm import tqdm
 from .config import DEFAULT_PAGE_SIZE
 from .container import build_downloader_container
 from .env import load_env
+from .image_hashes import ensure_image_hash
 from .http import MPClient
 from .file_storage import FileStorageError, S3FileStorage
 from .image_store import ArticleImageService
@@ -161,6 +162,17 @@ def init_db(
     pg_dsn: Optional[str] = typer.Option(
         None, help="PostgreSQL DSN (defaults to HIPPO_PG_DSN)"
     ),
+    backfill_image_hashes: bool = typer.Option(
+        False,
+        '--backfill-image-hashes',
+        help='Initialize schema and then backfill missing image hashes',
+    ),
+    image_hash_limit: Optional[int] = typer.Option(
+        None,
+        '--image-hash-limit',
+        min=1,
+        help='Optional limit used with --backfill-image-hashes',
+    ),
 ) -> None:
     resolved_dsn = pg_dsn or os.environ.get("HIPPO_PG_DSN")
     if not resolved_dsn:
@@ -169,6 +181,12 @@ def init_db(
     with PostgresStorage(resolved_dsn, auto_init=True):
         pass
     typer.echo("PostgreSQL schema initialized.")
+    if backfill_image_hashes:
+        _backfill_article_image_hashes(
+            pg_dsn=resolved_dsn,
+            limit=image_hash_limit,
+            dry_run=False,
+        )
 
 @db_app.command("rebuild-counts")
 def rebuild_counts(
@@ -1309,6 +1327,86 @@ async def _backfill_article_images_async(
                 typer.echo("Interrupted. Exiting.")
 
     typer.echo(f"Done. updated={updated} skipped={skipped} failed={failed}")
+    if interrupted:
+        raise typer.Exit(code=130)
+
+
+@articles_app.command('backfill-image-hashes')
+def backfill_article_image_hashes(
+    pg_dsn: Optional[str] = typer.Option(
+        None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'
+    ),
+    limit: Optional[int] = typer.Option(None, min=1, help='Max images to hash per run'),
+    dry_run: bool = typer.Option(False, is_flag=True, help='List targets without writing'),
+) -> None:
+    _backfill_article_image_hashes(
+        pg_dsn=pg_dsn,
+        limit=limit,
+        dry_run=dry_run,
+    )
+
+
+def _backfill_article_image_hashes(
+    *,
+    pg_dsn: Optional[str],
+    limit: Optional[int],
+    dry_run: bool,
+) -> None:
+    resolved_dsn = pg_dsn or os.environ.get('HIPPO_PG_DSN')
+    if not resolved_dsn:
+        typer.echo('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
+        raise typer.Exit(code=2)
+
+    updated = 0
+    skipped = 0
+    failed = 0
+    interrupted = False
+    query = """
+        SELECT i.id, i.orig_url
+        FROM article_images i
+        WHERE i.orig_url IS NOT NULL
+          AND (i.hash_algo IS NULL OR i.hash_algo = '' OR i.content_hash IS NULL OR i.content_hash = '')
+        ORDER BY i.id DESC
+    """
+    params: list[Any] = []
+    if limit is not None:
+        query += ' LIMIT %s'
+        params.append(limit)
+
+    with PostgresStorage(resolved_dsn) as storage:
+        with storage.conn.cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+        progress = tqdm(
+            total=len(rows),
+            desc='Backfill image hashes',
+            unit='img',
+            dynamic_ncols=True,
+            leave=True,
+        )
+        try:
+            for image_id, orig_url in rows:
+                try:
+                    if dry_run:
+                        typer.echo(f'DRY-RUN {image_id} {orig_url}')
+                        skipped += 1
+                    else:
+                        with storage.transaction():
+                            ensure_image_hash(storage, int(image_id))
+                        updated += 1
+                except KeyboardInterrupt:
+                    interrupted = True
+                    typer.echo('Interrupted. Exiting.')
+                    break
+                except Exception as exc:
+                    failed += 1
+                    typer.echo(f'FAILED {image_id} {orig_url}: {exc}')
+                finally:
+                    progress.update(1)
+        finally:
+            progress.close()
+
+    typer.echo(f'Done. updated={updated} skipped={skipped} failed={failed}')
     if interrupted:
         raise typer.Exit(code=130)
 
