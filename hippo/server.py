@@ -745,6 +745,71 @@ def _count_articles(
     return int(row.get('total') or 0) if row else 0
 
 
+def _count_article_item_show_type_facets(
+    *,
+    storage: PostgresStorage,
+    group_id: int | None,
+    biz: str | None,
+    query: str | None,
+    since_ts: int | None,
+    until_ts: int | None,
+    article_id: str | None = None,
+) -> list[dict[str, int]]:
+    where: list[str] = ['a.item_show_type IS NOT NULL']
+    params: list[Any] = []
+    query_text = query.strip() if query else ''
+    query_tsquery_sql, query_tsquery_params = _build_article_search_tsquery(query_text)
+
+    if article_id:
+        where.append('a.article_id = %s')
+        params.append(article_id)
+    if group_id is not None:
+        where.append('acc.group_id = %s')
+        params.append(group_id)
+    if biz:
+        where.append('a.biz = %s')
+        params.append(biz)
+    if query_tsquery_sql:
+        where.append(f'a.search_vector @@ {query_tsquery_sql}')
+        params.extend(query_tsquery_params)
+    if since_ts is not None:
+        where.append('a.publish_at >= %s')
+        params.append(since_ts)
+    if until_ts is not None:
+        where.append('a.publish_at <= %s')
+        params.append(until_ts)
+
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ''
+    rows = fetchall_rows(
+        storage,
+        (
+            'SELECT a.item_show_type, COUNT(*) AS total'
+            ' FROM articles a'
+            ' JOIN accounts acc ON acc.biz = a.biz'
+            f' {where_sql}'
+            ' GROUP BY a.item_show_type'
+            ' ORDER BY a.item_show_type ASC'
+        ),
+        params,
+        normalize=_normalize_record,
+    )
+    order_map = {value: index for index, value in enumerate(sorted(_ITEM_SHOW_TYPE_VALUES))}
+    facets: list[dict[str, int]] = []
+    for row in rows:
+        item_show_type = row.get('item_show_type')
+        total = row.get('total')
+        try:
+            normalized_type = int(item_show_type)
+            normalized_total = int(total)
+        except (TypeError, ValueError):
+            continue
+        if normalized_type not in _ITEM_SHOW_TYPE_VALUES or normalized_total <= 0:
+            continue
+        facets.append({'item_show_type': normalized_type, 'count': normalized_total})
+    facets.sort(key=lambda item: order_map.get(item['item_show_type'], 999))
+    return facets
+
+
 def _get_cached_article_total(
     storage: PostgresStorage,
     *,
@@ -828,7 +893,22 @@ def _list_articles(
         )
     else:
         total = _get_cached_article_total(storage, group_id=group_id, biz=biz)
-    return {'articles': rows, 'page': page, 'page_size': page_size, 'total': total}
+    item_show_type_facets = _count_article_item_show_type_facets(
+        storage=storage,
+        group_id=group_id,
+        biz=biz,
+        query=query,
+        since_ts=since_ts,
+        until_ts=until_ts,
+        article_id=article_id,
+    )
+    return {
+        'articles': rows,
+        'page': page,
+        'page_size': page_size,
+        'total': total,
+        'item_show_type_facets': item_show_type_facets,
+    }
 
 
 def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:

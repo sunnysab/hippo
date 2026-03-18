@@ -127,12 +127,51 @@
     return `<span class="item-show-type-badge item-show-type-${meta.tone}${compactClass}">${escapeHtml(getItemShowTypeLabel(value))}</span>`;
   };
 
-  const renderTypeLegend = () => {
-    const container = $('#article-type-legend');
-    if (!container) return;
-    container.innerHTML = ITEM_SHOW_TYPE_ORDER
-      .map((itemShowType) => renderItemShowTypeBadge(itemShowType, { compact: true }))
-      .join('');
+  const renderArticleInsights = (payload) => {
+    const summary = $('#article-filter-summary');
+    const facetsContainer = $('#article-type-facets');
+    if (summary) {
+      const total = Number(payload?.total || 0);
+      const activeType = $('#article-type-filter')?.value || '';
+      const totalLabel = t('articles.summary.total', '{n} articles').replace('{n}', total.toLocaleString('zh-CN'));
+      const typeLabel = activeType
+        ? t('articles.summary.filteredByType', 'Filtered by {type}').replace('{type}', getItemShowTypeLabel(activeType))
+        : t('articles.summary.allTypes', 'Across all article types');
+      summary.innerHTML = `<strong>${escapeHtml(totalLabel)}</strong><span>${escapeHtml(typeLabel)}</span>`;
+    }
+    if (!facetsContainer) return;
+    const facets = Array.isArray(payload?.item_show_type_facets) ? payload.item_show_type_facets : [];
+    if (!facets.length) {
+      facetsContainer.innerHTML = `<div class="article-type-facets-empty">${escapeHtml(t('articles.summary.noTypeData', 'No type data available.'))}</div>`;
+      return;
+    }
+    const activeType = $('#article-type-filter')?.value || '';
+    const allCount = facets.reduce((sum, item) => sum + Number(item?.count || 0), 0);
+    const buttons = [
+      `<button class="article-type-facet${activeType ? '' : ' is-active'}" type="button" data-item-show-type="">
+        <span class="item-show-type-badge item-show-type-share item-show-type-badge-compact">${escapeHtml(t('filters.allTypes', 'All Types'))}</span>
+        <span class="article-type-facet-count">${escapeHtml(allCount.toLocaleString('zh-CN'))}</span>
+      </button>`,
+      ...facets.map((facet) => {
+        const itemShowType = String(facet.item_show_type);
+        const activeClass = activeType === itemShowType ? ' is-active' : '';
+        return `<button class="article-type-facet${activeClass}" type="button" data-item-show-type="${escapeHtml(itemShowType)}">
+          ${renderItemShowTypeBadge(itemShowType, { compact: true })}
+          <span class="article-type-facet-count">${escapeHtml(Number(facet.count || 0).toLocaleString('zh-CN'))}</span>
+        </button>`;
+      }),
+    ];
+    facetsContainer.innerHTML = buttons.join('');
+    facetsContainer.querySelectorAll('.article-type-facet').forEach((button) => {
+      button.addEventListener('click', () => {
+        const targetValue = button.dataset.itemShowType || '';
+        const select = $('#article-type-filter');
+        if (!select || select.value === targetValue) return;
+        select.value = targetValue;
+        loadArticles(true);
+        updateArticleUrlParams();
+      });
+    });
   };
 
   const buildArticleHeader = (article) => {
@@ -300,6 +339,7 @@
         } else {
              state.articles = state.articles.concat(newArticles);
         }
+        renderArticleInsights(payload);
         renderArticleList();
     } finally {
         state.isArticleLoading = false;
@@ -1077,7 +1117,6 @@
   };
 
   const init = async () => {
-    renderTypeLegend();
     initReaderControls();
     initArticleLayout();
     bindEvents();
