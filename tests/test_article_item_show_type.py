@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from hippo.repositories import _row_to_article
-from hippo.server import _get_article
+from hippo.server import ApiError, _build_article_query, _get_article, _normalize_item_show_type
 from hippo.sync_tasks import _article_snapshot
 
 
@@ -84,6 +84,28 @@ class ArticleItemShowTypeTest(unittest.TestCase):
 
         self.assertEqual(payload['article']['item_show_type'], 6)
         self.assertEqual(payload['content_status'], 'ok')
+
+    def test_build_article_query_applies_item_show_type_filter(self) -> None:
+        query_sql, params = _build_article_query(
+            storage=object(),
+            group_id=None,
+            biz='demo',
+            item_show_type=8,
+            query=None,
+            since_ts=None,
+            until_ts=None,
+            sort_mode='publish_at_desc',
+            limit=20,
+            offset=0,
+            article_id=None,
+        )
+
+        self.assertIn('a.item_show_type = %s', query_sql)
+        self.assertEqual(params, ['demo', 8, 20, 0])
+
+    def test_normalize_item_show_type_rejects_unknown_value(self) -> None:
+        with self.assertRaises(ApiError):
+            _normalize_item_show_type(99)
 
 
 if __name__ == '__main__':
