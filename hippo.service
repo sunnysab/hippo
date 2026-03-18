@@ -4,10 +4,10 @@ After=network.target postgresql.service
 
 [Service]
 Type=simple
-User=sunnysab
-WorkingDirectory=/home/sunnysab/Code/hippo
-ExecStart=/home/sunnysab/Code/hippo/.venv/bin/python -m hippo serve --host 0.0.0.0 --port 8000
-Environment=HIPPO_LOG_FILE=/home/sunnysab/Code/hippo/logs/hippo.log
+User=sab
+WorkingDirectory=/home/sab/hippo
+ExecStart=/home/sab/hippo/.venv/bin/python -m hippo serve --host 0.0.0.0 --port 2000
+Environment=HIPPO_LOG_FILE=/home/sab/hippo/logs/hippo.log
 Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=10

@@ -1,33 +1,28 @@
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 LABEL maintainer="hippo"
-LABEL description="WeChat article exporter CLI"
+LABEL description="Hippo WeChat article service"
 
-# Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Create app directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    gcc \
-    libpq-dev \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy project files
-COPY pyproject.toml README.md ./
+COPY pyproject.toml uv.lock README.md __init__.py ./
 COPY hippo/ ./hippo/
-COPY __init__.py ./
+COPY static/ ./static/
+COPY schema/ ./schema/
 
-# Install Python dependencies
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install -e .
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install .
 
-# Set entrypoint
+EXPOSE 8000
+
 ENTRYPOINT ["hippo"]
-CMD ["--help"]
+CMD ["serve", "--host", "0.0.0.0", "--port", "8000", "--static-dir", "/app/static"]

@@ -1,4 +1,3 @@
-# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -9,37 +8,31 @@ dist/
 build/
 .eggs/
 
-# Virtual environments
 venv/
 env/
 ENV/
+.venv/
 
-# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# Git
 .git/
 .gitignore
 
-# Testing
 .pytest_cache/
 .coverage
 htmlcov/
+.mypy_cache/
+.ruff_cache/
 
-# Local data
-*.db
 downloads/
-*.log
+logs/
 
-# Documentation
 AGENTS.md
+PLAN.md
 mpcli.txt
-
-# Scripts
 scripts/
-
-# Schema
-schema/
+tests/
+.env

@@ -28,7 +28,7 @@ hippo --help
 # Build image
 docker build -t hippo .
 
-# Run with PostgreSQL
+# Run CLI with PostgreSQL
 docker run -it --rm -e HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname" hippo --help
 
 # Example: login
@@ -36,7 +36,14 @@ docker run -it --rm -e HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname" hi
 
 # Example: sync articles
 docker run -it --rm -e HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname" hippo article sync-all
+
+# Run web service
+docker run --rm -p 8000:8000 \
+  -e HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname" \
+  hippo
 ```
+
+当前 Docker 镜像默认执行 `hippo serve --host 0.0.0.0 --port 8000 --static-dir /app/static`。
 
 ---
 
