@@ -158,6 +158,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pyzbar" },
     { name = "qrcode" },
+    { name = "quickjs" },
     { name = "tqdm" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
@@ -178,6 +179,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "pyzbar", specifier = ">=0.1.9" },
     { name = "qrcode", specifier = ">=7.4.2" },
+    { name = "quickjs", specifier = ">=1.19.4" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.1" },
     { name = "tqdm", specifier = ">=4.67.0" },
     { name = "typer", specifier = ">=0.21.0" },
@@ -531,6 +533,12 @@ sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/8f/b2/7fc2931bfae0af
 wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/dd/b8/d2d6d731733f51684bbf76bf34dab3b70a9148e8f2cef2bb544fccec681a/qrcode-8.2-py3-none-any.whl", hash = "sha256:16e64e0716c14960108e85d853062c9e8bba5ca8252c0b4d0231b9df4060ff4f", size = 45986, upload-time = "2025-05-01T15:44:22.781Z" },
 ]
+
+[[package]]
+name = "quickjs"
+version = "1.19.4"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/f1/a7/8fac2e213db8108d8108e9f1ee8d6c2abfcbe943238b0960585c26666862/quickjs-1.19.4.tar.gz", hash = "sha256:1205953abc24ff757f4a795304d5d61e4bf1e555c9ef6ec96a132d4b95535484" }
 
 [[package]]
 name = "rich"
