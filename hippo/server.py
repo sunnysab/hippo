@@ -89,6 +89,21 @@ _ARTICLE_SORT_VALUES = {ARTICLE_SORT_PUBLISH_AT_DESC, ARTICLE_SORT_RELEVANCE_DES
 _ITEM_SHOW_TYPE_VALUES = {0, 5, 6, 7, 8, 10, 11, 17}
 
 
+def _build_item_show_type_where_clause(item_show_type: int) -> tuple[str, list[int]]:
+    if item_show_type == 0:
+        return '(a.item_show_type = %s OR a.item_show_type IS NULL)', [0]
+    return 'a.item_show_type = %s', [item_show_type]
+
+
+def _normalize_api_item_show_type(value: Any) -> int | None:
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_item_show_type(value: Any) -> int | None:
     if value in (None, ''):
         return None
@@ -643,8 +658,9 @@ def _build_article_query(
         where.append("a.biz = %s")
         params.append(biz)
     if item_show_type is not None:
-        where.append('a.item_show_type = %s')
-        params.append(item_show_type)
+        clause, clause_params = _build_item_show_type_where_clause(item_show_type)
+        where.append(clause)
+        params.extend(clause_params)
     if query_tsquery_sql:
         where.append(f"a.search_vector @@ {query_tsquery_sql}")
         params.extend(query_tsquery_params)
@@ -718,8 +734,9 @@ def _count_articles(
         where.append('a.biz = %s')
         params.append(biz)
     if item_show_type is not None:
-        where.append('a.item_show_type = %s')
-        params.append(item_show_type)
+        clause, clause_params = _build_item_show_type_where_clause(item_show_type)
+        where.append(clause)
+        params.extend(clause_params)
     if query_tsquery_sql:
         where.append(f'a.search_vector @@ {query_tsquery_sql}')
         params.extend(query_tsquery_params)
@@ -755,7 +772,7 @@ def _count_article_item_show_type_facets(
     until_ts: int | None,
     article_id: str | None = None,
 ) -> list[dict[str, int]]:
-    where: list[str] = ['a.item_show_type IS NOT NULL']
+    where: list[str] = []
     params: list[Any] = []
     query_text = query.strip() if query else ''
     query_tsquery_sql, query_tsquery_params = _build_article_search_tsquery(query_text)
@@ -783,21 +800,23 @@ def _count_article_item_show_type_facets(
     rows = fetchall_rows(
         storage,
         (
-            'SELECT a.item_show_type, COUNT(*) AS total'
+            'SELECT COALESCE(a.item_show_type, 0) AS item_show_type, COUNT(*) AS total'
             ' FROM articles a'
             ' JOIN accounts acc ON acc.biz = a.biz'
             f' {where_sql}'
-            ' GROUP BY a.item_show_type'
-            ' ORDER BY a.item_show_type ASC'
+            ' GROUP BY COALESCE(a.item_show_type, 0)'
+            ' ORDER BY COALESCE(a.item_show_type, 0) ASC'
         ),
         params,
         normalize=_normalize_record,
     )
     order_map = {value: index for index, value in enumerate(sorted(_ITEM_SHOW_TYPE_VALUES))}
-    facets: list[dict[str, int]] = []
+    facet_counts: dict[int, int] = {}
     for row in rows:
         item_show_type = row.get('item_show_type')
         total = row.get('total')
+        if item_show_type is None:
+            item_show_type = 0
         try:
             normalized_type = int(item_show_type)
             normalized_total = int(total)
@@ -805,7 +824,11 @@ def _count_article_item_show_type_facets(
             continue
         if normalized_type not in _ITEM_SHOW_TYPE_VALUES or normalized_total <= 0:
             continue
-        facets.append({'item_show_type': normalized_type, 'count': normalized_total})
+        facet_counts[normalized_type] = facet_counts.get(normalized_type, 0) + normalized_total
+    facets = [
+        {'item_show_type': item_show_type, 'count': count}
+        for item_show_type, count in facet_counts.items()
+    ]
     facets.sort(key=lambda item: order_map.get(item['item_show_type'], 999))
     return facets
 
@@ -875,6 +898,7 @@ def _list_articles(
     )
     rows = fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
     for row in rows:
+        row['item_show_type'] = _normalize_api_item_show_type(row.get('item_show_type'))
         row["account_avatar_url"] = f"/api/account/{row['biz']}/avatar"
     has_active_filters = any(
         value is not None and value != ''
@@ -929,6 +953,7 @@ def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
     )
     if not article:
         raise ApiError("Article not found", status=404)
+    article['item_show_type'] = _normalize_api_item_show_type(article.get('item_show_type'))
     article["account_avatar_url"] = f"/api/account/{article['biz']}/avatar"
 
     content_row = fetchone_row(

@@ -46,6 +46,14 @@ from .utils import format_table, parse_iso_datetime_to_timestamp
 # Initialize logger on module import
 logger = setup_logger()
 
+_ARTICLE_CONTENT_PRESENT_SQL = """
+(
+    (c.clean_html IS NOT NULL AND btrim(c.clean_html) <> '')
+    OR (c.content_markdown IS NOT NULL AND btrim(c.content_markdown) <> '')
+    OR (c.content_json IS NOT NULL AND c.content_json::text NOT IN ('[]', 'null'))
+)
+"""
+
 app = typer.Typer(
     help="Hippo WeChat article exporter CLI",
     no_args_is_help=True,
@@ -203,6 +211,81 @@ def rebuild_counts(
             with storage.conn.cursor() as cur:
                 cur.execute('SELECT hippo_rebuild_article_counts()')
     typer.echo('Rebuilt cached article counts.')
+
+
+@db_app.command('backfill-item-show-type')
+def backfill_item_show_type(
+    pg_dsn: Optional[str] = typer.Option(
+        None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'
+    ),
+    limit: Optional[int] = typer.Option(
+        None, min=1, help='Optional max article count to backfill per run'
+    ),
+    dry_run: bool = typer.Option(
+        False, help='Preview candidate count without writing changes'
+    ),
+) -> None:
+    resolved_dsn = pg_dsn or os.environ.get('HIPPO_PG_DSN')
+    if not resolved_dsn:
+        typer.echo('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
+        raise typer.Exit(code=2)
+
+    limited_ids_sql = f"""
+    SELECT a.id
+    FROM articles a
+    JOIN article_content c ON c.article_pk = a.id
+    WHERE a.item_show_type IS NULL
+      AND {_ARTICLE_CONTENT_PRESENT_SQL}
+    ORDER BY a.id ASC
+    LIMIT %s
+    """
+    update_sql = f"""
+    UPDATE articles a
+    SET item_show_type = 0,
+        updated_at = NOW()
+    FROM (
+        {limited_ids_sql}
+    ) AS candidate
+    WHERE a.id = candidate.id
+    """
+    unlimited_update_sql = f"""
+    UPDATE articles a
+    SET item_show_type = 0,
+        updated_at = NOW()
+    FROM article_content c
+    WHERE c.article_pk = a.id
+      AND a.item_show_type IS NULL
+      AND {_ARTICLE_CONTENT_PRESENT_SQL}
+    """
+    candidate_sql = f"""
+    SELECT COUNT(*)
+    FROM articles a
+    JOIN article_content c ON c.article_pk = a.id
+    WHERE a.item_show_type IS NULL
+      AND {_ARTICLE_CONTENT_PRESENT_SQL}
+    """
+
+    with PostgresStorage(resolved_dsn, auto_init=False) as storage:
+        if dry_run:
+            with storage.conn.cursor() as cur:
+                cur.execute(candidate_sql)
+                total_candidates = int(cur.fetchone()[0] or 0)
+            if total_candidates == 0:
+                typer.echo('No NULL item_show_type rows with present content were found.')
+                return
+            typer.echo(f'Found {total_candidates} candidate articles.')
+            return
+        with storage.transaction():
+            with storage.conn.cursor() as cur:
+                if limit is None:
+                    cur.execute(unlimited_update_sql)
+                else:
+                    cur.execute(update_sql, (limit,))
+                updated = cur.rowcount
+    if updated == 0:
+        typer.echo('No NULL item_show_type rows with present content were found.')
+        return
+    typer.echo(f'Backfilled item_show_type=0 for {updated} articles.')
 
 
 app.add_typer(accounts_app, name="account")
