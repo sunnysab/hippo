@@ -1,10 +1,21 @@
 (() => {
   const { state, $, apiGet, apiSend, t, copyToClipboard, showToast } = window.Hippo;
-  const ARTICLE_FILTER_PARAM_KEYS = ['group', 'account', 'q', 'sort'];
+  const ARTICLE_FILTER_PARAM_KEYS = ['group', 'account', 'type', 'q', 'sort'];
   const ARTICLE_SORT_PUBLISH_AT_DESC = 'publish_at_desc';
   const ARTICLE_SORT_RELEVANCE_DESC = 'relevance_desc';
   const ARTICLE_SORT_VALUES = new Set([ARTICLE_SORT_PUBLISH_AT_DESC, ARTICLE_SORT_RELEVANCE_DESC]);
   const articleAccountCache = new Map();
+  const ITEM_SHOW_TYPE_META = {
+    0: { key: 'articles.type.0', fallback: 'Regular Article', tone: 'regular' },
+    5: { key: 'articles.type.5', fallback: 'Video Share', tone: 'video' },
+    6: { key: 'articles.type.6', fallback: 'Music Share', tone: 'music' },
+    7: { key: 'articles.type.7', fallback: 'Audio Share', tone: 'audio' },
+    8: { key: 'articles.type.8', fallback: 'Picture Share', tone: 'picture' },
+    10: { key: 'articles.type.10', fallback: 'Text Share', tone: 'text' },
+    11: { key: 'articles.type.11', fallback: 'Article Share', tone: 'share' },
+    17: { key: 'articles.type.17', fallback: 'Short Post', tone: 'short' },
+  };
+  const ITEM_SHOW_TYPE_ORDER = [0, 5, 6, 7, 8, 10, 11, 17];
 
   const setArticleSearchLoading = (isLoading) => {
     const loading = $('#article-search-loading');
@@ -89,6 +100,41 @@
     return date.toLocaleString('zh-CN');
   };
 
+  const escapeHtml = (value) =>
+    String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+  const getItemShowTypeMeta = (value) => {
+    const normalized = Number(value);
+    if (!Number.isFinite(normalized)) return null;
+    return ITEM_SHOW_TYPE_META[normalized] || null;
+  };
+
+  const getItemShowTypeLabel = (value) => {
+    const meta = getItemShowTypeMeta(value);
+    if (!meta) return t('articles.meta.unknown', 'Unknown');
+    return t(meta.key, meta.fallback);
+  };
+
+  const renderItemShowTypeBadge = (value, options = {}) => {
+    const meta = getItemShowTypeMeta(value);
+    if (!meta) return '';
+    const compactClass = options.compact ? ' item-show-type-badge-compact' : '';
+    return `<span class="item-show-type-badge item-show-type-${meta.tone}${compactClass}">${escapeHtml(getItemShowTypeLabel(value))}</span>`;
+  };
+
+  const renderTypeLegend = () => {
+    const container = $('#article-type-legend');
+    if (!container) return;
+    container.innerHTML = ITEM_SHOW_TYPE_ORDER
+      .map((itemShowType) => renderItemShowTypeBadge(itemShowType, { compact: true }))
+      .join('');
+  };
+
   const buildArticleHeader = (article) => {
     if (!article) return null;
     const header = document.createElement('div');
@@ -97,7 +143,16 @@
     const title = document.createElement('h1');
     title.className = 'article-preview-title';
     title.textContent = article.title || '';
-    header.appendChild(title);
+    const titleRow = document.createElement('div');
+    titleRow.className = 'article-preview-title-row';
+    titleRow.appendChild(title);
+    if (article.item_show_type !== null && article.item_show_type !== undefined) {
+      const typeWrap = document.createElement('div');
+      typeWrap.className = 'article-preview-type';
+      typeWrap.innerHTML = renderItemShowTypeBadge(article.item_show_type);
+      titleRow.appendChild(typeWrap);
+    }
+    header.appendChild(titleRow);
 
     const meta = document.createElement('div');
     meta.className = 'article-preview-meta';
@@ -143,6 +198,7 @@
     };
 
     addMetaItem(t('articles.meta.author', 'Author'), article.author || '');
+    addMetaItem(t('articles.meta.type', 'Type'), getItemShowTypeLabel(article.item_show_type));
     addMetaItem(
       t('articles.meta.publishedAt', 'Published'),
       formatDateTime(article.publish_at || article.created_at),
@@ -167,11 +223,14 @@
       card.innerHTML = `
         ${thumb ? `<img class="article-thumb" src="${thumb}" alt="" onerror="this.style.display='none'">` : '<div class="article-thumb placeholder"></div>'}
         <div class="article-info">
-          <div class="article-title">${article.title}</div>
+          <div class="article-title-row">
+            <div class="article-title">${escapeHtml(article.title || '')}</div>
+            ${renderItemShowTypeBadge(article.item_show_type, { compact: true })}
+          </div>
           <div class="article-meta">
             ${avatar ? `<img class="article-avatar" src="${avatar}" alt="" onerror="this.style.display='none'">` : ''}
-            <span>${article.account_nickname || ''}</span>
-            <span>${formatDate(article.publish_at)}</span>
+            <span>${escapeHtml(article.account_nickname || '')}</span>
+            <span>${escapeHtml(formatDate(article.publish_at))}</span>
           </div>
           <div class="article-digest"></div>
         </div>
@@ -206,6 +265,7 @@
     }
     const groupId = $('#article-group-filter')?.value;
     const accountBiz = $('#article-account-filter')?.value;
+    const itemShowType = $('#article-type-filter')?.value;
     const search = $('#article-search')?.value.trim();
     const sort = resolveArticleSort(Boolean(search));
     const shouldShowLoading = Boolean(search);
@@ -219,6 +279,7 @@
     const url = new URL('/api/article', window.location.origin);
     if (groupId) url.searchParams.set('group_id', groupId);
     if (accountBiz) url.searchParams.set('biz', accountBiz);
+    if (itemShowType) url.searchParams.set('item_show_type', itemShowType);
     if (search) url.searchParams.set('q', search);
     url.searchParams.set('sort', sort);
     url.searchParams.set('page', state.articlePage.toString());
@@ -388,6 +449,7 @@
   const updateArticleUrlParams = () => {
     const groupId = $('#article-group-filter')?.value;
     const accountBiz = $('#article-account-filter')?.value;
+    const itemShowType = $('#article-type-filter')?.value;
     const search = $('#article-search')?.value.trim();
     const hasSearch = Boolean(search);
     const sortFilter = $('#article-sort');
@@ -402,6 +464,8 @@
     else params.delete('group');
     if (accountBiz) params.set('account', accountBiz);
     else params.delete('account');
+    if (itemShowType) params.set('type', itemShowType);
+    else params.delete('type');
     if (search) params.set('q', search);
     else params.delete('q');
     if (currentSort !== defaultSort) params.set('sort', currentSort);
@@ -420,6 +484,7 @@
     const params = getArticleUrlParams();
     const groupId = params.get('group');
     const accountBiz = params.get('account');
+    const itemShowType = params.get('type');
     const search = params.get('q');
     const sort = params.get('sort');
 
@@ -427,6 +492,7 @@
     const accountFilter = $('#article-account-filter');
     const searchInput = $('#article-search');
     const sortFilter = $('#article-sort');
+    const typeFilter = $('#article-type-filter');
 
     await populateArticleGroupFilter();
 
@@ -443,6 +509,12 @@
       const optionExists = Array.from(accountFilter.options).some(opt => opt.value === accountBiz);
       if (optionExists) {
         accountFilter.value = accountBiz;
+      }
+    }
+    if (itemShowType && typeFilter) {
+      const optionExists = Array.from(typeFilter.options).some(opt => opt.value === itemShowType);
+      if (optionExists) {
+        typeFilter.value = itemShowType;
       }
     }
 
@@ -486,12 +558,7 @@
   };
 
   const renderInline = (text) => {
-    const escaped = String(text || '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
+    const escaped = escapeHtml(text || '');
 
     return escaped
       .replace(/\\\|/g, '|')
@@ -910,6 +977,10 @@
       loadArticles(true);
       updateArticleUrlParams();
     });
+    $('#article-type-filter').addEventListener('change', () => {
+      loadArticles(true);
+      updateArticleUrlParams();
+    });
     $('#article-sort').addEventListener('change', () => {
       updateArticleUrlParams();
       loadArticles(true);
@@ -1006,6 +1077,7 @@
   };
 
   const init = async () => {
+    renderTypeLegend();
     initReaderControls();
     initArticleLayout();
     bindEvents();

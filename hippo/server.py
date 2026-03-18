@@ -86,6 +86,21 @@ _SYNC_MODES = {'incremental', 'recent', 'full', 'range'}
 ARTICLE_SORT_PUBLISH_AT_DESC = 'publish_at_desc'
 ARTICLE_SORT_RELEVANCE_DESC = 'relevance_desc'
 _ARTICLE_SORT_VALUES = {ARTICLE_SORT_PUBLISH_AT_DESC, ARTICLE_SORT_RELEVANCE_DESC}
+_ITEM_SHOW_TYPE_VALUES = {0, 5, 6, 7, 8, 10, 11, 17}
+
+
+def _normalize_item_show_type(value: Any) -> int | None:
+    if value in (None, ''):
+        return None
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ApiError('Invalid item_show_type', status=400) from exc
+    if normalized not in _ITEM_SHOW_TYPE_VALUES:
+        raise ApiError('Invalid item_show_type', status=400)
+    return normalized
+
+
 def _normalize_sync_mode(value: Any) -> str | None:
     if value in (None, ""):
         return None
@@ -600,6 +615,7 @@ def _build_article_query(
     storage: PostgresStorage,
     group_id: int | None,
     biz: str | None,
+    item_show_type: int | None,
     query: str | None,
     since_ts: int | None,
     until_ts: int | None,
@@ -626,6 +642,9 @@ def _build_article_query(
     if biz:
         where.append("a.biz = %s")
         params.append(biz)
+    if item_show_type is not None:
+        where.append('a.item_show_type = %s')
+        params.append(item_show_type)
     if query_tsquery_sql:
         where.append(f"a.search_vector @@ {query_tsquery_sql}")
         params.extend(query_tsquery_params)
@@ -673,6 +692,59 @@ def _build_article_query(
     return query_sql, params
 
 
+def _count_articles(
+    *,
+    storage: PostgresStorage,
+    group_id: int | None,
+    biz: str | None,
+    item_show_type: int | None,
+    query: str | None,
+    since_ts: int | None,
+    until_ts: int | None,
+    article_id: str | None = None,
+) -> int:
+    where: list[str] = []
+    params: list[Any] = []
+    query_text = query.strip() if query else ''
+    query_tsquery_sql, query_tsquery_params = _build_article_search_tsquery(query_text)
+
+    if article_id:
+        where.append('a.article_id = %s')
+        params.append(article_id)
+    if group_id is not None:
+        where.append('acc.group_id = %s')
+        params.append(group_id)
+    if biz:
+        where.append('a.biz = %s')
+        params.append(biz)
+    if item_show_type is not None:
+        where.append('a.item_show_type = %s')
+        params.append(item_show_type)
+    if query_tsquery_sql:
+        where.append(f'a.search_vector @@ {query_tsquery_sql}')
+        params.extend(query_tsquery_params)
+    if since_ts is not None:
+        where.append('a.publish_at >= %s')
+        params.append(since_ts)
+    if until_ts is not None:
+        where.append('a.publish_at <= %s')
+        params.append(until_ts)
+
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ''
+    row = fetchone_row(
+        storage,
+        (
+            'SELECT COUNT(*) AS total'
+            ' FROM articles a'
+            ' JOIN accounts acc ON acc.biz = a.biz'
+            f' {where_sql}'
+        ),
+        params,
+        normalize=_normalize_record,
+    )
+    return int(row.get('total') or 0) if row else 0
+
+
 def _get_cached_article_total(
     storage: PostgresStorage,
     *,
@@ -713,6 +785,7 @@ def _list_articles(
     *,
     group_id: int | None,
     biz: str | None,
+    item_show_type: int | None,
     query: str | None,
     since_ts: int | None,
     until_ts: int | None,
@@ -726,6 +799,7 @@ def _list_articles(
         storage=storage,
         group_id=group_id,
         biz=biz,
+        item_show_type=item_show_type,
         query=query,
         since_ts=since_ts,
         until_ts=until_ts,
@@ -737,7 +811,23 @@ def _list_articles(
     rows = fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
     for row in rows:
         row["account_avatar_url"] = f"/api/account/{row['biz']}/avatar"
-    total = _get_cached_article_total(storage, group_id=group_id, biz=biz)
+    has_active_filters = any(
+        value is not None and value != ''
+        for value in (article_id, item_show_type, query, since_ts, until_ts)
+    )
+    if has_active_filters:
+        total = _count_articles(
+            storage=storage,
+            group_id=group_id,
+            biz=biz,
+            item_show_type=item_show_type,
+            query=query,
+            since_ts=since_ts,
+            until_ts=until_ts,
+            article_id=article_id,
+        )
+    else:
+        total = _get_cached_article_total(storage, group_id=group_id, biz=biz)
     return {'articles': rows, 'page': page, 'page_size': page_size, 'total': total}
 
 
@@ -985,6 +1075,7 @@ def _list_feed(
         storage=storage,
         group_id=group_id,
         biz=biz,
+        item_show_type=None,
         query=query_text or None,
         since_ts=since_ts,
         until_ts=until_ts,
@@ -1506,6 +1597,7 @@ def get_account_avatar(
 def list_articles(
     group_id: int | None = None,
     biz: str | None = None,
+    item_show_type: int | None = None,
     article_id: str | None = None,
     q: str | None = None,
     sort: str | None = None,
@@ -1537,10 +1629,12 @@ def list_articles(
     until_ts = _parse_date(until, end_of_day=True)
     query_text = (q or '').strip()
     sort_mode = _normalize_article_sort(sort, has_query=bool(query_text))
+    normalized_item_show_type = _normalize_item_show_type(item_show_type)
     return _list_articles(
         storage,
         group_id=group_id,
         biz=biz or None,
+        item_show_type=normalized_item_show_type,
         query=query_text or None,
         since_ts=since_ts,
         until_ts=until_ts,

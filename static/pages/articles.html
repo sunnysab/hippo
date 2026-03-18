@@ -2,22 +2,36 @@
   <div class="article-layout">
     <div class="panel article-list">
       <div class="panel-header" style="display: block;">
-        <div style="width: 100%; max-width: 80%; min-width: 200px; margin: 0 auto;">
-          <div class="toolbar" style="display: grid; grid-template-columns: 4fr 6fr; gap: 8px; margin-bottom: 8px;">
-            <select id="article-group-filter" style="width: 100%; min-width: 0;"></select>
-            <select id="article-account-filter" style="width: 100%; min-width: 0;"></select>
+        <div class="article-filter-stack">
+          <div class="toolbar article-filter-grid article-filter-grid-top">
+            <select id="article-group-filter"></select>
+            <select id="article-account-filter"></select>
           </div>
-          <div class="toolbar" style="display: grid; grid-template-columns: 7fr 3fr; gap: 8px;">
-            <div class="input" style="width: 100%;">
-              <input type="search" id="article-search" placeholder="Search" data-i18n-placeholder="filters.search" style="width: 100%; border-color: #d1d5db;">
+          <div class="toolbar article-filter-grid article-filter-grid-middle">
+            <select id="article-type-filter">
+              <option value="" data-i18n="filters.allTypes">全部类型</option>
+              <option value="0" data-i18n="articles.type.0">普通图文</option>
+              <option value="5" data-i18n="articles.type.5">视频分享</option>
+              <option value="6" data-i18n="articles.type.6">音乐分享</option>
+              <option value="7" data-i18n="articles.type.7">音频分享</option>
+              <option value="8" data-i18n="articles.type.8">图片分享</option>
+              <option value="10" data-i18n="articles.type.10">文本分享</option>
+              <option value="11" data-i18n="articles.type.11">文章分享</option>
+              <option value="17" data-i18n="articles.type.17">短文</option>
+            </select>
+            <select id="article-sort">
+              <option value="publish_at_desc" data-i18n="filters.sortPublishedDesc">发布时间（新到旧）</option>
+              <option value="relevance_desc" data-i18n="filters.sortRelevanceDesc">相关度（高到低）</option>
+            </select>
+          </div>
+          <div class="toolbar article-filter-grid article-filter-grid-bottom">
+            <div class="input article-search-input">
+              <input type="search" id="article-search" placeholder="Search" data-i18n-placeholder="filters.search">
               <span class="icon">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6 6 0 1 0 14 15.5l.27.28v.79L20 21.5 21.5 20l-6-6zm-5.5 0a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>
               </span>
             </div>
-            <select id="article-sort" style="width: 100%; min-width: 0;">
-              <option value="publish_at_desc" data-i18n="filters.sortPublishedDesc">发布时间（新到旧）</option>
-              <option value="relevance_desc" data-i18n="filters.sortRelevanceDesc">相关度（高到低）</option>
-            </select>
+            <div class="article-type-legend" id="article-type-legend" aria-hidden="true"></div>
           </div>
         </div>
       </div>
