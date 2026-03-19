@@ -492,6 +492,21 @@
     gap: 10px;
   }
 
+  .groups-sidebar-header .btn,
+  .groups-main-header .btn {
+    width: 100%;
+  }
+
+  .groups-main-header .toolbar,
+  .groups-sidebar-header,
+  .groups-main-header {
+    width: 100%;
+  }
+
+  .group-actions > * {
+    flex: 1 1 100%;
+  }
+
   .group-actions .input {
     min-width: 100%;
   }
@@ -499,6 +514,10 @@
   .group-sync-toolbar,
   .accounts-toolbar {
     padding: 10px;
+  }
+
+  .group-sync-toolbar > * {
+    flex: 1 1 100%;
   }
 
   .card-grid {
@@ -514,10 +533,14 @@
   }
 
   .batch-actions > * {
-    flex: 1 1 140px;
+    flex: 1 1 100%;
   }
 
   .batch-divider {
     display: none;
+  }
+
+  #btn-account-refresh {
+    width: 100%;
   }
 }

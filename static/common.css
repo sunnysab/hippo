@@ -252,6 +252,7 @@ body {
   flex: 1;
   min-height: 0;
   padding: 14px 2px 18px;
+  overflow: hidden;
 }
 
 .banner {
@@ -528,8 +529,50 @@ body {
     border-radius: 12px;
   }
 
+  .brand,
+  .brand-text {
+    width: 100%;
+  }
+
+  .brand-subtitle {
+    white-space: normal;
+  }
+
+  .tabs {
+    width: 100%;
+    gap: 4px;
+  }
+
+  .tab {
+    flex: 1 1 0;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .top-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .top-meta {
+    width: 100%;
+    min-width: 0;
+    justify-content: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #btn-refresh {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
   .content {
     padding: 10px 0 14px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .panel {

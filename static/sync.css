@@ -318,6 +318,25 @@
     width: 100%;
   }
 
+  .sync-login .toolbar,
+  .sync-settings .toolbar,
+  .sync-email .toolbar {
+    width: 100%;
+  }
+
+  .sync-login .toolbar .btn,
+  .sync-settings .toolbar .btn,
+  .sync-email .toolbar .btn {
+    flex: 1 1 calc(50% - 6px);
+    min-width: 0;
+  }
+
+  .sync-login .toolbar .btn:only-child,
+  .sync-settings .toolbar .btn:only-child,
+  .sync-email .toolbar .btn:only-child {
+    flex-basis: 100%;
+  }
+
   .sync-progress-item,
   .sync-active-summary,
   .sync-progress-title-row,
@@ -329,5 +348,13 @@
 
   .sync-summary-side {
     width: 100%;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .login-qr {
+    width: min(180px, 100%);
   }
 }

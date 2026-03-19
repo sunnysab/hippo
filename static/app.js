@@ -15,6 +15,7 @@ const state = {
   syncPollTimer: null,
   loginStatus: null,
   loginPollTimer: null,
+  chromeTimer: null,
   accountTimer: null,
   searchTimer: null,
   articleTimer: null,
@@ -314,10 +315,39 @@ const refreshCurrent = async () => {
   }
 };
 
+const refreshChromeMeta = async () => {
+  const syncModule = window.HippoSync;
+  if (!syncModule) return;
+  const tasks = [];
+  if (typeof syncModule.loadLoginStatus === 'function') {
+    tasks.push(syncModule.loadLoginStatus().catch((err) => {
+      console.warn('Failed to refresh login meta', err);
+    }));
+  }
+  if (typeof syncModule.loadSyncStatus === 'function') {
+    tasks.push(syncModule.loadSyncStatus().catch((err) => {
+      console.warn('Failed to refresh sync meta', err);
+    }));
+  }
+  if (tasks.length) {
+    await Promise.all(tasks);
+  }
+};
+
+const startChromeMetaPoll = () => {
+  if (state.chromeTimer) {
+    clearInterval(state.chromeTimer);
+  }
+  state.chromeTimer = setInterval(() => {
+    void refreshChromeMeta();
+  }, 60000);
+};
+
 const bindGlobalEvents = () => {
   const refreshBtn = $('#btn-refresh');
   if (refreshBtn) {
     refreshBtn.addEventListener('click', async () => {
+      await refreshChromeMeta();
       await refreshCurrent();
     });
   }
@@ -344,6 +374,8 @@ const init = async () => {
     void handleRoute(false);
   });
   await loadI18n();
+  await refreshChromeMeta();
+  startChromeMetaPoll();
   await handleRoute(true);
   bindGlobalEvents();
 };

@@ -532,6 +532,16 @@
 }
 
 @media (max-width: 720px) {
+  .article-sidebar-header .btn,
+  .article-preview-topbar .btn {
+    width: 100%;
+  }
+
+  .article-preview-topbar,
+  .article-sidebar-header {
+    gap: 10px;
+  }
+
   .article-filter-shell,
   .article-preview-body {
     padding: 12px;
@@ -553,7 +563,8 @@
 
   .article-toolbar-btn,
   .article-reset-btn {
-    flex: 1 1 160px;
+    flex: 1 1 calc(50% - 6px);
+    min-width: 0;
   }
 
   .article-preview-title-row,
@@ -566,5 +577,10 @@
     position: static;
     width: 100%;
     margin-bottom: 16px;
+  }
+
+  .article-filter-summary strong {
+    width: 100%;
+    margin-right: 0;
   }
 }
