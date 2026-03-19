@@ -160,6 +160,22 @@
     return label === key ? reason : label;
   };
 
+  const getSyncTone = (status) => {
+    if (status === 'success' || status === 'completed') return 'success';
+    if (status === 'failed' || status === 'login_required' || status === 'error' || status === 'stopped') return 'danger';
+    if (status === 'running') return 'info';
+    if (status === 'pending') return 'warning';
+    if (status === 'skipped') return 'muted';
+    return 'neutral';
+  };
+
+  const getLoginToneStatus = (status) => {
+    if (status === 'success') return 'completed';
+    if (status === 'error') return 'failed';
+    if (loginActionStatuses.includes(status)) return 'running';
+    return 'idle';
+  };
+
   const renderActiveTask = () => {
     const container = $('#sync-active-task');
     if (!container) return;
@@ -182,8 +198,13 @@
       ? Math.max(1, Math.floor((Date.now() - new Date(startedAt).getTime()) / 60000))
       : 0;
     const progressBadge = activeTask.accounts_total > 0 ? `${activeTask.accounts_done || 0}/${activeTask.accounts_total}` : '';
+    const progressPercent = activeTask.accounts_total > 0
+      ? Math.max(4, Math.round(((activeTask.accounts_done || 0) / activeTask.accounts_total) * 100))
+      : 0;
     const stage = getActiveTaskStage(activeTask);
     const detail = getActiveTaskDetail(activeTask);
+    const statusLabel = t(`sync.status.${activeTask.status || 'running'}`, activeTask.status || 'running');
+    const toneClass = `sync-tone-${getSyncTone(activeTask.status)}`;
     const accounts = Array.isArray(activeTask.accounts) ? [...activeTask.accounts] : [];
     accounts.sort((left, right) => {
       const currentBiz = activeTask.current_account?.biz || '';
@@ -199,6 +220,7 @@
     const accountRows = visibleAccounts
       .map((account) => {
         const statusLabel = t(`sync.status.${account.status || 'pending'}`, account.status || 'pending');
+        const accountToneClass = `sync-tone-${getSyncTone(account.status)}`;
         const articleBadge =
           account.article_total !== null && account.article_total !== undefined
             ? `${account.article_current || 0}/${account.article_total}`
@@ -225,11 +247,11 @@
           ? t('sync.accountLastArticle', 'Latest article: {title}').replace('{title}', account.last_article.title)
           : '';
         return `
-          <div class="sync-progress-item ${account.status === 'running' ? 'is-running' : ''}">
+          <div class="sync-progress-item ${account.status === 'running' ? 'is-running' : ''} ${accountToneClass}">
             <div class="sync-progress-copy">
               <div class="sync-progress-title-row">
                 <div class="account-name">${escapeHtml(account.nickname || account.biz || '-')}</div>
-                <span class="sync-progress-status">${escapeHtml(statusLabel)}</span>
+                <span class="sync-progress-status sync-status-badge ${accountToneClass}">${escapeHtml(statusLabel)}</span>
               </div>
               ${meta.length ? `<div class="account-sub">${escapeHtml(meta.join(' · '))}</div>` : ''}
               ${lastArticleTitle ? `<div class="account-sub">${escapeHtml(lastArticleTitle)}</div>` : ''}
@@ -240,24 +262,35 @@
       })
       .join('');
 
+    const summaryPills = [stage, detail].filter(Boolean);
+
     container.innerHTML = `
       <div class="sync-active-summary">
-        <div>
-          <div class="account-name">${escapeHtml(
-            t(isPending ? 'sync.pendingTitle' : 'sync.runningTitle', isPending ? 'Queued {name}' : 'Syncing {name}')
-              .replace('{name}', accountName)
-          )}</div>
+        <div class="sync-summary-copy">
+          <div class="sync-summary-top">
+            <div class="account-name">${escapeHtml(
+              t(isPending ? 'sync.pendingTitle' : 'sync.runningTitle', isPending ? 'Queued {name}' : 'Syncing {name}')
+                .replace('{name}', accountName)
+            )}</div>
+            <span class="sync-status-badge ${toneClass}">${escapeHtml(statusLabel)}</span>
+          </div>
           <div class="account-sub">${escapeHtml(
             t(
               isPending ? 'sync.pendingSince' : 'sync.runningSince',
               isPending ? 'Queued for {n} minutes' : 'Started {n} minutes ago'
             ).replace('{n}', minutes)
           )}</div>
-          ${stage ? `<div class="account-sub">${escapeHtml(stage)}</div>` : ''}
-          ${detail ? `<div class="account-sub">${escapeHtml(detail)}</div>` : ''}
+          ${
+            summaryPills.length
+              ? `<div class="sync-summary-pills">${summaryPills.map((item) => `<span class="sync-inline-pill">${escapeHtml(item)}</span>`).join('')}</div>`
+              : ''
+          }
         </div>
-        ${progressBadge ? `<span class="badge">${escapeHtml(progressBadge)}</span>` : ''}
+        <div class="sync-summary-side">
+          ${progressBadge ? `<span class="badge">${escapeHtml(progressBadge)}</span>` : ''}
+        </div>
       </div>
+      ${progressBadge ? `<div class="sync-progress-track" aria-hidden="true"><span style="width: ${progressPercent}%"></span></div>` : ''}
       ${accountRows ? `<div class="sync-progress-list">${accountRows}</div>` : ''}
       ${
         hiddenCount
@@ -282,7 +315,8 @@
     }
     if (activeTask) {
       const item = document.createElement('div');
-      item.className = 'list-item is-running';
+      const activeToneClass = `sync-tone-${getSyncTone(activeTask.status)}`;
+      item.className = `list-item sync-history-item is-running ${activeToneClass}`;
       const isPending = activeTask.status === 'pending';
       const currentAccount = activeTask.current_account || {};
       const accountName =
@@ -301,9 +335,13 @@
           : '';
       const stage = getActiveTaskStage(activeTask);
       const detail = getActiveTaskDetail(activeTask);
+      const statusLabel = t(`sync.status.${activeTask.status || 'running'}`, activeTask.status || 'running');
       item.innerHTML = `
-        <div>
-          <div class="account-name">${escapeHtml(t(isPending ? 'sync.pendingTitle' : 'sync.runningTitle', isPending ? 'Queued {name}' : 'Syncing {name}').replace('{name}', accountName))}</div>
+        <div class="sync-history-copy">
+          <div class="sync-history-top">
+            <div class="account-name">${escapeHtml(t(isPending ? 'sync.pendingTitle' : 'sync.runningTitle', isPending ? 'Queued {name}' : 'Syncing {name}').replace('{name}', accountName))}</div>
+            <span class="sync-status-badge ${activeToneClass}">${escapeHtml(statusLabel)}</span>
+          </div>
           <div class="account-sub">${escapeHtml(t(isPending ? 'sync.pendingSince' : 'sync.runningSince', isPending ? 'Queued for {n} minutes' : 'Started {n} minutes ago').replace('{n}', minutes))}</div>
           ${stage ? `<div class="account-sub">${escapeHtml(stage)}</div>` : ''}
           ${detail ? `<div class="account-sub">${escapeHtml(detail)}</div>` : ''}
@@ -315,14 +353,19 @@
     const paged = history.slice(0, HISTORY_PAGE_SIZE);
     paged.forEach((entry) => {
       const item = document.createElement('div');
-      item.className = 'list-item';
+      const toneClass = `sync-tone-${getSyncTone(entry.status || 'unknown')}`;
+      item.className = `list-item sync-history-item ${toneClass}`;
       const status = entry.status || 'unknown';
       const saved = entry.saved || 0;
       const started = entry.started_at ? new Date(entry.started_at).toLocaleString('zh-CN') : '-';
       item.innerHTML = `
-        <div>
-          <div class="account-name">${escapeHtml(t(`sync.status.${status}`, status))}</div>
+        <div class="sync-history-copy">
+          <div class="sync-history-top">
+            <div class="account-name">${escapeHtml(t(`sync.status.${status}`, status))}</div>
+            <span class="sync-status-badge ${toneClass}">${escapeHtml(t(`sync.status.${status}`, status))}</span>
+          </div>
           <div class="account-sub">${escapeHtml(started)}</div>
+          ${entry.error ? `<div class="account-sub">${escapeHtml(entry.error)}</div>` : ''}
         </div>
         <span class="badge">+${escapeHtml(saved)}</span>
       `;
@@ -554,8 +597,16 @@
     state.loginStatus = payload;
     const status = payload.status || 'idle';
     const statusText = t(`login.status.${status}`, payload.message || status);
-    $('#login-status').textContent = statusText;
+    const loginStatus = $('#login-status');
+    if (loginStatus) {
+      loginStatus.textContent = statusText;
+      loginStatus.className = `login-status sync-status-badge sync-tone-${getSyncTone(getLoginToneStatus(status))}`;
+    }
     const qr = $('#login-qr');
+    const loginCard = $('#view-sync .login-card');
+    if (loginCard) {
+      loginCard.dataset.status = status;
+    }
     updateLoginActions(status);
     if (payload.qrcode_url) {
       qr.src = `${payload.qrcode_url}?ts=${Date.now()}`;

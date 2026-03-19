@@ -1,8 +1,9 @@
 <section id="view-groups" class="view is-active">
   <div class="groups-layout">
-    <div class="panel">
-      <div class="panel-header">
+    <div class="panel groups-sidebar">
+      <div class="panel-header groups-sidebar-header">
         <div>
+          <div class="section-kicker" data-i18n="groups.collectionKicker">Collections</div>
           <h2 data-i18n="groups.title">Groups</h2>
           <p class="muted" data-i18n="groups.subtitle">Organize accounts into focused collections.</p>
         </div>
@@ -10,13 +11,15 @@
           <span class="icon">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v14h-2zM5 11h14v2H5z"/></svg>
           </span>
+          <span data-i18n="groups.create">New Group</span>
         </button>
       </div>
-      <div class="list" id="group-list"></div>
+      <div class="list group-list" id="group-list"></div>
     </div>
-    <div class="panel">
-      <div class="panel-header">
+    <div class="panel groups-main">
+      <div class="panel-header groups-main-header">
         <div>
+          <div class="section-kicker" data-i18n="groups.workspaceKicker">Workspace</div>
           <div class="group-headline">
             <button class="group-name" id="group-current-name" type="button" data-i18n="groups.currentTitle">Group</button>
             <button class="group-id" id="group-current-id" type="button" data-i18n="groups.currentId">ID</button>
