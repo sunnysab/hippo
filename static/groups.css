@@ -493,7 +493,7 @@
   }
 
   .groups-sidebar .group-list {
-    max-height: 28vh;
+    max-height: none;
   }
 
   .groups-sidebar-header .btn,
@@ -505,6 +505,10 @@
   .groups-sidebar-header,
   .groups-main-header {
     width: 100%;
+  }
+
+  .groups-main {
+    scroll-margin-top: 12px;
   }
 
   .group-actions > * {

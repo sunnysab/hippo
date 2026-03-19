@@ -531,7 +531,8 @@ body {
   }
 
   .topbar {
-    top: 8px;
+    position: static;
+    top: auto;
     flex-direction: column;
     align-items: flex-start;
     border-radius: 12px;
@@ -560,7 +561,7 @@ body {
   .top-actions {
     width: 100%;
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
     gap: 6px;
   }
 
@@ -573,7 +574,6 @@ body {
   }
 
   #btn-refresh {
-    grid-column: 1 / -1;
     width: 100%;
   }
 

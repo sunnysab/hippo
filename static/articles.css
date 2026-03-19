@@ -537,6 +537,11 @@
     overflow: visible;
   }
 
+  .article-list,
+  .article-preview {
+    scroll-margin-top: 12px;
+  }
+
   .article-list-scroll {
     max-height: none;
     overflow: visible;
@@ -575,6 +580,10 @@
   .article-reset-btn {
     flex: 1 1 calc(50% - 6px);
     min-width: 0;
+  }
+
+  .article-preview-toolbar .icon-btn {
+    flex: 0 0 34px;
   }
 
   .article-preview-title-row,
