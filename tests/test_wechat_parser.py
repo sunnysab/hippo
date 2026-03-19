@@ -153,6 +153,40 @@ class WechatParserSamplesTest(unittest.TestCase):
         self.assertTrue(any(block.get('type') == 'paragraph' for block in blocks))
         self.assertIn('Source: https://example.com/short-post', parsed.markdown)
 
+    def test_parse_markdown_blocks_collapses_linked_image_split_by_blank_lines(self) -> None:
+        markdown = '\n'.join(
+            [
+                'Paragraph before',
+                '',
+                '[',
+                '',
+                '![](https://img.test/x.png)',
+                '',
+                '](https://mp.weixin.qq.com/s/demo)',
+                '',
+                'Paragraph after',
+            ]
+        )
+
+        _title, _cover_local, blocks, body_markdown = _parse_markdown_blocks(markdown)
+
+        self.assertEqual(
+            blocks,
+            [
+                {'type': 'paragraph', 'text': 'Paragraph before'},
+                {
+                    'type': 'image',
+                    'alt': '',
+                    'local_path': 'https://img.test/x.png',
+                    'href': 'https://mp.weixin.qq.com/s/demo',
+                },
+                {'type': 'paragraph', 'text': 'Paragraph after'},
+            ],
+        )
+        self.assertIn('[![](https://img.test/x.png)](https://mp.weixin.qq.com/s/demo)', body_markdown)
+        self.assertNotIn('\n[\n', body_markdown)
+        self.assertNotIn('](https://mp.weixin.qq.com/s/demo)', [block.get('text') for block in blocks if block.get('type') == 'paragraph'])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -106,6 +106,7 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
     image_pattern = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
     heading_pattern = re.compile(r"^(#{1,6})\s+(.*)$")
     link_pattern = re.compile(r"^[*-]\s+(https?://\S+)$")
+    linked_image_closing_pattern = re.compile(r"^\]\(([^)]+)\)$")
 
     def flush_paragraph() -> None:
         nonlocal paragraph
@@ -115,13 +116,45 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
                 blocks.append({"type": "paragraph", "text": text})
             paragraph = []
 
-    for line in lines:
+    index = 0
+    while index < len(lines):
+        line = lines[index]
         stripped = line.strip()
         if not stripped:
             flush_paragraph()
             if body_lines and body_lines[-1] != "":
                 body_lines.append("")
+            index += 1
             continue
+        if stripped == "[":
+            image_index = index + 1
+            while image_index < len(lines) and not lines[image_index].strip():
+                image_index += 1
+            if image_index < len(lines):
+                image_match = image_pattern.fullmatch(lines[image_index].strip())
+                if image_match:
+                    closing_index = image_index + 1
+                    while closing_index < len(lines) and not lines[closing_index].strip():
+                        closing_index += 1
+                    if closing_index < len(lines):
+                        closing_match = linked_image_closing_pattern.fullmatch(lines[closing_index].strip())
+                    else:
+                        closing_match = None
+                    if closing_match:
+                        flush_paragraph()
+                        alt, url = image_match.groups()
+                        href = closing_match.group(1).strip()
+                        normalized_markdown = f"[![{alt}]({url})]({href})"
+                        if cover_local is None and not blocks and not body_lines and title is None:
+                            cover_local = url
+                        else:
+                            block = {"type": "image", "alt": alt, "local_path": url}
+                            if href:
+                                block["href"] = href
+                            blocks.append(block)
+                            body_lines.append(normalized_markdown)
+                        index = closing_index + 1
+                        continue
         image_match = image_pattern.fullmatch(stripped)
         if image_match:
             flush_paragraph()
@@ -131,6 +164,7 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
             else:
                 blocks.append({"type": "image", "alt": alt, "local_path": url})
                 body_lines.append(f"![{alt}]({url})")
+            index += 1
             continue
         heading_match = heading_pattern.match(stripped)
         if heading_match:
@@ -142,6 +176,7 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
             else:
                 blocks.append({"type": "heading", "level": level, "text": text})
                 body_lines.append(stripped)
+            index += 1
             continue
         link_match = link_pattern.match(stripped)
         if link_match:
@@ -149,12 +184,38 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
             url = link_match.group(1)
             blocks.append({"type": "link", "text": url, "href": url})
             body_lines.append(stripped)
+            index += 1
             continue
         paragraph.append(stripped)
         body_lines.append(stripped)
+        index += 1
     flush_paragraph()
     body_markdown = "\n".join(body_lines).strip()
     return title, cover_local, blocks, body_markdown
+
+
+def _attach_image_block_metadata(
+    blocks: list[dict],
+    *,
+    resolve_url,
+    image_id_by_url: dict[str, int] | None = None,
+) -> list[dict]:
+    updated_blocks: list[dict] = []
+    for block in blocks:
+        if block.get("type") != "image":
+            updated_blocks.append(block)
+            continue
+        local_path = block.get("local_path")
+        orig_url = resolve_url(str(local_path)) if local_path else None
+        updated = dict(block)
+        updated.pop("local_path", None)
+        updated["orig_url"] = orig_url
+        if image_id_by_url and orig_url:
+            image_id = image_id_by_url.get(orig_url)
+            if image_id is not None:
+                updated["image_id"] = image_id
+        updated_blocks.append(updated)
+    return updated_blocks
 
 
 class ArticleDownloader(AbstractAsyncContextManager):
@@ -619,17 +680,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
             position += 1
 
         url_token = _extract_url_token(article.link)
-        blocks_with_urls: list[dict] = []
-        for block in blocks:
-            if block.get("type") == "image":
-                local_path = block.get("local_path")
-                orig_url = resolve_url(str(local_path)) if local_path else None
-                updated = dict(block)
-                updated.pop("local_path", None)
-                updated["orig_url"] = orig_url
-                blocks_with_urls.append(updated)
-            else:
-                blocks_with_urls.append(block)
+        blocks_with_urls = _attach_image_block_metadata(blocks, resolve_url=resolve_url)
 
         if hasattr(self.storage, 'transaction'):
             with self.storage.transaction():
