@@ -518,8 +518,16 @@ body {
 }
 
 @media (max-width: 720px) {
+  html,
+  body {
+    height: auto;
+    min-height: 100%;
+    overflow: auto;
+  }
+
   .app {
     padding: 8px 8px 0;
+    min-height: 100dvh;
   }
 
   .topbar {
@@ -571,7 +579,7 @@ body {
 
   .content {
     padding: 10px 0 14px;
-    overflow-y: auto;
+    overflow: visible;
     -webkit-overflow-scrolling: touch;
   }
 
@@ -581,6 +589,12 @@ body {
 
   .panel-header {
     flex-direction: column;
+  }
+
+  .view,
+  .view.is-active {
+    height: auto;
+    min-height: 0;
   }
 }
 

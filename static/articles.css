@@ -534,10 +534,12 @@
 @media (max-width: 720px) {
   .article-layout {
     gap: 10px;
+    overflow: visible;
   }
 
   .article-list-scroll {
-    max-height: 34vh;
+    max-height: none;
+    overflow: visible;
   }
 
   .article-sidebar-header .btn,
@@ -594,5 +596,11 @@
 
   .article-preview-body {
     min-height: 0;
+    overflow: visible;
+  }
+
+  .article-list,
+  .article-preview {
+    overflow: visible;
   }
 }
