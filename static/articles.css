@@ -532,6 +532,14 @@
 }
 
 @media (max-width: 720px) {
+  .article-layout {
+    gap: 10px;
+  }
+
+  .article-list-scroll {
+    max-height: 34vh;
+  }
+
   .article-sidebar-header .btn,
   .article-preview-topbar .btn {
     width: 100%;
@@ -576,11 +584,15 @@
   .reader-controls {
     position: static;
     width: 100%;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
   }
 
   .article-filter-summary strong {
     width: 100%;
     margin-right: 0;
+  }
+
+  .article-preview-body {
+    min-height: 0;
   }
 }

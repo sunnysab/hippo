@@ -17,6 +17,8 @@
     hasMore: true,
   };
 
+  const isNarrowViewport = () => window.matchMedia('(max-width: 720px)').matches;
+
   const setAccountSearchLoading = (isLoading) => {
     const loading = $('#account-search-loading');
     if (!loading) return;
@@ -143,6 +145,15 @@
     modal.classList.add('is-hidden');
   };
 
+  const focusGroupWorkspaceOnMobile = () => {
+    if (!isNarrowViewport()) return;
+    const panel = $('.groups-main');
+    if (!panel) return;
+    requestAnimationFrame(() => {
+      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+
   const renderGroupList = () => {
     const list = $('#group-list');
     list.innerHTML = '';
@@ -168,6 +179,7 @@
         renderGroupHeader();
         renderGroupSelects();
         await loadAccounts();
+        focusGroupWorkspaceOnMobile();
       });
       item.addEventListener('contextmenu', (event) => {
         event.preventDefault();

@@ -492,6 +492,10 @@
     gap: 10px;
   }
 
+  .groups-sidebar .group-list {
+    max-height: 28vh;
+  }
+
   .groups-sidebar-header .btn,
   .groups-main-header .btn {
     width: 100%;
@@ -518,6 +522,15 @@
 
   .group-sync-toolbar > * {
     flex: 1 1 100%;
+  }
+
+  .search-item {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .search-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
   }
 
   .card-grid {

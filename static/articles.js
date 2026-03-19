@@ -16,6 +16,7 @@
     17: { key: 'articles.type.17', fallback: 'Short Post', tone: 'short' },
   };
   const ITEM_SHOW_TYPE_ORDER = [0, 5, 6, 7, 8, 10, 11, 17];
+  const isNarrowViewport = () => window.matchMedia('(max-width: 720px)').matches;
 
   const setArticleSearchLoading = (isLoading) => {
     const loading = $('#article-search-loading');
@@ -856,6 +857,15 @@
     container.scrollTop = 0;
   };
 
+  const focusArticlePreviewOnMobile = () => {
+    if (!isNarrowViewport()) return;
+    const panel = $('.article-preview');
+    if (!panel) return;
+    requestAnimationFrame(() => {
+      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+
   const selectArticle = async (id) => {
     state.selectedArticleId = id;
     hideAllArticleContextMenus();
@@ -865,6 +875,7 @@
     renderArticleContent(payload);
     resetArticlePreviewScroll();
     updatePreviewToolbarState();
+    focusArticlePreviewOnMobile();
   };
 
   const blockArticleImage = async (imageId) => {
