@@ -1,7 +1,7 @@
 .groups-layout {
   display: grid;
   grid-template-columns: minmax(300px, 0.34fr) minmax(0, 1fr);
-  gap: 18px;
+  gap: 12px;
   height: calc(100vh - 154px);
   align-items: stretch;
   overflow: hidden;
@@ -16,7 +16,7 @@
 
 .groups-sidebar-header,
 .groups-main-header {
-  margin-bottom: 18px;
+  margin-bottom: 12px;
 }
 
 .group-list,
@@ -28,15 +28,15 @@
 
 .group-list-item {
   position: relative;
-  padding: 14px 16px;
-  border-radius: 18px;
+  padding: 10px 12px;
+  border-radius: 12px;
 }
 
 .group-list-item::before {
   content: '';
   position: absolute;
-  inset: 12px auto 12px 0;
-  width: 4px;
+  inset: 10px auto 10px 0;
+  width: 3px;
   border-radius: 999px;
   background: transparent;
 }
@@ -59,9 +59,9 @@
 .group-list-item .group-sync-btn {
   border: 1px solid rgba(201, 193, 179, 0.72);
   background: #fff;
-  border-radius: 10px;
-  width: 32px;
-  height: 32px;
+  border-radius: 8px;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -79,7 +79,6 @@
 .group-list-item .group-sync-btn:hover {
   transform: translateY(-1px);
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-soft);
 }
 
 .group-list-item .group-sync-btn svg {
@@ -91,7 +90,7 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px;
 }
 
 .group-name {
@@ -100,7 +99,7 @@
   background: transparent;
   color: var(--text);
   font-family: var(--font-display);
-  font-size: clamp(24px, 3vw, 30px);
+  font-size: clamp(20px, 2.4vw, 24px);
   font-weight: 700;
   line-height: 1.04;
   letter-spacing: -0.04em;
@@ -119,13 +118,13 @@
 .group-id {
   display: inline-flex;
   align-items: center;
-  min-height: 30px;
-  padding: 0 10px;
+  min-height: 24px;
+  padding: 0 8px;
   border: 1px solid rgba(201, 193, 179, 0.76);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.92);
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -139,15 +138,15 @@
 }
 
 .group-actions .input {
-  min-width: 240px;
+  min-width: 220px;
 }
 
 .group-sync-toolbar {
-  margin: 0 0 14px;
-  padding: 14px 16px;
+  margin: 0 0 10px;
+  padding: 10px 12px;
   border: 1px solid rgba(222, 216, 205, 0.84);
-  border-radius: 18px;
-  background: linear-gradient(180deg, rgba(247, 244, 238, 0.9), rgba(255, 255, 255, 0.95));
+  border-radius: 12px;
+  background: rgba(247, 244, 238, 0.72);
 }
 
 .group-sync-toolbar .muted {
@@ -165,18 +164,18 @@
   position: sticky;
   top: 0;
   z-index: 8;
-  margin-bottom: 16px;
-  padding: 12px 14px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
   border: 1px solid rgba(222, 216, 205, 0.84);
-  border-radius: 18px;
-  background: rgba(247, 244, 238, 0.92);
-  backdrop-filter: blur(12px);
+  border-radius: 12px;
+  background: rgba(247, 244, 238, 0.9);
+  backdrop-filter: blur(6px);
 }
 
 .batch-actions {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -189,7 +188,7 @@
 
 .search-results {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   margin-bottom: 8px;
   max-height: 52vh;
   overflow: auto;
@@ -199,11 +198,11 @@
 .search-item {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr) auto;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
-  padding: 12px 14px;
+  padding: 10px 12px;
   border: 1px solid rgba(222, 216, 205, 0.84);
-  border-radius: 16px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.96);
   transition: border-color 0.18s ease-out, box-shadow 0.18s ease-out, transform 0.18s ease-out;
 }
@@ -211,7 +210,6 @@
 .search-item:hover {
   transform: translateY(-1px);
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-soft);
 }
 
 .search-meta {
@@ -246,7 +244,7 @@
   min-width: 132px;
   padding: 6px;
   border: 1px solid rgba(201, 193, 179, 0.84);
-  border-radius: 14px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.98);
   box-shadow: var(--shadow);
   z-index: 100;
@@ -256,8 +254,8 @@
   width: 100%;
   border: none;
   background: transparent;
-  padding: 8px 10px;
-  border-radius: 10px;
+  padding: 7px 9px;
+  border-radius: 8px;
   color: var(--text);
   text-align: left;
   font-size: 13px;
@@ -271,7 +269,7 @@
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 16px;
+  gap: 12px;
   align-content: start;
   grid-auto-rows: max-content;
   width: 100%;
@@ -281,10 +279,10 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 18px;
+  gap: 10px;
+  padding: 14px;
   border: 1px solid rgba(222, 216, 205, 0.84);
-  border-radius: 20px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.96);
   transition: border-color 0.18s ease-out, box-shadow 0.18s ease-out, transform 0.18s ease-out, opacity 0.18s ease-out;
 }
@@ -292,7 +290,6 @@
 .card:hover {
   transform: translateY(-1px);
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-soft);
 }
 
 .card.is-disabled {
@@ -319,9 +316,9 @@
 }
 
 .account-avatar {
-  width: 46px;
-  height: 46px;
-  border-radius: 14px;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
   object-fit: cover;
   background: var(--accent-soft);
   border: 1px solid rgba(222, 216, 205, 0.82);
@@ -331,6 +328,7 @@
 .account-name {
   font-weight: 700;
   line-height: 1.3;
+  font-size: 14px;
 }
 
 .account-sub {
@@ -339,10 +337,10 @@
 }
 
 .account-stats {
-  margin-top: 6px;
+  margin-top: 4px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .account-stat {
@@ -366,9 +364,9 @@
 .account-toggle {
   border: 1px solid rgba(201, 193, 179, 0.72);
   background: #fff;
-  border-radius: 10px;
-  width: 32px;
-  height: 32px;
+  border-radius: 8px;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -386,7 +384,6 @@
 .account-toggle:hover {
   transform: translateY(-1px);
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-soft);
 }
 
 .account-toggle svg {
@@ -396,20 +393,20 @@
 
 .account-sync {
   display: grid;
-  gap: 8px;
-  margin-top: 4px;
-  padding-top: 12px;
+  gap: 6px;
+  margin-top: 2px;
+  padding-top: 10px;
   border-top: 1px solid rgba(222, 216, 205, 0.72);
 }
 
 .account-sync-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .account-sync-label {
-  min-width: 72px;
+  min-width: 64px;
   color: var(--muted);
   font-size: 11px;
   font-weight: 600;
@@ -435,7 +432,7 @@
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  padding: 90px 20px 20px;
+  padding: 60px 16px 16px;
   background: rgba(17, 21, 29, 0.3);
   backdrop-filter: blur(8px);
   z-index: 220;
@@ -445,10 +442,10 @@
   width: min(720px, 92vw);
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 24px;
+  gap: 12px;
+  padding: 16px;
   border: 1px solid rgba(201, 193, 179, 0.84);
-  border-radius: 22px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.98);
   box-shadow: var(--shadow);
 }
@@ -459,15 +456,15 @@
 
 .modal-title {
   font-family: var(--font-display);
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 700;
 }
 
 .modal-search input {
   width: 100%;
-  min-height: 46px;
-  padding: 12px 14px 12px 40px;
-  border-radius: 14px;
+  min-height: 38px;
+  padding: 10px 12px 10px 36px;
+  border-radius: 10px;
 }
 
 @media (max-width: 1180px) {
@@ -492,7 +489,7 @@
 
 @media (max-width: 720px) {
   .groups-layout {
-    gap: 14px;
+    gap: 10px;
   }
 
   .group-actions .input {
@@ -501,7 +498,7 @@
 
   .group-sync-toolbar,
   .accounts-toolbar {
-    padding: 12px;
+    padding: 10px;
   }
 
   .card-grid {

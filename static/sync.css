@@ -6,13 +6,13 @@
 .sync-page-shell {
   width: min(100%, 1380px);
   margin: 0 auto;
-  padding-bottom: 24px;
+  padding-bottom: 18px;
 }
 
 .panel-grid {
   display: grid;
   grid-template-columns: minmax(320px, 0.9fr) minmax(420px, 1.1fr);
-  gap: 18px;
+  gap: 12px;
 }
 
 .sync-login,
@@ -30,11 +30,11 @@
 .login-card {
   display: grid;
   justify-items: center;
-  gap: 14px;
-  padding: 18px;
+  gap: 10px;
+  padding: 12px;
   border: 1px solid rgba(222, 216, 205, 0.84);
-  border-radius: 20px;
-  background: linear-gradient(180deg, rgba(247, 244, 238, 0.92), rgba(255, 255, 255, 0.98));
+  border-radius: 12px;
+  background: rgba(247, 244, 238, 0.72);
 }
 
 .login-card[data-status='waiting'],
@@ -56,14 +56,14 @@
 }
 
 .login-qr {
-  width: min(240px, 100%);
+  width: min(200px, 100%);
   height: auto;
   aspect-ratio: 1;
   border: 1px solid rgba(222, 216, 205, 0.82);
-  border-radius: 18px;
+  border-radius: 10px;
   background: #fff;
   object-fit: contain;
-  padding: 12px;
+  padding: 8px;
 }
 
 .login-status {
@@ -71,24 +71,24 @@
 }
 
 .login-meta {
-  max-width: 320px;
+  max-width: 280px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   text-align: center;
 }
 
 .form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
 .form-grid label {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -116,30 +116,30 @@
 
 .sync-active-body {
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 
 .sync-active-summary {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 14px;
-  padding: 16px 18px;
+  gap: 10px;
+  padding: 12px;
   border: 1px solid rgba(222, 216, 205, 0.84);
-  border-radius: 20px;
-  background: linear-gradient(180deg, rgba(247, 244, 238, 0.92), rgba(255, 255, 255, 0.98));
+  border-radius: 12px;
+  background: rgba(247, 244, 238, 0.72);
 }
 
 .sync-summary-copy {
   min-width: 0;
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .sync-summary-top {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -150,24 +150,24 @@
 .sync-summary-pills {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .sync-inline-pill {
   display: inline-flex;
   align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: 24px;
+  padding: 0 8px;
   border: 1px solid rgba(201, 193, 179, 0.72);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.9);
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .sync-progress-track {
   position: relative;
-  height: 8px;
+  height: 6px;
   overflow: hidden;
   border-radius: 999px;
   background: rgba(222, 216, 205, 0.72);
@@ -182,22 +182,18 @@
 
 .sync-progress-list {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .sync-progress-item {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  padding: 13px 14px;
+  gap: 10px;
+  padding: 10px 12px;
   border: 1px solid rgba(222, 216, 205, 0.82);
-  border-radius: 16px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.96);
-}
-
-.sync-progress-item.is-running {
-  box-shadow: var(--shadow-soft);
 }
 
 .sync-progress-copy {
@@ -226,19 +222,19 @@
 .sync-status-badge {
   display: inline-flex;
   align-items: center;
-  min-height: 26px;
-  padding: 0 10px;
+  min-height: 22px;
+  padding: 0 8px;
   border: 1px solid transparent;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   white-space: nowrap;
 }
 
 .sync-history-item {
   align-items: flex-start;
-  padding: 14px 16px;
-  border-radius: 18px;
+  padding: 10px 12px;
+  border-radius: 12px;
 }
 
 .sync-history-copy {
