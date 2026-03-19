@@ -23,6 +23,7 @@ from tqdm import tqdm
 
 from .config import DEFAULT_PAGE_SIZE
 from .container import build_downloader_container
+from .downloader import _attach_image_block_metadata, _parse_markdown_blocks
 from .env import load_env
 from .image_hashes import ensure_image_hash_by_id
 from .http import MPClient
@@ -230,6 +231,9 @@ def backfill_item_show_type(
     limit: Optional[int] = typer.Option(
         None, min=1, help='Optional max article count to backfill per run'
     ),
+    batch_size: int = typer.Option(
+        1000, min=1, help='Article batch size used during backfill'
+    ),
     dry_run: bool = typer.Option(
         False, help='Preview candidate count without writing changes'
     ),
@@ -239,104 +243,307 @@ def backfill_item_show_type(
         typer.echo('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
         raise typer.Exit(code=2)
 
-    inferred_item_show_type_sql = f"""
-    COALESCE(
-        {_ARTICLE_ITEM_SHOW_TYPE_FROM_RAW_SQL},
-        CASE WHEN {_ARTICLE_CONTENT_PRESENT_SQL} THEN 0 ELSE NULL END
-    )
-    """
-    raw_limited_ids_sql = f"""
-    SELECT a.id, {_ARTICLE_ITEM_SHOW_TYPE_FROM_RAW_SQL} AS inferred_item_show_type
+    raw_candidate_ids_sql = f"""
+    SELECT a.id
     FROM articles a
     WHERE a.item_show_type IS NULL
       AND {_ARTICLE_ITEM_SHOW_TYPE_FROM_RAW_SQL} IS NOT NULL
     ORDER BY a.id ASC
-    LIMIT %s
     """
-    raw_limited_update_sql = f"""
-    UPDATE articles a
-    SET item_show_type = candidate.inferred_item_show_type,
-        updated_at = NOW()
-    FROM (
-        {raw_limited_ids_sql}
-    ) AS candidate
-    WHERE a.id = candidate.id
-    """
-    fallback_limited_ids_sql = f"""
-    SELECT a.id, {inferred_item_show_type_sql} AS inferred_item_show_type
+    fallback_candidate_ids_sql = f"""
+    SELECT a.id
     FROM articles a
     LEFT JOIN article_content c ON c.article_pk = a.id
     WHERE a.item_show_type IS NULL
       AND {_ARTICLE_ITEM_SHOW_TYPE_FROM_RAW_SQL} IS NULL
-      AND {inferred_item_show_type_sql} IS NOT NULL
-    ORDER BY a.id ASC
-    LIMIT %s
-    """
-    fallback_limited_update_sql = f"""
-    UPDATE articles a
-    SET item_show_type = candidate.inferred_item_show_type,
-        updated_at = NOW()
-    FROM (
-        {fallback_limited_ids_sql}
-    ) AS candidate
-    WHERE a.id = candidate.id
-    """
-    raw_only_update_sql = f"""
-    UPDATE articles a
-    SET item_show_type = {_ARTICLE_ITEM_SHOW_TYPE_FROM_RAW_SQL},
-        updated_at = NOW()
-    WHERE a.item_show_type IS NULL
-      AND {_ARTICLE_ITEM_SHOW_TYPE_FROM_RAW_SQL} IS NOT NULL
-    """
-    fallback_only_update_sql = f"""
-    UPDATE articles a
-    SET item_show_type = 0,
-        updated_at = NOW()
-    FROM article_content c
-    WHERE a.item_show_type IS NULL
-      AND c.article_pk = a.id
-      AND a.item_show_type IS NULL
       AND {_ARTICLE_CONTENT_PRESENT_SQL}
+    ORDER BY a.id ASC
     """
-    candidate_sql = f"""
-    SELECT COUNT(*)
-    FROM articles a
-    LEFT JOIN article_content c ON c.article_pk = a.id
-    WHERE a.item_show_type IS NULL
-      AND {inferred_item_show_type_sql} IS NOT NULL
+    raw_batch_update_sql = f"""
+    WITH candidate AS (
+        SELECT a.id, {_ARTICLE_ITEM_SHOW_TYPE_FROM_RAW_SQL} AS inferred_item_show_type
+        FROM articles a
+        WHERE a.item_show_type IS NULL
+          AND a.id > %s
+          AND {_ARTICLE_ITEM_SHOW_TYPE_FROM_RAW_SQL} IS NOT NULL
+        ORDER BY a.id ASC
+        LIMIT %s
+    ),
+    updated AS (
+        UPDATE articles a
+        SET item_show_type = candidate.inferred_item_show_type,
+            updated_at = NOW()
+        FROM candidate
+        WHERE a.id = candidate.id
+          AND a.item_show_type IS NULL
+        RETURNING a.id
+    )
+    SELECT
+        (SELECT COUNT(*) FROM updated) AS updated_count,
+        COALESCE((SELECT MAX(id) FROM candidate), %s) AS last_seen_id
+    """
+    fallback_batch_update_sql = f"""
+    WITH candidate AS (
+        SELECT a.id, 0 AS inferred_item_show_type
+        FROM articles a
+        LEFT JOIN article_content c ON c.article_pk = a.id
+        WHERE a.item_show_type IS NULL
+          AND a.id > %s
+          AND {_ARTICLE_ITEM_SHOW_TYPE_FROM_RAW_SQL} IS NULL
+          AND {_ARTICLE_CONTENT_PRESENT_SQL}
+        ORDER BY a.id ASC
+        LIMIT %s
+    ),
+    updated AS (
+        UPDATE articles a
+        SET item_show_type = candidate.inferred_item_show_type,
+            updated_at = NOW()
+        FROM candidate
+        WHERE a.id = candidate.id
+          AND a.item_show_type IS NULL
+        RETURNING a.id
+    )
+    SELECT
+        (SELECT COUNT(*) FROM updated) AS updated_count,
+        COALESCE((SELECT MAX(id) FROM candidate), %s) AS last_seen_id
     """
 
     with PostgresStorage(resolved_dsn, auto_init=False) as storage:
         if dry_run:
             with storage.conn.cursor() as cur:
-                cur.execute(candidate_sql)
-                total_candidates = int(cur.fetchone()[0] or 0)
+                if limit is None:
+                    cur.execute(f'SELECT COUNT(*) FROM ({raw_candidate_ids_sql}) AS candidate')
+                    raw_total = int(cur.fetchone()[0] or 0)
+                    cur.execute(f'SELECT COUNT(*) FROM ({fallback_candidate_ids_sql}) AS candidate')
+                    fallback_total = int(cur.fetchone()[0] or 0)
+                else:
+                    cur.execute(
+                        f'SELECT COUNT(*) FROM ({raw_candidate_ids_sql} LIMIT %s) AS candidate',
+                        (limit,),
+                    )
+                    raw_total = int(cur.fetchone()[0] or 0)
+                    remaining_after_raw = max(limit - raw_total, 0)
+                    fallback_total = 0
+                    if remaining_after_raw > 0:
+                        cur.execute(
+                            f'SELECT COUNT(*) FROM ({fallback_candidate_ids_sql} LIMIT %s) AS candidate',
+                            (remaining_after_raw,),
+                        )
+                        fallback_total = int(cur.fetchone()[0] or 0)
+            storage.rollback()
+            total_candidates = raw_total + fallback_total
             if total_candidates == 0:
                 typer.echo('No NULL item_show_type rows could be inferred.')
                 return
             typer.echo(f'Found {total_candidates} candidate articles.')
             return
-        with storage.transaction():
-            with storage.conn.cursor() as cur:
-                if limit is None:
-                    cur.execute(raw_only_update_sql)
-                    raw_updated = cur.rowcount
-                    cur.execute(fallback_only_update_sql)
-                    fallback_updated = cur.rowcount
-                    updated = raw_updated + fallback_updated
-                else:
-                    cur.execute(raw_limited_update_sql, (limit,))
-                    raw_updated = cur.rowcount
-                    remaining = max(limit - raw_updated, 0)
-                    fallback_updated = 0
-                    if remaining > 0:
-                        cur.execute(fallback_limited_update_sql, (remaining,))
-                        fallback_updated = cur.rowcount
-                    updated = raw_updated + fallback_updated
+
+        updated = 0
+        progress = tqdm(
+            total=limit,
+            desc='Backfill item_show_type',
+            unit='article',
+            dynamic_ncols=True,
+            leave=True,
+        )
+        try:
+            raw_last_id = 0
+            raw_remaining = limit
+            progress.set_description_str('Backfill item_show_type [raw]')
+            while raw_remaining != 0:
+                current_batch_size = batch_size if raw_remaining is None else min(batch_size, raw_remaining)
+                with storage.transaction():
+                    with storage.conn.cursor() as cur:
+                        cur.execute(
+                            raw_batch_update_sql,
+                            (raw_last_id, current_batch_size, raw_last_id),
+                        )
+                        row = cur.fetchone()
+                raw_updated = int(row[0] or 0)
+                next_last_id = int(row[1] or raw_last_id)
+                if next_last_id <= raw_last_id:
+                    break
+                raw_last_id = next_last_id
+                updated += raw_updated
+                progress.update(raw_updated)
+                if raw_remaining is not None:
+                    raw_remaining = max(raw_remaining - raw_updated, 0)
+
+            fallback_last_id = 0
+            fallback_remaining = raw_remaining
+            progress.set_description_str('Backfill item_show_type [fallback]')
+            while fallback_remaining != 0:
+                current_batch_size = (
+                    batch_size if fallback_remaining is None else min(batch_size, fallback_remaining)
+                )
+                with storage.transaction():
+                    with storage.conn.cursor() as cur:
+                        cur.execute(
+                            fallback_batch_update_sql,
+                            (fallback_last_id, current_batch_size, fallback_last_id),
+                        )
+                        row = cur.fetchone()
+                fallback_updated = int(row[0] or 0)
+                next_last_id = int(row[1] or fallback_last_id)
+                if next_last_id <= fallback_last_id:
+                    break
+                fallback_last_id = next_last_id
+                updated += fallback_updated
+                progress.update(fallback_updated)
+                if fallback_remaining is not None:
+                    fallback_remaining = max(fallback_remaining - fallback_updated, 0)
+        finally:
+            progress.close()
     if updated == 0:
         typer.echo('No NULL item_show_type rows could be inferred.')
         return
     typer.echo(f'Backfilled item_show_type for {updated} articles.')
+
+
+@db_app.command('backfill-content-json')
+def backfill_content_json(
+    pg_dsn: Optional[str] = typer.Option(
+        None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'
+    ),
+    article_pk: Optional[int] = typer.Option(
+        None, min=1, help='Only backfill a specific article_pk'
+    ),
+    limit: Optional[int] = typer.Option(
+        None, min=1, help='Optional max row count to backfill per run'
+    ),
+    batch_size: int = typer.Option(
+        1000, min=1, help='Row batch size used during backfill'
+    ),
+    dry_run: bool = typer.Option(
+        False, help='Preview affected row count without writing changes'
+    ),
+) -> None:
+    resolved_dsn = pg_dsn or os.environ.get('HIPPO_PG_DSN')
+    if not resolved_dsn:
+        typer.echo('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
+        raise typer.Exit(code=2)
+    processed = 0
+    updated = 0
+    last_article_pk = 0
+    with PostgresStorage(resolved_dsn, auto_init=False) as storage:
+        while True:
+            remaining = None if limit is None else max(limit - processed, 0)
+            if remaining == 0:
+                break
+            current_batch_size = 1 if article_pk is not None else batch_size
+            if remaining is not None:
+                current_batch_size = min(current_batch_size, remaining)
+
+            select_sql = """
+            SELECT article_pk, content_markdown, content_json
+            FROM article_content
+            WHERE content_markdown IS NOT NULL
+              AND btrim(content_markdown) <> ''
+            """
+            params: list[Any] = []
+            if article_pk is not None:
+                select_sql += ' AND article_pk = %s'
+                params.append(article_pk)
+            else:
+                select_sql += ' AND article_pk > %s'
+                params.append(last_article_pk)
+            select_sql += ' ORDER BY article_pk ASC LIMIT %s'
+            params.append(current_batch_size)
+
+            with storage.conn.cursor() as cur:
+                cur.execute(select_sql, params)
+                rows = cur.fetchall()
+            storage.rollback()
+
+            if not rows:
+                break
+
+            article_pks = [int(row[0]) for row in rows]
+            last_article_pk = article_pks[-1]
+
+            with storage.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT article_pk, id, orig_url
+                    FROM article_images
+                    WHERE article_pk = ANY(%s)
+                      AND orig_url IS NOT NULL
+                    """,
+                    (article_pks,),
+                )
+                image_rows = cur.fetchall()
+            storage.rollback()
+
+            image_id_maps: dict[int, dict[str, int]] = {}
+            for current_article_pk, image_id, orig_url in image_rows:
+                image_id_maps.setdefault(int(current_article_pk), {})[str(orig_url)] = int(image_id)
+
+            updates: list[tuple[str, list[dict], int]] = []
+            for current_article_pk, content_markdown, existing_content_json in rows:
+                markdown = str(content_markdown or '').strip()
+                if not markdown:
+                    continue
+                _title, _cover_local, blocks, normalized_markdown = _parse_markdown_blocks(markdown)
+                rebuilt_blocks = _attach_image_block_metadata(
+                    blocks,
+                    resolve_url=lambda value: value.strip() if isinstance(value, str) else None,
+                    image_id_by_url=image_id_maps.get(int(current_article_pk)),
+                )
+                current_content_json = existing_content_json
+                if isinstance(current_content_json, str):
+                    try:
+                        current_content_json = json.loads(current_content_json)
+                    except json.JSONDecodeError:
+                        current_content_json = None
+                if rebuilt_blocks != current_content_json or normalized_markdown != markdown:
+                    updates.append((normalized_markdown, rebuilt_blocks, int(current_article_pk)))
+
+            processed += len(rows)
+
+            if dry_run:
+                updated += len(updates)
+                typer.echo(
+                    f'Dry run progress: processed {processed} articles, would update {updated}.'
+                )
+            else:
+                if updates:
+                    with storage.transaction():
+                        with storage.conn.cursor() as cur:
+                            cur.executemany(
+                                """
+                                UPDATE article_content
+                                SET content_markdown = %s,
+                                    content_json = %s::jsonb,
+                                    updated_at = NOW()
+                                WHERE article_pk = %s
+                                """,
+                                [
+                                    (
+                                        normalized_markdown,
+                                        json.dumps(rebuilt_blocks, ensure_ascii=False),
+                                        current_article_pk,
+                                    )
+                                    for normalized_markdown, rebuilt_blocks, current_article_pk in updates
+                                ],
+                            )
+                updated += len(updates)
+                typer.echo(
+                    f'Backfill progress: processed {processed} articles, updated {updated}.'
+                )
+
+            if article_pk is not None:
+                break
+
+    if processed == 0:
+        typer.echo('No article_content rows matched.')
+        return
+    if updated == 0:
+        typer.echo('No article_content rows needed backfill.')
+        return
+    if dry_run:
+        typer.echo(f'Would backfill content_json for {updated} articles.')
+        return
+    typer.echo(f'Backfilled content_json for {updated} articles.')
 
 
 app.add_typer(accounts_app, name="account")
