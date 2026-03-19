@@ -1,7 +1,15 @@
 <section id="view-articles" class="view">
   <div class="article-layout">
     <div class="panel article-list">
-      <div class="panel-header" style="display: block;">
+      <div class="panel-header article-sidebar-header">
+        <div>
+          <div class="section-kicker" data-i18n="articles.libraryKicker">Library</div>
+          <h2 data-i18n="articles.title">Articles</h2>
+          <p class="muted" data-i18n="articles.librarySubtitle">Filter, scan, and open synced articles.</p>
+        </div>
+        <button class="btn ghost article-reset-btn" id="btn-article-reset" type="button" data-i18n="articles.resetFilters">Reset Filters</button>
+      </div>
+      <div class="article-filter-shell">
         <div class="article-filter-stack">
           <div class="toolbar article-filter-grid article-filter-grid-top">
             <select id="article-group-filter"></select>
@@ -9,19 +17,19 @@
           </div>
           <div class="toolbar article-filter-grid article-filter-grid-middle">
             <select id="article-type-filter">
-              <option value="" data-i18n="filters.allTypes">全部类型</option>
-              <option value="0" data-i18n="articles.type.0">普通图文</option>
-              <option value="5" data-i18n="articles.type.5">视频分享</option>
-              <option value="6" data-i18n="articles.type.6">音乐分享</option>
-              <option value="7" data-i18n="articles.type.7">音频分享</option>
-              <option value="8" data-i18n="articles.type.8">图片分享</option>
-              <option value="10" data-i18n="articles.type.10">文本分享</option>
-              <option value="11" data-i18n="articles.type.11">文章分享</option>
-              <option value="17" data-i18n="articles.type.17">短文</option>
+              <option value="" data-i18n="filters.allTypes">All Types</option>
+              <option value="0" data-i18n="articles.type.0">Regular Article</option>
+              <option value="5" data-i18n="articles.type.5">Video Share</option>
+              <option value="6" data-i18n="articles.type.6">Music Share</option>
+              <option value="7" data-i18n="articles.type.7">Audio Share</option>
+              <option value="8" data-i18n="articles.type.8">Picture Share</option>
+              <option value="10" data-i18n="articles.type.10">Text Share</option>
+              <option value="11" data-i18n="articles.type.11">Article Share</option>
+              <option value="17" data-i18n="articles.type.17">Short Post</option>
             </select>
             <select id="article-sort">
-              <option value="publish_at_desc" data-i18n="filters.sortPublishedDesc">发布时间（新到旧）</option>
-              <option value="relevance_desc" data-i18n="filters.sortRelevanceDesc">相关度（高到低）</option>
+              <option value="publish_at_desc" data-i18n="filters.sortPublishedDesc">Published (Newest)</option>
+              <option value="relevance_desc" data-i18n="filters.sortRelevanceDesc">Relevance</option>
             </select>
           </div>
           <div class="toolbar article-filter-grid article-filter-grid-bottom">
@@ -53,9 +61,25 @@
     <div class="article-resizer" id="article-resizer" role="separator" aria-orientation="vertical"></div>
 
     <div class="panel article-preview">
-      <div class="panel-header">
-        <div></div>
-        <div class="toolbar">
+      <div class="panel-header article-preview-topbar">
+        <div>
+          <div class="section-kicker" data-i18n="articles.previewKicker">Reader</div>
+          <h2 data-i18n="articles.previewTitle">Reading Preview</h2>
+          <p class="muted" data-i18n="articles.previewSubtitle">Inspect metadata and tune typography for long-form reading.</p>
+        </div>
+        <div class="toolbar article-preview-toolbar">
+          <button class="btn ghost article-toolbar-btn" id="btn-article-open-original" type="button" data-i18n="articles.menu.openOriginal">Open original</button>
+          <button class="btn ghost article-toolbar-btn" id="btn-article-copy-link" type="button" data-i18n="articles.menu.copyLink">Copy link</button>
+          <button class="icon-btn" id="reader-copy" type="button" aria-label="Copy article text" title="Copy article text">
+            <span class="icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+            </span>
+          </button>
+          <button class="icon-btn" id="reader-toggle" type="button" aria-label="Typography settings" title="Typography settings">
+            <span class="icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4zM4 11h16v2H4zM4 16h16v2H4z"/></svg>
+            </span>
+          </button>
           <button class="icon-btn" id="btn-article-toggle" type="button" aria-label="Toggle list" title="Toggle list">
             <span class="icon">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4zM4 11h10v2H4zM4 16h16v2H4z"/></svg>
@@ -89,16 +113,6 @@
           <span data-i18n="reader.hideSmallImages">Hide Small Images</span>
         </label>
       </div>
-      <button class="reader-fab" id="reader-copy" type="button" aria-label="复制全文" title="复制全文">
-        <span class="icon">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-        </span>
-      </button>
-      <button class="reader-fab" id="reader-toggle" type="button" aria-label="排版设置" title="排版设置">
-        <span class="icon">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4zM4 11h16v2H4zM4 16h16v2H4z"/></svg>
-        </span>
-      </button>
       <div class="article-preview-body" id="article-preview">
         <div class="empty-state" data-i18n="articles.empty">Select an article to preview.</div>
       </div>

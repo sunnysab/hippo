@@ -127,17 +127,71 @@
     return `<span class="item-show-type-badge item-show-type-${meta.tone}${compactClass}">${escapeHtml(getItemShowTypeLabel(value))}</span>`;
   };
 
+  const getSelectedArticle = () =>
+    state.currentArticlePayload?.article
+    || state.articles.find((article) => article.id === state.selectedArticleId)
+    || null;
+
+  const getSelectedArticleLink = () => {
+    const article = getSelectedArticle();
+    return article?.source_url || article?.link || '';
+  };
+
+  const updatePreviewToolbarState = () => {
+    const hasArticle = Boolean(getSelectedArticle());
+    const link = getSelectedArticleLink();
+    const openButton = $('#btn-article-open-original');
+    const copyLinkButton = $('#btn-article-copy-link');
+    const copyContentButton = $('#reader-copy');
+
+    if (openButton) {
+      openButton.disabled = !link;
+    }
+    if (copyLinkButton) {
+      copyLinkButton.disabled = !link;
+    }
+    if (copyContentButton) {
+      copyContentButton.disabled = !hasArticle;
+    }
+  };
+
+  const clearArticlePreview = () => {
+    state.selectedArticleId = null;
+    state.currentArticlePayload = null;
+    renderArticleContent(null);
+    updatePreviewToolbarState();
+  };
+
   const renderArticleInsights = (payload) => {
     const summary = $('#article-filter-summary');
     const facetsContainer = $('#article-type-facets');
     if (summary) {
       const total = Number(payload?.total || 0);
       const activeType = $('#article-type-filter')?.value || '';
+      const search = $('#article-search')?.value.trim() || '';
+      const groupLabel = $('#article-group-filter')?.selectedOptions?.[0]?.textContent || '';
+      const accountLabel = $('#article-account-filter')?.selectedOptions?.[0]?.textContent || '';
       const totalLabel = t('articles.summary.total', '{n} articles').replace('{n}', total.toLocaleString('zh-CN'));
-      const typeLabel = activeType
-        ? t('articles.summary.filteredByType', 'Filtered by {type}').replace('{type}', getItemShowTypeLabel(activeType))
-        : t('articles.summary.allTypes', 'Across all article types');
-      summary.innerHTML = `<strong>${escapeHtml(totalLabel)}</strong><span>${escapeHtml(typeLabel)}</span>`;
+      const tags = [];
+      if (groupLabel && $('#article-group-filter')?.value) {
+        tags.push(t('articles.summary.group', 'Group: {value}').replace('{value}', groupLabel));
+      }
+      if (accountLabel && $('#article-account-filter')?.value) {
+        tags.push(t('articles.summary.account', 'Account: {value}').replace('{value}', accountLabel));
+      }
+      if (activeType) {
+        tags.push(t('articles.summary.filteredByType', 'Type: {type}').replace('{type}', getItemShowTypeLabel(activeType)));
+      }
+      if (search) {
+        tags.push(t('articles.summary.keyword', 'Search: {value}').replace('{value}', search));
+      }
+      if (!tags.length) {
+        tags.push(t('articles.summary.allTypes', 'Across all article types'));
+      }
+      summary.innerHTML = `
+        <strong>${escapeHtml(totalLabel)}</strong>
+        ${tags.map((tag) => `<span class="article-summary-pill">${escapeHtml(tag)}</span>`).join('')}
+      `;
     }
     if (!facetsContainer) return;
     const facets = Array.isArray(payload?.item_show_type_facets) ? payload.item_show_type_facets : [];
@@ -256,6 +310,8 @@
     state.articles.forEach((article) => {
       const card = document.createElement('div');
       card.className = 'article-card' + (state.selectedArticleId === article.id ? ' is-active' : '');
+      card.setAttribute('role', 'button');
+      card.setAttribute('tabindex', '0');
       const thumb = article.image_id ? `/api/image/${article.image_id}` : '';
       const avatar = article.account_avatar_url || '';
       const digest = article.digest || '';
@@ -280,6 +336,12 @@
         digestEl.title = digest;
       }
       card.addEventListener('click', () => selectArticle(article.id));
+      card.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          selectArticle(article.id);
+        }
+      });
       card.addEventListener('contextmenu', (event) => {
         event.preventDefault();
         showArticleContextMenu(article, event.clientX, event.clientY);
@@ -339,8 +401,14 @@
         } else {
              state.articles = state.articles.concat(newArticles);
         }
+        if (state.selectedArticleId && !state.articles.some((article) => article.id === state.selectedArticleId)) {
+            state.selectedArticleId = null;
+            state.currentArticlePayload = null;
+            renderArticleContent(null);
+        }
         renderArticleInsights(payload);
         renderArticleList();
+        updatePreviewToolbarState();
     } finally {
         state.isArticleLoading = false;
         if (shouldShowLoading) {
@@ -796,6 +864,7 @@
     state.currentArticlePayload = payload;
     renderArticleContent(payload);
     resetArticlePreviewScroll();
+    updatePreviewToolbarState();
   };
 
   const blockArticleImage = async (imageId) => {
@@ -876,6 +945,34 @@
       if (input) input.addEventListener('input', apply);
     });
     apply();
+  };
+
+  const resetArticleFilters = async () => {
+    const groupFilter = $('#article-group-filter');
+    const accountFilter = $('#article-account-filter');
+    const typeFilter = $('#article-type-filter');
+    const sortFilter = $('#article-sort');
+    const searchInput = $('#article-search');
+
+    if (groupFilter) {
+      groupFilter.value = '';
+    }
+    await populateArticleAccountFilter({ force: true });
+    if (accountFilter) {
+      accountFilter.value = '';
+    }
+    if (typeFilter) {
+      typeFilter.value = '';
+    }
+    if (searchInput) {
+      searchInput.value = '';
+    }
+    if (sortFilter) {
+      sortFilter.value = ARTICLE_SORT_PUBLISH_AT_DESC;
+    }
+    updateArticleUrlParams();
+    clearArticlePreview();
+    await loadArticles(true);
   };
 
   const initArticleLayout = () => {
@@ -1008,30 +1105,60 @@
       state.articlePage += 1;
       loadArticles(false);
     });
+    $('#btn-article-reset').addEventListener('click', () => {
+      resetArticleFilters();
+    });
     $('#article-group-filter').addEventListener('change', async () => {
       await populateArticleAccountFilter();
+      clearArticlePreview();
       await loadArticles(true);
       updateArticleUrlParams();
     });
     $('#article-account-filter').addEventListener('change', () => {
+      clearArticlePreview();
       loadArticles(true);
       updateArticleUrlParams();
     });
     $('#article-type-filter').addEventListener('change', () => {
+      clearArticlePreview();
       loadArticles(true);
       updateArticleUrlParams();
     });
     $('#article-sort').addEventListener('change', () => {
+      clearArticlePreview();
       updateArticleUrlParams();
       loadArticles(true);
     });
     $('#article-search').addEventListener('input', () => {
       clearTimeout(state.articleTimer);
       state.articleTimer = setTimeout(() => {
+        clearArticlePreview();
         loadArticles(true);
         updateArticleUrlParams();
       }, 300);
     });
+
+    const previewOpenButton = $('#btn-article-open-original');
+    if (previewOpenButton) {
+      previewOpenButton.addEventListener('click', () => {
+        const link = getSelectedArticleLink();
+        if (!link) return;
+        window.open(link, '_blank', 'noopener,noreferrer');
+      });
+    }
+    const previewCopyButton = $('#btn-article-copy-link');
+    if (previewCopyButton) {
+      previewCopyButton.addEventListener('click', async () => {
+        const link = getSelectedArticleLink();
+        if (!link) return;
+        try {
+          await copyToClipboard(link);
+          showToast(t('articles.linkCopied', 'Link copied.'));
+        } catch (err) {
+          showToast(t('articles.copyFailed', 'Copy failed.'));
+        }
+      });
+    }
 
     const openBtn = $('#article-menu-open');
     if (openBtn) {
@@ -1114,6 +1241,7 @@
     await populateArticleGroupFilter();
     await populateArticleAccountFilter({ force: true });
     await loadArticles(true);
+    updatePreviewToolbarState();
   };
 
   const init = async () => {
