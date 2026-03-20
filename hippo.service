@@ -6,6 +6,7 @@ After=network.target postgresql.service
 Type=simple
 User=sab
 WorkingDirectory=/home/sab/hippo
+EnvironmentFile=/home/sab/hippo/.env
 ExecStart=/home/sab/hippo/.venv/bin/python -m hippo serve --host 0.0.0.0 --port 2000
 Environment=HIPPO_LOG_FILE=/home/sab/hippo/logs/hippo-web.log
 Environment=PYTHONUNBUFFERED=1
