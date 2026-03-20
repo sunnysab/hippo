@@ -114,6 +114,25 @@
   margin: 0;
 }
 
+.sync-form-sections {
+  display: grid;
+  gap: 10px;
+}
+
+.sync-form-section {
+  padding: 12px;
+  border: 1px solid rgba(222, 216, 205, 0.82);
+  border-radius: 10px;
+  background: rgba(247, 244, 238, 0.5);
+}
+
+.sync-section-title {
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .sync-active-body {
   display: grid;
   gap: 12px;
@@ -352,6 +371,10 @@
 
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .sync-form-section {
+    padding: 10px;
   }
 
   .login-qr {

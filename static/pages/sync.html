@@ -31,42 +31,52 @@
             <button class="btn ghost" id="btn-sync-run" type="button" data-i18n="sync.run">Run Now</button>
           </div>
         </div>
-        <div class="form-grid">
-          <label class="switch">
-            <span data-i18n="sync.enabled">Enable automatic sync</span>
-            <input type="checkbox" id="sync-enabled" />
-          </label>
-          <label>
-            <span data-i18n="sync.interval">Interval (minutes)</span>
-            <input type="number" id="sync-interval" min="1" />
-          </label>
-          <label class="sync-window-field">
-            <span data-i18n="sync.windowRange">Sync window</span>
-            <div class="sync-window-inputs">
-              <input type="number" id="sync-window-start" min="0" max="23" />
-              <span class="sync-window-unit" data-i18n="sync.windowHour">h</span>
-              <span class="sync-window-separator" data-i18n="sync.windowTo">to</span>
-              <input type="number" id="sync-window-end" min="0" max="24" />
-              <span class="sync-window-unit" data-i18n="sync.windowHour">h</span>
+        <div class="sync-form-sections">
+          <section class="sync-form-section">
+            <div class="sync-section-title" data-i18n="sync.sectionSchedule">调度</div>
+            <div class="form-grid">
+              <label class="switch">
+                <span data-i18n="sync.enabled">Enable automatic sync</span>
+                <input type="checkbox" id="sync-enabled" />
+              </label>
+              <label>
+                <span data-i18n="sync.interval">Interval (minutes)</span>
+                <input type="number" id="sync-interval" min="1" />
+              </label>
+              <label class="sync-window-field">
+                <span data-i18n="sync.windowRange">Sync window</span>
+                <div class="sync-window-inputs">
+                  <input type="number" id="sync-window-start" min="0" max="23" />
+                  <span class="sync-window-unit" data-i18n="sync.windowHour">h</span>
+                  <span class="sync-window-separator" data-i18n="sync.windowTo">to</span>
+                  <input type="number" id="sync-window-end" min="0" max="24" />
+                  <span class="sync-window-unit" data-i18n="sync.windowHour">h</span>
+                </div>
+              </label>
+              <p class="muted sync-window-note" id="sync-window-note" data-i18n="sync.windowHintRange">Current window: 06:00 - 24:00</p>
             </div>
-          </label>
-          <label>
-            <span data-i18n="sync.sleepSeconds">Sleep (seconds)</span>
-            <input type="number" id="sync-sleep" min="0" step="0.01" />
-          </label>
-          <label>
-            <span data-i18n="sync.skipMinutes">Skip interval (minutes)</span>
-            <input type="number" id="sync-skip-minutes" min="0" />
-          </label>
-          <label class="switch">
-            <span data-i18n="sync.downloadContent">Download content</span>
-            <input type="checkbox" id="sync-download-content" />
-          </label>
-          <label class="switch">
-            <span data-i18n="sync.downloadImages">Download images</span>
-            <input type="checkbox" id="sync-download-images" />
-          </label>
-          <p class="muted sync-window-note" id="sync-window-note" data-i18n="sync.windowHintRange">Current window: 06:00 - 24:00</p>
+          </section>
+          <section class="sync-form-section">
+            <div class="sync-section-title" data-i18n="sync.sectionFetch">抓取</div>
+            <div class="form-grid">
+              <label>
+                <span data-i18n="sync.sleepSeconds">Sleep (seconds)</span>
+                <input type="number" id="sync-sleep" min="0" step="0.01" />
+              </label>
+              <label>
+                <span data-i18n="sync.skipMinutes">Skip interval (minutes)</span>
+                <input type="number" id="sync-skip-minutes" min="0" />
+              </label>
+              <label class="switch">
+                <span data-i18n="sync.downloadContent">Download content</span>
+                <input type="checkbox" id="sync-download-content" />
+              </label>
+              <label class="switch">
+                <span data-i18n="sync.downloadImages">Download images</span>
+                <input type="checkbox" id="sync-download-images" />
+              </label>
+            </div>
+          </section>
         </div>
       </div>
       <div class="panel sync-email">
@@ -84,39 +94,49 @@
             </button>
           </div>
         </div>
-        <div class="form-grid">
-          <label class="switch">
-            <span data-i18n="sync.alertEnabled">Enable alert email</span>
-            <input type="checkbox" id="sync-alert-enabled" />
-          </label>
-          <label>
-            <span data-i18n="sync.alertEmail">Alert email</span>
-            <input type="email" id="sync-alert-email" placeholder="alerts@example.com" />
-          </label>
-          <label>
-            <span data-i18n="email.smtpHost">SMTP host</span>
-            <input type="text" id="email-smtp-host" placeholder="smtp.example.com" />
-          </label>
-          <label>
-            <span data-i18n="email.smtpPort">SMTP port</span>
-            <input type="number" id="email-smtp-port" min="1" placeholder="587" />
-          </label>
-          <label>
-            <span data-i18n="email.smtpUser">SMTP user</span>
-            <input type="text" id="email-smtp-user" placeholder="username@example.com" />
-          </label>
-          <label>
-            <span data-i18n="email.smtpPassword">SMTP password</span>
-            <input type="password" id="email-smtp-password" placeholder="app password" />
-          </label>
-          <label>
-            <span data-i18n="email.fromEmail">From email</span>
-            <input type="email" id="email-from" placeholder="no-reply@example.com" />
-          </label>
-          <label class="switch">
-            <span data-i18n="email.tls">Enable TLS</span>
-            <input type="checkbox" id="email-tls" />
-          </label>
+        <div class="sync-form-sections">
+          <section class="sync-form-section">
+            <div class="sync-section-title" data-i18n="email.sectionTarget">告警目标</div>
+            <div class="form-grid">
+              <label class="switch">
+                <span data-i18n="sync.alertEnabled">Enable alert email</span>
+                <input type="checkbox" id="sync-alert-enabled" />
+              </label>
+              <label>
+                <span data-i18n="sync.alertEmail">Alert email</span>
+                <input type="email" id="sync-alert-email" placeholder="alerts@example.com" />
+              </label>
+            </div>
+          </section>
+          <section class="sync-form-section">
+            <div class="sync-section-title" data-i18n="email.sectionSmtp">SMTP</div>
+            <div class="form-grid">
+              <label>
+                <span data-i18n="email.smtpHost">SMTP host</span>
+                <input type="text" id="email-smtp-host" placeholder="smtp.example.com" />
+              </label>
+              <label>
+                <span data-i18n="email.smtpPort">SMTP port</span>
+                <input type="number" id="email-smtp-port" min="1" placeholder="587" />
+              </label>
+              <label>
+                <span data-i18n="email.smtpUser">SMTP user</span>
+                <input type="text" id="email-smtp-user" placeholder="username@example.com" />
+              </label>
+              <label>
+                <span data-i18n="email.smtpPassword">SMTP password</span>
+                <input type="password" id="email-smtp-password" placeholder="app password" />
+              </label>
+              <label>
+                <span data-i18n="email.fromEmail">From email</span>
+                <input type="email" id="email-from" placeholder="no-reply@example.com" />
+              </label>
+              <label class="switch">
+                <span data-i18n="email.tls">Enable TLS</span>
+                <input type="checkbox" id="email-tls" />
+              </label>
+            </div>
+          </section>
         </div>
       </div>
 

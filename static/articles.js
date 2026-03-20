@@ -17,6 +17,7 @@
   };
   const ITEM_SHOW_TYPE_ORDER = [0, 5, 6, 7, 8, 10, 11, 17];
   const isNarrowViewport = () => window.matchMedia('(max-width: 720px)').matches;
+  let articleFiltersCollapsed = false;
 
   const setArticleSearchLoading = (isLoading) => {
     const loading = $('#article-search-loading');
@@ -161,6 +162,26 @@
     state.currentArticlePayload = null;
     renderArticleContent(null);
     updatePreviewToolbarState();
+  };
+
+  const renderArticleFilterToggle = () => {
+    const button = $('#btn-article-filter-toggle');
+    const shell = $('#article-filter-shell');
+    if (!button || !shell) return;
+    const collapsed = isNarrowViewport() ? articleFiltersCollapsed : false;
+    shell.classList.toggle('is-mobile-collapsed', collapsed);
+    button.textContent = t(
+      collapsed ? 'articles.showFilters' : 'articles.hideFilters',
+      collapsed ? 'Show Filters' : 'Hide Filters',
+    );
+    button.setAttribute('aria-expanded', String(!collapsed));
+  };
+
+  const syncArticleFilterMode = () => {
+    if (!isNarrowViewport()) {
+      articleFiltersCollapsed = false;
+    }
+    renderArticleFilterToggle();
   };
 
   const renderArticleInsights = (payload) => {
@@ -989,6 +1010,7 @@
   const initArticleLayout = () => {
     const layout = $('.article-layout');
     const toggle = $('#btn-article-toggle');
+    const filterToggle = $('#btn-article-filter-toggle');
     const updateLabel = () => {
       const collapsed = layout.classList.contains('is-collapsed');
       const label = t(
@@ -1004,7 +1026,16 @@
         updateLabel();
       });
     }
+    if (filterToggle) {
+      filterToggle.addEventListener('click', () => {
+        articleFiltersCollapsed = !articleFiltersCollapsed;
+        renderArticleFilterToggle();
+      });
+    }
     updateLabel();
+    articleFiltersCollapsed = isNarrowViewport();
+    syncArticleFilterMode();
+    window.addEventListener('resize', syncArticleFilterMode);
 
     // Infinite Scroll for Article List
     const listScroll = $('#article-list');

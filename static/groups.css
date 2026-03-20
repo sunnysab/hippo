@@ -179,6 +179,10 @@
   flex-wrap: wrap;
 }
 
+.accounts-batch-toggle {
+  display: none;
+}
+
 .batch-divider {
   width: 1px;
   height: 22px;
@@ -528,6 +532,11 @@
     flex: 1 1 100%;
   }
 
+  .accounts-batch-toggle {
+    display: inline-flex;
+    width: 100%;
+  }
+
   .search-item {
     grid-template-columns: 36px minmax(0, 1fr);
   }
@@ -547,6 +556,7 @@
 
   .batch-actions {
     width: 100%;
+    padding-top: 4px;
   }
 
   .batch-actions > * {

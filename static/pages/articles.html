@@ -7,9 +7,12 @@
           <h2 data-i18n="articles.title">Articles</h2>
           <p class="muted" data-i18n="articles.librarySubtitle">Filter, scan, and open synced articles.</p>
         </div>
-        <button class="btn ghost article-reset-btn" id="btn-article-reset" type="button" data-i18n="articles.resetFilters">Reset Filters</button>
+        <div class="toolbar article-sidebar-actions">
+          <button class="btn ghost article-mobile-toggle" id="btn-article-filter-toggle" type="button" data-i18n="articles.toggleFilters">筛选</button>
+          <button class="btn ghost article-reset-btn" id="btn-article-reset" type="button" data-i18n="articles.resetFilters">Reset Filters</button>
+        </div>
       </div>
-      <div class="article-filter-shell">
+      <div class="article-filter-shell" id="article-filter-shell">
         <div class="article-filter-stack">
           <div class="toolbar article-filter-grid article-filter-grid-top">
             <select id="article-group-filter"></select>

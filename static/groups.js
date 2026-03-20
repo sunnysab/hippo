@@ -16,6 +16,7 @@
     loading: false,
     hasMore: true,
   };
+  let batchActionsExpanded = false;
 
   const isNarrowViewport = () => window.matchMedia('(max-width: 720px)').matches;
 
@@ -636,10 +637,30 @@
   const updateBatchCount = () => {
     const badge = $('#batch-count');
     const batchActions = $('#batch-actions');
+    const batchToggle = $('#btn-batch-toggle');
     if (!badge) return;
-    badge.textContent = state.selectedAccounts.size.toString();
+    const count = state.selectedAccounts.size;
+    badge.textContent = count.toString();
+    if (batchToggle) {
+      batchToggle.classList.toggle('is-hidden', !isNarrowViewport() || count === 0);
+      batchToggle.textContent = t(
+        batchActionsExpanded ? 'accounts.batchHide' : 'accounts.batchToggle',
+        batchActionsExpanded ? 'Hide Batch' : 'Batch Actions',
+      );
+      if (count > 0) {
+        batchToggle.textContent = `${batchToggle.textContent} (${count})`;
+      }
+      batchToggle.setAttribute('aria-expanded', String(batchActionsExpanded));
+    }
+    if (count === 0) {
+      batchActionsExpanded = false;
+    }
     if (batchActions) {
-      batchActions.classList.toggle('is-hidden', state.selectedAccounts.size === 0);
+      if (isNarrowViewport()) {
+        batchActions.classList.toggle('is-hidden', count === 0 || !batchActionsExpanded);
+      } else {
+        batchActions.classList.toggle('is-hidden', count === 0);
+      }
     }
   };
 
@@ -829,6 +850,13 @@
       }
       renderAccounts();
     });
+    const batchToggle = $('#btn-batch-toggle');
+    if (batchToggle) {
+      batchToggle.addEventListener('click', () => {
+        batchActionsExpanded = !batchActionsExpanded;
+        updateBatchCount();
+      });
+    }
     $('#btn-batch-move').addEventListener('click', async () => {
       const groupId = $('#batch-group-select').value;
       if (!groupId) {
@@ -946,6 +974,12 @@
   const init = async () => {
     bindEvents();
     await refresh();
+    window.addEventListener('resize', () => {
+      if (!isNarrowViewport()) {
+        batchActionsExpanded = false;
+      }
+      updateBatchCount();
+    });
   };
 
   window.HippoGroups = {

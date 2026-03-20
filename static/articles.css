@@ -30,6 +30,14 @@
   margin-bottom: 12px;
 }
 
+.article-sidebar-actions {
+  justify-content: flex-end;
+}
+
+.article-mobile-toggle {
+  display: none;
+}
+
 .article-filter-shell {
   margin-bottom: 10px;
   padding: 12px;
@@ -537,6 +545,14 @@
     overflow: visible;
   }
 
+  .article-sidebar-actions {
+    width: 100%;
+  }
+
+  .article-mobile-toggle {
+    display: inline-flex;
+  }
+
   .article-list,
   .article-preview {
     scroll-margin-top: 12px;
@@ -562,6 +578,10 @@
     padding: 12px;
   }
 
+  .article-filter-shell.is-mobile-collapsed {
+    display: none;
+  }
+
   .article-card {
     grid-template-columns: 68px minmax(0, 1fr);
   }
@@ -577,7 +597,8 @@
   }
 
   .article-toolbar-btn,
-  .article-reset-btn {
+  .article-reset-btn,
+  .article-mobile-toggle {
     flex: 1 1 calc(50% - 6px);
     min-width: 0;
   }
