@@ -12,6 +12,38 @@ from hippo import server
 
 @unittest.skipUnless(hasattr(socket, 'AF_UNIX'), 'AF_UNIX is not available on this platform')
 class ServerListenerTest(unittest.TestCase):
+    def test_remove_stale_unix_socket_rejects_active_listener(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            uds_path = Path(tmpdir) / 'hippo.sock'
+            active = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            active.bind(str(uds_path))
+            active.listen(1)
+
+            try:
+                with self.assertRaisesRegex(RuntimeError, 'Unix socket path is already in use'):
+                    server._remove_stale_unix_socket(uds_path)
+                self.assertTrue(uds_path.exists())
+            finally:
+                active.close()
+
+    def test_create_unix_listen_socket_keeps_existing_path_when_bind_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            uds_path = Path(tmpdir) / 'hippo.sock'
+            active = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            active.bind(str(uds_path))
+            active.listen(1)
+
+            def noop_remove(path: Path) -> None:
+                return None
+
+            try:
+                with patch.object(server, '_remove_stale_unix_socket', noop_remove):
+                    with self.assertRaisesRegex(RuntimeError, 'Failed to bind Unix socket'):
+                        server._create_unix_listen_socket(uds_path, 0o660)
+                self.assertTrue(uds_path.exists())
+            finally:
+                active.close()
+
     def test_build_listen_sockets_supports_tcp_and_unix_socket(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             uds_path = Path(tmpdir) / 'hippo.sock'
