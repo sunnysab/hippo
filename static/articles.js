@@ -18,6 +18,7 @@
   const ITEM_SHOW_TYPE_ORDER = [0, 5, 6, 7, 8, 10, 11, 17];
   const isNarrowViewport = () => window.matchMedia('(max-width: 720px)').matches;
   let articleFiltersCollapsed = false;
+  let articleMobileReading = false;
 
   const setArticleSearchLoading = (isLoading) => {
     const loading = $('#article-search-loading');
@@ -160,8 +161,10 @@
   const clearArticlePreview = () => {
     state.selectedArticleId = null;
     state.currentArticlePayload = null;
+    articleMobileReading = false;
     renderArticleContent(null);
     updatePreviewToolbarState();
+    renderArticleMobileMode();
   };
 
   const renderArticleFilterToggle = () => {
@@ -177,11 +180,24 @@
     button.setAttribute('aria-expanded', String(!collapsed));
   };
 
+  const renderArticleMobileMode = () => {
+    const layout = $('.article-layout');
+    const backButton = $('#btn-article-mobile-back');
+    if (!layout) return;
+    const reading = isNarrowViewport() && articleMobileReading;
+    layout.classList.toggle('is-mobile-reading', reading);
+    if (backButton) {
+      backButton.classList.toggle('is-hidden', !reading);
+    }
+  };
+
   const syncArticleFilterMode = () => {
     if (!isNarrowViewport()) {
       articleFiltersCollapsed = false;
+      articleMobileReading = false;
     }
     renderArticleFilterToggle();
+    renderArticleMobileMode();
   };
 
   const renderArticleInsights = (payload) => {
@@ -424,12 +440,11 @@
              state.articles = state.articles.concat(newArticles);
         }
         if (state.selectedArticleId && !state.articles.some((article) => article.id === state.selectedArticleId)) {
-            state.selectedArticleId = null;
-            state.currentArticlePayload = null;
-            renderArticleContent(null);
+            clearArticlePreview();
         }
         renderArticleInsights(payload);
         renderArticleList();
+        renderArticleMobileMode();
         updatePreviewToolbarState();
     } finally {
         state.isArticleLoading = false;
@@ -887,12 +902,25 @@
     });
   };
 
+  const focusArticleListOnMobile = () => {
+    if (!isNarrowViewport()) return;
+    const panel = $('.article-list');
+    if (!panel) return;
+    requestAnimationFrame(() => {
+      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+
   const selectArticle = async (id) => {
     state.selectedArticleId = id;
     hideAllArticleContextMenus();
     renderArticleList();
     const payload = await apiGet(`/api/article/${id}`);
     state.currentArticlePayload = payload;
+    if (isNarrowViewport()) {
+      articleMobileReading = true;
+      renderArticleMobileMode();
+    }
     renderArticleContent(payload);
     resetArticlePreviewScroll();
     updatePreviewToolbarState();
@@ -1011,6 +1039,7 @@
     const layout = $('.article-layout');
     const toggle = $('#btn-article-toggle');
     const filterToggle = $('#btn-article-filter-toggle');
+    const mobileBack = $('#btn-article-mobile-back');
     const updateLabel = () => {
       const collapsed = layout.classList.contains('is-collapsed');
       const label = t(
@@ -1030,6 +1059,13 @@
       filterToggle.addEventListener('click', () => {
         articleFiltersCollapsed = !articleFiltersCollapsed;
         renderArticleFilterToggle();
+      });
+    }
+    if (mobileBack) {
+      mobileBack.addEventListener('click', () => {
+        articleMobileReading = false;
+        renderArticleMobileMode();
+        focusArticleListOnMobile();
       });
     }
     updateLabel();

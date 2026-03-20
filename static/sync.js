@@ -5,8 +5,12 @@
   const SYNC_POLL_FAST_MS = 1000;
   const SYNC_POLL_IDLE_MS = 10000;
   const TEST_EMAIL_TIMEOUT_MS = 10000;
+  const isNarrowViewport = () => window.matchMedia('(max-width: 760px)').matches;
   let lastSyncStatusFingerprint = '';
   let lastSyncTasksFingerprint = '';
+  let syncSettingsCollapsed = true;
+  let syncEmailCollapsed = true;
+  let syncViewportWasNarrow = false;
 
   const buildSyncStatusFingerprint = (payload) => {
     if (!payload || typeof payload !== 'object') return '';
@@ -489,6 +493,65 @@
     $('#email-smtp-port').value = email.smtp_port ?? (tlsEnabled ? 587 : 25);
   };
 
+  const renderSyncMobilePanelState = (
+    panelSelector,
+    buttonSelector,
+    collapsed,
+    showKey,
+    hideKey,
+    showFallback,
+    hideFallback,
+  ) => {
+    const narrow = isNarrowViewport();
+    const panel = $(panelSelector);
+    const button = $(buttonSelector);
+    if (panel) {
+      panel.classList.toggle('is-mobile-collapsed', narrow && collapsed);
+    }
+    if (!button) return;
+    button.classList.toggle('is-hidden', !narrow);
+    button.textContent = t(
+      collapsed ? showKey : hideKey,
+      collapsed ? showFallback : hideFallback,
+    );
+    button.setAttribute('aria-expanded', String(!(narrow && collapsed)));
+  };
+
+  const renderSyncMobileLayout = () => {
+    renderSyncMobilePanelState(
+      '.sync-settings',
+      '#btn-sync-settings-toggle',
+      syncSettingsCollapsed,
+      'sync.showSettings',
+      'sync.hideSettings',
+      'Show settings',
+      'Hide settings',
+    );
+    renderSyncMobilePanelState(
+      '.sync-email',
+      '#btn-sync-email-toggle',
+      syncEmailCollapsed,
+      'email.showSettings',
+      'email.hideSettings',
+      'Show settings',
+      'Hide settings',
+    );
+  };
+
+  const syncMobileLayout = (options = {}) => {
+    const forceCollapse = Boolean(options.forceCollapse);
+    const narrow = isNarrowViewport();
+    if (!narrow) {
+      syncSettingsCollapsed = false;
+      syncEmailCollapsed = false;
+    } else if (!syncViewportWasNarrow || forceCollapse) {
+      syncSettingsCollapsed = true;
+      syncEmailCollapsed = true;
+    }
+    syncViewportWasNarrow = narrow;
+    renderSyncMobileLayout();
+  };
+
   const loadSyncSettings = async () => {
     const payload = await apiGet('/api/sync/settings');
     state.syncSettings = payload;
@@ -679,6 +742,20 @@
     $('#btn-login-cancel').addEventListener('click', cancelLogin);
     $('#btn-sync-save').addEventListener('click', saveSyncSettings);
     $('#btn-sync-run').addEventListener('click', triggerSyncRun);
+    const syncSettingsToggle = $('#btn-sync-settings-toggle');
+    if (syncSettingsToggle) {
+      syncSettingsToggle.addEventListener('click', () => {
+        syncSettingsCollapsed = !syncSettingsCollapsed;
+        renderSyncMobileLayout();
+      });
+    }
+    const syncEmailToggle = $('#btn-sync-email-toggle');
+    if (syncEmailToggle) {
+      syncEmailToggle.addEventListener('click', () => {
+        syncEmailCollapsed = !syncEmailCollapsed;
+        renderSyncMobileLayout();
+      });
+    }
     const emailSaveBtn = $('#btn-email-save');
     if (emailSaveBtn) {
       emailSaveBtn.addEventListener('click', saveEmailSettings);
@@ -708,6 +785,9 @@
     $('#btn-banner-login').addEventListener('click', async () => {
       activateTab('sync');
       await startLogin();
+    });
+    window.addEventListener('resize', () => {
+      syncMobileLayout();
     });
   };
 
@@ -762,10 +842,12 @@
 
   const init = async () => {
     bindEvents();
+    syncMobileLayout({ forceCollapse: true });
     await refresh();
   };
 
   const onRouteEnter = async () => {
+    syncMobileLayout();
     await loadSyncTasks();
     await loadSyncStatus();
     startSyncPoll();

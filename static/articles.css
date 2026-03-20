@@ -38,6 +38,10 @@
   display: none;
 }
 
+.article-mobile-back {
+  display: none;
+}
+
 .article-filter-shell {
   margin-bottom: 10px;
   padding: 12px;
@@ -545,12 +549,33 @@
     overflow: visible;
   }
 
+  .article-layout:not(.is-mobile-reading) .article-preview {
+    display: none;
+  }
+
+  .article-layout.is-mobile-reading .article-list {
+    display: none;
+  }
+
+  .article-layout.is-mobile-reading .article-preview {
+    display: flex;
+  }
+
   .article-sidebar-actions {
     width: 100%;
   }
 
   .article-mobile-toggle {
     display: inline-flex;
+  }
+
+  .article-mobile-back {
+    display: inline-flex;
+    flex: 1 1 100%;
+  }
+
+  .article-mobile-back.is-hidden {
+    display: none;
   }
 
   .article-list,
