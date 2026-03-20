@@ -151,6 +151,11 @@ python -m hippo sync-worker
 - Web：`logs/hippo-web.log`
 - Worker：`logs/hippo-sync-worker.log`
 
+两个 service 都会加载仓库根目录的 `.env`：
+
+- `EnvironmentFile=/home/sab/hippo/.env`
+- service 内单独声明的 `HIPPO_LOG_FILE` 会覆盖 `.env` 中同名变量
+
 示例安装步骤：
 
 ```bash
