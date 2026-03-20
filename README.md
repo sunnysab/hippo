@@ -126,6 +126,42 @@ python -m hippo account sync-all --skip-time 30
 - `GET /api/sync/settings` / `PATCH /api/sync/settings`
   - 同步设置包含 `window_start_hour` 与 `window_end_hour`（默认 `6` 到 `24`）。
   - 自动调度只会在该时间段内触发执行。
+  - Web 进程默认不再执行自动同步；请单独启动 `hippo sync-worker`。
+
+### Web 与同步进程拆分
+
+```bash
+python -m hippo serve --host 0.0.0.0 --port 2000
+python -m hippo sync-worker
+```
+
+- `hippo serve` 默认只提供 UI 与 API，不在进程内执行自动同步。
+- `hippo sync-worker` 负责定时检查同步设置、创建队列任务并实际执行同步。
+- 如需保留旧的单进程行为，可显式传入 `hippo serve --inprocess-sync`。
+
+### systemd 部署
+
+仓库内提供了两个 service 文件：
+
+- `hippo.service`：Web API / UI
+- `hippo-sync-worker.service`：同步队列 worker
+
+示例安装步骤：
+
+```bash
+sudo cp hippo.service /etc/systemd/system/
+sudo cp hippo-sync-worker.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now hippo.service
+sudo systemctl enable --now hippo-sync-worker.service
+```
+
+查看状态：
+
+```bash
+sudo systemctl status hippo.service
+sudo systemctl status hippo-sync-worker.service
+```
 
 ---
 

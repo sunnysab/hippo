@@ -36,6 +36,7 @@ from .models import AccountCredential, AccountGroup, LoginSession
 from .server import serve as run_server
 from .rss import build_rss_xml, query_rss_items
 from .storage import StorageInitError, PostgresStorage, open_storage
+from .sync_worker import run_sync_worker
 from .controllers.sync import (
     SyncMode,
     sync_account_articles as perform_account_sync,
@@ -1877,13 +1878,32 @@ def serve(
     host: str = typer.Option("127.0.0.1", help="HTTP 监听地址"),
     port: int = typer.Option(8000, min=1, max=65535, help="HTTP 监听端口"),
     static_dir: Path = typer.Option(Path("static"), help="静态资源目录"),
+    inprocess_sync: bool = typer.Option(
+        False,
+        '--inprocess-sync',
+        help='在 Web 进程内启用自动同步（不推荐）',
+    ),
 ) -> None:
     """Start HTTP server for API + UI."""
     try:
-        run_server(host=host, port=port, static_dir=static_dir)
+        run_server(
+            host=host,
+            port=port,
+            static_dir=static_dir,
+            enable_inprocess_sync=inprocess_sync,
+        )
     except RuntimeError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
+
+
+@app.command("sync-worker")
+@coro
+async def sync_worker(
+    poll_interval: float = typer.Option(5.0, min=0.2, help='队列轮询间隔（秒）'),
+) -> None:
+    """Run dedicated sync worker."""
+    await run_sync_worker(poll_interval=poll_interval)
 
 
 @app.command("rss")

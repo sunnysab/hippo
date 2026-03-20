@@ -39,7 +39,6 @@ from .sync_service import (
     get_sync_status as load_sync_status,
     set_sync_settings as save_sync_settings,
 )
-from .sync_tasks import SyncTaskManager
 from .utils import ensure_default_group, fetchall_rows, fetchone_row, parse_iso_date_to_timestamp
 from .login_service import save_login_session
 
@@ -54,6 +53,7 @@ _LOG_LEVEL_MAP = {
     "INFO": logging.INFO,
     "DEBUG": logging.DEBUG,
 }
+_INPROCESS_SYNC_VALUES = {'1', 'true', 'yes', 'on'}
 
 logger = logging.getLogger("hippo.serve")
 
@@ -69,6 +69,10 @@ def _resolve_log_level() -> tuple[int, str]:
     if level_name not in _LOG_LEVEL_MAP:
         level_name = DEFAULT_LOG_LEVEL
     return _LOG_LEVEL_MAP[level_name], level_name.lower()
+
+
+def _inprocess_sync_enabled() -> bool:
+    return os.environ.get('HIPPO_ENABLE_INPROCESS_SYNC', '').strip().lower() in _INPROCESS_SYNC_VALUES
 
 
 
@@ -1210,12 +1214,8 @@ def _get_login_manager(request: Request) -> LoginManager:
     return request.app.state.login_manager
 
 
-def _get_sync_scheduler(request: Request) -> SyncScheduler:
-    return request.app.state.sync_scheduler
-
-
-def _get_sync_task_manager(request: Request) -> SyncTaskManager:
-    return request.app.state.sync_tasks
+def _get_sync_scheduler(request: Request) -> SyncScheduler | None:
+    return getattr(request.app.state, 'sync_scheduler', None)
 
 
 router = APIRouter(prefix="/api")
@@ -1945,28 +1945,27 @@ def sync_status(
 def list_sync_tasks(
     limit: int = 5,
     detail: bool = False,
-    task_manager: "SyncTaskManager" = Depends(_get_sync_task_manager),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
     """
     获取同步任务列表。
     """
-    tasks = task_manager.list_tasks()
-    tasks.sort(key=lambda item: item.created_at, reverse=True)
+    tasks = storage.sync_jobs.list_jobs(limit=max(int(limit), 1))
     formatter = (lambda task: task.to_dict()) if detail else (lambda task: task.to_summary_dict())
     return {
-        "tasks": [formatter(task) for task in tasks[: max(int(limit), 1)]],
+        "tasks": [formatter(task) for task in tasks],
     }
 
 
 @router.get("/sync/tasks/{task_id}")
 def get_sync_task(
     task_id: str,
-    task_manager: "SyncTaskManager" = Depends(_get_sync_task_manager),
+    storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
     """
     获取指定同步任务的进度与状态。
     """
-    state = task_manager.get_task(task_id)
+    state = storage.sync_jobs.get_job(task_id)
     if not state:
         raise ApiError("Task not found", status=404)
     return state.to_dict()
@@ -1989,7 +1988,7 @@ def get_sync_settings(storage: PostgresStorage = Depends(_get_storage)) -> dict[
 async def update_sync_settings(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
-    scheduler: "SyncScheduler" = Depends(_get_sync_scheduler),
+    scheduler: SyncScheduler | None = Depends(_get_sync_scheduler),
 ) -> dict[str, Any]:
     """
     更新同步设置。
@@ -2039,7 +2038,7 @@ async def update_sync_settings(
         settings["email"] = set_email_settings(storage, email_updates)
     else:
         settings["email"] = get_email_settings(storage)
-    if settings.get("enabled"):
+    if settings.get("enabled") and scheduler:
         scheduler.trigger()
     return settings
 
@@ -2142,7 +2141,6 @@ async def send_sync_test_email(
 async def run_sync(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
-    task_manager: "SyncTaskManager" = Depends(_get_sync_task_manager),
 ) -> dict[str, Any]:
     """
     手动触发同步操作。
@@ -2187,20 +2185,21 @@ async def run_sync(
         if missing_biz:
             raise ApiError(f'Account not found: {missing_biz[0]}', status=404)
         biz_list = normalized_biz_list
-    if group_id is not None or biz_list is not None:
-        task_id = task_manager.create_sync_task(group_id=group_id, biz_list=biz_list)
-        task_state = task_manager.get_task(task_id)
-        task_status = task_state.status if task_state else 'pending'
-        response: dict[str, Any] = {'status': task_status, 'task_id': task_id}
-        if group_id is not None:
-            response['group_id'] = group_id
-        if biz_list is not None:
-            response['biz_list'] = biz_list
-        return response
-    task_id = task_manager.create_sync_task()
-    task_state = task_manager.get_task(task_id)
-    task_status = task_state.status if task_state else 'pending'
-    return {'status': task_status, 'task_id': task_id}
+    with storage.transaction():
+        task_state = storage.sync_jobs.create_job(
+            trigger_type='manual',
+            group_id=group_id,
+            biz_list=biz_list,
+        )
+    response: dict[str, Any] = {
+        'status': task_state.status,
+        'task_id': task_state.task_id,
+    }
+    if group_id is not None:
+        response['group_id'] = group_id
+    if biz_list is not None:
+        response['biz_list'] = biz_list
+    return response
 
 
 @router.get("/feed/mixed", response_model=None)
@@ -2290,7 +2289,11 @@ def list_feed(
     return {"articles": payload}
 
 
-def create_app(static_dir: Path | str = "static") -> FastAPI:
+def create_app(
+    static_dir: Path | str = "static",
+    *,
+    enable_inprocess_sync: bool | None = None,
+) -> FastAPI:
     log_level, _ = _resolve_log_level()
     logging.basicConfig(level=log_level, format="%(levelname)s: %(message)s", force=True)
     static_path = Path(static_dir).expanduser().resolve()
@@ -2311,9 +2314,12 @@ def create_app(static_dir: Path | str = "static") -> FastAPI:
             ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
             _ensure_avatar_images_table(storage)
         app.state.login_manager = LoginManager()
-        app.state.sync_scheduler = SyncScheduler()
-        app.state.sync_tasks = SyncTaskManager()
-        app.state.sync_scheduler.start()
+        should_enable_sync = _inprocess_sync_enabled() if enable_inprocess_sync is None else enable_inprocess_sync
+        if should_enable_sync:
+            app.state.sync_scheduler = SyncScheduler()
+            app.state.sync_scheduler.start()
+        else:
+            app.state.sync_scheduler = None
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
@@ -2349,9 +2355,11 @@ def serve(
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
     static_dir: Path | str = "static",
+    *,
+    enable_inprocess_sync: bool | None = None,
 ) -> None:
     import uvicorn
 
-    app = create_app(static_dir=static_dir)
+    app = create_app(static_dir=static_dir, enable_inprocess_sync=enable_inprocess_sync)
     _, uvicorn_log_level = _resolve_log_level()
     uvicorn.run(app, host=host, port=port, log_level=uvicorn_log_level)

@@ -1,12 +1,12 @@
 [Unit]
-Description=Hippo Web Service
+Description=Hippo Sync Worker Service
 After=network.target postgresql.service
 
 [Service]
 Type=simple
 User=sab
 WorkingDirectory=/home/sab/hippo
-ExecStart=/home/sab/hippo/.venv/bin/python -m hippo serve --host 0.0.0.0 --port 2000
+ExecStart=/home/sab/hippo/.venv/bin/python -m hippo sync-worker
 Environment=HIPPO_LOG_FILE=/home/sab/hippo/logs/hippo.log
 Environment=PYTHONUNBUFFERED=1
 Restart=always
