@@ -146,6 +146,11 @@ python -m hippo sync-worker
 - `hippo.service`：Web API / UI
 - `hippo-sync-worker.service`：同步队列 worker
 
+默认日志文件：
+
+- Web：`logs/hippo-web.log`
+- Worker：`logs/hippo-sync-worker.log`
+
 示例安装步骤：
 
 ```bash

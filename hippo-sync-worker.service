@@ -7,7 +7,7 @@ Type=simple
 User=sab
 WorkingDirectory=/home/sab/hippo
 ExecStart=/home/sab/hippo/.venv/bin/python -m hippo sync-worker
-Environment=HIPPO_LOG_FILE=/home/sab/hippo/logs/hippo.log
+Environment=HIPPO_LOG_FILE=/home/sab/hippo/logs/hippo-sync-worker.log
 Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=10
