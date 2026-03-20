@@ -148,6 +148,22 @@
     return null;
   };
 
+  const getActiveTaskAccountName = (task) => {
+    if (!task) return t('sync.runningProgress', 'Processing sync task');
+    const isPending = task.status === 'pending';
+    const currentAccount = task.current_account || {};
+    if (currentAccount.nickname || currentAccount.biz) {
+      return currentAccount.nickname || currentAccount.biz;
+    }
+    if (isPending) {
+      return t('sync.pendingUnknown', 'Waiting for current sync to finish');
+    }
+    if ((task.accounts_total || 0) === 0 && !task.phase && !task.last_log) {
+      return t('sync.runningPreparing', 'Preparing sync task');
+    }
+    return t('sync.runningProgress', 'Processing sync task');
+  };
+
   const getAccountStatusWeight = (status) => {
     if (status === 'running') return 0;
     if (status === 'pending') return 1;
@@ -190,13 +206,7 @@
     }
 
     const isPending = activeTask.status === 'pending';
-    const currentAccount = activeTask.current_account || {};
-    const accountName =
-      currentAccount.nickname ||
-      currentAccount.biz ||
-      (isPending
-        ? t('sync.pendingUnknown', 'Waiting for current sync to finish')
-        : t('sync.runningUnknown', 'Unknown account'));
+    const accountName = getActiveTaskAccountName(activeTask);
     const startedAt = activeTask.started_at || activeTask.created_at;
     const minutes = startedAt
       ? Math.max(1, Math.floor((Date.now() - new Date(startedAt).getTime()) / 60000))
@@ -322,13 +332,7 @@
       const activeToneClass = `sync-tone-${getSyncTone(activeTask.status)}`;
       item.className = `list-item sync-history-item is-running ${activeToneClass}`;
       const isPending = activeTask.status === 'pending';
-      const currentAccount = activeTask.current_account || {};
-      const accountName =
-        currentAccount.nickname ||
-        currentAccount.biz ||
-        (isPending
-          ? t('sync.pendingUnknown', 'Waiting for current sync to finish')
-          : t('sync.runningUnknown', 'Unknown account'));
+      const accountName = getActiveTaskAccountName(activeTask);
       const startedAt = activeTask.started_at || activeTask.created_at;
       const minutes = startedAt
         ? Math.max(1, Math.floor((Date.now() - new Date(startedAt).getTime()) / 60000))
@@ -866,5 +870,6 @@
     loadSyncTasks,
     loadSyncSettings,
     loadLoginStatus,
+    getActiveTaskAccountName,
   };
 })();
