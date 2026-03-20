@@ -243,6 +243,34 @@ CREATE TABLE IF NOT EXISTS blocked_image_hashes (
     UNIQUE (hash_algo, content_hash)
 );
 
+CREATE TABLE IF NOT EXISTS sync_jobs (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    trigger_type TEXT NOT NULL,
+    group_id INTEGER REFERENCES account_groups(id) ON DELETE SET NULL,
+    biz_list JSONB,
+    phase TEXT,
+    accounts_total INTEGER NOT NULL DEFAULT 0,
+    accounts_done INTEGER NOT NULL DEFAULT 0,
+    current_account JSONB,
+    current_article JSONB,
+    last_log TEXT,
+    report JSONB,
+    accounts JSONB NOT NULL DEFAULT '[]'::jsonb,
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL,
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    locked_by TEXT,
+    locked_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_jobs_status_created_at
+ON sync_jobs (status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_sync_jobs_trigger_type_status
+ON sync_jobs (trigger_type, status, created_at DESC);
+
 DROP INDEX IF EXISTS idx_article_content_article_pk;
 
 CREATE INDEX IF NOT EXISTS idx_accounts_nickname_trgm

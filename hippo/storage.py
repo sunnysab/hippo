@@ -18,10 +18,11 @@ from .repositories import (
     LoginSessionRepository,
     MetaRepository,
 )
+from .sync_jobs import SyncJobRepository
 
 load_env()
 
-SCHEMA_VERSION = '16'
+SCHEMA_VERSION = '17'
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'schema' / 'postgres.sql'
 
@@ -274,6 +275,7 @@ class PostgresStorage(AbstractContextManager):
         self.sessions = LoginSessionRepository(self.conn)
         self.articles = ArticleRepository(self.conn)
         self.images = ImageRepository(self.conn)
+        self.sync_jobs = SyncJobRepository(self.conn)
 
     def __enter__(self) -> PostgresStorage:
         return self
