@@ -183,9 +183,12 @@ def _parse_octal_mode(value: str) -> int:
     if not normalized:
         raise typer.BadParameter('Unix socket mode cannot be empty')
     try:
-        return int(normalized, 8)
+        mode = int(normalized, 8)
     except ValueError as exc:
         raise typer.BadParameter('Unix socket mode must be an octal value such as 660') from exc
+    if mode < 0 or mode > 0o777:
+        raise typer.BadParameter('Unix socket mode must be between 000 and 777')
+    return mode
 
 
 @db_app.command("init")
@@ -1912,6 +1915,8 @@ def serve(
     ),
 ) -> None:
     """Start HTTP server for API + UI."""
+    if no_tcp and unix_socket is None:
+        raise typer.BadParameter('--unix-socket is required when --no-tcp is set')
     resolved_host = None if no_tcp else host
     resolved_port = None if no_tcp else port
     try:

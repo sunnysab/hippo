@@ -149,6 +149,7 @@ python -m hippo serve --no-tcp --unix-socket /run/hippo/hippo.sock
 ```
 
 - `--unix-socket-mode` 用八进制权限表示，默认 `660`。
+- `--unix-socket` 的父目录需要提前存在，例如先由 systemd `RuntimeDirectory=` 或部署脚本创建。
 - 如果 socket 文件已存在且本身就是 socket，启动时会自动清理旧文件；如果该路径被普通文件占用，启动会直接报错。
 
 ### systemd 部署

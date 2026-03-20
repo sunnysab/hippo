@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -122,6 +123,10 @@ def _create_tcp_listen_socket(host: str, port: int) -> socket.socket:
 def _create_unix_listen_socket(path: Path, mode: int) -> socket.socket:
     if not hasattr(socket, 'AF_UNIX'):
         raise RuntimeError('Unix sockets are not supported on this platform')
+    if not path.parent.exists():
+        raise RuntimeError(f'Unix socket parent directory does not exist: {path.parent}')
+    if not path.parent.is_dir():
+        raise RuntimeError(f'Unix socket parent path is not a directory: {path.parent}')
     _remove_stale_unix_socket(path)
     candidate = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
@@ -129,9 +134,11 @@ def _create_unix_listen_socket(path: Path, mode: int) -> socket.socket:
         os.chmod(path, mode)
         candidate.set_inheritable(True)
         return candidate
-    except OSError:
+    except OSError as exc:
         candidate.close()
-        raise
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+        raise RuntimeError(f'Failed to bind Unix socket on {path}: {exc}') from exc
 
 
 def _build_listen_sockets(
@@ -2462,7 +2469,7 @@ def serve(
     config = uvicorn.Config(
         app,
         host=host or DEFAULT_HOST,
-        port=port or DEFAULT_PORT,
+        port=DEFAULT_PORT if port is None else port,
         log_level=uvicorn_log_level,
     )
     server = uvicorn.Server(config)
