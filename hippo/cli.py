@@ -176,6 +176,18 @@ def run() -> None:
         raise typer.Exit(code=2) from exc
 
 
+def _parse_octal_mode(value: str) -> int:
+    normalized = value.strip().lower()
+    if normalized.startswith('0o'):
+        normalized = normalized[2:]
+    if not normalized:
+        raise typer.BadParameter('Unix socket mode cannot be empty')
+    try:
+        return int(normalized, 8)
+    except ValueError as exc:
+        raise typer.BadParameter('Unix socket mode must be an octal value such as 660') from exc
+
+
 @db_app.command("init")
 def init_db(
     pg_dsn: Optional[str] = typer.Option(
@@ -1875,8 +1887,23 @@ async def login(
 
 @app.command("serve")
 def serve(
-    host: str = typer.Option("127.0.0.1", help="HTTP 监听地址"),
-    port: int = typer.Option(8000, min=1, max=65535, help="HTTP 监听端口"),
+    host: Optional[str] = typer.Option('127.0.0.1', help='HTTP 监听地址'),
+    port: Optional[int] = typer.Option(8000, min=1, max=65535, help='HTTP 监听端口'),
+    no_tcp: bool = typer.Option(
+        False,
+        '--no-tcp',
+        help='禁用 TCP 监听，仅使用 Unix socket',
+    ),
+    unix_socket: Optional[Path] = typer.Option(
+        None,
+        '--unix-socket',
+        help='Unix socket 路径，例如 /run/hippo/hippo.sock',
+    ),
+    unix_socket_mode: str = typer.Option(
+        '660',
+        '--unix-socket-mode',
+        help='Unix socket 文件权限，八进制，例如 660',
+    ),
     static_dir: Path = typer.Option(Path("static"), help="静态资源目录"),
     inprocess_sync: bool = typer.Option(
         False,
@@ -1885,11 +1912,15 @@ def serve(
     ),
 ) -> None:
     """Start HTTP server for API + UI."""
+    resolved_host = None if no_tcp else host
+    resolved_port = None if no_tcp else port
     try:
         run_server(
-            host=host,
-            port=port,
+            host=resolved_host,
+            port=resolved_port,
             static_dir=static_dir,
+            unix_socket=unix_socket,
+            unix_socket_mode=_parse_octal_mode(unix_socket_mode),
             enable_inprocess_sync=inprocess_sync,
         )
     except RuntimeError as exc:
