@@ -4,6 +4,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import typer
+
+from hippo import cli
 from hippo import server
 
 
@@ -37,6 +40,17 @@ class ServerListenerTest(unittest.TestCase):
                 unix_socket=None,
             )
 
+    def test_build_listen_sockets_reports_missing_unix_socket_parent_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            uds_path = Path(tmpdir) / 'missing' / 'hippo.sock'
+
+            with self.assertRaisesRegex(RuntimeError, 'Unix socket parent directory does not exist'):
+                server._build_listen_sockets(
+                    host=None,
+                    port=None,
+                    unix_socket=uds_path,
+                )
+
     def test_serve_passes_bound_sockets_to_uvicorn_server(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             uds_path = Path(tmpdir) / 'hippo.sock'
@@ -66,6 +80,29 @@ class ServerListenerTest(unittest.TestCase):
             self.assertIsInstance(sockets, list)
             self.assertEqual(2, len(sockets))
             self.assertEqual('warning', captured['config_kwargs']['log_level'])
+            self.assertEqual(0, captured['config_kwargs']['port'])
 
             for sock in sockets:
                 sock.close()
+
+
+class CliServeTest(unittest.TestCase):
+    def test_parse_octal_mode_rejects_negative_value(self) -> None:
+        with self.assertRaisesRegex(typer.BadParameter, 'Unix socket mode must be between 000 and 777'):
+            cli._parse_octal_mode('-1')
+
+    def test_parse_octal_mode_rejects_bits_outside_permission_range(self) -> None:
+        with self.assertRaisesRegex(typer.BadParameter, 'Unix socket mode must be between 000 and 777'):
+            cli._parse_octal_mode('1777')
+
+    def test_serve_requires_unix_socket_when_tcp_is_disabled(self) -> None:
+        with self.assertRaisesRegex(typer.BadParameter, '--unix-socket is required when --no-tcp is set'):
+            cli.serve(
+                host='127.0.0.1',
+                port=8000,
+                no_tcp=True,
+                unix_socket=None,
+                unix_socket_mode='660',
+                static_dir=Path('static'),
+                inprocess_sync=False,
+            )
