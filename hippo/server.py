@@ -8,6 +8,8 @@ import logging
 import os
 import random
 import re
+import socket
+import stat
 import threading
 import time as time_module
 from datetime import datetime, timezone
@@ -73,6 +75,93 @@ def _resolve_log_level() -> tuple[int, str]:
 
 def _inprocess_sync_enabled() -> bool:
     return os.environ.get('HIPPO_ENABLE_INPROCESS_SYNC', '').strip().lower() in _INPROCESS_SYNC_VALUES
+
+
+def _normalize_listen_host(host: str | None) -> str | None:
+    if host is None:
+        return None
+    normalized = host.strip()
+    return normalized or None
+
+
+def _normalize_unix_socket_path(unix_socket: Path | str | None) -> Path | None:
+    if unix_socket is None:
+        return None
+    normalized = str(unix_socket).strip()
+    if not normalized:
+        return None
+    return Path(normalized)
+
+
+def _remove_stale_unix_socket(path: Path) -> None:
+    try:
+        existing = path.stat()
+    except FileNotFoundError:
+        return
+    if not stat.S_ISSOCK(existing.st_mode):
+        raise RuntimeError(f'Unix socket path already exists and is not a socket: {path}')
+    path.unlink()
+
+
+def _create_tcp_listen_socket(host: str, port: int) -> socket.socket:
+    last_error: OSError | None = None
+    addrinfo = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE)
+    for family, socktype, proto, _, sockaddr in addrinfo:
+        candidate = socket.socket(family, socktype, proto)
+        try:
+            candidate.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            candidate.bind(sockaddr)
+            candidate.set_inheritable(True)
+            return candidate
+        except OSError as exc:
+            last_error = exc
+            candidate.close()
+    raise RuntimeError(f'Failed to bind TCP listener on {host}:{port}') from last_error
+
+
+def _create_unix_listen_socket(path: Path, mode: int) -> socket.socket:
+    if not hasattr(socket, 'AF_UNIX'):
+        raise RuntimeError('Unix sockets are not supported on this platform')
+    _remove_stale_unix_socket(path)
+    candidate = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        candidate.bind(str(path))
+        os.chmod(path, mode)
+        candidate.set_inheritable(True)
+        return candidate
+    except OSError:
+        candidate.close()
+        raise
+
+
+def _build_listen_sockets(
+    *,
+    host: str | None,
+    port: int | None,
+    unix_socket: Path | str | None,
+    unix_socket_mode: int = 0o660,
+) -> list[socket.socket]:
+    normalized_host = _normalize_listen_host(host)
+    normalized_unix_socket = _normalize_unix_socket_path(unix_socket)
+    sockets: list[socket.socket] = []
+    try:
+        if normalized_host is not None:
+            if port is None:
+                raise RuntimeError('TCP port is required when host is configured')
+            sockets.append(_create_tcp_listen_socket(normalized_host, port))
+        elif port is not None:
+            raise RuntimeError('TCP host is required when port is configured')
+
+        if normalized_unix_socket is not None:
+            sockets.append(_create_unix_listen_socket(normalized_unix_socket, unix_socket_mode))
+
+        if not sockets:
+            raise RuntimeError('At least one listener must be configured')
+        return sockets
+    except Exception:
+        for candidate in sockets:
+            candidate.close()
+        raise
 
 
 
@@ -2352,14 +2441,33 @@ def create_app(
 
 
 def serve(
-    host: str = DEFAULT_HOST,
-    port: int = DEFAULT_PORT,
+    host: str | None = DEFAULT_HOST,
+    port: int | None = DEFAULT_PORT,
     static_dir: Path | str = "static",
     *,
+    unix_socket: Path | str | None = None,
+    unix_socket_mode: int = 0o660,
     enable_inprocess_sync: bool | None = None,
 ) -> None:
     import uvicorn
 
     app = create_app(static_dir=static_dir, enable_inprocess_sync=enable_inprocess_sync)
     _, uvicorn_log_level = _resolve_log_level()
-    uvicorn.run(app, host=host, port=port, log_level=uvicorn_log_level)
+    listen_sockets = _build_listen_sockets(
+        host=host,
+        port=port,
+        unix_socket=unix_socket,
+        unix_socket_mode=unix_socket_mode,
+    )
+    config = uvicorn.Config(
+        app,
+        host=host or DEFAULT_HOST,
+        port=port or DEFAULT_PORT,
+        log_level=uvicorn_log_level,
+    )
+    server = uvicorn.Server(config)
+    try:
+        server.run(sockets=listen_sockets)
+    finally:
+        for candidate in listen_sockets:
+            candidate.close()

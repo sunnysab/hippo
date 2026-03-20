@@ -138,6 +138,18 @@ python -m hippo sync-worker
 - `hippo serve` 默认只提供 UI 与 API，不在进程内执行自动同步。
 - `hippo sync-worker` 负责定时检查同步设置、创建队列任务并实际执行同步。
 - 如需保留旧的单进程行为，可显式传入 `hippo serve --inprocess-sync`。
+- `hippo serve` 现在也支持 Unix socket：
+
+```bash
+# 同时监听 TCP 和 Unix socket
+python -m hippo serve --host 0.0.0.0 --port 2000 --unix-socket /run/hippo/hippo.sock
+
+# 仅监听 Unix socket
+python -m hippo serve --no-tcp --unix-socket /run/hippo/hippo.sock
+```
+
+- `--unix-socket-mode` 用八进制权限表示，默认 `660`。
+- 如果 socket 文件已存在且本身就是 socket，启动时会自动清理旧文件；如果该路径被普通文件占用，启动会直接报错。
 
 ### systemd 部署
 
@@ -171,6 +183,12 @@ sudo systemctl enable --now hippo-sync-worker.service
 ```bash
 sudo systemctl status hippo.service
 sudo systemctl status hippo-sync-worker.service
+```
+
+如果你要让 Web 服务走 Unix socket，可把 `ExecStart` 改成类似这样：
+
+```bash
+ExecStart=/home/sab/hippo/.venv/bin/python -m hippo serve --no-tcp --unix-socket /run/hippo/hippo.sock
 ```
 
 ---
