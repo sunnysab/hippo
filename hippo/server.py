@@ -101,6 +101,18 @@ def _remove_stale_unix_socket(path: Path) -> None:
         return
     if not stat.S_ISSOCK(existing.st_mode):
         raise RuntimeError(f'Unix socket path already exists and is not a socket: {path}')
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        probe.settimeout(0.1)
+        probe.connect(str(path))
+    except (ConnectionRefusedError, FileNotFoundError):
+        pass
+    except OSError as exc:
+        raise RuntimeError(f'Failed to inspect Unix socket path {path}: {exc}') from exc
+    else:
+        raise RuntimeError(f'Unix socket path is already in use: {path}')
+    finally:
+        probe.close()
     path.unlink()
 
 
@@ -129,15 +141,18 @@ def _create_unix_listen_socket(path: Path, mode: int) -> socket.socket:
         raise RuntimeError(f'Unix socket parent path is not a directory: {path.parent}')
     _remove_stale_unix_socket(path)
     candidate = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    bound = False
     try:
         candidate.bind(str(path))
+        bound = True
         os.chmod(path, mode)
         candidate.set_inheritable(True)
         return candidate
     except OSError as exc:
         candidate.close()
-        with contextlib.suppress(FileNotFoundError):
-            path.unlink()
+        if bound:
+            with contextlib.suppress(FileNotFoundError):
+                path.unlink()
         raise RuntimeError(f'Failed to bind Unix socket on {path}: {exc}') from exc
 
 
