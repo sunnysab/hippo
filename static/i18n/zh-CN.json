@@ -191,6 +191,8 @@
   "sync.phase.images": "下图片",
   "sync.runningImages": "正在下载图片",
   "sync.runningArticle": "正在处理文章：{title}",
+  "sync.runningPreparing": "准备中",
+  "sync.runningProgress": "处理中",
   "sync.runningUnknown": "未知账号",
   "sync.pendingTitle": "排队中 {name}",
   "sync.pendingSince": "已排队 {n} 分钟",
