@@ -1,9 +1,12 @@
 (() => {
   const { state, $, apiGet, apiSend, t, copyToClipboard, showToast } = window.Hippo;
+  const { buildArticleFacetVisibility } = window.HippoArticleFacets || {};
   const ARTICLE_FILTER_PARAM_KEYS = ['group', 'account', 'type', 'q', 'sort'];
   const ARTICLE_SORT_PUBLISH_AT_DESC = 'publish_at_desc';
   const ARTICLE_SORT_RELEVANCE_DESC = 'relevance_desc';
   const ARTICLE_SORT_VALUES = new Set([ARTICLE_SORT_PUBLISH_AT_DESC, ARTICLE_SORT_RELEVANCE_DESC]);
+  const ARTICLE_FACET_COLLAPSED_LIMIT = 5;
+  const ARTICLE_FACET_COLLAPSED_LIMIT_MOBILE = 3;
   const articleAccountCache = new Map();
   const ITEM_SHOW_TYPE_META = {
     0: { key: 'articles.type.0', fallback: 'Regular Article', tone: 'regular' },
@@ -19,6 +22,8 @@
   const isNarrowViewport = () => window.matchMedia('(max-width: 720px)').matches;
   let articleFiltersCollapsed = false;
   let articleMobileReading = false;
+  let articleFacetPayload = null;
+  let articleTypeFacetsExpanded = false;
 
   const setArticleSearchLoading = (isLoading) => {
     const loading = $('#article-search-loading');
@@ -198,9 +203,13 @@
     }
     renderArticleFilterToggle();
     renderArticleMobileMode();
+    if (articleFacetPayload) {
+      renderArticleInsights(articleFacetPayload);
+    }
   };
 
   const renderArticleInsights = (payload) => {
+    articleFacetPayload = payload;
     const summary = $('#article-filter-summary');
     const facetsContainer = $('#article-type-facets');
     if (summary) {
@@ -239,22 +248,66 @@
     }
     const activeType = $('#article-type-filter')?.value || '';
     const allCount = facets.reduce((sum, item) => sum + Number(item?.count || 0), 0);
-    const buttons = [
-      `<button class="article-type-facet${activeType ? '' : ' is-active'}" type="button" data-item-show-type="">
-        <span class="item-show-type-badge item-show-type-share item-show-type-badge-compact">${escapeHtml(t('filters.allTypes', 'All Types'))}</span>
-        <span class="article-type-facet-count">${escapeHtml(allCount.toLocaleString('zh-CN'))}</span>
-      </button>`,
+    const items = [
+      {
+        value: '',
+        count: allCount,
+        html: `<button class="article-type-facet${activeType ? '' : ' is-active'}" type="button" data-item-show-type="">
+          <span class="item-show-type-badge item-show-type-share item-show-type-badge-compact">${escapeHtml(t('filters.allTypes', 'All Types'))}</span>
+          <span class="article-type-facet-count">${escapeHtml(allCount.toLocaleString('zh-CN'))}</span>
+        </button>`,
+      },
       ...facets.map((facet) => {
         const itemShowType = String(facet.item_show_type);
         const activeClass = activeType === itemShowType ? ' is-active' : '';
-        return `<button class="article-type-facet${activeClass}" type="button" data-item-show-type="${escapeHtml(itemShowType)}">
-          ${renderItemShowTypeBadge(itemShowType, { compact: true })}
-          <span class="article-type-facet-count">${escapeHtml(Number(facet.count || 0).toLocaleString('zh-CN'))}</span>
-        </button>`;
+        return {
+          value: itemShowType,
+          count: Number(facet.count || 0),
+          html: `<button class="article-type-facet${activeClass}" type="button" data-item-show-type="${escapeHtml(itemShowType)}">
+            ${renderItemShowTypeBadge(itemShowType, { compact: true })}
+            <span class="article-type-facet-count">${escapeHtml(Number(facet.count || 0).toLocaleString('zh-CN'))}</span>
+          </button>`,
+        };
       }),
     ];
+    const collapsedLimit = isNarrowViewport()
+      ? ARTICLE_FACET_COLLAPSED_LIMIT_MOBILE
+      : ARTICLE_FACET_COLLAPSED_LIMIT;
+    const visibility = typeof buildArticleFacetVisibility === 'function'
+      ? buildArticleFacetVisibility({
+        items,
+        activeValue: activeType,
+        collapsedLimit,
+        expanded: articleTypeFacetsExpanded,
+      })
+      : {
+        visibleItems: items,
+        hiddenCount: 0,
+        isCollapsible: false,
+      };
+    const buttons = visibility.visibleItems.map((item) => item.html);
+    if (visibility.isCollapsible) {
+      const toggleLabel = articleTypeFacetsExpanded
+        ? t('articles.typeFacetCollapse', 'Collapse')
+        : t('articles.typeFacetExpand', 'Show {n} more').replace(
+          '{n}',
+          visibility.hiddenCount.toLocaleString('zh-CN'),
+        );
+      buttons.push(
+        `<button class="article-type-facet article-type-facet-toggle" type="button" data-facet-toggle="true" aria-expanded="${articleTypeFacetsExpanded}">
+          <span>${escapeHtml(toggleLabel)}</span>
+        </button>`,
+      );
+    }
     facetsContainer.innerHTML = buttons.join('');
     facetsContainer.querySelectorAll('.article-type-facet').forEach((button) => {
+      if (button.dataset.facetToggle === 'true') {
+        button.addEventListener('click', () => {
+          articleTypeFacetsExpanded = !articleTypeFacetsExpanded;
+          renderArticleInsights(articleFacetPayload);
+        });
+        return;
+      }
       button.addEventListener('click', () => {
         const targetValue = button.dataset.itemShowType || '';
         const select = $('#article-type-filter');

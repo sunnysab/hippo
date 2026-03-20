@@ -76,6 +76,8 @@
   "articles.toggleFilters": "筛选",
   "articles.showFilters": "展开筛选",
   "articles.hideFilters": "收起筛选",
+  "articles.typeFacetExpand": "展开其余 {n} 项",
+  "articles.typeFacetCollapse": "收起类型",
   "articles.backToList": "返回列表",
   "articles.resetFilters": "重置",
   "articles.loadMore": "加载更多",
