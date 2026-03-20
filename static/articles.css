@@ -106,15 +106,16 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  align-items: center;
+  align-items: flex-start;
 }
 
 .article-type-facet {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-height: 30px;
-  padding: 4px 10px;
+  gap: 5px;
+  min-height: 28px;
+  max-width: 100%;
+  padding: 3px 9px;
   border: 1px solid rgba(201, 193, 179, 0.72);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.92);
@@ -133,13 +134,20 @@
   border-color: rgba(31, 107, 92, 0.24);
 }
 
+.article-type-facet-toggle {
+  border-style: dashed;
+  background: rgba(244, 239, 231, 0.92);
+  color: var(--muted);
+  font-weight: 700;
+}
+
 .article-type-facet-count {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 24px;
-  height: 24px;
-  padding: 0 8px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
   border-radius: 999px;
   background: rgba(30, 36, 48, 0.06);
   color: var(--text);
@@ -405,9 +413,9 @@
 
 .article-preview-meta {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px 16px;
   flex-wrap: wrap;
   color: var(--muted);
   font-size: 12px;
@@ -416,14 +424,17 @@
 .article-preview-account {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  flex: 1 1 240px;
   min-width: 0;
+  max-width: 100%;
+  gap: 12px;
 }
 
 .article-preview-avatar {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  border-radius: 12px;
   object-fit: cover;
   background: var(--surface-muted);
   border: 1px solid rgba(222, 216, 205, 0.82);
@@ -434,16 +445,26 @@
 }
 
 .article-preview-name {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
   color: var(--text);
   font-size: 13px;
   font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .article-preview-items {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
+  flex: 0 1 420px;
   gap: 8px;
   flex-wrap: wrap;
+  margin-left: auto;
+  min-width: min(260px, 100%);
 }
 
 .article-preview-item {
@@ -636,6 +657,12 @@
   .article-preview-meta {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .article-preview-items {
+    justify-content: flex-start;
+    margin-left: 0;
+    min-width: 0;
   }
 
   .reader-controls {
