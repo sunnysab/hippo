@@ -343,6 +343,15 @@ const startChromeMetaPoll = () => {
   }, 60000);
 };
 
+const triggerBannerLogin = async () => {
+  activateTab('sync');
+  setHash('sync');
+  const syncModule = window.HippoSync;
+  if (typeof syncModule?.startLogin === 'function') {
+    await syncModule.startLogin();
+  }
+};
+
 const bindGlobalEvents = () => {
   const refreshBtn = $('#btn-refresh');
   if (refreshBtn) {
@@ -350,6 +359,10 @@ const bindGlobalEvents = () => {
       await refreshChromeMeta();
       await refreshCurrent();
     });
+  }
+  const bannerLoginBtn = $('#btn-banner-login');
+  if (bannerLoginBtn) {
+    bannerLoginBtn.addEventListener('click', triggerBannerLogin);
   }
 };
 
