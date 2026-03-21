@@ -20,3 +20,4 @@ mpcli.txt
 deploy.sh
 
 logs/
+.worktrees/
