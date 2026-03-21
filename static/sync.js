@@ -786,10 +786,6 @@
         syncWindowInputs(startInput.value, endInput.value);
       });
     }
-    $('#btn-banner-login').addEventListener('click', async () => {
-      activateTab('sync');
-      await startLogin();
-    });
     window.addEventListener('resize', () => {
       syncMobileLayout();
     });
@@ -866,6 +862,7 @@
     refresh,
     onRouteEnter,
     onRouteLeave,
+    startLogin,
     loadSyncStatus,
     loadSyncTasks,
     loadSyncSettings,
