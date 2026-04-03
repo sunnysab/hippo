@@ -223,10 +223,13 @@ async def perform_sync(
         if detail is None:
             return
         skipped = detail.skipped
+        failed = detail.failed
         skip_reason = detail.skip_reason
         saved = detail.saved
         completed = detail.completed
-        if skipped:
+        if failed:
+            progress.set_postfix_str('失败', refresh=True)
+        elif skipped:
             account = account_map.get(biz)
             if account:
                 progress.set_postfix_str(_format_skip_reason(str(skip_reason or ''), account), refresh=True)

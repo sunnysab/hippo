@@ -42,6 +42,7 @@ class AccountProgress:
     article_total: int | None = None
     last_article: dict[str, Any] | None = None
     skip_reason: str | None = None
+    error: str | None = None
     updated_at: str | None = None
 
     def touch(self) -> None:
@@ -59,6 +60,7 @@ class AccountProgress:
             "article_total": self.article_total,
             "last_article": self.last_article,
             "skip_reason": self.skip_reason,
+            "error": self.error,
             "updated_at": self.updated_at,
         }
 
@@ -167,6 +169,7 @@ class SyncTaskObserver(SyncObserver):
             progress.status = "skipped"
             progress.phase = None
             progress.skip_reason = reason
+            progress.error = None
             progress.touch()
 
 
@@ -247,6 +250,7 @@ class SyncTaskManager:
                 )
                 progress.status = "running"
                 progress.phase = 'listing'
+                progress.error = None
                 progress.touch()
 
         def on_account_stage(account: AccountCredential, stage: str) -> None:
@@ -268,8 +272,15 @@ class SyncTaskManager:
                 if result.skipped:
                     progress.status = "skipped"
                     progress.skip_reason = result.skip_reason
+                    progress.error = None
+                elif result.failed:
+                    progress.status = 'failed'
+                    progress.skip_reason = None
+                    progress.error = result.error
                 else:
                     progress.status = "completed" if result.completed else "stopped"
+                    progress.skip_reason = None
+                    progress.error = None
                 progress.phase = None
                 progress.saved = result.saved
                 if summary:
@@ -301,6 +312,7 @@ class SyncTaskManager:
                     "total_saved": result.report.total_saved,
                     "downloaded": result.report.downloaded,
                     "summary": result.report.summary,
+                    "failed_accounts": result.report.failed_accounts,
                 }
                 status = str(result.status.get("status") or "success")
                 state.status = status

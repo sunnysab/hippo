@@ -168,8 +168,9 @@
     if (status === 'running') return 0;
     if (status === 'pending') return 1;
     if (status === 'completed') return 2;
-    if (status === 'skipped') return 3;
-    if (status === 'stopped') return 4;
+    if (status === 'failed') return 3;
+    if (status === 'skipped') return 4;
+    if (status === 'stopped') return 5;
     return 5;
   };
 
@@ -256,6 +257,9 @@
         }
         if (account.skip_reason) {
           meta.push(getSkipReasonLabel(account.skip_reason));
+        }
+        if (account.error) {
+          meta.push(t('sync.accountError', 'Error: {message}').replace('{message}', account.error));
         }
         const lastArticleTitle = account.last_article?.title
           ? t('sync.accountLastArticle', 'Latest article: {title}').replace('{title}', account.last_article.title)
