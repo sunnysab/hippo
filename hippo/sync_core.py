@@ -57,7 +57,15 @@ def extract_publish_page(payload: dict[str, Any]) -> dict[str, Any]:
 
 def is_login_error(message: str) -> bool:
     lowered = message.lower()
-    hints = ("login", "token", "session", "invalid", "expire", "expired", "timeout")
+    hints = (
+        'login',
+        'invalid token',
+        'invalid session',
+        'session',
+        'expire',
+        'expired',
+        'timeout',
+    )
     return any(hint in lowered for hint in hints)
 
 

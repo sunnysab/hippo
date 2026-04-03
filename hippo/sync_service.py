@@ -259,6 +259,7 @@ def _persist_sync_outcome(
         for item in report.details
         if item.skipped and item.skip_reason in ('disabled', 'recently_synced')
     )
+    failed_accounts = sum(1 for item in report.details if item.failed)
     append_sync_history(
         storage,
         {
@@ -269,6 +270,7 @@ def _persist_sync_outcome(
             'saved': report.total_saved,
             'downloaded': report.downloaded,
             'skipped_accounts': skipped_accounts,
+            'failed_accounts': failed_accounts,
         },
     )
     _send_sync_alert(
@@ -310,6 +312,13 @@ def _get_login_updated_at(storage: PostgresStorage) -> datetime | None:
 
 def _should_skip_for_login(storage: PostgresStorage) -> bool:
     if storage.meta.get(SYNC_STATUS_KEY) != 'login_required':
+        return False
+    last_error = storage.meta.get(SYNC_ERROR_KEY) or ''
+    if last_error and not is_login_error(last_error):
+        with storage.transaction():
+            storage.meta.delete(SYNC_LOGIN_REQUIRED_AT_KEY)
+            storage.meta.delete(ALERT_SENT_KEY)
+            storage.meta.set(SYNC_STATUS_KEY, 'failed')
         return False
     blocked_at = _parse_iso_datetime(storage.meta.get(SYNC_LOGIN_REQUIRED_AT_KEY))
     if not blocked_at:
@@ -544,6 +553,8 @@ class ArticleSyncService:
                 completed=False,
                 skipped=True,
                 skip_reason='disabled',
+                failed=False,
+                error=None,
             )
             return result, [], None
 
@@ -563,6 +574,8 @@ class ArticleSyncService:
                 completed=True,
                 skipped=True,
                 skip_reason='completed_today',
+                failed=False,
+                error=None,
             )
             return result, [], None
 
@@ -575,6 +588,8 @@ class ArticleSyncService:
                 completed=False,
                 skipped=True,
                 skip_reason='recently_synced',
+                failed=False,
+                error=None,
             )
             return result, [], None
 
@@ -615,6 +630,20 @@ class ArticleSyncService:
                     completed=False,
                     skipped=True,
                     skip_reason='freq_control',
+                    failed=False,
+                    error=None,
+                )
+                return result, [], None
+            if bulk and not is_login_error(message):
+                result = SyncAccountResult(
+                    biz=account.biz,
+                    nickname=account.nickname or account.biz,
+                    saved=0,
+                    completed=False,
+                    skipped=False,
+                    skip_reason=None,
+                    failed=True,
+                    error=message,
                 )
                 return result, [], None
             raise SyncRunError(message, login_required=is_login_error(message)) from exc
@@ -636,6 +665,8 @@ class ArticleSyncService:
             completed=summary.completed,
             skipped=False,
             skip_reason=None,
+            failed=False,
+            error=None,
         )
         return result, collector.records if collector else [], summary
 
@@ -656,6 +687,7 @@ class ArticleSyncService:
         shared_since, shared_until = self._resolve_shared_window(config)
         total_saved = 0
         total_downloaded = 0
+        failed_accounts = 0
         summary_rows: list[tuple[str, int]] = []
         details: list[SyncAccountResult] = []
 
@@ -677,10 +709,21 @@ class ArticleSyncService:
                 allow_freq_skip=allow_freq_skip,
             )
             details.append(result)
+            if result.failed:
+                failed_accounts += 1
+                if on_account_done:
+                    on_account_done(result, summary)
+                continue
             if result.skipped and not bulk:
                 if on_account_done:
                     on_account_done(result, summary)
-                return SyncReport(total_saved=0, summary=[], details=details, downloaded=0)
+                return SyncReport(
+                    total_saved=0,
+                    summary=[],
+                    details=details,
+                    downloaded=0,
+                    failed_accounts=failed_accounts,
+                )
             if result.skipped:
                 if on_account_done:
                     on_account_done(result, summary)
@@ -717,6 +760,7 @@ class ArticleSyncService:
             summary=summary_rows,
             details=details,
             downloaded=total_downloaded,
+            failed_accounts=failed_accounts,
         )
 
 
