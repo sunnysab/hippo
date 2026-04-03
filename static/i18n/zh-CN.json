@@ -213,6 +213,7 @@
   "sync.accountSaved": "已保存 {n} 篇",
   "sync.accountPages": "已翻 {n} 页",
   "sync.accountLastArticle": "最新文章：{title}",
+  "sync.accountError": "错误：{message}",
   "sync.accountMore": "还有 {n} 个账号",
   "sync.skip.disabled": "已禁用",
   "sync.skip.recently_synced": "近期已同步",
