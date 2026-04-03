@@ -58,6 +58,8 @@ class SyncAccountResult:
     completed: bool
     skipped: bool
     skip_reason: str | None
+    failed: bool = False
+    error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,7 @@ class SyncReport:
     summary: list[tuple[str, int]]
     details: list[SyncAccountResult]
     downloaded: int = 0
+    failed_accounts: int = 0
 
 
 class SyncObserver(Protocol):

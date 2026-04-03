@@ -221,9 +221,9 @@ class SyncJobRepository:
                 """
                 UPDATE sync_jobs
                 SET status = 'running',
-                    started_at = COALESCE(started_at, NOW()),
+                    started_at = COALESCE(started_at, clock_timestamp()),
                     locked_by = %s,
-                    locked_at = NOW()
+                    locked_at = clock_timestamp()
                 WHERE id = %s
                 """,
                 (worker_id, task_id),
@@ -287,7 +287,7 @@ class SyncJobRepository:
                     phase = NULL,
                     current_account = NULL,
                     current_article = NULL,
-                    finished_at = NOW(),
+                    finished_at = clock_timestamp(),
                     locked_by = NULL,
                     locked_at = NULL
                 WHERE id = %s
