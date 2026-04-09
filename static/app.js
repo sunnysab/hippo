@@ -30,7 +30,7 @@ const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 const handleAuthError = (message) => {
   const fallback = t('login.sessionExpired', 'Session expired. Please login again.');
   showToast(message || fallback);
-  setHash('sync');
+  setHash('settings');
 };
 
 const apiGet = async (path) => {
@@ -147,7 +147,7 @@ const availableTabs = () =>
 const TAB_MODULES = {
   groups: () => window.HippoGroups,
   articles: () => window.HippoArticles,
-  sync: () => window.HippoSync,
+  settings: () => window.HippoSettings,
 };
 
 const initializedTabs = new Set();
@@ -290,7 +290,7 @@ const initTabs = () => {
 const loadViewFragments = async () => {
   const root = $('#view-root');
   if (!root) return;
-  const pages = ['groups', 'articles', 'sync'];
+  const pages = ['groups', 'articles', 'settings'];
   const html = await Promise.all(
     pages.map(async (name) => {
       const res = await fetch(`/pages/${name}.html`);
@@ -316,16 +316,16 @@ const refreshCurrent = async () => {
 };
 
 const refreshChromeMeta = async () => {
-  const syncModule = window.HippoSync;
-  if (!syncModule) return;
+  const settingsModule = window.HippoSettings;
+  if (!settingsModule) return;
   const tasks = [];
-  if (typeof syncModule.loadLoginStatus === 'function') {
-    tasks.push(syncModule.loadLoginStatus().catch((err) => {
+  if (typeof settingsModule.loadLoginStatus === 'function') {
+    tasks.push(settingsModule.loadLoginStatus().catch((err) => {
       console.warn('Failed to refresh login meta', err);
     }));
   }
-  if (typeof syncModule.loadSyncStatus === 'function') {
-    tasks.push(syncModule.loadSyncStatus().catch((err) => {
+  if (typeof settingsModule.loadSyncStatus === 'function') {
+    tasks.push(settingsModule.loadSyncStatus().catch((err) => {
       console.warn('Failed to refresh sync meta', err);
     }));
   }
@@ -344,11 +344,11 @@ const startChromeMetaPoll = () => {
 };
 
 const triggerBannerLogin = async () => {
-  activateTab('sync');
-  setHash('sync');
-  const syncModule = window.HippoSync;
-  if (typeof syncModule?.startLogin === 'function') {
-    await syncModule.startLogin();
+  activateTab('settings');
+  setHash('settings');
+  const settingsModule = window.HippoSettings;
+  if (typeof settingsModule?.startLogin === 'function') {
+    await settingsModule.startLogin();
   }
 };
 

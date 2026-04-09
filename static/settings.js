@@ -676,7 +676,7 @@
       loginStatus.className = `login-status sync-status-badge sync-tone-${getSyncTone(getLoginToneStatus(status))}`;
     }
     const qr = $('#login-qr');
-    const loginCard = $('#view-sync .login-card');
+    const loginCard = $('#view-settings .login-card');
     if (loginCard) {
       loginCard.dataset.status = status;
     }
@@ -797,7 +797,7 @@
     });
   };
 
-  const isSyncActive = () => $('#view-sync')?.classList.contains('is-active');
+  const isSyncActive = () => $('#view-settings')?.classList.contains('is-active');
 
   const hasActiveSyncTask = () => {
     const tasks = state.syncTasks || [];
@@ -863,7 +863,7 @@
     stopSyncPoll();
   };
 
-  window.HippoSync = {
+  window.HippoSettings = {
     init,
     refresh,
     onRouteEnter,

@@ -5,7 +5,7 @@ from hippo.server import router
 
 
 ROOT = Path(__file__).resolve().parent.parent
-SYNC_JS = ROOT / 'static' / 'sync.js'
+SETTINGS_JS = ROOT / 'static' / 'settings.js'
 GROUPS_JS = ROOT / 'static' / 'groups.js'
 
 
@@ -37,18 +37,18 @@ class SettingsApiNamespaceTest(unittest.TestCase):
         self.assertNotIn('/api/sync/run', route_map)
 
     def test_frontend_uses_settings_api_namespace(self) -> None:
-        sync_js = SYNC_JS.read_text(encoding='utf-8')
+        settings_js = SETTINGS_JS.read_text(encoding='utf-8')
         groups_js = GROUPS_JS.read_text(encoding='utf-8')
 
-        self.assertIn('/api/settings/status', sync_js)
-        self.assertIn('/api/settings/tasks?limit=5&detail=true', sync_js)
-        self.assertIn('/api/settings', sync_js)
-        self.assertIn('/api/settings/test-email', sync_js)
-        self.assertIn('/api/settings/run', sync_js)
+        self.assertIn('/api/settings/status', settings_js)
+        self.assertIn('/api/settings/tasks?limit=5&detail=true', settings_js)
+        self.assertIn('/api/settings', settings_js)
+        self.assertIn('/api/settings/test-email', settings_js)
+        self.assertIn('/api/settings/run', settings_js)
         self.assertIn('/api/settings/run', groups_js)
-        self.assertNotIn('/api/sync/settings', sync_js)
-        self.assertNotIn('/api/sync/test-email', sync_js)
-        self.assertNotIn('/api/sync/run', sync_js)
+        self.assertNotIn('/api/sync/settings', settings_js)
+        self.assertNotIn('/api/sync/test-email', settings_js)
+        self.assertNotIn('/api/sync/run', settings_js)
         self.assertNotIn('/api/sync/run', groups_js)
 
 
