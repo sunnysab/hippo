@@ -2095,7 +2095,6 @@ def login_qrcode(
     return Response(content=data, media_type="image/png")
 
 
-@router.get("/sync")
 @router.get("/settings/status")
 def sync_status(
     limit: int = 5,
@@ -2115,7 +2114,6 @@ def sync_status(
     return payload
 
 
-@router.get("/sync/tasks")
 @router.get("/settings/tasks")
 def list_sync_tasks(
     limit: int = 5,
@@ -2132,7 +2130,6 @@ def list_sync_tasks(
     }
 
 
-@router.get("/sync/tasks/{task_id}")
 @router.get("/settings/tasks/{task_id}")
 def get_sync_task(
     task_id: str,
@@ -2147,7 +2144,6 @@ def get_sync_task(
     return state.to_dict()
 
 
-@router.get("/sync/settings")
 @router.get("/settings")
 def get_sync_settings(storage: PostgresStorage = Depends(_get_storage)) -> dict[str, Any]:
     """
@@ -2161,7 +2157,6 @@ def get_sync_settings(storage: PostgresStorage = Depends(_get_storage)) -> dict[
     return payload
 
 
-@router.patch("/sync/settings")
 @router.patch("/settings")
 async def update_sync_settings(
     body: dict[str, Any] = Body(default={}),
@@ -2221,7 +2216,6 @@ async def update_sync_settings(
     return settings
 
 
-@router.post('/sync/test-email')
 @router.post('/settings/test-email')
 async def send_sync_test_email(
     body: dict[str, Any] = Body(default={}),
@@ -2316,7 +2310,6 @@ async def send_sync_test_email(
     return {'status': 'sent', 'to_email': to_email}
 
 
-@router.post("/sync/run", status_code=status.HTTP_202_ACCEPTED)
 @router.post("/settings/run", status_code=status.HTTP_202_ACCEPTED)
 async def run_sync(
     body: dict[str, Any] = Body(default={}),
