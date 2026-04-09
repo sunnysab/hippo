@@ -7,6 +7,7 @@ import quickjs
 ROOT = Path(__file__).resolve().parent.parent
 APP_JS = ROOT / 'static' / 'app.js'
 SYNC_JS = ROOT / 'static' / 'sync.js'
+SYNC_HTML = ROOT / 'static' / 'pages' / 'sync.html'
 
 
 class SyncFrontendLogicTest(unittest.TestCase):
@@ -69,6 +70,14 @@ class SyncFrontendLogicTest(unittest.TestCase):
         context = self.build_sync_context()
 
         self.assertEqual('function', context.eval('typeof window.HippoSync.startLogin'))
+
+    def test_settings_page_wires_article_exclude_keywords_field(self) -> None:
+        sync_html = SYNC_HTML.read_text(encoding='utf-8')
+        sync_js = SYNC_JS.read_text(encoding='utf-8')
+
+        self.assertIn('id="sync-article-exclude-keywords"', sync_html)
+        self.assertIn('article_exclude_keywords', sync_js)
+        self.assertIn("#sync-article-exclude-keywords", sync_js)
 
     def test_global_banner_login_click_switches_to_sync_and_starts_login(self) -> None:
         context = quickjs.Context()

@@ -96,6 +96,10 @@
   font-weight: 600;
 }
 
+.sync-textarea-field {
+  grid-column: 1 / -1;
+}
+
 .sync-window-field .sync-window-inputs {
   display: flex;
   align-items: center;

@@ -127,6 +127,7 @@ python -m hippo account sync-all --skip-time 30
 - `GET /api/settings` / `PATCH /api/settings`
   - 设置包含 `window_start_hour` 与 `window_end_hour`（默认 `6` 到 `24`）。
   - 自动调度只会在该时间段内触发执行。
+  - `article_exclude_keywords` 用于设置文章默认过滤关键词；每行一个，或使用逗号、分号分隔。
   - Web 进程默认不再执行自动同步；请单独启动 `hippo sync-worker`。
 - `POST /api/settings/test-email`
   - 使用当前设置或请求体中的 SMTP 参数发送测试邮件。
@@ -307,6 +308,7 @@ python -m hippo db init
   - 多个以空格分隔的关键词按宽松匹配处理：命中任一关键词即可返回，再按相关度排序。
   - 支持 `sort` 参数：`publish_at_desc`（发布时间新到旧）与 `relevance_desc`（相关度高到低）。
   - 支持 `exclude_keywords` 参数：使用逗号、分号或换行分隔多个关键词；命中标题、摘要或作者任一字段的文章会被过滤掉。
+  - 未传 `exclude_keywords` 时，会回落到 `/api/settings` 中保存的 `article_exclude_keywords`；显式传空字符串可临时关闭该默认过滤。
   - 未传 `sort` 时保持兼容：`q` 非空默认 `relevance_desc`，否则默认 `publish_at_desc`。
 
 ---
