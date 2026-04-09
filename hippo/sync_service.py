@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
@@ -63,6 +64,7 @@ _DEFAULT_RECENT_DAYS = 7
 _DEFAULT_PAGE_SIZE = 10
 _DEFAULT_WINDOW_START_HOUR = 6
 _DEFAULT_WINDOW_END_HOUR = 24
+_ARTICLE_EXCLUDE_KEYWORD_LIMIT = 20
 SYNC_RUN_LOCK = asyncio.Lock()
 
 
@@ -83,9 +85,33 @@ def default_sync_settings() -> dict[str, Any]:
         'download_content': True,
         'download_images': True,
         'skip_minutes': 30,
+        'article_exclude_keywords': '',
         'alert_enabled': False,
         'alert_email': '',
     }
+
+
+def _split_article_exclude_keywords(value: Any) -> list[str]:
+    if value in (None, ''):
+        return []
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for chunk in re.split(r'[,;\n]+', str(value)):
+        term = chunk.strip()
+        if not term:
+            continue
+        dedupe_key = term.lower()
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        keywords.append(term)
+        if len(keywords) >= _ARTICLE_EXCLUDE_KEYWORD_LIMIT:
+            break
+    return keywords
+
+
+def _normalize_article_exclude_keywords(value: Any) -> str:
+    return '\n'.join(_split_article_exclude_keywords(value))
 
 
 def _normalize_window_start_hour(value: Any) -> int:
@@ -156,6 +182,9 @@ def get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
     start_hour, end_hour = _get_window_hours(merged)
     merged['window_start_hour'] = start_hour
     merged['window_end_hour'] = end_hour
+    merged['article_exclude_keywords'] = _normalize_article_exclude_keywords(
+        merged.get('article_exclude_keywords'),
+    )
     # Remove legacy fields that are no longer supported by the settings UI.
     for key in ('mode', 'recent_days', 'page_size', 'content_limit', 'since', 'until'):
         merged.pop(key, None)
@@ -165,6 +194,10 @@ def get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
 def set_sync_settings(storage: PostgresStorage, updates: dict[str, Any]) -> dict[str, Any]:
     current = get_sync_settings(storage)
     current.update(updates)
+    if 'article_exclude_keywords' in current:
+        current['article_exclude_keywords'] = _normalize_article_exclude_keywords(
+            current.get('article_exclude_keywords'),
+        )
     with storage.transaction():
         save_meta_json(storage, SYNC_SETTINGS_KEY, current)
     return current

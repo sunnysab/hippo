@@ -13,6 +13,7 @@ from hippo.server import (
     _get_article,
     _list_articles,
     _normalize_item_show_type,
+    list_articles as list_articles_route,
 )
 from hippo.sync_tasks import _article_snapshot
 
@@ -395,6 +396,46 @@ class ArticleItemShowTypeTest(unittest.TestCase):
         _, query_sql, params = fetchone_row.call_args.args
         self.assertIn('(a.item_show_type = %s OR a.item_show_type IS NULL)', query_sql)
         self.assertEqual(params, ['demo', 0])
+
+    def test_list_articles_route_uses_settings_exclude_keywords_by_default(self) -> None:
+        storage = object()
+        payload = {'articles': [], 'page': 1, 'page_size': 20, 'total': 0, 'item_show_type_facets': []}
+
+        with (
+            patch('hippo.server.load_sync_settings', return_value={'article_exclude_keywords': 'promo\nAd'}),
+            patch('hippo.server._list_articles', return_value=payload) as list_articles_impl,
+        ):
+            result = list_articles_route(storage=storage, exclude_keywords=None)
+
+        self.assertIs(result, payload)
+        list_articles_impl.assert_called_once_with(
+            storage,
+            group_id=None,
+            biz=None,
+            item_show_type=None,
+            query=None,
+            exclude_keywords=['promo', 'Ad'],
+            since_ts=None,
+            until_ts=None,
+            sort_mode='publish_at_desc',
+            page=1,
+            page_size=20,
+            article_id=None,
+        )
+
+    def test_list_articles_route_allows_empty_param_to_disable_settings_exclusion(self) -> None:
+        storage = object()
+        payload = {'articles': [], 'page': 1, 'page_size': 20, 'total': 0, 'item_show_type_facets': []}
+
+        with (
+            patch('hippo.server.load_sync_settings', return_value={'article_exclude_keywords': 'promo\nAd'}),
+            patch('hippo.server._list_articles', return_value=payload) as list_articles_impl,
+        ):
+            result = list_articles_route(storage=storage, exclude_keywords='')
+
+        self.assertIs(result, payload)
+        called_kwargs = list_articles_impl.call_args.kwargs
+        self.assertIsNone(called_kwargs['exclude_keywords'])
 
     def test_normalize_item_show_type_rejects_unknown_value(self) -> None:
         with self.assertRaises(ApiError):

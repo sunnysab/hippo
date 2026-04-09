@@ -447,6 +447,7 @@ body {
 .toolbar input,
 .form-grid input,
 .form-grid select,
+.form-grid textarea,
 .group-sync-toolbar select,
 .group-sync-toolbar input,
 .account-sync-mode,
@@ -459,6 +460,13 @@ body {
   color: var(--text);
   font-size: 13px;
   font-family: var(--font-sans);
+}
+
+.form-grid textarea {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  line-height: 1.5;
 }
 
 .input {

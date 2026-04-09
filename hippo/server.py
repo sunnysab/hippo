@@ -299,10 +299,11 @@ def _split_article_exclude_keywords(raw: str | None) -> list[str]:
     keywords: list[str] = []
     seen: set[str] = set()
     for chunk in re.split(r'[,;\n]+', raw):
-        term = chunk.strip().lower()
-        if not term or term in seen:
+        term = chunk.strip()
+        dedupe_key = term.lower()
+        if not term or dedupe_key in seen:
             continue
-        seen.add(term)
+        seen.add(dedupe_key)
         keywords.append(term)
         if len(keywords) >= _ARTICLE_EXCLUDE_KEYWORD_LIMIT:
             break
@@ -315,7 +316,7 @@ def _build_article_exclude_keywords_where_clause(exclude_keywords: list[str] | N
     clauses: list[str] = []
     params: list[str] = []
     for keyword in exclude_keywords:
-        pattern = f'%{keyword}%'
+        pattern = f'%{keyword.lower()}%'
         clauses.append(
             "("
             "LOWER(COALESCE(a.title, '')) LIKE %s"
@@ -1904,7 +1905,11 @@ def list_articles(
     since_ts = _parse_date(since)
     until_ts = _parse_date(until, end_of_day=True)
     query_text = (q or '').strip()
-    exclude_terms = _split_article_exclude_keywords(exclude_keywords)
+    exclude_source = exclude_keywords
+    if exclude_source is None:
+        settings = load_sync_settings(storage)
+        exclude_source = str(settings.get('article_exclude_keywords') or '')
+    exclude_terms = _split_article_exclude_keywords(exclude_source)
     sort_mode = _normalize_article_sort(sort, has_query=bool(query_text))
     normalized_item_show_type = _normalize_item_show_type(item_show_type)
     return _list_articles(
@@ -2189,6 +2194,8 @@ async def update_sync_settings(
         updates["download_images"] = bool(body["download_images"])
     if "skip_minutes" in body:
         updates["skip_minutes"] = max(int(body["skip_minutes"]), 0)
+    if "article_exclude_keywords" in body:
+        updates["article_exclude_keywords"] = str(body["article_exclude_keywords"] or '')
     if "alert_enabled" in body:
         updates["alert_enabled"] = bool(body["alert_enabled"])
     if "alert_email" in body:

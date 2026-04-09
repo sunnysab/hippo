@@ -489,6 +489,7 @@
     $('#sync-skip-minutes').value = settings.skip_minutes ?? 30;
     $('#sync-download-content').checked = Boolean(settings.download_content);
     $('#sync-download-images').checked = Boolean(settings.download_images);
+    $('#sync-article-exclude-keywords').value = settings.article_exclude_keywords || '';
     $('#sync-alert-enabled').checked = Boolean(settings.alert_enabled);
     $('#sync-alert-email').value = settings.alert_email || '';
     const email = settings.email || {};
@@ -595,6 +596,7 @@
       skip_minutes: Number($('#sync-skip-minutes').value),
       download_content: $('#sync-download-content').checked,
       download_images: $('#sync-download-images').checked,
+      article_exclude_keywords: $('#sync-article-exclude-keywords').value.trim(),
       alert_enabled: $('#sync-alert-enabled').checked,
       alert_email: $('#sync-alert-email').value.trim(),
       email: getEmailFormData(),
