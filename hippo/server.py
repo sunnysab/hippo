@@ -202,6 +202,7 @@ ARTICLE_SORT_PUBLISH_AT_DESC = 'publish_at_desc'
 ARTICLE_SORT_RELEVANCE_DESC = 'relevance_desc'
 _ARTICLE_SORT_VALUES = {ARTICLE_SORT_PUBLISH_AT_DESC, ARTICLE_SORT_RELEVANCE_DESC}
 _ITEM_SHOW_TYPE_VALUES = {0, 5, 6, 7, 8, 10, 11, 17}
+_ARTICLE_EXCLUDE_KEYWORD_LIMIT = 20
 
 
 def _build_item_show_type_where_clause(item_show_type: int) -> tuple[str, list[int]]:
@@ -290,6 +291,40 @@ def _build_article_search_tsquery(query: str | None) -> tuple[str, list[str]]:
         return "plainto_tsquery('jiebaqry', %s)", [query_text]
     tsquery_sql = ' || '.join(["plainto_tsquery('jiebaqry', %s)"] * len(terms))
     return f'({tsquery_sql})', terms
+
+
+def _split_article_exclude_keywords(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for chunk in re.split(r'[,;\n]+', raw):
+        term = chunk.strip().lower()
+        if not term or term in seen:
+            continue
+        seen.add(term)
+        keywords.append(term)
+        if len(keywords) >= _ARTICLE_EXCLUDE_KEYWORD_LIMIT:
+            break
+    return keywords
+
+
+def _build_article_exclude_keywords_where_clause(exclude_keywords: list[str] | None) -> tuple[str, list[str]]:
+    if not exclude_keywords:
+        return '', []
+    clauses: list[str] = []
+    params: list[str] = []
+    for keyword in exclude_keywords:
+        pattern = f'%{keyword}%'
+        clauses.append(
+            "("
+            "LOWER(COALESCE(a.title, '')) LIKE %s"
+            " OR LOWER(COALESCE(a.digest, '')) LIKE %s"
+            " OR LOWER(COALESCE(a.author, '')) LIKE %s"
+            ")"
+        )
+        params.extend([pattern, pattern, pattern])
+    return f"NOT ({' OR '.join(clauses)})", params
 
 
 def _parse_date(value: str | None, *, end_of_day: bool = False) -> int | None:
@@ -747,6 +782,7 @@ def _build_article_query(
     biz: str | None,
     item_show_type: int | None,
     query: str | None,
+    exclude_keywords: list[str] | None,
     since_ts: int | None,
     until_ts: int | None,
     sort_mode: str,
@@ -779,6 +815,10 @@ def _build_article_query(
     if query_tsquery_sql:
         where.append(f"a.search_vector @@ {query_tsquery_sql}")
         params.extend(query_tsquery_params)
+    exclude_clause, exclude_params = _build_article_exclude_keywords_where_clause(exclude_keywords)
+    if exclude_clause:
+        where.append(exclude_clause)
+        params.extend(exclude_params)
     if sort_mode == ARTICLE_SORT_RELEVANCE_DESC and query_tsquery_sql:
         rank_select = f", ts_rank(a.search_vector, {query_tsquery_sql}) AS rank"
         select_params.extend(query_tsquery_params)
@@ -830,6 +870,7 @@ def _count_articles(
     biz: str | None,
     item_show_type: int | None,
     query: str | None,
+    exclude_keywords: list[str] | None,
     since_ts: int | None,
     until_ts: int | None,
     article_id: str | None = None,
@@ -855,6 +896,10 @@ def _count_articles(
     if query_tsquery_sql:
         where.append(f'a.search_vector @@ {query_tsquery_sql}')
         params.extend(query_tsquery_params)
+    exclude_clause, exclude_params = _build_article_exclude_keywords_where_clause(exclude_keywords)
+    if exclude_clause:
+        where.append(exclude_clause)
+        params.extend(exclude_params)
     if since_ts is not None:
         where.append('a.publish_at >= %s')
         params.append(since_ts)
@@ -883,6 +928,7 @@ def _count_article_item_show_type_facets(
     group_id: int | None,
     biz: str | None,
     query: str | None,
+    exclude_keywords: list[str] | None,
     since_ts: int | None,
     until_ts: int | None,
     article_id: str | None = None,
@@ -904,6 +950,10 @@ def _count_article_item_show_type_facets(
     if query_tsquery_sql:
         where.append(f'a.search_vector @@ {query_tsquery_sql}')
         params.extend(query_tsquery_params)
+    exclude_clause, exclude_params = _build_article_exclude_keywords_where_clause(exclude_keywords)
+    if exclude_clause:
+        where.append(exclude_clause)
+        params.extend(exclude_params)
     if since_ts is not None:
         where.append('a.publish_at >= %s')
         params.append(since_ts)
@@ -990,6 +1040,7 @@ def _list_articles(
     biz: str | None,
     item_show_type: int | None,
     query: str | None,
+    exclude_keywords: list[str] | None,
     since_ts: int | None,
     until_ts: int | None,
     sort_mode: str,
@@ -1004,6 +1055,7 @@ def _list_articles(
         biz=biz,
         item_show_type=item_show_type,
         query=query,
+        exclude_keywords=exclude_keywords,
         since_ts=since_ts,
         until_ts=until_ts,
         sort_mode=sort_mode,
@@ -1015,9 +1067,13 @@ def _list_articles(
     for row in rows:
         row['item_show_type'] = _normalize_api_item_show_type(row.get('item_show_type'))
         row["account_avatar_url"] = f"/api/account/{row['biz']}/avatar"
-    has_active_filters = any(
-        value is not None and value != ''
-        for value in (article_id, item_show_type, query, since_ts, until_ts)
+    has_active_filters = (
+        article_id not in (None, '')
+        or item_show_type is not None
+        or bool(query)
+        or since_ts is not None
+        or until_ts is not None
+        or bool(exclude_keywords)
     )
     if has_active_filters:
         total = _count_articles(
@@ -1026,6 +1082,7 @@ def _list_articles(
             biz=biz,
             item_show_type=item_show_type,
             query=query,
+            exclude_keywords=exclude_keywords,
             since_ts=since_ts,
             until_ts=until_ts,
             article_id=article_id,
@@ -1037,6 +1094,7 @@ def _list_articles(
         group_id=group_id,
         biz=biz,
         query=query,
+        exclude_keywords=exclude_keywords,
         since_ts=since_ts,
         until_ts=until_ts,
         article_id=article_id,
@@ -1297,6 +1355,7 @@ def _list_feed(
         biz=biz,
         item_show_type=None,
         query=query_text or None,
+        exclude_keywords=None,
         since_ts=since_ts,
         until_ts=until_ts,
         sort_mode=sort_mode,
@@ -1816,6 +1875,7 @@ def list_articles(
     item_show_type: int | None = None,
     article_id: str | None = None,
     q: str | None = None,
+    exclude_keywords: str | None = None,
     sort: str | None = None,
     page: int = 1,
     page_size: int = 20,
@@ -1844,6 +1904,7 @@ def list_articles(
     since_ts = _parse_date(since)
     until_ts = _parse_date(until, end_of_day=True)
     query_text = (q or '').strip()
+    exclude_terms = _split_article_exclude_keywords(exclude_keywords)
     sort_mode = _normalize_article_sort(sort, has_query=bool(query_text))
     normalized_item_show_type = _normalize_item_show_type(item_show_type)
     return _list_articles(
@@ -1852,6 +1913,7 @@ def list_articles(
         biz=biz or None,
         item_show_type=normalized_item_show_type,
         query=query_text or None,
+        exclude_keywords=exclude_terms or None,
         since_ts=since_ts,
         until_ts=until_ts,
         sort_mode=sort_mode,
@@ -2034,6 +2096,7 @@ def login_qrcode(
 
 
 @router.get("/sync")
+@router.get("/settings/status")
 def sync_status(
     limit: int = 5,
     storage: PostgresStorage = Depends(_get_storage),
@@ -2053,6 +2116,7 @@ def sync_status(
 
 
 @router.get("/sync/tasks")
+@router.get("/settings/tasks")
 def list_sync_tasks(
     limit: int = 5,
     detail: bool = False,
@@ -2069,6 +2133,7 @@ def list_sync_tasks(
 
 
 @router.get("/sync/tasks/{task_id}")
+@router.get("/settings/tasks/{task_id}")
 def get_sync_task(
     task_id: str,
     storage: PostgresStorage = Depends(_get_storage),
@@ -2083,6 +2148,7 @@ def get_sync_task(
 
 
 @router.get("/sync/settings")
+@router.get("/settings")
 def get_sync_settings(storage: PostgresStorage = Depends(_get_storage)) -> dict[str, Any]:
     """
     获取当前的同步配置设置。
@@ -2096,6 +2162,7 @@ def get_sync_settings(storage: PostgresStorage = Depends(_get_storage)) -> dict[
 
 
 @router.patch("/sync/settings")
+@router.patch("/settings")
 async def update_sync_settings(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
@@ -2155,6 +2222,7 @@ async def update_sync_settings(
 
 
 @router.post('/sync/test-email')
+@router.post('/settings/test-email')
 async def send_sync_test_email(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
@@ -2249,6 +2317,7 @@ async def send_sync_test_email(
 
 
 @router.post("/sync/run", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/settings/run", status_code=status.HTTP_202_ACCEPTED)
 async def run_sync(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
