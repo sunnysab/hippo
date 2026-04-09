@@ -75,6 +75,7 @@ class SyncFrontendLogicTest(unittest.TestCase):
         settings_html = SETTINGS_HTML.read_text(encoding='utf-8')
         settings_js = SETTINGS_JS.read_text(encoding='utf-8')
 
+        self.assertIn('data-i18n="sync.sectionFilter"', settings_html)
         self.assertIn('id="sync-article-exclude-keywords"', settings_html)
         self.assertIn('article_exclude_keywords', settings_js)
         self.assertIn("#sync-article-exclude-keywords", settings_js)
