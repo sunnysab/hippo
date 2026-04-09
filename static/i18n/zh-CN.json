@@ -158,6 +158,7 @@
   "sync.hideSettings": "收起设置",
   "sync.sectionSchedule": "调度",
   "sync.sectionFetch": "抓取",
+  "sync.sectionFilter": "过滤",
   "sync.enabled": "启用自动同步",
   "sync.interval": "间隔（分钟）",
   "sync.windowRange": "同步时间段",
