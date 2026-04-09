@@ -29,6 +29,12 @@ class SettingsApiNamespaceTest(unittest.TestCase):
         self.assertIn('POST', route_map['/api/settings/test-email'])
         self.assertIn('/api/settings/run', route_map)
         self.assertIn('POST', route_map['/api/settings/run'])
+        self.assertNotIn('/api/sync', route_map)
+        self.assertNotIn('/api/sync/tasks', route_map)
+        self.assertNotIn('/api/sync/tasks/{task_id}', route_map)
+        self.assertNotIn('/api/sync/settings', route_map)
+        self.assertNotIn('/api/sync/test-email', route_map)
+        self.assertNotIn('/api/sync/run', route_map)
 
     def test_frontend_uses_settings_api_namespace(self) -> None:
         sync_js = SYNC_JS.read_text(encoding='utf-8')

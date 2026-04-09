@@ -132,8 +132,6 @@ python -m hippo account sync-all --skip-time 30
   - 使用当前设置或请求体中的 SMTP 参数发送测试邮件。
 - `POST /api/settings/run`
   - 手动触发同步任务，可选传 `group_id` 或 `biz_list`。
-- 兼容性说明
-  - 旧的 `/api/sync/*` 路径目前仍可用，但前端已切换到 `/api/settings/*`。
 
 ### Web 与同步进程拆分
 
