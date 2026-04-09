@@ -114,19 +114,26 @@ python -m hippo account sync-all --skip-time 30
 - 断点进度：保存在 meta 表，key 为 `sync_progress:<biz>`
 - 当页为空时判定“已完成”，写入 `sync_complete:<biz>`（当天有效）
 
-### Web 同步接口说明
+### Web 设置接口说明
 
-- `GET /api/sync`
+- 设置页入口现在显示为“设置”。
+- `GET /api/settings/status`
   - 返回全局同步状态与最近同步历史。
   - 默认仅返回最近 `5` 条 `history`（可通过 `limit` 参数调整，范围 `1~50`）。
-- `GET /api/sync/tasks`
+- `GET /api/settings/tasks`
   - 默认返回任务摘要（适合轮询列表页）。
   - 默认返回最近 `5` 个任务（可通过 `limit` 参数调整）。
-  - 如需完整任务数据（含 `accounts` 与 `report`），可传 `detail=true`，或调用 `GET /api/sync/tasks/{task_id}`。
-- `GET /api/sync/settings` / `PATCH /api/sync/settings`
-  - 同步设置包含 `window_start_hour` 与 `window_end_hour`（默认 `6` 到 `24`）。
+  - 如需完整任务数据（含 `accounts` 与 `report`），可传 `detail=true`，或调用 `GET /api/settings/tasks/{task_id}`。
+- `GET /api/settings` / `PATCH /api/settings`
+  - 设置包含 `window_start_hour` 与 `window_end_hour`（默认 `6` 到 `24`）。
   - 自动调度只会在该时间段内触发执行。
   - Web 进程默认不再执行自动同步；请单独启动 `hippo sync-worker`。
+- `POST /api/settings/test-email`
+  - 使用当前设置或请求体中的 SMTP 参数发送测试邮件。
+- `POST /api/settings/run`
+  - 手动触发同步任务，可选传 `group_id` 或 `biz_list`。
+- 兼容性说明
+  - 旧的 `/api/sync/*` 路径目前仍可用，但前端已切换到 `/api/settings/*`。
 
 ### Web 与同步进程拆分
 
@@ -301,6 +308,7 @@ python -m hippo db init
 - 查询入口为 HTTP API：`/api/article?q=关键词`。
   - 多个以空格分隔的关键词按宽松匹配处理：命中任一关键词即可返回，再按相关度排序。
   - 支持 `sort` 参数：`publish_at_desc`（发布时间新到旧）与 `relevance_desc`（相关度高到低）。
+  - 支持 `exclude_keywords` 参数：使用逗号、分号或换行分隔多个关键词；命中标题、摘要或作者任一字段的文章会被过滤掉。
   - 未传 `sort` 时保持兼容：`q` 非空默认 `relevance_desc`，否则默认 `publish_at_desc`。
 
 ---
