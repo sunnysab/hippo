@@ -134,6 +134,7 @@ class ArticleItemShowTypeTest(unittest.TestCase):
             biz='demo',
             item_show_type=8,
             query=None,
+            exclude_keywords=None,
             since_ts=None,
             until_ts=None,
             sort_mode='publish_at_desc',
@@ -152,6 +153,7 @@ class ArticleItemShowTypeTest(unittest.TestCase):
             biz='demo',
             item_show_type=0,
             query=None,
+            exclude_keywords=None,
             since_ts=None,
             until_ts=None,
             sort_mode='publish_at_desc',
@@ -162,6 +164,41 @@ class ArticleItemShowTypeTest(unittest.TestCase):
 
         self.assertIn('(a.item_show_type = %s OR a.item_show_type IS NULL)', query_sql)
         self.assertEqual(params, ['demo', 0, 20, 0])
+
+    def test_build_article_query_applies_exclude_keywords_filter(self) -> None:
+        query_sql, params = _build_article_query(
+            storage=object(),
+            group_id=None,
+            biz='demo',
+            item_show_type=None,
+            query=None,
+            exclude_keywords=['promo', 'ad'],
+            since_ts=None,
+            until_ts=None,
+            sort_mode='publish_at_desc',
+            limit=20,
+            offset=0,
+            article_id=None,
+        )
+
+        self.assertIn('LOWER(COALESCE(a.title, \'\')) LIKE %s', query_sql)
+        self.assertIn('LOWER(COALESCE(a.digest, \'\')) LIKE %s', query_sql)
+        self.assertIn('LOWER(COALESCE(a.author, \'\')) LIKE %s', query_sql)
+        self.assertIn('NOT (', query_sql)
+        self.assertEqual(
+            params,
+            [
+                'demo',
+                '%promo%',
+                '%promo%',
+                '%promo%',
+                '%ad%',
+                '%ad%',
+                '%ad%',
+                20,
+                0,
+            ],
+        )
 
     def test_count_article_item_show_type_facets_filters_invalid_rows(self) -> None:
         rows = [
@@ -179,6 +216,7 @@ class ArticleItemShowTypeTest(unittest.TestCase):
                 group_id=42,
                 biz='demo',
                 query='picture',
+                exclude_keywords=None,
                 since_ts=1710000000,
                 until_ts=1710086400,
                 article_id='100-1',
@@ -214,6 +252,7 @@ class ArticleItemShowTypeTest(unittest.TestCase):
                 group_id=None,
                 biz=None,
                 query=None,
+                exclude_keywords=None,
                 since_ts=None,
                 until_ts=None,
                 article_id=None,
@@ -250,6 +289,7 @@ class ArticleItemShowTypeTest(unittest.TestCase):
                 biz='demo',
                 item_show_type=8,
                 query='picture',
+                exclude_keywords=None,
                 since_ts=None,
                 until_ts=None,
                 sort_mode='publish_at_desc',
@@ -270,6 +310,68 @@ class ArticleItemShowTypeTest(unittest.TestCase):
             group_id=3,
             biz='demo',
             query='picture',
+            exclude_keywords=None,
+            since_ts=None,
+            until_ts=None,
+            article_id=None,
+        )
+
+    def test_list_articles_passes_exclude_keywords_to_counts_and_facets(self) -> None:
+        storage = object()
+        article_rows = [{'id': 1, 'biz': 'demo', 'article_id': '100-1', 'title': 'Normal Story', 'item_show_type': None}]
+
+        with (
+            patch('hippo.server._build_article_query', return_value=('SELECT 1', ['demo'])) as build_query,
+            patch('hippo.server.fetchall_rows', return_value=article_rows),
+            patch('hippo.server._count_articles', return_value=1) as count_articles,
+            patch('hippo.server._count_article_item_show_type_facets', return_value=[]) as count_facets,
+        ):
+            _list_articles(
+                storage=storage,
+                group_id=3,
+                biz='demo',
+                item_show_type=None,
+                query='story',
+                exclude_keywords=['promo'],
+                since_ts=None,
+                until_ts=None,
+                sort_mode='publish_at_desc',
+                page=1,
+                page_size=20,
+                article_id=None,
+            )
+
+        build_query.assert_called_once_with(
+            storage=storage,
+            group_id=3,
+            biz='demo',
+            item_show_type=None,
+            query='story',
+            exclude_keywords=['promo'],
+            since_ts=None,
+            until_ts=None,
+            sort_mode='publish_at_desc',
+            limit=20,
+            offset=0,
+            article_id=None,
+        )
+        count_articles.assert_called_once_with(
+            storage=storage,
+            group_id=3,
+            biz='demo',
+            item_show_type=None,
+            query='story',
+            exclude_keywords=['promo'],
+            since_ts=None,
+            until_ts=None,
+            article_id=None,
+        )
+        count_facets.assert_called_once_with(
+            storage=storage,
+            group_id=3,
+            biz='demo',
+            query='story',
+            exclude_keywords=['promo'],
             since_ts=None,
             until_ts=None,
             article_id=None,
@@ -283,6 +385,7 @@ class ArticleItemShowTypeTest(unittest.TestCase):
                 biz='demo',
                 item_show_type=0,
                 query=None,
+                exclude_keywords=None,
                 since_ts=None,
                 until_ts=None,
                 article_id=None,

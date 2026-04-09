@@ -101,7 +101,7 @@
 
   const triggerSync = async (payload, { successMessage, errorMessage }) => {
     try {
-      await apiSend('/api/sync/run', 'POST', payload);
+      await apiSend('/api/settings/run', 'POST', payload);
       openSyncView();
       showToast(successMessage);
     } catch (err) {

@@ -458,7 +458,7 @@
   };
 
   const loadSyncStatus = async () => {
-    const payload = await apiGet('/api/sync');
+    const payload = await apiGet('/api/settings/status');
     const fingerprint = buildSyncStatusFingerprint(payload);
     if (fingerprint === lastSyncStatusFingerprint) {
       return;
@@ -469,7 +469,7 @@
   };
 
   const loadSyncTasks = async () => {
-    const payload = await apiGet('/api/sync/tasks?limit=5&detail=true');
+    const payload = await apiGet('/api/settings/tasks?limit=5&detail=true');
     const tasks = payload.tasks || [];
     const fingerprint = buildSyncTasksFingerprint(tasks);
     if (fingerprint === lastSyncTasksFingerprint) {
@@ -561,7 +561,7 @@
   };
 
   const loadSyncSettings = async () => {
-    const payload = await apiGet('/api/sync/settings');
+    const payload = await apiGet('/api/settings');
     state.syncSettings = payload;
     renderSyncSettings(payload);
   };
@@ -599,7 +599,7 @@
       alert_email: $('#sync-alert-email').value.trim(),
       email: getEmailFormData(),
     };
-    const payload = await apiSend('/api/sync/settings', 'PATCH', body);
+    const payload = await apiSend('/api/settings', 'PATCH', body);
     state.syncSettings = payload;
     renderSyncSettings(payload);
   };
@@ -608,7 +608,7 @@
     const btn = $('#btn-email-save');
     if (btn) btn.disabled = true;
     try {
-      const payload = await apiSend('/api/sync/settings', 'PATCH', getEmailSettingsBody());
+      const payload = await apiSend('/api/settings', 'PATCH', getEmailSettingsBody());
       state.syncSettings = payload;
       renderSyncSettings(payload);
       showToast(t('email.saveSuccess', 'Email settings saved.'));
@@ -636,7 +636,7 @@
   const triggerTestEmail = async () => {
     setEmailTestButtonLoading(true);
     try {
-      const payload = await apiSend('/api/sync/test-email', 'POST', {
+      const payload = await apiSend('/api/settings/test-email', 'POST', {
         to_email: $('#sync-alert-email').value.trim(),
         email: getEmailFormData(),
       }, { timeoutMs: TEST_EMAIL_TIMEOUT_MS });
@@ -657,7 +657,7 @@
   };
 
   const triggerSyncRun = async () => {
-    await apiSend('/api/sync/run', 'POST', {});
+    await apiSend('/api/settings/run', 'POST', {});
     setTimeout(async () => {
       await loadSyncTasks();
       await loadSyncStatus();
