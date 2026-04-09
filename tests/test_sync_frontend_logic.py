@@ -6,8 +6,8 @@ import quickjs
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_JS = ROOT / 'static' / 'app.js'
-SYNC_JS = ROOT / 'static' / 'sync.js'
-SYNC_HTML = ROOT / 'static' / 'pages' / 'sync.html'
+SETTINGS_JS = ROOT / 'static' / 'settings.js'
+SETTINGS_HTML = ROOT / 'static' / 'pages' / 'settings.html'
 
 
 class SyncFrontendLogicTest(unittest.TestCase):
@@ -28,8 +28,8 @@ class SyncFrontendLogicTest(unittest.TestCase):
             };
             """
         )
-        context.eval(SYNC_JS.read_text(encoding='utf-8'))
-        context.eval(f'var result = window.HippoSync.getActiveTaskAccountName({payload});')
+        context.eval(SETTINGS_JS.read_text(encoding='utf-8'))
+        context.eval(f'var result = window.HippoSettings.getActiveTaskAccountName({payload});')
         return context.eval('result')
 
     def build_sync_context(self) -> quickjs.Context:
@@ -49,7 +49,7 @@ class SyncFrontendLogicTest(unittest.TestCase):
             };
             """
         )
-        context.eval(SYNC_JS.read_text(encoding='utf-8'))
+        context.eval(SETTINGS_JS.read_text(encoding='utf-8'))
         return context
 
     def test_running_task_without_account_uses_preparing_copy(self) -> None:
@@ -69,17 +69,17 @@ class SyncFrontendLogicTest(unittest.TestCase):
     def test_sync_module_exposes_start_login_for_global_actions(self) -> None:
         context = self.build_sync_context()
 
-        self.assertEqual('function', context.eval('typeof window.HippoSync.startLogin'))
+        self.assertEqual('function', context.eval('typeof window.HippoSettings.startLogin'))
 
     def test_settings_page_wires_article_exclude_keywords_field(self) -> None:
-        sync_html = SYNC_HTML.read_text(encoding='utf-8')
-        sync_js = SYNC_JS.read_text(encoding='utf-8')
+        settings_html = SETTINGS_HTML.read_text(encoding='utf-8')
+        settings_js = SETTINGS_JS.read_text(encoding='utf-8')
 
-        self.assertIn('id="sync-article-exclude-keywords"', sync_html)
-        self.assertIn('article_exclude_keywords', sync_js)
-        self.assertIn("#sync-article-exclude-keywords", sync_js)
+        self.assertIn('id="sync-article-exclude-keywords"', settings_html)
+        self.assertIn('article_exclude_keywords', settings_js)
+        self.assertIn("#sync-article-exclude-keywords", settings_js)
 
-    def test_global_banner_login_click_switches_to_sync_and_starts_login(self) -> None:
+    def test_global_banner_login_click_switches_to_settings_and_starts_login(self) -> None:
         context = quickjs.Context()
         context.eval(
             """
@@ -124,7 +124,7 @@ class SyncFrontendLogicTest(unittest.TestCase):
             };
             var window = {
               location: { hash: '#/groups' },
-              HippoSync: {
+              HippoSettings: {
                 startLoginCalls: 0,
                 startLogin: function () {
                   this.startLoginCalls += 1;
@@ -155,8 +155,8 @@ class SyncFrontendLogicTest(unittest.TestCase):
         context.eval('window.__test.bindGlobalEvents()')
         context.eval('bannerButton.click()')
 
-        self.assertEqual('#/sync', context.eval('window.location.hash'))
-        self.assertEqual(1, context.eval('window.HippoSync.startLoginCalls'))
+        self.assertEqual('#/settings', context.eval('window.location.hash'))
+        self.assertEqual(1, context.eval('window.HippoSettings.startLoginCalls'))
 
 
 if __name__ == '__main__':

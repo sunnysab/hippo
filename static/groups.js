@@ -96,7 +96,7 @@
   };
 
   const openSyncView = () => {
-    window.location.hash = '#/sync';
+    window.location.hash = '#/settings';
   };
 
   const triggerSync = async (payload, { successMessage, errorMessage }) => {
