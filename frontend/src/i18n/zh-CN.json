@@ -24,7 +24,7 @@
   "groups.currentTitle": "当前分组",
   "groups.currentSubtitle": "请选择一个分组。",
   "groups.currentEmpty": "请选择一个分组。",
-  "groups.currentMeta": "{n} 个公众号",
+  "groups.currentMeta": "{accounts} 个公众号 · {articles} 篇文章",
   "groups.currentId": "ID: {id}",
   "groups.currentIdEmpty": "ID",
   "groups.accounts": "个公众号",
