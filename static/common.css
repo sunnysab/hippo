@@ -1,10 +1,8 @@
-@import url('https://fonts.googleapis.com/css2?family=Newsreader:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
-
 :root {
   color-scheme: light;
-  --font-sans: 'Source Sans 3', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-display: 'Space Grotesk', 'Source Sans 3', ui-sans-serif, system-ui, sans-serif;
-  --font-serif: 'Newsreader', ui-serif, Georgia, serif;
+  --font-sans: 'Avenir Next', 'Segoe UI', 'Helvetica Neue', 'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+  --font-display: 'Avenir Next Condensed', 'DIN Alternate', 'Franklin Gothic Medium', 'Segoe UI', 'Helvetica Neue', 'PingFang SC', sans-serif;
+  --font-serif: 'Iowan Old Style', 'Palatino Linotype', 'Noto Serif CJK SC', 'Source Han Serif SC', Georgia, serif;
   --bg: #f4f1ea;
   --bg-elevated: #fbf8f3;
   --surface: #ffffff;
