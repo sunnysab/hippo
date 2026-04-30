@@ -319,18 +319,16 @@ export function ArticlesPage() {
   ]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
+    queueMicrotask(() => {
       void loadGroupOptions();
-    }, 0);
-    return () => window.clearTimeout(timer);
+    });
   }, [loadGroupOptions]);
 
   useEffect(() => {
     if (!filters.groupId) return;
-    const timer = window.setTimeout(() => {
+    queueMicrotask(() => {
       void loadAccountOptions(filters.groupId);
-    }, 0);
-    return () => window.clearTimeout(timer);
+    });
   }, [filters.groupId, loadAccountOptions]);
 
   useEffect(() => {
@@ -345,10 +343,7 @@ export function ArticlesPage() {
       search: deferredSearch,
       sort: filters.sort,
     };
-    const timer = window.setTimeout(() => {
-      void loadArticles(nextFilters, true);
-    }, 0);
-    return () => window.clearTimeout(timer);
+    void loadArticles(nextFilters, true);
   }, [
     deferredSearch,
     filters.accountBiz,
@@ -359,10 +354,7 @@ export function ArticlesPage() {
   ]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void resolveArticleTarget();
-    }, 0);
-    return () => window.clearTimeout(timer);
+    void resolveArticleTarget();
   }, [resolveArticleTarget]);
 
   useEffect(() => {

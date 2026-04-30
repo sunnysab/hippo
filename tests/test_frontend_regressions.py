@@ -33,6 +33,15 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertIn('useMediaQuery', article_filters)
         self.assertIn('useMediaQuery', batch_actions)
 
+    def test_articles_page_limits_zero_delay_timers_to_route_sync(self) -> None:
+        source = ARTICLES_PAGE.read_text(encoding='utf-8')
+
+        self.assertLessEqual(source.count('window.setTimeout(() => {'), 1)
+        self.assertIn('loadGroupOptions', source)
+        self.assertIn('loadAccountOptions(filters.groupId)', source)
+        self.assertIn('void loadArticles(nextFilters, true);', source)
+        self.assertIn('void resolveArticleTarget();', source)
+
     def test_i18n_keys_exist_for_reader_controls_and_copy_feedback(self) -> None:
         translations = json.loads(I18N_ZH.read_text(encoding='utf-8'))
         articles_page = ARTICLES_PAGE.read_text(encoding='utf-8')
