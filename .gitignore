@@ -15,7 +15,9 @@ dist/
 .ruff_cache/
 .idea/
 .vscode/
+.opencode/
 AGENTS.md
+CLAUDE.md
 mpcli.txt
 deploy.sh
 
