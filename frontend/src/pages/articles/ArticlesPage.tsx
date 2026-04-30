@@ -44,6 +44,8 @@ export function ArticlesPage() {
   const [listCollapsed, setListCollapsed] = useState(false);
   const [readerControlsOpen, setReaderControlsOpen] = useState(false);
   const deferredSearch = useDeferredValue(filters.search.trim());
+  const readerControlsRef = useRef<HTMLDivElement>(null);
+  const readerToggleRef = useRef<HTMLButtonElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const isArticleLoadingRef = useRef(state.isArticleLoading);
   const articlePageRef = useRef(state.articlePage);
@@ -377,6 +379,21 @@ export function ArticlesPage() {
     return () => window.removeEventListener('hippo:refresh', handler);
   }, [loadAccountOptions, loadArticles, loadGroupOptions, resolveArticleTarget]);
 
+  useEffect(() => {
+    if (!readerControlsOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (readerControlsRef.current?.contains(target)) return;
+      if (readerToggleRef.current?.contains(target)) return;
+      setReaderControlsOpen(false);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [readerControlsOpen]);
+
   const getSelectedArticleLink = () => {
     const article = state.currentArticlePayload?.article ||
       state.articles.find((a) => a.id === state.selectedArticleId);
@@ -478,6 +495,7 @@ export function ArticlesPage() {
                 className="icon-btn"
                 id="reader-toggle"
                 type="button"
+                ref={readerToggleRef}
                 aria-label="Typography settings"
                 title="Typography settings"
                 onClick={() => setReaderControlsOpen((prev) => !prev)}
@@ -502,7 +520,11 @@ export function ArticlesPage() {
               </button>
             </div>
           </div>
-          <div className={`reader-controls${readerControlsOpen ? ' is-open' : ''}`} id="reader-controls">
+          <div
+            className={`reader-controls${readerControlsOpen ? ' is-open' : ''}`}
+            id="reader-controls"
+            ref={readerControlsRef}
+          >
             <label>
               <span>{t('reader.width', 'Width')}</span>
               <input id="reader-width" type="range" min="400" max="1200" step="10" value={config.width} onChange={(e) => updateConfig({ width: e.target.value })} />
@@ -523,6 +545,20 @@ export function ArticlesPage() {
               <input id="reader-serif" type="checkbox" checked={config.serif} onChange={(e) => updateConfig({ serif: e.target.checked })} />
               <span>{t('reader.serif', 'Serif Font')}</span>
             </label>
+            <div className="reader-controls-section">
+              <label className="switch">
+                <input
+                  id="reader-hide-small-images"
+                  type="checkbox"
+                  checked={config.hideSmall}
+                  onChange={(event) => updateConfig({ hideSmall: event.target.checked })}
+                />
+                <span>{t('reader.hideSmallImages', 'Hide small images')}</span>
+              </label>
+              <p className="muted reader-controls-note">
+                {t('reader.hideSmallImagesHint', 'Use local heuristics to reduce decorative or low-value images while reading.')}
+              </p>
+            </div>
           </div>
           <ArticlePreview previewRef={previewRef} />
         </div>
