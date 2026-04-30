@@ -1,6 +1,7 @@
 import socket
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,6 +13,17 @@ from hippo import server
 
 @unittest.skipUnless(hasattr(socket, 'AF_UNIX'), 'AF_UNIX is not available on this platform')
 class ServerListenerTest(unittest.TestCase):
+    def test_create_app_does_not_register_deprecated_event_handlers(self) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            app = server.create_app(
+                static_dir=Path('frontend/dist'),
+                enable_inprocess_sync=False,
+            )
+
+        self.assertIsNotNone(app)
+        self.assertFalse(any(item.category is DeprecationWarning for item in caught))
+
     def test_remove_stale_unix_socket_rejects_active_listener(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             uds_path = Path(tmpdir) / 'hippo.sock'
