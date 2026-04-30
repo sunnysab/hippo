@@ -142,11 +142,9 @@
 }
 
 .group-sync-toolbar {
-  margin: 0 0 10px;
   padding: 10px 12px;
   border: 1px solid rgba(222, 216, 205, 0.84);
   border-radius: 12px;
-  background: rgba(247, 244, 238, 0.72);
 }
 
 .group-sync-toolbar .muted {
@@ -165,10 +163,8 @@
   top: 0;
   z-index: 8;
   margin-bottom: 12px;
-  padding: 10px 12px;
   border: 1px solid rgba(222, 216, 205, 0.84);
   border-radius: 12px;
-  background: rgba(247, 244, 238, 0.9);
   backdrop-filter: blur(6px);
 }
 

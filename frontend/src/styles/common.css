@@ -471,7 +471,6 @@ body {
 .switch.inline {
   padding: 5px 8px;
   border-radius: 9px;
-  background: var(--surface-panel-strong);
 }
 
 .switch input {
