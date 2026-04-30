@@ -1,8 +1,7 @@
 import { useArticlesState } from '../../store/articles';
 import { useI18n } from '../../i18n';
 import { escapeHtml } from '../../utils/format';
-import { ITEM_SHOW_TYPE_META, ARTICLE_FACET_COLLAPSED_LIMIT, ARTICLE_FACET_COLLAPSED_LIMIT_MOBILE } from '../../utils/constants';
-import { buildArticleFacetVisibility } from '../../utils/facets';
+import { ITEM_SHOW_TYPE_META } from '../../utils/constants';
 
 function getItemShowTypeLabel(value: number, t: (k: string, f: string) => string) {
   const meta = ITEM_SHOW_TYPE_META[value];
@@ -25,7 +24,6 @@ interface ArticleTypeFacetsProps {
 export function ArticleTypeFacets({ activeType, onChange }: ArticleTypeFacetsProps) {
   const { state, dispatch } = useArticlesState();
   const { t } = useI18n();
-  const isNarrow = window.matchMedia('(max-width: 720px)').matches;
 
   const payload = state.lastFacetPayload;
   if (!payload) return null;
@@ -44,17 +42,19 @@ export function ArticleTypeFacets({ activeType, onChange }: ArticleTypeFacetsPro
       count: Number(f.count || 0),
     })),
   ];
-
-  const collapsedLimit = isNarrow ? ARTICLE_FACET_COLLAPSED_LIMIT_MOBILE : ARTICLE_FACET_COLLAPSED_LIMIT;
-  const visibility = buildArticleFacetVisibility({
-    items,
-    activeValue: activeType,
-    collapsedLimit,
-    expanded: state.typeFacetsExpanded,
-  });
+  const typeItems = items.filter((item) => item.value !== '');
+  const activeItem = typeItems.find((item) => item.value === activeType) || null;
+  const visibleItems = state.typeFacetsExpanded
+    ? typeItems
+    : (activeItem ? [activeItem] : []);
+  const hiddenCount = typeItems.length - visibleItems.length;
+  const isCollapsible = hiddenCount > 0;
 
   return (
-    <div className="article-type-facets" id="article-type-facets">
+    <div
+      className={`article-type-facets${state.typeFacetsExpanded ? ' is-expanded' : ''}`}
+      id="article-type-facets"
+    >
       <button
         className={`article-type-facet${activeType ? '' : ' is-active'}`}
         type="button"
@@ -65,7 +65,7 @@ export function ArticleTypeFacets({ activeType, onChange }: ArticleTypeFacetsPro
         </span>
         <span className="article-type-facet-count">{escapeHtml(allCount.toLocaleString('zh-CN'))}</span>
       </button>
-      {visibility.visibleItems.filter((item) => item.value !== '').map((item) => {
+      {visibleItems.map((item) => {
         const typeValue = Number(item.value);
         return (
           <button
@@ -79,7 +79,7 @@ export function ArticleTypeFacets({ activeType, onChange }: ArticleTypeFacetsPro
           />
         );
       })}
-      {visibility.isCollapsible && (
+      {isCollapsible && (
         <button
           className="article-type-facet article-type-facet-toggle"
           type="button"
@@ -89,7 +89,7 @@ export function ArticleTypeFacets({ activeType, onChange }: ArticleTypeFacetsPro
           <span>
             {state.typeFacetsExpanded
               ? t('articles.typeFacetCollapse', 'Collapse')
-              : t('articles.typeFacetExpand', 'Show {n} more').replace('{n}', visibility.hiddenCount.toLocaleString('zh-CN'))
+              : t('articles.typeFacetExpand', 'Show {n} more').replace('{n}', hiddenCount.toLocaleString('zh-CN'))
             }
           </span>
         </button>
