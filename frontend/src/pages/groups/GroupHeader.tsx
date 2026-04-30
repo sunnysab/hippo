@@ -26,7 +26,6 @@ export function GroupHeader({
     return (
       <div className="panel-header groups-main-header">
         <div>
-          <div className="section-kicker">{t('groups.workspaceKicker', 'Workspace')}</div>
           <div className="group-headline">
             <button className="group-name" id="group-current-name" type="button" disabled>
               {t('groups.currentTitle', 'Group')}
@@ -68,7 +67,6 @@ export function GroupHeader({
   return (
     <div className="panel-header groups-main-header">
       <div>
-        <div className="section-kicker">{t('groups.workspaceKicker', 'Workspace')}</div>
         <div className="group-headline">
           <button
             className="group-name"

@@ -57,9 +57,6 @@ export function GroupsPage() {
         <div className="panel groups-sidebar">
           <div className="panel-header groups-sidebar-header">
             <div>
-              <div className="section-kicker">
-                {t('groups.collectionKicker', 'Collections')}
-              </div>
               <h2>{t('groups.title', 'Groups')}</h2>
               <p className="muted">{t('groups.subtitle', 'Organize accounts into focused collections.')}</p>
             </div>

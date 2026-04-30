@@ -40,7 +40,6 @@ export function LoginPanel() {
     <div className="panel sync-login">
       <div className="panel-header">
         <div>
-          <div className="section-kicker">{t('sync.loginKicker', 'Session')}</div>
           <h2>{t('login.title', 'Login')}</h2>
           <p className="muted">{t('login.subtitle', 'Scan QR code to refresh login session.')}</p>
         </div>

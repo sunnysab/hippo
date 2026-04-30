@@ -36,7 +36,6 @@ export function SyncSettingsPanel({
     <div className="panel sync-settings">
       <div className="panel-header">
         <div>
-          <div className="section-kicker">{t('sync.settingsKicker', 'Sync Policy')}</div>
           <h2>{t('sync.title', 'Sync Settings')}</h2>
           <p className="muted">{t('sync.subtitle', 'Schedule periodic sync for accounts and articles.')}</p>
         </div>
