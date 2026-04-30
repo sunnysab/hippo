@@ -6,9 +6,16 @@ import { GroupSyncToolbar } from './GroupSyncToolbar';
 import { AccountCardGrid } from './AccountCardGrid';
 import { BatchActions } from './BatchActions';
 import { AccountSearchModal } from './AccountSearchModal';
+import { GroupNameModal } from './GroupNameModal';
 import { useI18n } from '../../i18n';
 import { apiSend } from '../../api';
 import { useToast } from '../../hooks/useToast';
+
+interface GroupNameDialogState {
+  mode: 'create' | 'rename';
+  groupId: number | null;
+  initialName: string;
+}
 
 export function GroupsPage() {
   const { state, dispatch } = useGroupsState();
@@ -17,6 +24,7 @@ export function GroupsPage() {
   const { showToast } = useToast();
   const [accountQuery, setAccountQuery] = useState('');
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
+  const [groupNameDialog, setGroupNameDialog] = useState<GroupNameDialogState | null>(null);
 
   const refresh = useCallback(async () => {
     const { nextGroup } = await loadGroups();
@@ -51,6 +59,18 @@ export function GroupsPage() {
     }
   };
 
+  const handleSubmitGroupName = async (name: string) => {
+    if (!groupNameDialog) return;
+    if (groupNameDialog.mode === 'create') {
+      await apiSend('/api/group', 'POST', { name });
+      await loadGroups();
+      return;
+    }
+    if (groupNameDialog.groupId == null) return;
+    await apiSend(`/api/group/${groupNameDialog.groupId}`, 'PATCH', { name });
+    await loadGroups();
+  };
+
   return (
     <section id="view-groups" className="view is-active">
       <div className="groups-layout">
@@ -64,12 +84,7 @@ export function GroupsPage() {
               className="btn"
               id="btn-group-create"
               type="button"
-              onClick={async () => {
-                const name = prompt(t('groups.createPrompt', 'Group name'));
-                if (!name) return;
-                await apiSend('/api/group', 'POST', { name });
-                await loadGroups();
-              }}
+              onClick={() => setGroupNameDialog({ mode: 'create', groupId: null, initialName: '' })}
             >
               <span className="icon">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v14h-2zM5 11h14v2H5z"/></svg>
@@ -85,6 +100,7 @@ export function GroupsPage() {
             accountQuery={accountQuery}
             onAccountQueryChange={setAccountQuery}
             onOpenAccountSearch={() => setIsSearchModalOpen(true)}
+            onOpenRename={(groupId, name) => setGroupNameDialog({ mode: 'rename', groupId, initialName: name })}
           />
           <GroupSyncToolbar />
           <BatchActions />
@@ -96,6 +112,22 @@ export function GroupsPage() {
         isOpen={isSearchModalOpen}
         onClose={() => setIsSearchModalOpen(false)}
       />
+      {groupNameDialog && (
+        <GroupNameModal
+          key={`${groupNameDialog.mode}:${groupNameDialog.groupId ?? 'new'}:${groupNameDialog.initialName}`}
+          isOpen
+          title={groupNameDialog.mode === 'rename' ? t('groups.rename', 'Rename') : t('groups.create', 'New Group')}
+          initialValue={groupNameDialog.initialName}
+          placeholder={
+            groupNameDialog.mode === 'rename'
+              ? t('groups.renamePrompt', 'New group name')
+              : t('groups.createPrompt', 'Group name')
+          }
+          submitLabel={groupNameDialog.mode === 'rename' ? t('common.save', '保存') : t('groups.create', 'New Group')}
+          onClose={() => setGroupNameDialog(null)}
+          onSubmit={handleSubmitGroupName}
+        />
+      )}
     </section>
   );
 }

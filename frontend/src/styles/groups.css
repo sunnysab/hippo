@@ -467,6 +467,21 @@
   border-radius: var(--radius-control);
 }
 
+.group-name-modal {
+  width: min(460px, 92vw);
+}
+
+.group-name-modal-input input {
+  width: 100%;
+  min-height: 40px;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+}
+
+.group-name-modal-actions {
+  justify-content: flex-end;
+}
+
 @media (max-width: 1180px) {
   .groups-layout {
     grid-template-columns: 1fr;
