@@ -5,8 +5,10 @@ from hippo.server import router
 
 
 ROOT = Path(__file__).resolve().parent.parent
-SETTINGS_JS = ROOT / 'static' / 'settings.js'
-GROUPS_JS = ROOT / 'static' / 'groups.js'
+SETTINGS_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'settings' / 'SettingsPage.tsx'
+SYNC_SETTINGS_PANEL = ROOT / 'frontend' / 'src' / 'pages' / 'settings' / 'SyncSettingsPanel.tsx'
+EMAIL_PANEL = ROOT / 'frontend' / 'src' / 'pages' / 'settings' / 'EmailPanel.tsx'
+GROUPS_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'groups' / 'GroupsPage.tsx'
 
 
 class SettingsApiNamespaceTest(unittest.TestCase):
@@ -37,19 +39,21 @@ class SettingsApiNamespaceTest(unittest.TestCase):
         self.assertNotIn('/api/sync/run', route_map)
 
     def test_frontend_uses_settings_api_namespace(self) -> None:
-        settings_js = SETTINGS_JS.read_text(encoding='utf-8')
-        groups_js = GROUPS_JS.read_text(encoding='utf-8')
+        settings_page = SETTINGS_PAGE.read_text(encoding='utf-8')
+        sync_settings_panel = SYNC_SETTINGS_PANEL.read_text(encoding='utf-8')
+        email_panel = EMAIL_PANEL.read_text(encoding='utf-8')
+        groups_page = GROUPS_PAGE.read_text(encoding='utf-8')
 
-        self.assertIn('/api/settings/status', settings_js)
-        self.assertIn('/api/settings/tasks?limit=5&detail=true', settings_js)
-        self.assertIn('/api/settings', settings_js)
-        self.assertIn('/api/settings/test-email', settings_js)
-        self.assertIn('/api/settings/run', settings_js)
-        self.assertIn('/api/settings/run', groups_js)
-        self.assertNotIn('/api/sync/settings', settings_js)
-        self.assertNotIn('/api/sync/test-email', settings_js)
-        self.assertNotIn('/api/sync/run', settings_js)
-        self.assertNotIn('/api/sync/run', groups_js)
+        self.assertIn('/api/settings/status', settings_page)
+        self.assertIn('/api/settings/tasks?limit=5&detail=true', settings_page)
+        self.assertIn('/api/settings', settings_page)
+        self.assertIn('/api/settings', sync_settings_panel)
+        self.assertIn('/api/settings/test-email', email_panel)
+        self.assertIn('/api/settings/run', groups_page)
+        self.assertNotIn('/api/sync/settings', settings_page)
+        self.assertNotIn('/api/sync/test-email', email_panel)
+        self.assertNotIn('/api/sync/run', settings_page)
+        self.assertNotIn('/api/sync/run', groups_page)
 
 
 if __name__ == '__main__':

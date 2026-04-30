@@ -1,3 +1,13 @@
+FROM node:24-slim AS frontend-build
+
+WORKDIR /app/frontend
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
 FROM python:3.14-slim
 
 LABEL maintainer="hippo"
@@ -16,8 +26,8 @@ RUN apt-get update \
 
 COPY pyproject.toml uv.lock README.md __init__.py ./
 COPY hippo/ ./hippo/
-COPY static/ ./static/
 COPY schema/ ./schema/
+COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
 RUN pip install --upgrade pip setuptools wheel \
     && pip install .
@@ -25,4 +35,4 @@ RUN pip install --upgrade pip setuptools wheel \
 EXPOSE 8000
 
 ENTRYPOINT ["hippo"]
-CMD ["serve", "--host", "0.0.0.0", "--port", "8000", "--static-dir", "/app/static"]
+CMD ["serve", "--host", "0.0.0.0", "--port", "8000", "--static-dir", "/app/frontend/dist"]

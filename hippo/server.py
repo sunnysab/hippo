@@ -1,4 +1,4 @@
-"""Minimal HTTP server for Hippo API + static UI."""
+"""Minimal HTTP server for Hippo API + frontend UI."""
 
 from __future__ import annotations
 
@@ -2470,7 +2470,7 @@ def list_feed(
 
 
 def create_app(
-    static_dir: Path | str = "static",
+    static_dir: Path | str = 'frontend/dist',
     *,
     enable_inprocess_sync: bool | None = None,
 ) -> FastAPI:
@@ -2478,7 +2478,9 @@ def create_app(
     logging.basicConfig(level=log_level, format="%(levelname)s: %(message)s", force=True)
     static_path = Path(static_dir).expanduser().resolve()
     if not static_path.exists():
-        raise RuntimeError(f"Static directory not found: {static_path}")
+        raise RuntimeError(
+            f'Static directory not found: {static_path}. Run `npm --prefix frontend build` first.'
+        )
 
     app = FastAPI()
     app.add_middleware(
@@ -2534,7 +2536,7 @@ def create_app(
 def serve(
     host: str | None = DEFAULT_HOST,
     port: int | None = DEFAULT_PORT,
-    static_dir: Path | str = "static",
+    static_dir: Path | str = 'frontend/dist',
     *,
     unix_socket: Path | str | None = None,
     unix_socket_mode: int = 0o660,
