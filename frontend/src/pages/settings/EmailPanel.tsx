@@ -1,10 +1,23 @@
-import { useState, useEffect } from 'react';
+import { useState, type Dispatch, type SetStateAction } from 'react';
 import { useSettingsState, type SyncSettings } from '../../store/settings';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
 import { apiSend } from '../../api';
+import {
+  buildEmailPayload,
+  buildTestEmailPayload,
+  type SyncSettingsFormState,
+} from './form';
 
-export function EmailPanel() {
+interface EmailPanelProps {
+  formState: SyncSettingsFormState;
+  setFormState: Dispatch<SetStateAction<SyncSettingsFormState>>;
+}
+
+export function EmailPanel({
+  formState,
+  setFormState,
+}: EmailPanelProps) {
   const { state, dispatch } = useSettingsState();
   const { t } = useI18n();
   const { showToast } = useToast();
@@ -13,43 +26,10 @@ export function EmailPanel() {
   const isNarrow = window.matchMedia('(max-width: 760px)').matches;
 
   const settings = state.syncSettings;
-  const email = settings?.email || {};
-
-  useEffect(() => {
-    if (!email) return;
-    const host = document.getElementById('email-smtp-host') as HTMLInputElement | null;
-    const user = document.getElementById('email-smtp-user') as HTMLInputElement | null;
-    const password = document.getElementById('email-smtp-password') as HTMLInputElement | null;
-    const from = document.getElementById('email-from') as HTMLInputElement | null;
-    const tls = document.getElementById('email-tls') as HTMLInputElement | null;
-    const port = document.getElementById('email-smtp-port') as HTMLInputElement | null;
-
-    if (host) host.value = (email.smtp_host as string) || '';
-    if (user) user.value = (email.smtp_user as string) || '';
-    if (password) password.value = (email.smtp_password as string) || '';
-    if (from) from.value = (email.from_email as string) || '';
-    const tlsEnabled = email.smtp_tls !== false;
-    if (tls) tls.checked = tlsEnabled;
-    if (port) port.value = String(email.smtp_port ?? (tlsEnabled ? 587 : 25));
-  }, [email]);
 
   const saveEmail = async () => {
-    const host = (document.getElementById('email-smtp-host') as HTMLInputElement)?.value.trim();
-    const port = Number((document.getElementById('email-smtp-port') as HTMLInputElement)?.value);
-    const user = (document.getElementById('email-smtp-user') as HTMLInputElement)?.value.trim();
-    const password = (document.getElementById('email-smtp-password') as HTMLInputElement)?.value;
-    const tls = (document.getElementById('email-tls') as HTMLInputElement)?.checked;
-    const from = (document.getElementById('email-from') as HTMLInputElement)?.value.trim();
-    const alertEnabled = (document.getElementById('sync-alert-enabled') as HTMLInputElement)?.checked;
-    const alertEmail = (document.getElementById('sync-alert-email') as HTMLInputElement)?.value.trim();
-
     try {
-      const body: Record<string, unknown> = {
-        alert_enabled: alertEnabled,
-        alert_email: alertEmail,
-        email: { smtp_host: host, smtp_port: port, smtp_user: user, smtp_password: password, smtp_tls: tls, from_email: from },
-      };
-      const payload = await apiSend('/api/settings', 'PATCH', body);
+      const payload = await apiSend('/api/settings', 'PATCH', buildEmailPayload(formState));
       dispatch({ type: 'SET_SYNC_SETTINGS', payload: payload as unknown as SyncSettings });
       showToast(t('email.saveSuccess', 'Email settings saved.'));
     } catch (err) {
@@ -60,19 +40,13 @@ export function EmailPanel() {
   const testEmail = async () => {
     setTesting(true);
     try {
-      const host = (document.getElementById('email-smtp-host') as HTMLInputElement)?.value.trim();
-      const port = Number((document.getElementById('email-smtp-port') as HTMLInputElement)?.value);
-      const userEl = (document.getElementById('email-smtp-user') as HTMLInputElement)?.value.trim();
-      const password = (document.getElementById('email-smtp-password') as HTMLInputElement)?.value;
-      const tls = (document.getElementById('email-tls') as HTMLInputElement)?.checked;
-      const from = (document.getElementById('email-from') as HTMLInputElement)?.value.trim();
-      const toEmail = (document.getElementById('sync-alert-email') as HTMLInputElement)?.value.trim();
-
-      const payload = await apiSend('/api/settings/test-email', 'POST', {
-        to_email: toEmail,
-        email: { smtp_host: host, smtp_port: port, smtp_user: userEl, smtp_password: password, smtp_tls: tls, from_email: from },
-      }, { timeoutMs: 10000 });
-      showToast(t('email.testSuccess', 'Test email sent to {email}.').replace('{email}', (payload.to_email as string) || toEmail));
+      const payload = await apiSend(
+        '/api/settings/test-email',
+        'POST',
+        buildTestEmailPayload(formState),
+        { timeoutMs: 10000 },
+      );
+      showToast(t('email.testSuccess', 'Test email sent to {email}.').replace('{email}', (payload.to_email as string) || formState.alertEmail.trim()));
     } catch (err) {
       if ((err as Record<string, unknown>)?.code === 'TIMEOUT') {
         showToast(t('email.testTimeout', 'Timed out while sending test email.'));
@@ -119,11 +93,22 @@ export function EmailPanel() {
           <div className="form-grid">
             <label className="switch">
               <span>{t('sync.alertEnabled', 'Enable alert email')}</span>
-              <input type="checkbox" id="sync-alert-enabled" />
+              <input
+                type="checkbox"
+                id="sync-alert-enabled"
+                checked={formState.alertEnabled}
+                onChange={(event) => setFormState((prev) => ({ ...prev, alertEnabled: event.target.checked }))}
+              />
             </label>
             <label>
               <span>{t('sync.alertEmail', 'Alert email')}</span>
-              <input type="email" id="sync-alert-email" placeholder="alerts@example.com" />
+              <input
+                type="email"
+                id="sync-alert-email"
+                placeholder="alerts@example.com"
+                value={formState.alertEmail}
+                onChange={(event) => setFormState((prev) => ({ ...prev, alertEmail: event.target.value }))}
+              />
             </label>
           </div>
         </section>
@@ -132,30 +117,67 @@ export function EmailPanel() {
           <div className="form-grid">
             <label>
               <span>{t('email.smtpHost', 'SMTP host')}</span>
-              <input type="text" id="email-smtp-host" placeholder="smtp.example.com" />
+              <input
+                type="text"
+                id="email-smtp-host"
+                placeholder="smtp.example.com"
+                value={formState.smtpHost}
+                onChange={(event) => setFormState((prev) => ({ ...prev, smtpHost: event.target.value }))}
+              />
             </label>
             <label>
               <span>{t('email.smtpPort', 'SMTP port')}</span>
-              <input type="number" id="email-smtp-port" min="1" placeholder="587" />
+              <input
+                type="number"
+                id="email-smtp-port"
+                min="1"
+                placeholder="587"
+                value={formState.smtpPort}
+                onChange={(event) => setFormState((prev) => ({ ...prev, smtpPort: event.target.value }))}
+              />
             </label>
             <label>
               <span>{t('email.smtpUser', 'SMTP user')}</span>
-              <input type="text" id="email-smtp-user" placeholder="username@example.com" />
+              <input
+                type="text"
+                id="email-smtp-user"
+                placeholder="username@example.com"
+                value={formState.smtpUser}
+                onChange={(event) => setFormState((prev) => ({ ...prev, smtpUser: event.target.value }))}
+              />
             </label>
             <label>
               <span>{t('email.smtpPassword', 'SMTP password')}</span>
-              <input type="password" id="email-smtp-password" placeholder="app password" />
+              <input
+                type="password"
+                id="email-smtp-password"
+                placeholder="app password"
+                value={formState.smtpPassword}
+                onChange={(event) => setFormState((prev) => ({ ...prev, smtpPassword: event.target.value }))}
+              />
             </label>
             <label>
               <span>{t('email.fromEmail', 'From email')}</span>
-              <input type="email" id="email-from" placeholder="no-reply@example.com" />
+              <input
+                type="email"
+                id="email-from"
+                placeholder="no-reply@example.com"
+                value={formState.fromEmail}
+                onChange={(event) => setFormState((prev) => ({ ...prev, fromEmail: event.target.value }))}
+              />
             </label>
             <label className="switch">
               <span>{t('email.tls', 'Enable TLS')}</span>
-              <input type="checkbox" id="email-tls" onChange={(e) => {
-                const port = document.getElementById('email-smtp-port') as HTMLInputElement | null;
-                if (port) port.value = e.target.checked ? '587' : '25';
-              }} />
+              <input
+                type="checkbox"
+                id="email-tls"
+                checked={formState.smtpTls}
+                onChange={(event) => setFormState((prev) => ({
+                  ...prev,
+                  smtpTls: event.target.checked,
+                  smtpPort: event.target.checked ? '587' : '25',
+                }))}
+              />
             </label>
           </div>
         </section>

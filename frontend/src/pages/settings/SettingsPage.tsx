@@ -9,6 +9,10 @@ import { EmailPanel } from './EmailPanel';
 import { ActiveTaskPanel } from './ActiveTaskPanel';
 import { SyncHistoryPanel } from './SyncHistoryPanel';
 import type { SyncStatus, SyncSettings, SyncTask, LoginStatus } from '../../store/settings';
+import {
+  buildSyncSettingsFormState,
+  type SyncSettingsFormState,
+} from './form';
 
 const buildSyncStatusFingerprint = (payload: Record<string, unknown> | null): string => {
   if (!payload) return '';
@@ -37,6 +41,9 @@ export function SettingsPage() {
   const lastTasksFingerprint = useRef('');
   const syncPollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loginPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [formState, setFormState] = useState<SyncSettingsFormState>(
+    () => buildSyncSettingsFormState(state.syncSettings),
+  );
 
   const hasActiveTask = () => {
     const tasks = state.syncTasks || [];
@@ -120,6 +127,10 @@ export function SettingsPage() {
     void loadLoginStatus();
   }, [loadSyncSettings, loadLoginStatus]);
 
+  useEffect(() => {
+    setFormState(buildSyncSettingsFormState(state.syncSettings));
+  }, [state.syncSettings]);
+
   // Route enter/leave
   useEffect(() => {
     if (isActive) {
@@ -153,8 +164,8 @@ export function SettingsPage() {
       <div className="sync-page-shell">
         <div className="panel-grid">
           <LoginPanel />
-          <SyncSettingsPanel />
-          <EmailPanel />
+          <SyncSettingsPanel formState={formState} setFormState={setFormState} />
+          <EmailPanel formState={formState} setFormState={setFormState} />
           <ActiveTaskPanel />
           <SyncHistoryPanel />
         </div>

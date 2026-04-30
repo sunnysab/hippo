@@ -1,10 +1,22 @@
-import { useState, useEffect } from 'react';
+import { useState, type Dispatch, type SetStateAction } from 'react';
 import { useSettingsState, type SyncSettings } from '../../store/settings';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
 import { apiSend } from '../../api';
+import {
+  buildSyncSettingsPayload,
+  type SyncSettingsFormState,
+} from './form';
 
-export function SyncSettingsPanel() {
+interface SyncSettingsPanelProps {
+  formState: SyncSettingsFormState;
+  setFormState: Dispatch<SetStateAction<SyncSettingsFormState>>;
+}
+
+export function SyncSettingsPanel({
+  formState,
+  setFormState,
+}: SyncSettingsPanelProps) {
   const { state, dispatch } = useSettingsState();
   const { t } = useI18n();
   const { showToast } = useToast();
@@ -13,66 +25,8 @@ export function SyncSettingsPanel() {
 
   const settings = state.syncSettings;
 
-  useEffect(() => {
-    if (!settings) return;
-    const enabled = document.getElementById('sync-enabled') as HTMLInputElement | null;
-    const interval = document.getElementById('sync-interval') as HTMLInputElement | null;
-    const windowStart = document.getElementById('sync-window-start') as HTMLInputElement | null;
-    const windowEnd = document.getElementById('sync-window-end') as HTMLInputElement | null;
-    const sleep = document.getElementById('sync-sleep') as HTMLInputElement | null;
-    const skip = document.getElementById('sync-skip-minutes') as HTMLInputElement | null;
-    const downloadContent = document.getElementById('sync-download-content') as HTMLInputElement | null;
-    const downloadImages = document.getElementById('sync-download-images') as HTMLInputElement | null;
-    const articleKeywords = document.getElementById('sync-article-exclude-keywords') as HTMLTextAreaElement | null;
-
-    if (enabled) enabled.checked = Boolean(settings.enabled);
-    if (interval) interval.value = String(settings.interval_minutes ?? 60);
-    if (windowStart) windowStart.value = String(settings.window_start_hour ?? 6);
-    if (windowEnd) windowEnd.value = String(settings.window_end_hour ?? 24);
-    if (sleep) sleep.value = String(settings.sleep_seconds ?? 0.05);
-    if (skip) skip.value = String(settings.skip_minutes ?? 30);
-    if (downloadContent) downloadContent.checked = Boolean(settings.download_content);
-    if (downloadImages) downloadImages.checked = Boolean(settings.download_images);
-    if (articleKeywords) articleKeywords.value = settings.article_exclude_keywords || '';
-  }, [settings]);
-
-  useEffect(() => {
-    const emailToggle = document.getElementById('sync-alert-enabled') as HTMLInputElement | null;
-    const alertEmail = document.getElementById('sync-alert-email') as HTMLInputElement | null;
-    if (!settings) return;
-    if (emailToggle) emailToggle.checked = Boolean(settings.alert_enabled);
-    if (alertEmail) alertEmail.value = settings.alert_email || '';
-  }, [settings]);
-
   const handleSave = async () => {
-    const enabled = (document.getElementById('sync-enabled') as HTMLInputElement)?.checked;
-    const interval = Number((document.getElementById('sync-interval') as HTMLInputElement)?.value);
-    const windowStartVal = Number((document.getElementById('sync-window-start') as HTMLInputElement)?.value);
-    const windowEndVal = Number((document.getElementById('sync-window-end') as HTMLInputElement)?.value);
-    const sleep = Number((document.getElementById('sync-sleep') as HTMLInputElement)?.value);
-    const skip = Number((document.getElementById('sync-skip-minutes') as HTMLInputElement)?.value);
-    const downloadContent = (document.getElementById('sync-download-content') as HTMLInputElement)?.checked;
-    const downloadImages = (document.getElementById('sync-download-images') as HTMLInputElement)?.checked;
-    const articleKeywords = (document.getElementById('sync-article-exclude-keywords') as HTMLTextAreaElement)?.value.trim();
-
-    const emailEnabled = (document.getElementById('sync-alert-enabled') as HTMLInputElement)?.checked;
-    const alertEmailVal = (document.getElementById('sync-alert-email') as HTMLInputElement)?.value.trim();
-
-    const body: Record<string, unknown> = {
-      enabled,
-      interval_minutes: interval,
-      window_start_hour: windowStartVal,
-      window_end_hour: windowEndVal,
-      sleep_seconds: sleep,
-      skip_minutes: skip,
-      download_content: downloadContent,
-      download_images: downloadImages,
-      article_exclude_keywords: articleKeywords || '',
-      alert_enabled: emailEnabled,
-      alert_email: alertEmailVal || '',
-    };
-
-    const payload = await apiSend('/api/settings', 'PATCH', body);
+    const payload = await apiSend('/api/settings', 'PATCH', buildSyncSettingsPayload(formState));
     dispatch({ type: 'SET_SYNC_SETTINGS', payload: payload as unknown as SyncSettings });
   };
 
@@ -115,26 +69,51 @@ export function SyncSettingsPanel() {
           <div className="form-grid">
             <label className="switch">
               <span>{t('sync.enabled', 'Enable automatic sync')}</span>
-              <input type="checkbox" id="sync-enabled" />
+              <input
+                type="checkbox"
+                id="sync-enabled"
+                checked={formState.enabled}
+                onChange={(event) => setFormState((prev) => ({ ...prev, enabled: event.target.checked }))}
+              />
             </label>
             <label>
               <span>{t('sync.interval', 'Interval (minutes)')}</span>
-              <input type="number" id="sync-interval" min="1" />
+              <input
+                type="number"
+                id="sync-interval"
+                min="1"
+                value={formState.intervalMinutes}
+                onChange={(event) => setFormState((prev) => ({ ...prev, intervalMinutes: event.target.value }))}
+              />
             </label>
             <label className="sync-window-field">
               <span>{t('sync.windowRange', 'Sync window')}</span>
               <div className="sync-window-inputs">
-                <input type="number" id="sync-window-start" min="0" max="23" />
+                <input
+                  type="number"
+                  id="sync-window-start"
+                  min="0"
+                  max="23"
+                  value={formState.windowStartHour}
+                  onChange={(event) => setFormState((prev) => ({ ...prev, windowStartHour: event.target.value }))}
+                />
                 <span className="sync-window-unit">{t('sync.windowHour', 'h')}</span>
                 <span className="sync-window-separator">{t('sync.windowTo', 'to')}</span>
-                <input type="number" id="sync-window-end" min="0" max="24" />
+                <input
+                  type="number"
+                  id="sync-window-end"
+                  min="0"
+                  max="24"
+                  value={formState.windowEndHour}
+                  onChange={(event) => setFormState((prev) => ({ ...prev, windowEndHour: event.target.value }))}
+                />
                 <span className="sync-window-unit">{t('sync.windowHour', 'h')}</span>
               </div>
             </label>
             <p className="muted sync-window-note" id="sync-window-note">
               {t('sync.windowHintRange', 'Current window: {start} - {end}')
-                .replace('{start}', formatHour(settings?.window_start_hour ?? 6))
-                .replace('{end}', formatHour(settings?.window_end_hour ?? 24))}
+                .replace('{start}', formatHour(Number(formState.windowStartHour || settings?.window_start_hour || 6)))
+                .replace('{end}', formatHour(Number(formState.windowEndHour || settings?.window_end_hour || 24)))}
             </p>
           </div>
         </section>
@@ -143,19 +122,42 @@ export function SyncSettingsPanel() {
           <div className="form-grid">
             <label>
               <span>{t('sync.sleepSeconds', 'Sleep (seconds)')}</span>
-              <input type="number" id="sync-sleep" min="0" step="0.01" />
+              <input
+                type="number"
+                id="sync-sleep"
+                min="0"
+                step="0.01"
+                value={formState.sleepSeconds}
+                onChange={(event) => setFormState((prev) => ({ ...prev, sleepSeconds: event.target.value }))}
+              />
             </label>
             <label>
               <span>{t('sync.skipMinutes', 'Skip interval (minutes)')}</span>
-              <input type="number" id="sync-skip-minutes" min="0" />
+              <input
+                type="number"
+                id="sync-skip-minutes"
+                min="0"
+                value={formState.skipMinutes}
+                onChange={(event) => setFormState((prev) => ({ ...prev, skipMinutes: event.target.value }))}
+              />
             </label>
             <label className="switch">
               <span>{t('sync.downloadContent', 'Download content')}</span>
-              <input type="checkbox" id="sync-download-content" />
+              <input
+                type="checkbox"
+                id="sync-download-content"
+                checked={formState.downloadContent}
+                onChange={(event) => setFormState((prev) => ({ ...prev, downloadContent: event.target.checked }))}
+              />
             </label>
             <label className="switch">
               <span>{t('sync.downloadImages', 'Download images')}</span>
-              <input type="checkbox" id="sync-download-images" />
+              <input
+                type="checkbox"
+                id="sync-download-images"
+                checked={formState.downloadImages}
+                onChange={(event) => setFormState((prev) => ({ ...prev, downloadImages: event.target.checked }))}
+              />
             </label>
           </div>
         </section>
@@ -167,7 +169,9 @@ export function SyncSettingsPanel() {
               <textarea
                 id="sync-article-exclude-keywords"
                 rows={4}
-                placeholder="promo&#10;ad"
+                placeholder='promo&#10;ad'
+                value={formState.articleExcludeKeywords}
+                onChange={(event) => setFormState((prev) => ({ ...prev, articleExcludeKeywords: event.target.value }))}
               ></textarea>
               <small className="muted">{t('sync.articleExcludeKeywordsHint', 'One keyword per line, or separate by comma / semicolon.')}</small>
             </label>
