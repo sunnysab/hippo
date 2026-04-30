@@ -40,8 +40,12 @@
   --shadow: 0 16px 38px rgba(40, 36, 28, 0.1);
   --shadow-float: 0 22px 52px rgba(31, 29, 25, 0.16);
   --radius: 18px;
+  --radius-lg: 16px;
   --radius-sm: 12px;
+  --radius-control: 10px;
+  --radius-tight: 8px;
   --radius-xs: 9px;
+  --lift-hover: -1px;
   --reader-width: 860px;
   --reader-font: 17px;
   --reader-line: 1.8;
@@ -93,7 +97,7 @@ body {
   background: var(--surface-panel);
   backdrop-filter: blur(16px) saturate(1.15);
   box-shadow: 0 2px 8px rgba(40, 36, 28, 0.05);
-  border-radius: 20px;
+  border-radius: var(--radius);
 }
 
 .brand {
@@ -108,7 +112,7 @@ body {
   place-items: center;
   width: 40px;
   height: 40px;
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   background: var(--accent);
   color: #fff;
   font-family: var(--font-display);
@@ -178,7 +182,7 @@ body {
 
 .tab:hover {
   color: var(--text);
-  transform: translateY(-1px);
+  transform: translateY(var(--lift-hover));
 }
 
 .tab.is-active {
@@ -301,7 +305,7 @@ body {
   gap: 12px;
   margin-bottom: 14px;
   padding: 13px 14px;
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   background: rgba(245, 234, 210, 0.92);
   color: #72470d;
 }
@@ -538,7 +542,7 @@ body {
   bottom: 16px;
   transform: translateX(-50%);
   padding: 8px 12px;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   background: rgba(31, 37, 31, 0.93);
   box-shadow: var(--shadow-float);
   color: #fff;
@@ -590,7 +594,7 @@ body {
     top: auto;
     flex-direction: column;
     align-items: flex-start;
-    border-radius: 12px;
+    border-radius: var(--radius-sm);
   }
 
   .brand,

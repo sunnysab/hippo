@@ -45,7 +45,7 @@
 .article-filter-shell {
   margin-bottom: 10px;
   padding: 14px;
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   background: var(--surface-panel-strong);
 }
 
@@ -131,7 +131,7 @@
 }
 
 .article-type-facet:hover {
-  transform: translateY(-1px);
+  transform: translateY(var(--lift-hover));
   background: var(--surface-item-hover);
 }
 
@@ -180,7 +180,7 @@
   grid-template-columns: 84px minmax(0, 1fr);
   gap: 12px;
   padding: 11px;
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   background: var(--surface-item);
   cursor: pointer;
   transition: background 0.18s ease-out, transform 0.18s ease-out;
@@ -208,7 +208,7 @@
 .article-thumb {
   width: 84px;
   height: 84px;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   object-fit: cover;
   background: var(--surface-chip);
 }
@@ -250,7 +250,7 @@
 .article-avatar {
   width: 18px;
   height: 18px;
-  border-radius: 5px;
+  border-radius: var(--radius-tight);
   object-fit: cover;
   background: var(--surface-chip);
 }
@@ -350,7 +350,7 @@
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
   padding: 14px;
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   background: var(--surface-panel);
   box-shadow: 0 8px 24px rgba(31, 29, 25, 0.1);
 }
@@ -375,7 +375,7 @@
   overflow-y: auto;
   overflow-x: hidden;
   padding: 18px;
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   background: var(--surface-panel-strong);
 }
 
@@ -383,7 +383,7 @@
   width: 100%;
   margin-bottom: 16px;
   padding-bottom: 16px;
-  border-radius: 0 0 14px 14px;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
   box-shadow: inset 0 -1px 0 rgba(134, 126, 104, 0.1);
 }
 
@@ -425,7 +425,7 @@
   width: 40px;
   height: 40px;
   flex: 0 0 40px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   object-fit: cover;
   background: var(--surface-item-active);
 }
@@ -526,7 +526,7 @@
 
 .reader img {
   width: 100%;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
 }
 
 .reader a {
