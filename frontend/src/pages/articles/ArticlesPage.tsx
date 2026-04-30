@@ -14,7 +14,7 @@ import type { Article, ArticlePayload } from '../../store/articles';
 import { ARTICLE_SORT_PUBLISH_AT_DESC } from '../../utils/constants';
 import { copyToClipboard } from '../../utils/clipboard';
 import {
-  buildArticleFiltersFromSearchParams,
+  buildArticleRouteStateFromSearchParams,
   buildArticleSearchParams,
   type ArticleFiltersState,
   type ArticleSelectOption,
@@ -26,7 +26,10 @@ export function ArticlesPage() {
   const { showToast } = useToast();
   const { config, updateConfig } = useReaderSettings();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [filters, setFilters] = useState<ArticleFiltersState>(() => buildArticleFiltersFromSearchParams(searchParams));
+  const initialRouteState = buildArticleRouteStateFromSearchParams(searchParams);
+  const [filters, setFilters] = useState<ArticleFiltersState>(() => initialRouteState.filters);
+  const [articleIdParam, setArticleIdParam] = useState(initialRouteState.articleId);
+  const [wxArticleIdParam, setWxArticleIdParam] = useState(initialRouteState.wxArticleId);
   const [groupOptions, setGroupOptions] = useState<ArticleSelectOption[]>([]);
   const [accountOptions, setAccountOptions] = useState<ArticleSelectOption[]>([]);
   const [listCollapsed, setListCollapsed] = useState(false);
@@ -51,7 +54,11 @@ export function ArticlesPage() {
     deferredSearchRef.current = deferredSearch;
   }, [deferredSearch, filters, state.articlePage, state.articlePageSize, state.articles, state.isArticleLoading]);
 
-  const loadArticles = useCallback(async (nextFilters: ArticleFiltersState, reset = true) => {
+  const loadArticles = useCallback(async (
+    nextFilters: ArticleFiltersState,
+    reset = true,
+    routeTarget?: { articleId?: string; wxArticleId?: string },
+  ) => {
     if (isArticleLoadingRef.current) return;
     dispatch({ type: 'SET_LOADING', loading: true });
     isArticleLoadingRef.current = true;
@@ -59,13 +66,22 @@ export function ArticlesPage() {
     const page = reset ? 1 : articlePageRef.current;
     const pageSize = articlePageSizeRef.current;
     const previousArticles = articlesRef.current;
+    let resolvedPayload: ArticlePayload | null = null;
+    let articleIdFilter = routeTarget?.wxArticleId?.trim() || '';
 
     try {
+      if (!articleIdFilter && routeTarget?.articleId && /^\d+$/.test(routeTarget.articleId)) {
+        const payload = await apiGet(`/api/article/${routeTarget.articleId}`);
+        resolvedPayload = payload as unknown as ArticlePayload;
+        articleIdFilter = resolvedPayload.article.article_id || '';
+      }
+
       const url = new URL('/api/article', window.location.origin);
       if (nextFilters.groupId) url.searchParams.set('group_id', nextFilters.groupId);
       if (nextFilters.accountBiz) url.searchParams.set('biz', nextFilters.accountBiz);
       if (nextFilters.itemShowType) url.searchParams.set('item_show_type', nextFilters.itemShowType);
       if (nextFilters.search) url.searchParams.set('q', nextFilters.search);
+      if (articleIdFilter) url.searchParams.set('article_id', articleIdFilter);
       url.searchParams.set('sort', sort);
       url.searchParams.set('page', String(page));
       url.searchParams.set('page_size', String(pageSize));
@@ -85,7 +101,6 @@ export function ArticlesPage() {
       });
       dispatch({ type: 'SET_PAGE', page: articlePageRef.current, hasMore });
 
-      // Update facet payload
       dispatch({
         type: 'SET_FACET_PAYLOAD',
         payload: {
@@ -93,20 +108,57 @@ export function ArticlesPage() {
           item_show_type_facets: (payload.item_show_type_facets || []) as Array<{ item_show_type: number; count: number }>,
         },
       });
+
+      if (reset) {
+        const matchedArticle = resolvedPayload
+          ? newArticles.find((article) => article.id === resolvedPayload?.article.id) || resolvedPayload.article
+          : articleIdFilter
+            ? newArticles.find((article) => article.article_id === articleIdFilter) || null
+            : null;
+
+        if (resolvedPayload) {
+          dispatch({
+            type: 'SELECT_ARTICLE',
+            id: resolvedPayload.article.id,
+            payload: resolvedPayload,
+          });
+          if (window.matchMedia('(max-width: 720px)').matches) {
+            dispatch({ type: 'SET_MOBILE_READING', reading: true });
+          }
+        } else if (matchedArticle && matchedArticle.id !== state.selectedArticleId) {
+          dispatch({ type: 'SELECT_ARTICLE', id: matchedArticle.id, payload: null });
+          const detailPayload = await apiGet(`/api/article/${matchedArticle.id}`);
+          dispatch({
+            type: 'SELECT_ARTICLE',
+            id: matchedArticle.id,
+            payload: detailPayload as unknown as ArticlePayload,
+          });
+          if (window.matchMedia('(max-width: 720px)').matches) {
+            dispatch({ type: 'SET_MOBILE_READING', reading: true });
+          }
+        } else if (!routeTarget?.articleId && !routeTarget?.wxArticleId && state.selectedArticleId !== null) {
+          dispatch({ type: 'SELECT_ARTICLE', id: null, payload: null });
+        }
+      }
     } finally {
       isArticleLoadingRef.current = false;
       dispatch({ type: 'SET_LOADING', loading: false });
     }
-  }, [dispatch]);
+  }, [dispatch, state.selectedArticleId]);
 
   const syncUrlParams = useCallback((nextFilters: ArticleFiltersState) => {
-    setSearchParams(buildArticleSearchParams(nextFilters), { replace: true });
-  }, [setSearchParams]);
+    setSearchParams(buildArticleSearchParams(nextFilters, {
+      articleId: articleIdParam,
+      wxArticleId: wxArticleIdParam,
+    }), { replace: true });
+  }, [articleIdParam, setSearchParams, wxArticleIdParam]);
 
   const updateFilters = useCallback((patch: Partial<ArticleFiltersState>) => {
     if (patch.groupId !== undefined) {
       setAccountOptions([]);
     }
+    setArticleIdParam('');
+    setWxArticleIdParam('');
     setFilters((prev) => {
       const groupChanged = patch.groupId !== undefined && patch.groupId !== prev.groupId;
       return {
@@ -172,6 +224,8 @@ export function ArticlesPage() {
       sort: ARTICLE_SORT_PUBLISH_AT_DESC,
     });
     setAccountOptions([]);
+    setArticleIdParam('');
+    setWxArticleIdParam('');
     dispatch({ type: 'SELECT_ARTICLE', id: null, payload: null });
   }, [dispatch]);
 
@@ -203,16 +257,21 @@ export function ArticlesPage() {
       sort: filters.sort,
     };
     const timer = window.setTimeout(() => {
-      void loadArticles(nextFilters, true);
+      void loadArticles(nextFilters, true, {
+        articleId: articleIdParam,
+        wxArticleId: wxArticleIdParam,
+      });
     }, 0);
     return () => window.clearTimeout(timer);
   }, [
+    articleIdParam,
     deferredSearch,
     filters.accountBiz,
     filters.groupId,
     filters.itemShowType,
     filters.sort,
     loadArticles,
+    wxArticleIdParam,
   ]);
 
   useEffect(() => {
@@ -223,11 +282,14 @@ export function ArticlesPage() {
       if (nextFilters.groupId) {
         void loadAccountOptions(nextFilters.groupId);
       }
-      void loadArticles({ ...nextFilters, search: nextSearch }, true);
+      void loadArticles({ ...nextFilters, search: nextSearch }, true, {
+        articleId: articleIdParam,
+        wxArticleId: wxArticleIdParam,
+      });
     };
     window.addEventListener('hippo:refresh', handler);
     return () => window.removeEventListener('hippo:refresh', handler);
-  }, [loadAccountOptions, loadArticles, loadGroupOptions]);
+  }, [articleIdParam, loadAccountOptions, loadArticles, loadGroupOptions, wxArticleIdParam]);
 
   const getSelectedArticleLink = () => {
     const article = state.currentArticlePayload?.article ||
@@ -273,7 +335,10 @@ export function ArticlesPage() {
           <LoadingIndicator isLoading={state.isArticleLoading} id="article-search-loading" />
           <ArticleList
             onSelect={selectArticle}
-            onLoadMore={() => loadArticles({ ...filters, search: deferredSearch }, false)}
+            onLoadMore={() => loadArticles({ ...filters, search: deferredSearch }, false, {
+              articleId: articleIdParam,
+              wxArticleId: wxArticleIdParam,
+            })}
           />
         </div>
 
