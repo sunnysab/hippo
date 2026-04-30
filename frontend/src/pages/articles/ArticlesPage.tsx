@@ -32,15 +32,29 @@ export function ArticlesPage() {
   const [listCollapsed, setListCollapsed] = useState(false);
   const [readerControlsOpen, setReaderControlsOpen] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
+  const isArticleLoadingRef = useRef(state.isArticleLoading);
+  const articlePageRef = useRef(state.articlePage);
+  const articlePageSizeRef = useRef(state.articlePageSize);
+  const articlesRef = useRef(state.articles);
   const deferredSearch = useDeferredValue(filters.search.trim());
 
   const isNarrowViewport = () => window.matchMedia('(max-width: 720px)').matches;
 
+  useEffect(() => {
+    isArticleLoadingRef.current = state.isArticleLoading;
+    articlePageRef.current = state.articlePage;
+    articlePageSizeRef.current = state.articlePageSize;
+    articlesRef.current = state.articles;
+  }, [state.articlePage, state.articlePageSize, state.articles, state.isArticleLoading]);
+
   const loadArticles = useCallback(async (nextFilters: ArticleFiltersState, reset = true) => {
-    if (state.isArticleLoading) return;
+    if (isArticleLoadingRef.current) return;
     dispatch({ type: 'SET_LOADING', loading: true });
+    isArticleLoadingRef.current = true;
     const sort = nextFilters.sort || ARTICLE_SORT_PUBLISH_AT_DESC;
-    const page = reset ? 1 : state.articlePage;
+    const page = reset ? 1 : articlePageRef.current;
+    const pageSize = articlePageSizeRef.current;
+    const previousArticles = articlesRef.current;
 
     try {
       const url = new URL('/api/article', window.location.origin);
@@ -50,18 +64,22 @@ export function ArticlesPage() {
       if (nextFilters.search) url.searchParams.set('q', nextFilters.search);
       url.searchParams.set('sort', sort);
       url.searchParams.set('page', String(page));
-      url.searchParams.set('page_size', String(state.articlePageSize));
+      url.searchParams.set('page_size', String(pageSize));
 
       const payload = await apiGet(url.pathname + url.search);
       const newArticles = (payload.articles || []) as Article[];
-      const hasMore = newArticles.length >= state.articlePageSize;
+      const hasMore = newArticles.length >= pageSize;
+      const mergedArticles = reset ? newArticles : [...previousArticles, ...newArticles];
+
+      articlesRef.current = mergedArticles;
+      articlePageRef.current = reset ? 2 : page + 1;
 
       dispatch({
         type: 'SET_ARTICLES',
-        articles: reset ? newArticles : [...state.articles, ...newArticles],
+        articles: mergedArticles,
         reset,
       });
-      dispatch({ type: 'SET_PAGE', page: reset ? 2 : state.articlePage + 1, hasMore });
+      dispatch({ type: 'SET_PAGE', page: articlePageRef.current, hasMore });
 
       // Update facet payload
       dispatch({
@@ -72,9 +90,10 @@ export function ArticlesPage() {
         },
       });
     } finally {
+      isArticleLoadingRef.current = false;
       dispatch({ type: 'SET_LOADING', loading: false });
     }
-  }, [state.isArticleLoading, state.articlePage, state.articlePageSize, state.articles, dispatch]);
+  }, [dispatch]);
 
   const syncUrlParams = useCallback((nextFilters: ArticleFiltersState) => {
     setSearchParams(buildArticleSearchParams(nextFilters), { replace: true });
