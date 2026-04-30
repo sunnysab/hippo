@@ -10,6 +10,9 @@ export function BatchActions() {
   const { t } = useI18n();
   const { showToast } = useToast();
   const [expanded, setExpanded] = useState(false);
+  const [targetGroupId, setTargetGroupId] = useState('');
+  const [syncMode, setSyncMode] = useState('');
+  const [syncDays, setSyncDays] = useState(String(syncDefaults.recent_days));
 
   const count = state.selectedAccounts.length;
   const isNarrow = window.matchMedia('(max-width: 720px)').matches;
@@ -37,9 +40,7 @@ export function BatchActions() {
     : t('accounts.syncModeInherit', 'Follow global ({mode})').replace('{mode}', getSyncModeLabel(defaultMode));
 
   const handleMove = async () => {
-    const select = document.getElementById('batch-group-select') as HTMLSelectElement | null;
-    const groupId = select?.value;
-    if (!groupId) {
+    if (!targetGroupId) {
       alert(t('accounts.moveSelectGroup', 'Select a target group.'));
       return;
     }
@@ -48,10 +49,12 @@ export function BatchActions() {
       return;
     }
     await apiSend('/api/account/move', 'POST', {
-      group_id: Number(groupId),
+      group_id: Number(targetGroupId),
       biz_list: state.selectedAccounts,
     });
     dispatch({ type: 'CLEAR_SELECTED' });
+    setTargetGroupId('');
+    window.dispatchEvent(new CustomEvent('hippo:refresh'));
   };
 
   const handleBatchSyncSettings = async () => {
@@ -59,20 +62,18 @@ export function BatchActions() {
       alert(t('accounts.moveSelectAccounts', 'Select accounts to move.'));
       return;
     }
-    const modeSelect = document.getElementById('batch-sync-mode') as HTMLSelectElement | null;
-    const daysInput = document.getElementById('batch-sync-days') as HTMLInputElement | null;
-    const mode = modeSelect?.value || '';
     const body: Record<string, unknown> = {
       biz_list: state.selectedAccounts,
-      sync_mode: mode || null,
+      sync_mode: syncMode || null,
     };
-    if (mode === 'recent') {
-      const days = parseInt(daysInput?.value || String(syncDefaults.recent_days), 10);
+    if (syncMode === 'recent') {
+      const days = parseInt(syncDays || String(syncDefaults.recent_days), 10);
       body.sync_recent_days = Number.isFinite(days) && days > 0 ? days : syncDefaults.recent_days;
     }
     try {
       await apiSend('/api/account/batch', 'POST', body);
       showToast(t('accounts.syncSaved', 'Sync strategy updated.'));
+      window.dispatchEvent(new CustomEvent('hippo:refresh'));
     } catch {
       showToast(t('accounts.syncFailed', 'Failed to update sync strategy.'));
     }
@@ -122,7 +123,11 @@ export function BatchActions() {
         </button>
       )}
       <div className={`batch-actions${showActions ? '' : ' is-hidden'}`} id="batch-actions">
-        <select id="batch-group-select">
+        <select
+          id="batch-group-select"
+          value={targetGroupId}
+          onChange={(event) => setTargetGroupId(event.target.value)}
+        >
           <option value="">{t('accounts.movePlaceholder', 'Move to group')}</option>
           {state.groups.map((g) => (
             <option key={g.id} value={g.id}>{g.name}</option>
@@ -132,13 +137,24 @@ export function BatchActions() {
           {t('accounts.move', 'Move')}
         </button>
         <div className="batch-divider"></div>
-        <select id="batch-sync-mode" defaultValue="">
+        <select
+          id="batch-sync-mode"
+          value={syncMode}
+          onChange={(event) => setSyncMode(event.target.value)}
+        >
           <option value="">{inheritLabel}</option>
           <option value="incremental">{t('sync.modeIncremental', 'Incremental')}</option>
           <option value="recent">{t('sync.modeRecent', 'Recent')}</option>
           <option value="full">{t('sync.modeFull', 'Full')}</option>
         </select>
-        <input type="number" id="batch-sync-days" min="1" defaultValue={syncDefaults.recent_days} />
+        <input
+          type="number"
+          id="batch-sync-days"
+          min="1"
+          value={syncDays}
+          disabled={syncMode !== 'recent'}
+          onChange={(event) => setSyncDays(event.target.value)}
+        />
         <button className="btn ghost" id="btn-batch-sync" type="button" onClick={handleBatchSyncSettings}>
           {t('accounts.batchSyncApply', 'Apply')}
         </button>
@@ -148,7 +164,12 @@ export function BatchActions() {
         </button>
       </div>
       <span className="badge" id="batch-count">{count}</span>
-      <button className="btn ghost" id="btn-account-refresh" type="button">
+      <button
+        className="btn ghost"
+        id="btn-account-refresh"
+        type="button"
+        onClick={() => window.dispatchEvent(new CustomEvent('hippo:refresh'))}
+      >
         <span>{t('actions.refresh', 'Refresh')}</span>
       </button>
     </div>

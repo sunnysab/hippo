@@ -4,10 +4,22 @@ import { AccountCard } from './AccountCard';
 import { useI18n } from '../../i18n';
 import { EmptyState } from '../../components/EmptyState';
 
-export function AccountCardGrid() {
+interface AccountCardGridProps {
+  query: string;
+}
+
+export function AccountCardGrid({ query }: AccountCardGridProps) {
   const { state } = useGroupsState();
   const { loadAccounts } = useGroupsActions();
   const { t } = useI18n();
+  const normalizedQuery = query.trim().toLowerCase();
+  const accounts = normalizedQuery
+    ? state.accounts.filter((account) => (
+      account.nickname.toLowerCase().includes(normalizedQuery) ||
+      account.alias.toLowerCase().includes(normalizedQuery) ||
+      account.biz.toLowerCase().includes(normalizedQuery)
+    ))
+    : state.accounts;
 
   useEffect(() => {
     if (state.selectedGroupId) {
@@ -23,7 +35,7 @@ export function AccountCardGrid() {
     return () => window.removeEventListener('hippo:refresh', handler);
   }, [loadAccounts]);
 
-  if (!state.accounts.length) {
+  if (!accounts.length) {
     return (
       <div className="card-grid" id="account-list">
         <EmptyState message={t('accounts.empty', 'No accounts found.')} />
@@ -33,7 +45,7 @@ export function AccountCardGrid() {
 
   return (
     <div className="card-grid" id="account-list">
-      {state.accounts.map((account) => (
+      {accounts.map((account) => (
         <AccountCard key={account.biz} account={account} />
       ))}
     </div>

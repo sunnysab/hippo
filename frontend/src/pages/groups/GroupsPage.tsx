@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 import { useGroupsState, useGroupsActions } from '../../store/groups';
 import { GroupList } from './GroupList';
 import { GroupHeader } from './GroupHeader';
@@ -16,6 +16,8 @@ export function GroupsPage() {
   const { loadGroups } = useGroupsActions();
   const { t } = useI18n();
   const { showToast } = useToast();
+  const [accountQuery, setAccountQuery] = useState('');
+  const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     const { nextGroup } = await loadGroups();
@@ -83,14 +85,21 @@ export function GroupsPage() {
         </div>
 
         <div className="panel groups-main">
-          <GroupHeader />
+          <GroupHeader
+            accountQuery={accountQuery}
+            onAccountQueryChange={setAccountQuery}
+            onOpenAccountSearch={() => setIsSearchModalOpen(true)}
+          />
           <GroupSyncToolbar />
           <BatchActions />
-          <AccountCardGrid />
+          <AccountCardGrid query={accountQuery} />
         </div>
       </div>
 
-      <AccountSearchModal />
+      <AccountSearchModal
+        isOpen={isSearchModalOpen}
+        onClose={() => setIsSearchModalOpen(false)}
+      />
     </section>
   );
 }

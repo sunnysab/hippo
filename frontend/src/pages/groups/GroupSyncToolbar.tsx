@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useGroupsState } from '../../store/groups';
 import { useI18n } from '../../i18n';
 import { apiSend } from '../../api';
@@ -6,9 +6,11 @@ import { useToast } from '../../hooks/useToast';
 import { syncDefaults } from '../../store/shared';
 
 export function GroupSyncToolbar() {
-  const { state } = useGroupsState();
+  const { state, dispatch } = useGroupsState();
   const { t } = useI18n();
   const { showToast } = useToast();
+  const [mode, setMode] = useState('');
+  const [days, setDays] = useState(String(syncDefaults.recent_days));
 
   const group = state.groups.find((g) => g.id === state.selectedGroupId);
 
@@ -22,33 +24,29 @@ export function GroupSyncToolbar() {
 
   useEffect(() => {
     if (!group) return;
-    const daysInput = document.getElementById('group-sync-days') as HTMLInputElement | null;
-    if (daysInput) {
-      daysInput.disabled = group.sync_mode !== 'recent';
-    }
+    setMode(group.sync_mode || '');
+    setDays(String(group.sync_recent_days ?? syncDefaults.recent_days));
   }, [group]);
 
   if (!group) return null;
 
-  const handleModeChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const mode = e.target.value;
-    const daysInput = document.getElementById('group-sync-days') as HTMLInputElement | null;
-    if (daysInput) {
-      daysInput.disabled = mode !== 'recent';
-    }
-  };
-
-  const handleSave = async (e: React.ChangeEvent<HTMLSelectElement> | React.ChangeEvent<HTMLInputElement>) => {
-    const modeSelect = document.getElementById('group-sync-mode') as HTMLSelectElement | null;
-    const daysInput = document.getElementById('group-sync-days') as HTMLInputElement | null;
-    const mode = modeSelect?.value || '';
-    const days = parseInt(daysInput?.value || String(syncDefaults.recent_days), 10);
+  const handleSave = async (nextMode: string, nextDays: string) => {
+    const parsedDays = parseInt(nextDays || String(syncDefaults.recent_days), 10);
     try {
-      const body: Record<string, unknown> = { sync_mode: mode || null };
-      if (mode === 'recent') {
-        body.sync_recent_days = Number.isFinite(days) && days > 0 ? days : syncDefaults.recent_days;
+      const body: Record<string, unknown> = { sync_mode: nextMode || null };
+      const safeDays = Number.isFinite(parsedDays) && parsedDays > 0 ? parsedDays : syncDefaults.recent_days;
+      if (nextMode === 'recent') {
+        body.sync_recent_days = safeDays;
       }
       await apiSend(`/api/group/${group.id}`, 'PATCH', body);
+      dispatch({
+        type: 'UPDATE_GROUP',
+        groupId: group.id,
+        patch: {
+          sync_mode: nextMode || null,
+          sync_recent_days: nextMode === 'recent' ? safeDays : null,
+        },
+      });
       showToast(t('groups.syncSaved', 'Default sync updated.'));
     } catch {
       showToast(t('groups.syncFailed', 'Failed to update default sync.'));
@@ -62,8 +60,15 @@ export function GroupSyncToolbar() {
       <span className="muted">{t('groups.syncDefault', 'Default sync')}</span>
       <select
         id="group-sync-mode"
-        value={group.sync_mode || ''}
-        onChange={(e) => { handleModeChange(e); void handleSave(e); }}
+        value={mode}
+        onChange={(event) => {
+          const nextMode = event.target.value;
+          setMode(nextMode);
+          if (nextMode !== 'recent') {
+            setDays(String(group.sync_recent_days ?? syncDefaults.recent_days));
+          }
+          void handleSave(nextMode, days);
+        }}
       >
         <option value="">{inheritLabel}</option>
         <option value="incremental">{t('sync.modeIncremental', 'Incremental')}</option>
@@ -74,9 +79,10 @@ export function GroupSyncToolbar() {
         type="number"
         id="group-sync-days"
         min="1"
-        defaultValue={group.sync_recent_days ?? syncDefaults.recent_days}
-        disabled={group.sync_mode !== 'recent'}
-        onChange={(e) => { void handleSave(e); }}
+        value={days}
+        disabled={mode !== 'recent'}
+        onChange={(event) => setDays(event.target.value)}
+        onBlur={() => { void handleSave(mode, days); }}
       />
     </div>
   );

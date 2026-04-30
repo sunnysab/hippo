@@ -5,9 +5,18 @@ import { useI18n } from '../../i18n';
 import { apiSend } from '../../api';
 import { useToast } from '../../hooks/useToast';
 import { copyToClipboard } from '../../utils/clipboard';
-import type { Group } from '../../store/shared';
 
-export function GroupHeader() {
+interface GroupHeaderProps {
+  accountQuery: string;
+  onAccountQueryChange: (value: string) => void;
+  onOpenAccountSearch: () => void;
+}
+
+export function GroupHeader({
+  accountQuery,
+  onAccountQueryChange,
+  onOpenAccountSearch,
+}: GroupHeaderProps) {
   const { state, dispatch } = useGroupsState();
   const { loadGroups } = useGroupsActions();
   const { t } = useI18n();
@@ -88,14 +97,20 @@ export function GroupHeader() {
       </div>
       <div className="toolbar group-actions">
         <div className="input">
-          <input type="search" id="account-search" placeholder={t('filters.search', 'Search')} />
+          <input
+            type="search"
+            id="account-search"
+            placeholder={t('filters.search', 'Search')}
+            value={accountQuery}
+            onChange={(event) => onAccountQueryChange(event.target.value)}
+          />
           <span className="icon">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M15.5 14h-.79l-.28-.27A6 6 0 1 0 14 15.5l.27.28v.79L20 21.5 21.5 20l-6-6zm-5.5 0a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/>
             </svg>
           </span>
         </div>
-        <button className="btn ghost" id="btn-account-add" type="button">
+        <button className="btn ghost" id="btn-account-add" type="button" onClick={onOpenAccountSearch}>
           <span className="icon">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v14h-2zM5 11h14v2H5z"/></svg>
           </span>
