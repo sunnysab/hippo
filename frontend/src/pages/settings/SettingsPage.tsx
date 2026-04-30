@@ -197,25 +197,25 @@ function SettingsPageContent({ initialFormState }: SettingsPageContentProps) {
       key: 'sync',
       path: '/settings/sync',
       title: t('settings.navSync', 'Sync'),
-      summary: t('settings.navSyncSummary', 'Scheduler, live tasks, history, and alerts.'),
+      summary: t('settings.navSyncSummary', 'Manage schedules, progress, and alerts.'),
     },
     {
       key: 'filter',
       path: '/settings/filter',
       title: t('settings.navFilter', 'Filter'),
-      summary: t('settings.navFilterSummary', 'Article keywords and reader image filters.'),
+      summary: t('settings.navFilterSummary', 'Manage article filters and reading preferences.'),
     },
     {
       key: 'email',
       path: '/settings/email',
       title: t('settings.navEmail', 'Email'),
-      summary: t('settings.navEmailSummary', 'SMTP connection and test delivery.'),
+      summary: t('settings.navEmailSummary', 'Configure SMTP and test delivery.'),
     },
     {
       key: 'login',
       path: '/settings/login',
       title: t('settings.navLogin', 'Login'),
-      summary: t('settings.navLoginSummary', 'QR session and sign-in state.'),
+      summary: t('settings.navLoginSummary', 'Check sign-in state and refresh the session.'),
     },
   ];
 
@@ -231,7 +231,7 @@ function SettingsPageContent({ initialFormState }: SettingsPageContentProps) {
           <div className="panel-header settings-sidebar-header">
             <div>
               <h2>{t('settings.title', 'Settings')}</h2>
-              <p className="muted">{t('settings.subtitle', 'Split sync operations into focused workspaces.')}</p>
+              <p className="muted">{t('settings.subtitle', 'Manage login, sync, filters, and email settings.')}</p>
             </div>
           </div>
           <nav className="settings-nav" aria-label={t('settings.navAria', 'Settings sections')}>

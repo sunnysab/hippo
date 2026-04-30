@@ -35,7 +35,7 @@ export function SyncSettingsPanel({
       <div className="panel-header">
         <div>
           <h2>{t('sync.title', 'Sync Settings')}</h2>
-          <p className="muted">{t('sync.subtitle', 'Schedule periodic sync for accounts and articles.')}</p>
+          <p className="muted">{t('sync.subtitle', 'Configure how account and article sync runs.')}</p>
         </div>
         <div className="toolbar">
           <button className="btn" id="btn-sync-save" type="button" onClick={handleSave}>

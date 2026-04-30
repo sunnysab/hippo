@@ -41,7 +41,7 @@ export function LoginPanel() {
       <div className="panel-header">
         <div>
           <h2>{t('login.title', 'Login')}</h2>
-          <p className="muted">{t('login.subtitle', 'Scan QR code to refresh login session.')}</p>
+          <p className="muted">{t('login.subtitle', 'Scan the QR code to sign in or refresh the session.')}</p>
         </div>
         <div className="toolbar">
           <button className="btn" id="btn-login-start" type="button" onClick={startLogin}>
