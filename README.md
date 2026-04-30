@@ -22,6 +22,15 @@ pip install -e .
 hippo --help
 ```
 
+### 前端构建
+
+Web UI 现在使用 React 构建产物，启动服务前需要先构建前端：
+
+```bash
+npm --prefix frontend ci
+npm --prefix frontend run build
+```
+
 ### 方式 C：Docker
 
 ```bash
@@ -43,7 +52,7 @@ docker run --rm -p 8000:8000 \
   hippo
 ```
 
-当前 Docker 镜像默认执行 `hippo serve --host 0.0.0.0 --port 8000 --static-dir /app/static`。
+当前 Docker 镜像默认执行 `hippo serve --host 0.0.0.0 --port 8000 --static-dir /app/frontend/dist`。
 
 ---
 

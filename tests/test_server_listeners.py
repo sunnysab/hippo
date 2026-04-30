@@ -135,6 +135,6 @@ class CliServeTest(unittest.TestCase):
                 no_tcp=True,
                 unix_socket=None,
                 unix_socket_mode='660',
-                static_dir=Path('static'),
+                static_dir=Path('frontend/dist'),
                 inprocess_sync=False,
             )

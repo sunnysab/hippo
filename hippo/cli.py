@@ -1907,7 +1907,7 @@ def serve(
         '--unix-socket-mode',
         help='Unix socket 文件权限，八进制，例如 660',
     ),
-    static_dir: Path = typer.Option(Path("static"), help="静态资源目录"),
+    static_dir: Path = typer.Option(Path('frontend/dist'), help='静态资源目录'),
     inprocess_sync: bool = typer.Option(
         False,
         '--inprocess-sync',
