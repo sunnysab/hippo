@@ -1,7 +1,7 @@
 import { useArticlesState } from '../../store/articles';
 import { useI18n } from '../../i18n';
 import { escapeHtml } from '../../utils/format';
-import { ITEM_SHOW_TYPE_META, ITEM_SHOW_TYPE_ORDER, ARTICLE_FACET_COLLAPSED_LIMIT, ARTICLE_FACET_COLLAPSED_LIMIT_MOBILE } from '../../utils/constants';
+import { ITEM_SHOW_TYPE_META, ARTICLE_FACET_COLLAPSED_LIMIT, ARTICLE_FACET_COLLAPSED_LIMIT_MOBILE } from '../../utils/constants';
 import { buildArticleFacetVisibility } from '../../utils/facets';
 
 function getItemShowTypeLabel(value: number, t: (k: string, f: string) => string) {

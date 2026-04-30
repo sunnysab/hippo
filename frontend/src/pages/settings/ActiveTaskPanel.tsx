@@ -1,6 +1,7 @@
 import { useSettingsState } from '../../store/settings';
 import { useI18n } from '../../i18n';
 import { escapeHtml, formatRelativeTime } from '../../utils/format';
+import { getSyncTone } from '../../utils/sync';
 
 export function ActiveTaskPanel() {
   const { state } = useSettingsState();
@@ -9,15 +10,6 @@ export function ActiveTaskPanel() {
   const getActiveTask = () => {
     const tasks = state.syncTasks || [];
     return tasks.find((t) => t.status === 'running') || tasks.find((t) => t.status === 'pending') || null;
-  };
-
-  const getSyncTone = (status: string) => {
-    if (status === 'success' || status === 'completed') return 'success';
-    if (status === 'failed' || status === 'login_required' || status === 'stopped') return 'danger';
-    if (status === 'running') return 'info';
-    if (status === 'pending') return 'warning';
-    if (status === 'skipped') return 'muted';
-    return 'neutral';
   };
 
   const activeTask = getActiveTask();

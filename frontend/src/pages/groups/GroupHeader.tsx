@@ -1,9 +1,7 @@
-import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGroupsState, useGroupsActions } from '../../store/groups';
 import { useI18n } from '../../i18n';
 import { apiSend } from '../../api';
-import { useToast } from '../../hooks/useToast';
 import { copyToClipboard } from '../../utils/clipboard';
 
 interface GroupHeaderProps {
@@ -20,7 +18,6 @@ export function GroupHeader({
   const { state, dispatch } = useGroupsState();
   const { loadGroups } = useGroupsActions();
   const { t } = useI18n();
-  const { showToast } = useToast();
   const navigate = useNavigate();
 
   const group = state.groups.find((g) => g.id === state.selectedGroupId);
