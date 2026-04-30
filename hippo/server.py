@@ -2482,16 +2482,8 @@ def create_app(
             f'Static directory not found: {static_path}. Run `npm --prefix frontend build` first.'
         )
 
-    app = FastAPI()
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    @app.on_event("startup")
-    async def _startup() -> None:
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI):
         with open_storage() as storage:
             ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
             _ensure_avatar_images_table(storage)
@@ -2502,12 +2494,20 @@ def create_app(
             app.state.sync_scheduler.start()
         else:
             app.state.sync_scheduler = None
+        try:
+            yield
+        finally:
+            scheduler = getattr(app.state, 'sync_scheduler', None)
+            if scheduler:
+                await scheduler.stop()
 
-    @app.on_event("shutdown")
-    async def _shutdown() -> None:
-        scheduler = getattr(app.state, "sync_scheduler", None)
-        if scheduler:
-            await scheduler.stop()
+    app = FastAPI(lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.exception_handler(ApiError)
     async def _handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
