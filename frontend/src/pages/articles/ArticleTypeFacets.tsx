@@ -89,7 +89,7 @@ export function ArticleTypeFacets({ activeType, onChange }: ArticleTypeFacetsPro
           <span>
             {state.typeFacetsExpanded
               ? t('articles.typeFacetCollapse', 'Collapse')
-              : t('articles.typeFacetExpand', 'Show {n} more').replace('{n}', hiddenCount.toLocaleString('zh-CN'))
+              : t('articles.typeFacetExpand', 'Expand all').replace('{n}', hiddenCount.toLocaleString('zh-CN'))
             }
           </span>
         </button>

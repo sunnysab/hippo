@@ -52,34 +52,6 @@ export function ArticleFilters({
           </select>
         </div>
         <div className="toolbar article-filter-grid article-filter-grid-middle">
-          <select
-            id="article-type-filter"
-            value={filters.itemShowType}
-            onChange={(event) => {
-              dispatch({ type: 'SET_TYPE_FACETS_EXPANDED', expanded: false });
-              onChange({ itemShowType: event.target.value });
-            }}
-          >
-            <option value=''>{t('filters.allTypes', 'All Types')}</option>
-            <option value='0'>{t('articles.type.0', 'Regular Article')}</option>
-            <option value='5'>{t('articles.type.5', 'Video Share')}</option>
-            <option value='6'>{t('articles.type.6', 'Music Share')}</option>
-            <option value='7'>{t('articles.type.7', 'Audio Share')}</option>
-            <option value='8'>{t('articles.type.8', 'Picture Share')}</option>
-            <option value='10'>{t('articles.type.10', 'Text Share')}</option>
-            <option value='11'>{t('articles.type.11', 'Article Share')}</option>
-            <option value='17'>{t('articles.type.17', 'Short Post')}</option>
-          </select>
-          <select
-            id="article-sort"
-            value={filters.sort}
-            onChange={(event) => onChange({ sort: event.target.value })}
-          >
-            <option value='publish_at_desc'>{t('filters.sortPublishedDesc', 'Published (Newest)')}</option>
-            <option value='relevance_desc'>{t('filters.sortRelevanceDesc', 'Relevance')}</option>
-          </select>
-        </div>
-        <div className="toolbar article-filter-grid article-filter-grid-bottom">
           <div className="input article-search-input">
             <input
               type='search'
@@ -92,6 +64,16 @@ export function ArticleFilters({
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6 6 0 1 0 14 15.5l.27.28v.79L20 21.5 21.5 20l-6-6zm-5.5 0a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>
             </span>
           </div>
+          <select
+            id="article-sort"
+            value={filters.sort}
+            onChange={(event) => onChange({ sort: event.target.value })}
+          >
+            <option value='publish_at_desc'>{t('filters.sortPublishedDesc', 'Published (Newest)')}</option>
+            <option value='relevance_desc'>{t('filters.sortRelevanceDesc', 'Relevance')}</option>
+          </select>
+        </div>
+        <div className="toolbar article-filter-grid article-filter-grid-bottom">
           <ArticleFilterSummary
             filters={filters}
             groupOptions={groupOptions}
