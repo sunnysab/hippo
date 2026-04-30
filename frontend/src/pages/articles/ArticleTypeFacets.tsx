@@ -17,7 +17,12 @@ function renderBadge(value: number, t: (k: string, f: string) => string, compact
   return `<span class="item-show-type-badge item-show-type-${meta.tone}${compactClass}">${escapeHtml(getItemShowTypeLabel(value, t))}</span>`;
 }
 
-export function ArticleTypeFacets() {
+interface ArticleTypeFacetsProps {
+  activeType: string;
+  onChange: (type: string) => void;
+}
+
+export function ArticleTypeFacets({ activeType, onChange }: ArticleTypeFacetsProps) {
   const { state, dispatch } = useArticlesState();
   const { t } = useI18n();
   const isNarrow = window.matchMedia('(max-width: 720px)').matches;
@@ -30,7 +35,6 @@ export function ArticleTypeFacets() {
     return <div className="article-type-facets" id="article-type-facets"><div className="article-type-facets-empty">{t('articles.summary.noTypeData', 'No type data available.')}</div></div>;
   }
 
-  const activeType = (document.getElementById('article-type-filter') as HTMLSelectElement)?.value || '';
   const allCount = facets.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
 
   const items = [
@@ -49,20 +53,12 @@ export function ArticleTypeFacets() {
     expanded: state.typeFacetsExpanded,
   });
 
-  const handleChange = (type: string) => {
-    const select = document.getElementById('article-type-filter') as HTMLSelectElement | null;
-    if (select && select.value !== type) {
-      select.value = type;
-      window.dispatchEvent(new CustomEvent('hippo:refresh'));
-    }
-  };
-
   return (
     <div className="article-type-facets" id="article-type-facets">
       <button
         className={`article-type-facet${activeType ? '' : ' is-active'}`}
         type="button"
-        onClick={() => handleChange('')}
+        onClick={() => onChange('')}
       >
         <span className="item-show-type-badge item-show-type-share item-show-type-badge-compact">
           {escapeHtml(t('filters.allTypes', 'All Types'))}
@@ -76,7 +72,7 @@ export function ArticleTypeFacets() {
             key={item.value}
             className={`article-type-facet${activeType === item.value ? ' is-active' : ''}`}
             type="button"
-            onClick={() => handleChange(item.value)}
+            onClick={() => onChange(item.value)}
             dangerouslySetInnerHTML={{
               __html: `${renderBadge(typeValue, t, true)} <span class="article-type-facet-count">${escapeHtml((item.count || 0).toLocaleString('zh-CN'))}</span>`,
             }}

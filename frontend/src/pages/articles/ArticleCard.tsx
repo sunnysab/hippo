@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { escapeHtml, formatDate } from '../../utils/format';
 import { ITEM_SHOW_TYPE_META } from '../../utils/constants';
 import { useI18n } from '../../i18n';
@@ -10,7 +11,12 @@ interface ArticleCardProps {
   onContextMenu: (e: React.MouseEvent) => void;
 }
 
-export function ArticleCard({ article, isActive, onClick, onContextMenu }: ArticleCardProps) {
+export const ArticleCard = memo(function ArticleCard({
+  article,
+  isActive,
+  onClick,
+  onContextMenu,
+}: ArticleCardProps) {
   const { t } = useI18n();
 
   const getTypeBadge = (value: number | null): string => {
@@ -60,4 +66,4 @@ export function ArticleCard({ article, isActive, onClick, onContextMenu }: Artic
       </div>
     </div>
   );
-}
+});

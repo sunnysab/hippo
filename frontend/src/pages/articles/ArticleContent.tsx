@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { useI18n } from '../../i18n';
 import { renderInline } from '../../utils/markdown';
 import { EmptyState } from '../../components/EmptyState';
@@ -7,16 +7,91 @@ import type { ArticlePayload, ArticleContentBlock } from '../../store/articles';
 interface ArticleContentProps {
   payload: ArticlePayload;
   hideSmall: boolean;
-  onBlockImage: (imageId: number) => void;
+  onImageContextMenu: (detail: { imageId: number; x: number; y: number }) => void;
 }
 
-function ContentBlock({ block, images, hideSmall }: {
+interface ContentBlockProps {
   block: ArticleContentBlock;
   images: ArticlePayload['images'];
   hideSmall: boolean;
-}) {
+  onImageContextMenu: (detail: { imageId: number; x: number; y: number }) => void;
+}
+
+const ArticleImageBlock = memo(function ArticleImageBlock({
+  block,
+  images,
+  hideSmall,
+  onImageContextMenu,
+}: ContentBlockProps) {
   const figureRef = useRef<HTMLElement>(null);
 
+  useEffect(() => {
+    const figure = figureRef.current;
+    if (!figure) return;
+
+    figure.style.display = '';
+    if (!hideSmall) return;
+
+    const img = figure.querySelector('img');
+    if (!img) return;
+
+    const onLoad = () => {
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      const imageMeta = (images || []).find((item) => item.id === block.image_id);
+      const isGif = imageMeta?.content_type && String(imageMeta.content_type).includes('gif');
+
+      if (isGif) {
+        figure.style.display = 'none';
+        return;
+      }
+
+      if (w < 500 && h < 500) {
+        const ratio = w / h;
+        if (ratio < 1.2) {
+          figure.style.display = 'none';
+        }
+      }
+    };
+
+    if (img.complete) {
+      onLoad();
+      return;
+    }
+
+    img.addEventListener('load', onLoad);
+    return () => img.removeEventListener('load', onLoad);
+  }, [block.image_id, hideSmall, images]);
+
+  if (!block.image_id) return null;
+
+  return (
+    <figure ref={figureRef} data-image-id={String(block.image_id)}>
+      <img
+        src={`/api/image/${block.image_id}`}
+        alt={block.alt || ''}
+        loading='lazy'
+        data-image-id={String(block.image_id)}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onImageContextMenu({
+            imageId: block.image_id!,
+            x: event.clientX,
+            y: event.clientY,
+          });
+        }}
+      />
+    </figure>
+  );
+});
+
+const ContentBlock = memo(function ContentBlock({
+  block,
+  images,
+  hideSmall,
+  onImageContextMenu,
+}: ContentBlockProps) {
   if (block.type === 'paragraph') {
     return <p dangerouslySetInnerHTML={{ __html: renderInline(block.text || '') }} />;
   }
@@ -29,108 +104,21 @@ function ContentBlock({ block, images, hideSmall }: {
   }
 
   if (block.type === 'image') {
-    if (!block.image_id) return null;
-
-    useEffect(() => {
-      if (!hideSmall || !figureRef.current) return;
-      const img = figureRef.current.querySelector('img');
-      if (!img) return;
-
-      const onLoad = () => {
-        const w = img.naturalWidth;
-        const h = img.naturalHeight;
-
-        const imageMeta = (images || []).find((i) => i.id === block.image_id);
-        const isGif = imageMeta?.content_type && String(imageMeta.content_type).includes('gif');
-
-        if (isGif) {
-          if (figureRef.current) figureRef.current.style.display = 'none';
-          return;
-        }
-
-        if (w < 500 && h < 500) {
-          const ratio = w / h;
-          if (ratio < 1.2) {
-            if (figureRef.current) figureRef.current.style.display = 'none';
-          }
-        }
-      };
-
-      img.addEventListener('load', onLoad);
-      return () => img.removeEventListener('load', onLoad);
-    }, [hideSmall, images, block.image_id]);
-
     return (
-      <figure ref={figureRef} data-image-id={String(block.image_id)}>
-        <img
-          src={`/api/image/${block.image_id}`}
-          alt={block.alt || ''}
-          loading="lazy"
-          data-image-id={String(block.image_id)}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            window.dispatchEvent(new CustomEvent('hippo:image-context-menu', {
-              detail: { imageId: block.image_id, x: e.clientX, y: e.clientY },
-            }));
-          }}
-        />
-      </figure>
+      <ArticleImageBlock
+        block={block}
+        images={images}
+        hideSmall={hideSmall}
+        onImageContextMenu={onImageContextMenu}
+      />
     );
   }
 
   return null;
-}
+});
 
-export function ArticleContent({ payload, hideSmall, onBlockImage }: ArticleContentProps) {
+export function ArticleContent({ payload, hideSmall, onImageContextMenu }: ArticleContentProps) {
   const { t } = useI18n();
-
-  // Listen for image context menu events
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const { imageId, x, y } = (e as CustomEvent).detail as { imageId: number; x: number; y: number };
-      const menu = document.getElementById('article-image-context-menu');
-      if (menu) {
-        (menu as HTMLElement).dataset.imageId = String(imageId);
-        menu.style.left = `${x}px`;
-        menu.style.top = `${y}px`;
-        menu.classList.remove('is-hidden');
-      }
-    };
-    const clickHandler = (e: MouseEvent) => {
-      const menu = document.getElementById('article-image-context-menu');
-      if (menu && !menu.classList.contains('is-hidden') && !menu.contains(e.target as Node)) {
-        menu.classList.add('is-hidden');
-      }
-    };
-    window.addEventListener('hippo:image-context-menu', handler);
-    document.addEventListener('click', clickHandler);
-    return () => {
-      window.removeEventListener('hippo:image-context-menu', handler);
-      document.removeEventListener('click', clickHandler);
-    };
-  }, []);
-
-  // Wire up the block image button
-  useEffect(() => {
-    const btn = document.getElementById('article-image-menu-block');
-    if (!btn) return;
-    const clickHandler = async () => {
-      const menu = document.getElementById('article-image-context-menu');
-      if (!menu) return;
-      const imageId = Number((menu as HTMLElement).dataset.imageId || 0);
-      if (!imageId) return;
-      (btn as HTMLButtonElement).disabled = true;
-      try {
-        await onBlockImage(imageId);
-        menu.classList.add('is-hidden');
-      } finally {
-        (btn as HTMLButtonElement).disabled = false;
-      }
-    };
-    btn.addEventListener('click', clickHandler);
-    return () => btn.removeEventListener('click', clickHandler);
-  }, [onBlockImage]);
 
   const content = payload.content;
   const status = String(payload.content_status || '').trim().toLowerCase();
@@ -158,7 +146,13 @@ export function ArticleContent({ payload, hideSmall, onBlockImage }: ArticleCont
   return (
     <>
       {content.map((block, i) => (
-        <ContentBlock key={i} block={block} images={payload.images} hideSmall={hideSmall} />
+        <ContentBlock
+          key={i}
+          block={block}
+          images={payload.images}
+          hideSmall={hideSmall}
+          onImageContextMenu={onImageContextMenu}
+        />
       ))}
     </>
   );
