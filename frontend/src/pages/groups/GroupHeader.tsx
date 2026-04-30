@@ -1,7 +1,6 @@
 import { useNavigate } from 'react-router-dom';
-import { useGroupsState, useGroupsActions } from '../../store/groups';
+import { useGroupsState } from '../../store/groups';
 import { useI18n } from '../../i18n';
-import { apiSend } from '../../api';
 import { copyToClipboard } from '../../utils/clipboard';
 import { useToast } from '../../hooks/useToast';
 
@@ -10,6 +9,7 @@ interface GroupHeaderProps {
   onAccountQueryChange: (value: string) => void;
   onOpenAccountSearch: () => void;
   onOpenRename: (groupId: number, name: string) => void;
+  onOpenDelete: (groupId: number) => void;
 }
 
 export function GroupHeader({
@@ -17,9 +17,9 @@ export function GroupHeader({
   onAccountQueryChange,
   onOpenAccountSearch,
   onOpenRename,
+  onOpenDelete,
 }: GroupHeaderProps) {
-  const { state, dispatch } = useGroupsState();
-  const { loadGroups } = useGroupsActions();
+  const { state } = useGroupsState();
   const { t } = useI18n();
   const { showToast } = useToast();
   const navigate = useNavigate();
@@ -43,13 +43,6 @@ export function GroupHeader({
       </div>
     );
   }
-
-  const handleDelete = async () => {
-    if (!confirm(t('groups.deleteConfirm', 'Delete this group?'))) return;
-    await apiSend(`/api/group/${group.id}`, 'DELETE', {});
-    dispatch({ type: 'SELECT_GROUP', groupId: null });
-    await loadGroups();
-  };
 
   const handleNameClick = () => {
     navigate(`/articles?group=${group.id}`);
@@ -118,7 +111,7 @@ export function GroupHeader({
         <button className="btn ghost" id="btn-group-rename" type="button" onClick={() => onOpenRename(group.id, group.name)}>
           {t('groups.rename', 'Rename')}
         </button>
-        <button className="btn ghost" id="btn-group-delete" type="button" onClick={handleDelete}>
+        <button className="btn ghost" id="btn-group-delete" type="button" onClick={() => onOpenDelete(group.id)}>
           {t('groups.delete', 'Delete')}
         </button>
         <button className="btn ghost" id="btn-group-articles" type="button" onClick={handleViewArticles}>

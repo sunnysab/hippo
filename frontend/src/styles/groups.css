@@ -482,6 +482,18 @@
   justify-content: flex-end;
 }
 
+.confirm-modal {
+  width: min(420px, 92vw);
+}
+
+.confirm-modal-copy {
+  margin: 0;
+}
+
+.confirm-modal-actions {
+  justify-content: flex-end;
+}
+
 @media (max-width: 1180px) {
   .groups-layout {
     grid-template-columns: 1fr;

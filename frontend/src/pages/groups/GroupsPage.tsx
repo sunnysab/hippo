@@ -7,6 +7,7 @@ import { AccountCardGrid } from './AccountCardGrid';
 import { BatchActions } from './BatchActions';
 import { AccountSearchModal } from './AccountSearchModal';
 import { GroupNameModal } from './GroupNameModal';
+import { ConfirmModal } from '../../components/ConfirmModal';
 import { useI18n } from '../../i18n';
 import { apiSend } from '../../api';
 import { useToast } from '../../hooks/useToast';
@@ -17,6 +18,10 @@ interface GroupNameDialogState {
   initialName: string;
 }
 
+interface GroupDeleteDialogState {
+  groupId: number;
+}
+
 export function GroupsPage() {
   const { state, dispatch } = useGroupsState();
   const { loadGroups } = useGroupsActions();
@@ -25,6 +30,7 @@ export function GroupsPage() {
   const [accountQuery, setAccountQuery] = useState('');
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [groupNameDialog, setGroupNameDialog] = useState<GroupNameDialogState | null>(null);
+  const [groupDeleteDialog, setGroupDeleteDialog] = useState<GroupDeleteDialogState | null>(null);
 
   const refresh = useCallback(async () => {
     const { nextGroup } = await loadGroups();
@@ -71,6 +77,13 @@ export function GroupsPage() {
     await loadGroups();
   };
 
+  const handleConfirmGroupDelete = async () => {
+    if (!groupDeleteDialog) return;
+    await apiSend(`/api/group/${groupDeleteDialog.groupId}`, 'DELETE', {});
+    dispatch({ type: 'SELECT_GROUP', groupId: null });
+    await loadGroups();
+  };
+
   return (
     <section id="view-groups" className="view is-active">
       <div className="groups-layout">
@@ -101,6 +114,7 @@ export function GroupsPage() {
             onAccountQueryChange={setAccountQuery}
             onOpenAccountSearch={() => setIsSearchModalOpen(true)}
             onOpenRename={(groupId, name) => setGroupNameDialog({ mode: 'rename', groupId, initialName: name })}
+            onOpenDelete={(groupId) => setGroupDeleteDialog({ groupId })}
           />
           <GroupSyncToolbar />
           <BatchActions />
@@ -126,6 +140,16 @@ export function GroupsPage() {
           submitLabel={groupNameDialog.mode === 'rename' ? t('common.save', '保存') : t('groups.create', 'New Group')}
           onClose={() => setGroupNameDialog(null)}
           onSubmit={handleSubmitGroupName}
+        />
+      )}
+      {groupDeleteDialog && (
+        <ConfirmModal
+          isOpen
+          title={t('groups.delete', 'Delete')}
+          message={t('groups.deleteConfirm', 'Delete this group?')}
+          confirmLabel={t('groups.delete', 'Delete')}
+          onClose={() => setGroupDeleteDialog(null)}
+          onConfirm={handleConfirmGroupDelete}
         />
       )}
     </section>

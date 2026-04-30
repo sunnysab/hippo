@@ -74,6 +74,11 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertNotIn('prompt(', groups_page)
         self.assertNotIn('prompt(', group_header)
 
+    def test_group_delete_does_not_use_native_confirm(self) -> None:
+        source = GROUP_HEADER.read_text(encoding='utf-8')
+
+        self.assertNotIn('confirm(', source)
+
 
 if __name__ == '__main__':
     unittest.main()
