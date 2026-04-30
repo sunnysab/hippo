@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { useGroupsState, useGroupsActions } from '../../store/groups';
+import { useGroupsState } from '../../store/groups';
 import { useI18n } from '../../i18n';
 import { GroupContextMenu } from './GroupContextMenu';
 import type { Group } from '../../store/shared';

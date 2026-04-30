@@ -4,6 +4,7 @@ import { useI18n } from '../../i18n';
 import { apiSend } from '../../api';
 import { useToast } from '../../hooks/useToast';
 import { syncDefaults } from '../../store/shared';
+import { getSyncModeLabel } from '../../utils/sync';
 
 export function GroupSyncToolbar() {
   const { state, dispatch } = useGroupsState();
@@ -15,13 +16,6 @@ export function GroupSyncToolbar() {
   const group = state.groups.find((g) => g.id === state.selectedGroupId);
 
   const defaultMode = syncDefaults.mode;
-  const getSyncModeLabel = (mode: string) => {
-    if (mode === 'incremental') return t('sync.modeIncremental', 'Incremental');
-    if (mode === 'recent') return t('sync.modeRecent', 'Recent');
-    if (mode === 'full') return t('sync.modeFull', 'Full');
-    return mode;
-  };
-
   useEffect(() => {
     if (!group) return;
     setMode(group.sync_mode || '');
@@ -53,7 +47,7 @@ export function GroupSyncToolbar() {
     }
   };
 
-  const inheritLabel = t('groups.syncModeInherit', 'Follow global ({mode})').replace('{mode}', getSyncModeLabel(defaultMode));
+  const inheritLabel = t('groups.syncModeInherit', 'Follow global ({mode})').replace('{mode}', getSyncModeLabel(t, defaultMode));
 
   return (
     <div className="toolbar group-sync-toolbar">

@@ -4,6 +4,7 @@ import { useI18n } from '../../i18n';
 import { apiSend } from '../../api';
 import { useToast } from '../../hooks/useToast';
 import { syncDefaults } from '../../store/shared';
+import { getSyncModeLabel } from '../../utils/sync';
 
 export function BatchActions() {
   const { state, dispatch } = useGroupsState();
@@ -29,15 +30,9 @@ export function BatchActions() {
   const activeGroup = state.groups.find((g) => g.id === state.selectedGroupId);
   const groupMode = activeGroup?.sync_mode || '';
   const defaultMode = groupMode || syncDefaults.mode;
-  const getSyncModeLabel = (mode: string) => {
-    if (mode === 'incremental') return t('sync.modeIncremental', 'Incremental');
-    if (mode === 'recent') return t('sync.modeRecent', 'Recent');
-    if (mode === 'full') return t('sync.modeFull', 'Full');
-    return mode;
-  };
   const inheritLabel = groupMode
-    ? t('accounts.syncModeInheritGroup', 'Follow group ({mode})').replace('{mode}', getSyncModeLabel(defaultMode))
-    : t('accounts.syncModeInherit', 'Follow global ({mode})').replace('{mode}', getSyncModeLabel(defaultMode));
+    ? t('accounts.syncModeInheritGroup', 'Follow group ({mode})').replace('{mode}', getSyncModeLabel(t, defaultMode))
+    : t('accounts.syncModeInherit', 'Follow global ({mode})').replace('{mode}', getSyncModeLabel(t, defaultMode));
 
   const handleMove = async () => {
     if (!targetGroupId) {

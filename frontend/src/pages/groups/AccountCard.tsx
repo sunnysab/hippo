@@ -5,6 +5,7 @@ import { apiSend } from '../../api';
 import { useToast } from '../../hooks/useToast';
 import { formatRelativeTime } from '../../utils/format';
 import { syncDefaults } from '../../store/shared';
+import { getSyncModeLabel } from '../../utils/sync';
 import type { Account } from '../../store/shared';
 
 interface AccountCardProps {
@@ -21,15 +22,9 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
   const activeGroup = state.groups.find((g) => g.id === state.selectedGroupId);
   const groupMode = activeGroup?.sync_mode || '';
   const defaultMode = groupMode || syncDefaults.mode;
-  const getSyncModeLabel = (funcMode: string) => {
-    if (funcMode === 'incremental') return t('sync.modeIncremental', 'Incremental');
-    if (funcMode === 'recent') return t('sync.modeRecent', 'Recent');
-    if (funcMode === 'full') return t('sync.modeFull', 'Full');
-    return funcMode;
-  };
   const inheritLabel = groupMode
-    ? t('accounts.syncModeInheritGroup', 'Follow group ({mode})').replace('{mode}', getSyncModeLabel(defaultMode))
-    : t('accounts.syncModeInherit', 'Follow global ({mode})').replace('{mode}', getSyncModeLabel(defaultMode));
+    ? t('accounts.syncModeInheritGroup', 'Follow group ({mode})').replace('{mode}', getSyncModeLabel(t, defaultMode))
+    : t('accounts.syncModeInherit', 'Follow global ({mode})').replace('{mode}', getSyncModeLabel(t, defaultMode));
 
   const groupRecentDays = activeGroup?.sync_recent_days;
   const baseRecentDays = groupRecentDays ?? syncDefaults.recent_days;

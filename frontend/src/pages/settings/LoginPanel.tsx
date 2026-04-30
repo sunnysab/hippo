@@ -2,6 +2,7 @@ import { useSettingsState, type LoginStatus } from '../../store/settings';
 import { useI18n } from '../../i18n';
 import { apiSend } from '../../api';
 import { formatRelativeTime } from '../../utils/format';
+import { getSyncTone } from '../../utils/sync';
 
 export function LoginPanel() {
   const { state, dispatch } = useSettingsState();
@@ -30,13 +31,6 @@ export function LoginPanel() {
   const getStatusLabel = () => {
     const statusKey = `login.status.${status}`;
     return t(statusKey, message || '');
-  };
-
-  const getSyncTone = (s: string) => {
-    if (s === 'success') return 'success';
-    if (s === 'error' || s === 'login_required') return 'danger';
-    if (['starting', 'waiting', 'scanned', 'refresh'].includes(s)) return 'info';
-    return 'neutral';
   };
 
   return (
