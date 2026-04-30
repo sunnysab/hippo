@@ -37,11 +37,11 @@ export function BatchActions() {
 
   const handleMove = async () => {
     if (!targetGroupId) {
-      alert(t('accounts.moveSelectGroup', 'Select a target group.'));
+      showToast(t('accounts.moveSelectGroup', 'Select a target group.'));
       return;
     }
     if (!count) {
-      alert(t('accounts.moveSelectAccounts', 'Select accounts to move.'));
+      showToast(t('accounts.moveSelectAccounts', 'Select accounts to move.'));
       return;
     }
     await apiSend('/api/account/move', 'POST', {
@@ -55,7 +55,7 @@ export function BatchActions() {
 
   const handleBatchSyncSettings = async () => {
     if (!count) {
-      alert(t('accounts.moveSelectAccounts', 'Select accounts to move.'));
+      showToast(t('accounts.moveSelectAccounts', 'Select accounts to move.'));
       return;
     }
     const body: Record<string, unknown> = {
@@ -77,7 +77,7 @@ export function BatchActions() {
 
   const handleBatchGroupSync = async () => {
     if (!count) {
-      alert(t('accounts.moveSelectAccounts', 'Select accounts to move.'));
+      showToast(t('accounts.moveSelectAccounts', 'Select accounts to move.'));
       return;
     }
     try {

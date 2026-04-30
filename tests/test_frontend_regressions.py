@@ -59,6 +59,12 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertNotIn('useNavigate', source)
         self.assertNotIn('onClick={() => navigate(tab.path)}', source)
 
+    def test_batch_actions_uses_toasts_instead_of_alerts(self) -> None:
+        source = BATCH_ACTIONS.read_text(encoding='utf-8')
+
+        self.assertNotIn('alert(', source)
+        self.assertIn('showToast', source)
+
 
 if __name__ == '__main__':
     unittest.main()
