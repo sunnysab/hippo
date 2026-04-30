@@ -81,7 +81,7 @@ export function BatchActions() {
     }
     try {
       await apiSend('/api/settings/run', 'POST', { biz_list: state.selectedAccounts });
-      window.location.hash = '#/settings';
+      window.location.hash = '#/settings/sync';
       showToast(t('accounts.syncTriggered', 'Selected accounts sync started.'));
     } catch {
       showToast(t('accounts.syncTriggerFailed', 'Failed to start selected accounts sync.'));

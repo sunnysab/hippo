@@ -15,9 +15,9 @@ export function TopBar({ topbarRef, currentTab, lastLoginAt, lastSyncAt, onRefre
   const { t } = useI18n();
 
   const tabs = [
-    { key: 'groups', label: t('nav.groups', 'Groups') },
-    { key: 'articles', label: t('nav.articles', 'Articles') },
-    { key: 'settings', label: t('nav.sync', 'Settings') },
+    { key: 'groups', label: t('nav.groups', 'Groups'), path: '/groups' },
+    { key: 'articles', label: t('nav.articles', 'Articles'), path: '/articles' },
+    { key: 'settings', label: t('nav.sync', 'Settings'), path: '/settings/sync' },
   ];
 
   return (
@@ -37,7 +37,7 @@ export function TopBar({ topbarRef, currentTab, lastLoginAt, lastSyncAt, onRefre
             key={tab.key}
             className={`tab${currentTab === tab.key ? ' is-active' : ''}`}
             data-tab={tab.key}
-            onClick={() => navigate(`/${tab.key}`)}
+            onClick={() => navigate(tab.path)}
           >
             {tab.label}
           </button>

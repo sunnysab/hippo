@@ -66,14 +66,18 @@ export const buildSyncSettingsPayload = (form: SyncSettingsFormState): Record<st
   skip_minutes: toNumber(form.skipMinutes, 30),
   download_content: form.downloadContent,
   download_images: form.downloadImages,
+});
+
+export const buildFilterSettingsPayload = (form: SyncSettingsFormState): Record<string, unknown> => ({
   article_exclude_keywords: form.articleExcludeKeywords.trim(),
+});
+
+export const buildAlertSettingsPayload = (form: SyncSettingsFormState): Record<string, unknown> => ({
   alert_enabled: form.alertEnabled,
   alert_email: form.alertEmail.trim(),
 });
 
 export const buildEmailPayload = (form: SyncSettingsFormState): Record<string, unknown> => ({
-  alert_enabled: form.alertEnabled,
-  alert_email: form.alertEmail.trim(),
   email: {
     smtp_host: form.smtpHost.trim(),
     smtp_port: toNumber(form.smtpPort, form.smtpTls ? 587 : 25),
@@ -84,8 +88,11 @@ export const buildEmailPayload = (form: SyncSettingsFormState): Record<string, u
   },
 });
 
-export const buildTestEmailPayload = (form: SyncSettingsFormState): Record<string, unknown> => ({
-  to_email: form.alertEmail.trim(),
+export const buildTestEmailPayload = (
+  form: SyncSettingsFormState,
+  toEmail: string,
+): Record<string, unknown> => ({
+  to_email: toEmail.trim(),
   email: {
     smtp_host: form.smtpHost.trim(),
     smtp_port: toNumber(form.smtpPort, form.smtpTls ? 587 : 25),

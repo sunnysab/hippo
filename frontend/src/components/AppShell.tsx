@@ -18,7 +18,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [bannerVisible, setBannerVisible] = useState(false);
   const [bannerText, setBannerText] = useState('');
 
-  const currentTab = location.pathname.replace(/^\//, '') || 'groups';
+  const currentTab = location.pathname.split('/').filter(Boolean)[0] || 'groups';
 
   const refreshChromeMeta = useCallback(async () => {
     try {
@@ -91,7 +91,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   };
 
   const handleBannerLogin = () => {
-    navigate('/settings');
+    navigate('/settings/login');
   };
 
   // Listen for toast events from the API layer

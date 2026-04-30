@@ -6,6 +6,10 @@ import { AppShell } from './components/AppShell';
 import { GroupsPage } from './pages/groups/GroupsPage';
 import { ArticlesPage } from './pages/articles/ArticlesPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
+import { SettingsEmailRoute } from './pages/settings/SettingsEmailRoute';
+import { SettingsFilterRoute } from './pages/settings/SettingsFilterRoute';
+import { SettingsLoginRoute } from './pages/settings/SettingsLoginRoute';
+import { SettingsSyncRoute } from './pages/settings/SettingsSyncRoute';
 
 export default function App() {
   return (
@@ -17,7 +21,13 @@ export default function App() {
               <Routes>
                 <Route path="/groups" element={<GroupsPage />} />
                 <Route path="/articles" element={<ArticlesPage />} />
-                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/settings" element={<SettingsPage />}>
+                  <Route index element={<Navigate to="sync" replace />} />
+                  <Route path="login" element={<SettingsLoginRoute />} />
+                  <Route path="sync" element={<SettingsSyncRoute />} />
+                  <Route path="filter" element={<SettingsFilterRoute />} />
+                  <Route path="email" element={<SettingsEmailRoute />} />
+                </Route>
                 <Route path="*" element={<Navigate to="/groups" replace />} />
               </Routes>
             </AppShell>

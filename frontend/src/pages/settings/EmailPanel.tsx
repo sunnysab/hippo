@@ -21,9 +21,10 @@ export function EmailPanel({
   const { dispatch } = useSettingsState();
   const { t } = useI18n();
   const { showToast } = useToast();
-  const [collapsed, setCollapsed] = useState(true);
   const [testing, setTesting] = useState(false);
-  const isNarrow = window.matchMedia('(max-width: 760px)').matches;
+  const [testRecipient, setTestRecipient] = useState(() => (
+    formState.alertEmail || formState.fromEmail || formState.smtpUser
+  ));
 
   const saveEmail = async () => {
     try {
@@ -36,15 +37,20 @@ export function EmailPanel({
   };
 
   const testEmail = async () => {
+    const toEmail = testRecipient.trim();
+    if (!toEmail) {
+      showToast(t('email.testRecipientRequired', 'Enter a test recipient email first.'));
+      return;
+    }
     setTesting(true);
     try {
       const payload = await apiSend(
         '/api/settings/test-email',
         'POST',
-        buildTestEmailPayload(formState),
+        buildTestEmailPayload(formState, toEmail),
         { timeoutMs: 10000 },
       );
-      showToast(t('email.testSuccess', 'Test email sent to {email}.').replace('{email}', (payload.to_email as string) || formState.alertEmail.trim()));
+      showToast(t('email.testSuccess', 'Test email sent to {email}.').replace('{email}', (payload.to_email as string) || toEmail));
     } catch (err) {
       if ((err as Record<string, unknown>)?.code === 'TIMEOUT') {
         showToast(t('email.testTimeout', 'Timed out while sending test email.'));
@@ -64,17 +70,6 @@ export function EmailPanel({
           <p className="muted">{t('email.subtitle', 'SMTP config for alert emails.')}</p>
         </div>
         <div className="toolbar">
-          {isNarrow && (
-            <button
-              className="btn ghost sync-mobile-toggle"
-              id="btn-sync-email-toggle"
-              type="button"
-              onClick={() => setCollapsed(!collapsed)}
-              aria-expanded={!collapsed}
-            >
-              {collapsed ? t('email.showSettings', 'Show settings') : t('email.hideSettings', 'Hide settings')}
-            </button>
-          )}
           <button className="btn" id="btn-email-save" type="button" onClick={saveEmail}>
             {t('email.save', 'Save')}
           </button>
@@ -84,31 +79,7 @@ export function EmailPanel({
           </button>
         </div>
       </div>
-      <div className={`sync-form-sections${isNarrow && collapsed ? ' is-mobile-collapsed' : ''}`}>
-        <section className="sync-form-section">
-          <div className="sync-section-title">{t('email.sectionTarget', 'Alert Target')}</div>
-          <div className="form-grid">
-            <label className="switch">
-              <span>{t('sync.alertEnabled', 'Enable alert email')}</span>
-              <input
-                type="checkbox"
-                id="sync-alert-enabled"
-                checked={formState.alertEnabled}
-                onChange={(event) => setFormState((prev) => ({ ...prev, alertEnabled: event.target.checked }))}
-              />
-            </label>
-            <label>
-              <span>{t('sync.alertEmail', 'Alert email')}</span>
-              <input
-                type="email"
-                id="sync-alert-email"
-                placeholder="alerts@example.com"
-                value={formState.alertEmail}
-                onChange={(event) => setFormState((prev) => ({ ...prev, alertEmail: event.target.value }))}
-              />
-            </label>
-          </div>
-        </section>
+      <div className="sync-form-sections">
         <section className="sync-form-section">
           <div className="sync-section-title">{t('email.sectionSmtp', 'SMTP')}</div>
           <div className="form-grid">
@@ -175,6 +146,22 @@ export function EmailPanel({
                   smtpPort: event.target.checked ? '587' : '25',
                 }))}
               />
+            </label>
+          </div>
+        </section>
+        <section className="sync-form-section">
+          <div className="sync-section-title">{t('email.sectionTest', 'Test Delivery')}</div>
+          <div className="form-grid">
+            <label className="sync-textarea-field">
+              <span>{t('email.testRecipient', 'Test recipient')}</span>
+              <input
+                type="email"
+                id="email-test-recipient"
+                placeholder="alerts@example.com"
+                value={testRecipient}
+                onChange={(event) => setTestRecipient(event.target.value)}
+              />
+              <small className="muted">{t('email.testRecipientHint', 'Used only for test email delivery, not for failure alerts.')}</small>
             </label>
           </div>
         </section>

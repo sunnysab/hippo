@@ -375,10 +375,6 @@ export function ArticlesPage() {
               <input id="reader-serif" type="checkbox" checked={config.serif} onChange={(e) => updateConfig({ serif: e.target.checked })} />
               <span>{t('reader.serif', 'Serif Font')}</span>
             </label>
-            <label className="switch">
-              <input id="reader-hide-small-images" type="checkbox" checked={config.hideSmall} onChange={(e) => updateConfig({ hideSmall: e.target.checked })} />
-              <span>{t('reader.hideSmallImages', 'Hide Small Images')}</span>
-            </label>
           </div>
           <ArticlePreview previewRef={previewRef} />
         </div>
