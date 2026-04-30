@@ -36,7 +36,7 @@
   justify-items: center;
   gap: 10px;
   padding: 14px;
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   background: var(--surface-panel-strong);
 }
 
@@ -59,7 +59,7 @@
   width: min(200px, 100%);
   height: auto;
   aspect-ratio: 1;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   background: #fff;
   object-fit: contain;
   padding: 8px;
@@ -124,7 +124,7 @@
 
 .sync-form-section {
   padding: 12px;
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   background: var(--surface-panel-strong);
 }
 
@@ -146,7 +146,7 @@
   justify-content: space-between;
   gap: 10px;
   padding: 14px;
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   background: var(--surface-panel-strong);
 }
 
@@ -210,7 +210,7 @@
   justify-content: space-between;
   gap: 10px;
   padding: 11px 13px;
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   background: var(--surface-item);
 }
 
@@ -251,7 +251,7 @@
 .sync-history-item {
   align-items: flex-start;
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
 }
 
 .sync-history-copy {
