@@ -22,6 +22,17 @@ export interface ArticleSelectOption {
   label: string;
 }
 
+export const areArticleFiltersEqual = (
+  left: ArticleFiltersState,
+  right: ArticleFiltersState,
+): boolean => (
+  left.groupId === right.groupId &&
+  left.accountBiz === right.accountBiz &&
+  left.itemShowType === right.itemShowType &&
+  left.search === right.search &&
+  left.sort === right.sort
+);
+
 export const getDefaultArticleSort = (search: string): string => (
   search.trim() ? ARTICLE_SORT_RELEVANCE_DESC : ARTICLE_SORT_PUBLISH_AT_DESC
 );
