@@ -84,7 +84,7 @@ export function AccountSearchModal({ isOpen, onClose }: AccountSearchModalProps)
     };
     document.addEventListener('keydown', handleEsc);
     return () => document.removeEventListener('keydown', handleEsc);
-  }, [isOpen]);
+  }, [handleClose, isOpen]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const nextQuery = e.target.value;

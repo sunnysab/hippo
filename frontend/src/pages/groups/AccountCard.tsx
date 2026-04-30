@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useState } from 'react';
 import { useGroupsState } from '../../store/groups';
 import { useI18n } from '../../i18n';
 import { apiSend } from '../../api';
@@ -29,12 +29,7 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
   const groupRecentDays = activeGroup?.sync_recent_days;
   const baseRecentDays = groupRecentDays ?? syncDefaults.recent_days;
 
-  useEffect(() => {
-    setSyncMode(account.sync_mode || '');
-    setSyncDays(String(account.sync_recent_days ?? baseRecentDays));
-  }, [account.sync_mode, account.sync_recent_days, baseRecentDays]);
-
-  const handleCheck = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCheck = () => {
     dispatch({ type: 'TOGGLE_SELECTED', biz: account.biz });
   };
 
@@ -54,10 +49,11 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
   };
 
   const saveSyncSettings = async (nextMode: string, nextDays: string) => {
+    const parsedDays = parseInt(nextDays || String(baseRecentDays), 10);
+    const safeDays = Number.isFinite(parsedDays) && parsedDays > 0 ? parsedDays : baseRecentDays;
     const body: Record<string, unknown> = { sync_mode: nextMode || null };
     if (nextMode === 'recent') {
-      const days = parseInt(nextDays || String(baseRecentDays), 10);
-      body.sync_recent_days = Number.isFinite(days) && days > 0 ? days : baseRecentDays;
+      body.sync_recent_days = safeDays;
     }
     try {
       await apiSend(`/api/account/${account.biz}`, 'PATCH', body);
@@ -66,11 +62,7 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
         biz: account.biz,
         patch: {
           sync_mode: nextMode || null,
-          sync_recent_days: nextMode === 'recent'
-            ? (Number.isFinite(parseInt(nextDays || String(baseRecentDays), 10)) && parseInt(nextDays || String(baseRecentDays), 10) > 0
-              ? parseInt(nextDays || String(baseRecentDays), 10)
-              : baseRecentDays)
-            : null,
+          sync_recent_days: nextMode === 'recent' ? safeDays : null,
         },
       });
       showToast(t('accounts.syncSaved', 'Sync strategy updated.'));
@@ -133,6 +125,9 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
             onChange={(event) => {
               const nextMode = event.target.value;
               setSyncMode(nextMode);
+              if (nextMode !== 'recent') {
+                setSyncDays(String(account.sync_recent_days ?? baseRecentDays));
+              }
               void saveSyncSettings(nextMode, syncDays);
             }}
           >

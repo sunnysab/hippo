@@ -6,7 +6,6 @@ import { ArticleCard } from './ArticleCard';
 import { EmptyState } from '../../components/EmptyState';
 import { useToast } from '../../hooks/useToast';
 import { copyToClipboard } from '../../utils/clipboard';
-import { apiGet } from '../../api';
 import type { Article } from '../../store/articles';
 
 interface ArticleListProps {

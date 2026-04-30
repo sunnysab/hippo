@@ -13,6 +13,9 @@ export function LoginPanel() {
   const message = loginStatus?.message || '';
   const qrcodeUrl = loginStatus?.qrcode_url;
   const lastLogin = loginStatus?.last_login;
+  const qrCodeSrc = qrcodeUrl
+    ? `${qrcodeUrl}${qrcodeUrl.includes('?') ? '&' : '?'}v=${encodeURIComponent(`${status}:${message}`)}`
+    : '';
 
   const isInProgress = ['starting', 'waiting', 'scanned', 'refresh'].includes(status);
 
@@ -63,7 +66,7 @@ export function LoginPanel() {
           id="login-qr"
           className={`login-qr${qrcodeUrl ? '' : ' is-hidden'}`}
           alt="QR"
-          src={qrcodeUrl ? `${qrcodeUrl}?ts=${Date.now()}` : ''}
+          src={qrCodeSrc}
         />
         <div className="login-meta" id="login-meta">
           {lastLogin?.nickname ? `${t('login.lastLogin', 'Last login')}: ${lastLogin.nickname} · ${formatRelativeTime(lastLogin.updated_at as string)}` : ''}

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useSettingsState } from '../../store/settings';
 import { useI18n } from '../../i18n';
 import { escapeHtml, formatRelativeTime } from '../../utils/format';
@@ -6,6 +7,14 @@ import { getSyncTone } from '../../utils/sync';
 export function ActiveTaskPanel() {
   const { state } = useSettingsState();
   const { t } = useI18n();
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNow(Date.now());
+    }, 60000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const getActiveTask = () => {
     const tasks = state.syncTasks || [];
@@ -46,7 +55,7 @@ export function ActiveTaskPanel() {
                 <div className="account-sub">
                   {activeTask.started_at || activeTask.created_at
                     ? t('sync.runningSince', 'Started {n} minutes ago').replace(
-                        '{n}', String(Math.max(1, Math.floor((Date.now() - new Date(activeTask.started_at || activeTask.created_at).getTime()) / 60000))),
+                        '{n}', String(Math.max(1, Math.floor((now - new Date(activeTask.started_at || activeTask.created_at).getTime()) / 60000))),
                       )
                     : ''}
                 </div>

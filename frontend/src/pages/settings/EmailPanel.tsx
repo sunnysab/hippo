@@ -18,14 +18,12 @@ export function EmailPanel({
   formState,
   setFormState,
 }: EmailPanelProps) {
-  const { state, dispatch } = useSettingsState();
+  const { dispatch } = useSettingsState();
   const { t } = useI18n();
   const { showToast } = useToast();
   const [collapsed, setCollapsed] = useState(true);
   const [testing, setTesting] = useState(false);
   const isNarrow = window.matchMedia('(max-width: 760px)').matches;
-
-  const settings = state.syncSettings;
 
   const saveEmail = async () => {
     try {

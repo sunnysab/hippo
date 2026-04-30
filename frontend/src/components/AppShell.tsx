@@ -1,7 +1,6 @@
 import { type ReactNode, useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { TopBar } from './TopBar';
-import { useSettingsState } from '../store/settings';
 import { apiGet } from '../api';
 import { useI18n } from '../i18n';
 import { useToast } from '../hooks/useToast';
@@ -12,7 +11,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const { t } = useI18n();
   const { showToast } = useToast();
-  const { state: settingsState, dispatch: settingsDispatch } = useSettingsState();
   const [lastLoginAt, setLastLoginAt] = useState('');
   const [lastSyncAt, setLastSyncAt] = useState('');
   const [bannerVisible, setBannerVisible] = useState(false);
@@ -53,9 +51,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [t]);
 
   useEffect(() => {
-    void refreshChromeMeta();
-    const timer = setInterval(refreshChromeMeta, 60000);
-    return () => clearInterval(timer);
+    const kickoff = window.setTimeout(() => {
+      void refreshChromeMeta();
+    }, 0);
+    const timer = window.setInterval(() => {
+      void refreshChromeMeta();
+    }, 60000);
+    return () => {
+      window.clearTimeout(kickoff);
+      window.clearInterval(timer);
+    };
   }, [refreshChromeMeta]);
 
   const handleRefresh = async () => {

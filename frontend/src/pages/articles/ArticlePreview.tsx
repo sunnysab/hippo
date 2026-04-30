@@ -1,4 +1,4 @@
-import { useRef, useState, type RefObject } from 'react';
+import { useState, type RefObject } from 'react';
 import { ContextMenu } from '../../components/ContextMenu';
 import { useArticlesState } from '../../store/articles';
 import { useI18n } from '../../i18n';
