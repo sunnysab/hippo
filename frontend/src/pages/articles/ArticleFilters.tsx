@@ -1,5 +1,6 @@
 import { useArticlesState } from '../../store/articles';
 import { useI18n } from '../../i18n';
+import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { ArticleFilterSummary } from './ArticleFilterSummary';
 import { ArticleTypeFacets } from './ArticleTypeFacets';
 import type {
@@ -24,7 +25,7 @@ export function ArticleFilters({
 }: ArticleFiltersProps) {
   const { state, dispatch } = useArticlesState();
   const { t } = useI18n();
-  const isNarrow = window.matchMedia('(max-width: 720px)').matches;
+  const isNarrow = useMediaQuery('(max-width: 720px)');
 
   return (
     <div className={`article-filter-shell${isNarrow && state.filtersCollapsed ? ' is-mobile-collapsed' : ''}`} id="article-filter-shell">

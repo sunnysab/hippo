@@ -3,6 +3,7 @@ import { useGroupsState } from '../../store/groups';
 import { useI18n } from '../../i18n';
 import { apiSend } from '../../api';
 import { useToast } from '../../hooks/useToast';
+import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { syncDefaults } from '../../store/shared';
 import { getSyncModeLabel } from '../../utils/sync';
 
@@ -14,9 +15,9 @@ export function BatchActions() {
   const [targetGroupId, setTargetGroupId] = useState('');
   const [syncMode, setSyncMode] = useState('');
   const [syncDays, setSyncDays] = useState(String(syncDefaults.recent_days));
+  const isNarrow = useMediaQuery('(max-width: 720px)');
 
   const count = state.selectedAccounts.length;
-  const isNarrow = window.matchMedia('(max-width: 720px)').matches;
   const showActions = isNarrow ? count > 0 && expanded : count > 0;
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {

@@ -27,6 +27,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       if (lastLogin?.updated_at) {
         const ts = formatRelativeTime(lastLogin.updated_at as string);
         setLastLoginAt(ts ? t('login.lastLoginAt', 'Last login {time}').replace('{time}', ts) : '');
+      } else {
+        setLastLoginAt('');
       }
       const loginStatus = loginPayload.status as string;
       if (loginStatus === 'login_required' || loginStatus === 'failed') {
@@ -46,6 +48,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       if (finished) {
         const ts = formatRelativeTime(finished);
         setLastSyncAt(ts ? t('sync.lastSyncAt', 'Last sync {time}').replace('{time}', ts) : '');
+      } else {
+        setLastSyncAt('');
       }
     } catch {
       /* ignore errors during meta refresh */

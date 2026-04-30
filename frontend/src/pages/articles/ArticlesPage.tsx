@@ -4,6 +4,7 @@ import { useArticlesState } from '../../store/articles';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
 import { useReaderSettings } from '../../hooks/useReaderSettings';
+import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { apiGet } from '../../api';
 import { ArticleFilters } from './ArticleFilters';
 import { ArticleList } from './ArticleList';
@@ -58,7 +59,7 @@ export function ArticlesPage() {
   const skipNextArticleTargetResolveRef = useRef(false);
   const pendingRouteTargetRef = useRef<{ articleId: string; wxArticleId: string } | null>(null);
 
-  const isNarrowViewport = () => window.matchMedia('(max-width: 720px)').matches;
+  const isNarrowViewport = useMediaQuery('(max-width: 720px)');
 
   useEffect(() => {
     isArticleLoadingRef.current = state.isArticleLoading;
@@ -199,10 +200,10 @@ export function ArticlesPage() {
     dispatch({ type: 'SELECT_ARTICLE', id, payload: null });
     const payload = await apiGet(`/api/article/${id}`);
     dispatch({ type: 'SELECT_ARTICLE', id, payload: payload as unknown as ArticlePayload });
-    if (isNarrowViewport()) {
+    if (isNarrowViewport) {
       dispatch({ type: 'SET_MOBILE_READING', reading: true });
     }
-  }, [dispatch]);
+  }, [dispatch, isNarrowViewport]);
 
   const resetFilters = useCallback(async () => {
     setFilters({
@@ -236,7 +237,7 @@ export function ArticlesPage() {
       dispatch({ type: 'SELECT_ARTICLE', id: Number(articleId), payload: null });
       const payload = await apiGet(`/api/article/${articleId}`);
       dispatch({ type: 'SELECT_ARTICLE', id: Number(articleId), payload: payload as unknown as ArticlePayload });
-      if (isNarrowViewport()) {
+      if (isNarrowViewport) {
         dispatch({ type: 'SET_MOBILE_READING', reading: true });
       }
       return;
@@ -266,10 +267,10 @@ export function ArticlesPage() {
       id: article.id,
       payload: detailPayload as unknown as ArticlePayload,
     });
-    if (isNarrowViewport()) {
+    if (isNarrowViewport) {
       dispatch({ type: 'SET_MOBILE_READING', reading: true });
     }
-  }, [articleIdParam, dispatch, wxArticleIdParam]);
+  }, [articleIdParam, dispatch, isNarrowViewport, wxArticleIdParam]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -486,7 +487,7 @@ export function ArticlesPage() {
                 const content = previewRef.current?.querySelector('.reader');
                 if (content) {
                   const text = (content as HTMLElement).innerText;
-                  try { await copyToClipboard(text); showToast(t('articles.copied', '已复制全文')); } catch { showToast(t('articles.copyFailed', '复制失败')); }
+                  try { await copyToClipboard(text); showToast(t('articles.copied', '全文已复制')); } catch { showToast(t('articles.copyFailed', '复制失败')); }
                 }
               }}>
                 <span className="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></span>
@@ -509,7 +510,7 @@ export function ArticlesPage() {
                 aria-label="Toggle list"
                 title="Toggle list"
                 onClick={() => {
-                  if (isNarrowViewport() && state.mobileReading) {
+                  if (isNarrowViewport && state.mobileReading) {
                     dispatch({ type: 'SET_MOBILE_READING', reading: false });
                     return;
                   }
