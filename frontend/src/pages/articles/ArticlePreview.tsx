@@ -1,3 +1,5 @@
+import { useRef, useState, type RefObject } from 'react';
+import { ContextMenu } from '../../components/ContextMenu';
 import { useArticlesState } from '../../store/articles';
 import { useI18n } from '../../i18n';
 import { useReaderSettings } from '../../hooks/useReaderSettings';
@@ -5,32 +7,52 @@ import { ArticleHeader } from './ArticleHeader';
 import { ArticleContent } from './ArticleContent';
 import { EmptyState } from '../../components/EmptyState';
 import { useToast } from '../../hooks/useToast';
-import { apiSend } from '../../api';
+import { apiGet, apiSend } from '../../api';
 
-export function ArticlePreview() {
+interface ArticlePreviewProps {
+  previewRef: RefObject<HTMLDivElement | null>;
+}
+
+export function ArticlePreview({ previewRef }: ArticlePreviewProps) {
   const { state, dispatch } = useArticlesState();
   const { t } = useI18n();
   const { showToast } = useToast();
   const { config } = useReaderSettings();
+  const [imageContextMenu, setImageContextMenu] = useState<{
+    imageId: number;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [isBlockingImage, setIsBlockingImage] = useState(false);
 
   const payload = state.currentArticlePayload;
 
-  // Handle image blocking from context menu
   const handleBlockImage = async (imageId: number) => {
-    const container = document.getElementById('article-preview');
-    const scrollTop = container ? container.scrollTop : 0;
-    await apiSend(`/api/image/${imageId}/block`, 'POST', {});
-    if (state.selectedArticleId) {
-      const { apiGet } = await import('../../api');
-      const newPayload = await apiGet(`/api/article/${state.selectedArticleId}`);
-      dispatch({ type: 'SELECT_ARTICLE', id: state.selectedArticleId, payload: newPayload as unknown as typeof payload });
-      if (container) container.scrollTop = scrollTop;
+    const container = previewRef.current;
+    const scrollTop = container?.scrollTop || 0;
+    setIsBlockingImage(true);
+    try {
+      await apiSend(`/api/image/${imageId}/block`, 'POST', {});
+      if (state.selectedArticleId) {
+        const newPayload = await apiGet(`/api/article/${state.selectedArticleId}`);
+        dispatch({
+          type: 'SELECT_ARTICLE',
+          id: state.selectedArticleId,
+          payload: newPayload as unknown as typeof payload,
+        });
+        if (container) {
+          container.scrollTop = scrollTop;
+        }
+      }
+      showToast(t('articles.imageBlocked', 'Image blocked.'));
+      setImageContextMenu(null);
+    } finally {
+      setIsBlockingImage(false);
     }
-    showToast(t('articles.imageBlocked', 'Image blocked.'));
   };
 
   return (
-    <div className="article-preview-body" id="article-preview">
+    <div className="article-preview-body" id="article-preview" ref={previewRef}>
       {!payload ? (
         <div className="reader">
           <EmptyState message={t('articles.empty', 'Select an article to preview.')} />
@@ -41,10 +63,30 @@ export function ArticlePreview() {
           <ArticleContent
             payload={payload}
             hideSmall={config.hideSmall}
-            onBlockImage={handleBlockImage}
+            onImageContextMenu={setImageContextMenu}
           />
         </div>
       )}
+      <ContextMenu
+        id="article-image-context-menu"
+        isOpen={Boolean(imageContextMenu)}
+        x={imageContextMenu?.x || 0}
+        y={imageContextMenu?.y || 0}
+        onClose={() => setImageContextMenu(null)}
+      >
+        <button
+          className="context-item"
+          id="article-image-menu-block"
+          type="button"
+          disabled={!imageContextMenu || isBlockingImage}
+          onClick={() => {
+            if (!imageContextMenu) return;
+            void handleBlockImage(imageContextMenu.imageId);
+          }}
+        >
+          {t('articles.menu.blockImage', 'Block image')}
+        </button>
+      </ContextMenu>
     </div>
   );
 }

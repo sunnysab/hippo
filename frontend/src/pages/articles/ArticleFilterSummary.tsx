@@ -1,34 +1,43 @@
-import { useArticlesState } from '../../store/articles';
 import { useI18n } from '../../i18n';
 import { escapeHtml } from '../../utils/format';
 import { ITEM_SHOW_TYPE_META } from '../../utils/constants';
+import type {
+  ArticleFiltersState,
+  ArticleSelectOption,
+} from './filtering';
 
-export function ArticleFilterSummary() {
-  const { state } = useArticlesState();
+interface ArticleFilterSummaryProps {
+  filters: ArticleFiltersState;
+  groupOptions: ArticleSelectOption[];
+  accountOptions: ArticleSelectOption[];
+  total: number;
+}
+
+export function ArticleFilterSummary({
+  filters,
+  groupOptions,
+  accountOptions,
+  total,
+}: ArticleFilterSummaryProps) {
   const { t } = useI18n();
-
-  const payload = state.lastFacetPayload;
-  const total = Number(payload?.total || 0);
-  const typeFilter = (document.getElementById('article-type-filter') as HTMLSelectElement)?.value || '';
-  const search = (document.getElementById('article-search') as HTMLInputElement)?.value?.trim() || '';
-  const groupLabel = (document.getElementById('article-group-filter') as HTMLSelectElement)?.selectedOptions?.[0]?.textContent || '';
-  const accountLabel = (document.getElementById('article-account-filter') as HTMLSelectElement)?.selectedOptions?.[0]?.textContent || '';
+  const groupLabel = groupOptions.find((group) => group.value === filters.groupId)?.label || '';
+  const accountLabel = accountOptions.find((account) => account.value === filters.accountBiz)?.label || '';
 
   const totalLabel = t('articles.summary.total', '{n} articles').replace('{n}', total.toLocaleString('zh-CN'));
   const tags: string[] = [];
-  if (groupLabel && (document.getElementById('article-group-filter') as HTMLSelectElement)?.value) {
+  if (groupLabel && filters.groupId) {
     tags.push(t('articles.summary.group', 'Group: {value}').replace('{value}', groupLabel));
   }
-  if (accountLabel && (document.getElementById('article-account-filter') as HTMLSelectElement)?.value) {
+  if (accountLabel && filters.accountBiz) {
     tags.push(t('articles.summary.account', 'Account: {value}').replace('{value}', accountLabel));
   }
-  if (typeFilter) {
-    const meta = ITEM_SHOW_TYPE_META[Number(typeFilter)];
+  if (filters.itemShowType) {
+    const meta = ITEM_SHOW_TYPE_META[Number(filters.itemShowType)];
     const label = meta ? t(meta.key, meta.fallback) : '';
     tags.push(t('articles.summary.filteredByType', 'Type: {type}').replace('{type}', label));
   }
-  if (search) {
-    tags.push(t('articles.summary.keyword', 'Search: {value}').replace('{value}', search));
+  if (filters.search.trim()) {
+    tags.push(t('articles.summary.keyword', 'Search: {value}').replace('{value}', filters.search.trim()));
   }
   if (!tags.length) {
     tags.push(t('articles.summary.allTypes', 'Across all article types'));

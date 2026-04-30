@@ -98,7 +98,7 @@ function reducer(state: ArticlesState, action: ArticlesAction): ArticlesState {
     case 'SET_ARTICLES':
       return {
         ...state,
-        articles: action.reset ? action.articles : [...state.articles, ...action.articles],
+        articles: action.articles,
       };
     case 'SET_PAGE':
       return { ...state, articlePage: action.page, hasMoreArticles: action.hasMore };

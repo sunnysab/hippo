@@ -1,4 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
+import { ContextMenu } from '../../components/ContextMenu';
 import { useArticlesState } from '../../store/articles';
 import { useI18n } from '../../i18n';
 import { ArticleCard } from './ArticleCard';
@@ -10,22 +11,21 @@ import type { Article } from '../../store/articles';
 
 interface ArticleListProps {
   onSelect: (id: number) => Promise<void>;
+  onLoadMore: () => Promise<void>;
 }
 
-export function ArticleList({ onSelect }: ArticleListProps) {
+export function ArticleList({ onSelect, onLoadMore }: ArticleListProps) {
   const { state } = useArticlesState();
   const { t } = useI18n();
   const { showToast } = useToast();
   const listRef = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<{ article: Article; x: number; y: number } | null>(null);
-  const [imageCtxMenu, setImageCtxMenu] = useState<{ imageId: number; x: number; y: number } | null>(null);
 
   const handleLoadMore = useCallback(() => {
     if (state.isArticleLoading || !state.hasMoreArticles) return;
-    window.dispatchEvent(new CustomEvent('hippo:refresh'));
-  }, [state.isArticleLoading, state.hasMoreArticles]);
+    void onLoadMore();
+  }, [onLoadMore, state.hasMoreArticles, state.isArticleLoading]);
 
-  // Infinite scroll
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
@@ -37,20 +37,6 @@ export function ArticleList({ onSelect }: ArticleListProps) {
     el.addEventListener('scroll', handler);
     return () => el.removeEventListener('scroll', handler);
   }, [handleLoadMore]);
-
-  // Close context menus on click/escape
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      setContextMenu(null);
-      setImageCtxMenu(null);
-    };
-    const keyHandler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setContextMenu(null); setImageCtxMenu(null); }
-    };
-    document.addEventListener('click', handler);
-    document.addEventListener('keydown', keyHandler);
-    return () => { document.removeEventListener('click', handler); document.removeEventListener('keydown', keyHandler); };
-  }, []);
 
   if (!state.articles.length) {
     return (
@@ -76,21 +62,14 @@ export function ArticleList({ onSelect }: ArticleListProps) {
           />
         ))}
       </div>
-      <div className="panel-footer">
-        <button
-          className="btn ghost"
-          id="btn-article-more"
-          type="button"
-          style={{ display: 'none' }}
-          onClick={handleLoadMore}
-        >
-          {t('articles.loadMore', 'Load More')}
-        </button>
-      </div>
-
-      {/* Article context menu */}
-      {contextMenu && (
-        <div className="context-menu" id="article-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+      <ContextMenu
+        id="article-context-menu"
+        isOpen={Boolean(contextMenu)}
+        x={contextMenu?.x || 0}
+        y={contextMenu?.y || 0}
+        onClose={() => setContextMenu(null)}
+      >
+        {contextMenu ? (
           <button
             className="context-item"
             id="article-menu-open"
@@ -104,6 +83,8 @@ export function ArticleList({ onSelect }: ArticleListProps) {
           >
             {t('articles.menu.openOriginal', 'Open original')}
           </button>
+        ) : null}
+        {contextMenu ? (
           <button
             className="context-item"
             id="article-menu-copy"
@@ -118,8 +99,8 @@ export function ArticleList({ onSelect }: ArticleListProps) {
           >
             {t('articles.menu.copyLink', 'Copy link')}
           </button>
-        </div>
-      )}
+        ) : null}
+      </ContextMenu>
     </>
   );
 }

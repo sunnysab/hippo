@@ -1,104 +1,53 @@
-import { useEffect, useCallback } from 'react';
+import { useDeferredValue, useEffect, useCallback, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useArticlesState } from '../../store/articles';
-import { useGroupsState } from '../../store/groups';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
 import { useReaderSettings } from '../../hooks/useReaderSettings';
-import { apiGet, apiSend } from '../../api';
+import { apiGet } from '../../api';
 import { ArticleFilters } from './ArticleFilters';
 import { ArticleList } from './ArticleList';
 import { ArticlePreview } from './ArticlePreview';
 import { ArticleResizer } from './ArticleResizer';
 import { LoadingIndicator } from '../../components/LoadingIndicator';
 import type { Article, ArticlePayload } from '../../store/articles';
-import { ARTICLE_SORT_PUBLISH_AT_DESC, ARTICLE_SORT_RELEVANCE_DESC, ARTICLE_FILTER_PARAM_KEYS } from '../../utils/constants';
+import { ARTICLE_SORT_PUBLISH_AT_DESC } from '../../utils/constants';
 import { copyToClipboard } from '../../utils/clipboard';
+import {
+  buildArticleFiltersFromSearchParams,
+  buildArticleSearchParams,
+  type ArticleFiltersState,
+  type ArticleSelectOption,
+} from './filtering';
 
 export function ArticlesPage() {
   const { state, dispatch } = useArticlesState();
-  const groupsState = useGroupsState();
   const { t } = useI18n();
   const { showToast } = useToast();
   const { config, updateConfig } = useReaderSettings();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [filters, setFilters] = useState<ArticleFiltersState>(() => buildArticleFiltersFromSearchParams(searchParams));
+  const [groupOptions, setGroupOptions] = useState<ArticleSelectOption[]>([]);
+  const [accountOptions, setAccountOptions] = useState<ArticleSelectOption[]>([]);
+  const [listCollapsed, setListCollapsed] = useState(false);
+  const [readerControlsOpen, setReaderControlsOpen] = useState(false);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const deferredSearch = useDeferredValue(filters.search.trim());
 
   const isNarrowViewport = () => window.matchMedia('(max-width: 720px)').matches;
 
-  // Sync filter URL params with state
-  const applyUrlParams = useCallback(async () => {
-    const groupId = searchParams.get('group') || '';
-    const accountBiz = searchParams.get('account') || '';
-    const itemShowType = searchParams.get('type') || '';
-    const search = searchParams.get('q') || '';
-    const sort = searchParams.get('sort') || '';
-
-    const groupFilter = document.getElementById('article-group-filter') as HTMLSelectElement | null;
-    const accountFilter = document.getElementById('article-account-filter') as HTMLSelectElement | null;
-    const searchInput = document.getElementById('article-search') as HTMLInputElement | null;
-    const sortFilter = document.getElementById('article-sort') as HTMLSelectElement | null;
-    const typeFilter = document.getElementById('article-type-filter') as HTMLSelectElement | null;
-
-    if (groupId && groupFilter) groupFilter.value = groupId;
-    if (accountBiz && accountFilter) accountFilter.value = accountBiz;
-    if (itemShowType && typeFilter) typeFilter.value = itemShowType;
-    if (search && searchInput) searchInput.value = search;
-    const hasSearch = Boolean(search && search.trim());
-    if (sortFilter) {
-      sortFilter.value = sort || (hasSearch ? ARTICLE_SORT_RELEVANCE_DESC : ARTICLE_SORT_PUBLISH_AT_DESC);
-    }
-    await loadArticles(true);
-  }, [searchParams]);
-
-  const updateUrlParams = useCallback(() => {
-    const groupFilter = document.getElementById('article-group-filter') as HTMLSelectElement | null;
-    const accountFilter = document.getElementById('article-account-filter') as HTMLSelectElement | null;
-    const searchInput = document.getElementById('article-search') as HTMLInputElement | null;
-    const sortFilter = document.getElementById('article-sort') as HTMLSelectElement | null;
-    const typeFilter = document.getElementById('article-type-filter') as HTMLSelectElement | null;
-
-    const groupId = groupFilter?.value || '';
-    const accountBiz = accountFilter?.value || '';
-    const itemShowType = typeFilter?.value || '';
-    const search = searchInput?.value.trim() || '';
-    const sort = sortFilter?.value || '';
-
-    const params = new URLSearchParams();
-    if (groupId) params.set('group', groupId);
-    if (accountBiz) params.set('account', accountBiz);
-    if (itemShowType) params.set('type', itemShowType);
-    if (search) params.set('q', search);
-    const hasSearch = Boolean(search);
-    const defaultSort = hasSearch ? ARTICLE_SORT_RELEVANCE_DESC : ARTICLE_SORT_PUBLISH_AT_DESC;
-    if (sort && sort !== defaultSort) params.set('sort', sort);
-
-    setSearchParams(params, { replace: true });
-  }, [setSearchParams]);
-
-  const loadArticles = useCallback(async (reset = true) => {
+  const loadArticles = useCallback(async (nextFilters: ArticleFiltersState, reset = true) => {
     if (state.isArticleLoading) return;
     dispatch({ type: 'SET_LOADING', loading: true });
-
-    const groupFilter = document.getElementById('article-group-filter') as HTMLSelectElement | null;
-    const accountFilter = document.getElementById('article-account-filter') as HTMLSelectElement | null;
-    const searchInput = document.getElementById('article-search') as HTMLInputElement | null;
-    const sortFilter = document.getElementById('article-sort') as HTMLSelectElement | null;
-    const typeFilter = document.getElementById('article-type-filter') as HTMLSelectElement | null;
-
-    const groupId = groupFilter?.value;
-    const accountBiz = accountFilter?.value;
-    const itemShowType = typeFilter?.value;
-    const search = searchInput?.value.trim();
-    const sort = sortFilter?.value || ARTICLE_SORT_PUBLISH_AT_DESC;
+    const sort = nextFilters.sort || ARTICLE_SORT_PUBLISH_AT_DESC;
     const page = reset ? 1 : state.articlePage;
-    const pageItems = reset ? [] : state.articles;
 
     try {
       const url = new URL('/api/article', window.location.origin);
-      if (groupId) url.searchParams.set('group_id', groupId);
-      if (accountBiz) url.searchParams.set('biz', accountBiz);
-      if (itemShowType) url.searchParams.set('item_show_type', itemShowType);
-      if (search) url.searchParams.set('q', search);
+      if (nextFilters.groupId) url.searchParams.set('group_id', nextFilters.groupId);
+      if (nextFilters.accountBiz) url.searchParams.set('biz', nextFilters.accountBiz);
+      if (nextFilters.itemShowType) url.searchParams.set('item_show_type', nextFilters.itemShowType);
+      if (nextFilters.search) url.searchParams.set('q', nextFilters.search);
       url.searchParams.set('sort', sort);
       url.searchParams.set('page', String(page));
       url.searchParams.set('page_size', String(state.articlePageSize));
@@ -109,7 +58,7 @@ export function ArticlesPage() {
 
       dispatch({
         type: 'SET_ARTICLES',
-        articles: reset ? newArticles : [...pageItems, ...newArticles],
+        articles: reset ? newArticles : [...state.articles, ...newArticles],
         reset,
       });
       dispatch({ type: 'SET_PAGE', page: reset ? 2 : state.articlePage + 1, hasMore });
@@ -127,6 +76,49 @@ export function ArticlesPage() {
     }
   }, [state.isArticleLoading, state.articlePage, state.articlePageSize, state.articles, dispatch]);
 
+  const syncUrlParams = useCallback((nextFilters: ArticleFiltersState) => {
+    setSearchParams(buildArticleSearchParams(nextFilters), { replace: true });
+  }, [setSearchParams]);
+
+  const updateFilters = useCallback((patch: Partial<ArticleFiltersState>) => {
+    setFilters((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  const loadGroupOptions = useCallback(async () => {
+    const payload = await apiGet('/api/group');
+    const groups = (payload.groups || []) as Array<{ id: number; name: string; account_count: number }>;
+    const options = groups.map((group) => ({
+      value: String(group.id),
+      label: group.name,
+    }));
+    setGroupOptions(options);
+    setFilters((prev) => {
+      if (!prev.groupId) return prev;
+      const exists = options.some((group) => group.value === prev.groupId);
+      return exists ? prev : { ...prev, groupId: '', accountBiz: '' };
+    });
+  }, []);
+
+  const loadAccountOptions = useCallback(async (groupId: string) => {
+    if (!groupId) {
+      setAccountOptions([]);
+      return;
+    }
+
+    const payload = await apiGet(`/api/account?group_id=${groupId}&page_size=200`);
+    const accounts = (payload.accounts || []) as Array<{ biz: string; nickname: string }>;
+    const options = accounts.map((account) => ({
+      value: account.biz,
+      label: account.nickname,
+    }));
+    setAccountOptions(options);
+    setFilters((prev) => {
+      if (!prev.accountBiz) return prev;
+      const exists = options.some((account) => account.value === prev.accountBiz);
+      return exists ? prev : { ...prev, accountBiz: '' };
+    });
+  }, []);
+
   const selectArticle = useCallback(async (id: number) => {
     dispatch({ type: 'SELECT_ARTICLE', id, payload: null });
     const payload = await apiGet(`/api/article/${id}`);
@@ -137,60 +129,55 @@ export function ArticlesPage() {
   }, [dispatch]);
 
   const resetFilters = useCallback(async () => {
-    const groupFilter = document.getElementById('article-group-filter') as HTMLSelectElement | null;
-    const accountFilter = document.getElementById('article-account-filter') as HTMLSelectElement | null;
-    const typeFilter = document.getElementById('article-type-filter') as HTMLSelectElement | null;
-    const sortFilter = document.getElementById('article-sort') as HTMLSelectElement | null;
-    const searchInput = document.getElementById('article-search') as HTMLInputElement | null;
-
-    if (groupFilter) groupFilter.value = '';
-    if (accountFilter) accountFilter.value = '';
-    if (typeFilter) typeFilter.value = '';
-    if (searchInput) searchInput.value = '';
-    if (sortFilter) sortFilter.value = ARTICLE_SORT_PUBLISH_AT_DESC;
-    dispatch({ type: 'SELECT_ARTICLE', id: null, payload: null });
-    updateUrlParams();
-    await loadArticles(true);
-  }, [loadArticles, updateUrlParams, dispatch]);
-
-  // Init on mount
-  useEffect(() => {
-    // Load group options
-    const loadGroups = async () => {
-      const payload = await apiGet('/api/group');
-      const groups = (payload.groups || []) as Array<{ id: number; name: string; account_count: number }>;
-      const select = document.getElementById('article-group-filter') as HTMLSelectElement | null;
-      if (select) {
-        const currentValue = select.value;
-        select.innerHTML = '<option value="">' + t('filters.allGroups', 'All Groups') + '</option>';
-        groups.forEach((g) => {
-          const opt = document.createElement('option');
-          opt.value = String(g.id);
-          opt.textContent = g.name;
-          select.appendChild(opt);
-        });
-        if (currentValue) select.value = currentValue;
-      }
-    };
-
-    void loadGroups().then(() => {
-      const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
-      if (params.toString()) {
-        void applyUrlParams();
-      } else {
-        void loadArticles(true);
-      }
+    setFilters({
+      groupId: '',
+      accountBiz: '',
+      itemShowType: '',
+      search: '',
+      sort: ARTICLE_SORT_PUBLISH_AT_DESC,
     });
-  }, []);
+    setAccountOptions([]);
+    dispatch({ type: 'SELECT_ARTICLE', id: null, payload: null });
+  }, [dispatch]);
 
-  // Refresh handler
+  useEffect(() => {
+    void loadGroupOptions();
+  }, [loadGroupOptions]);
+
+  useEffect(() => {
+    if (!filters.groupId) {
+      setAccountOptions([]);
+      return;
+    }
+    void loadAccountOptions(filters.groupId);
+  }, [filters.groupId, loadAccountOptions]);
+
+  useEffect(() => {
+    syncUrlParams(filters);
+  }, [filters, syncUrlParams]);
+
+  useEffect(() => {
+    void loadArticles({ ...filters, search: deferredSearch }, true);
+  }, [
+    deferredSearch,
+    filters.accountBiz,
+    filters.groupId,
+    filters.itemShowType,
+    filters.sort,
+    loadArticles,
+  ]);
+
   useEffect(() => {
     const handler = () => {
-      void loadArticles(true);
+      void loadGroupOptions();
+      if (filters.groupId) {
+        void loadAccountOptions(filters.groupId);
+      }
+      void loadArticles({ ...filters, search: deferredSearch }, true);
     };
     window.addEventListener('hippo:refresh', handler);
     return () => window.removeEventListener('hippo:refresh', handler);
-  }, [loadArticles]);
+  }, [deferredSearch, filters, loadAccountOptions, loadArticles, loadGroupOptions]);
 
   const getSelectedArticleLink = () => {
     const article = state.currentArticlePayload?.article ||
@@ -200,7 +187,7 @@ export function ArticlesPage() {
 
   return (
     <section id="view-articles" className="view is-active">
-      <div className={`article-layout${state.filtersCollapsed ? '' : ''}${state.mobileReading ? ' is-mobile-reading' : ''}`}>
+      <div className={`article-layout${listCollapsed ? ' is-collapsed' : ''}${state.mobileReading ? ' is-mobile-reading' : ''}`}>
         <div className="panel article-list">
           <div className="panel-header article-sidebar-header">
             <div>
@@ -221,15 +208,24 @@ export function ArticlesPage() {
                 className="btn ghost article-reset-btn"
                 id="btn-article-reset"
                 type="button"
-                onClick={resetFilters}
+                onClick={() => { void resetFilters(); }}
               >
                 {t('articles.resetFilters', 'Reset Filters')}
               </button>
             </div>
           </div>
-          <ArticleFilters />
+          <ArticleFilters
+            filters={filters}
+            groupOptions={groupOptions}
+            accountOptions={accountOptions}
+            total={Number(state.lastFacetPayload?.total || 0)}
+            onChange={updateFilters}
+          />
           <LoadingIndicator isLoading={state.isArticleLoading} id="article-search-loading" />
-          <ArticleList onSelect={selectArticle} />
+          <ArticleList
+            onSelect={selectArticle}
+            onLoadMore={() => loadArticles({ ...filters, search: deferredSearch }, false)}
+          />
         </div>
 
         <ArticleResizer />
@@ -274,7 +270,7 @@ export function ArticlesPage() {
                 {t('articles.menu.copyLink', 'Copy link')}
               </button>
               <button className="icon-btn" id="reader-copy" type="button" aria-label="Copy article text" title="Copy article text" onClick={async () => {
-                const content = document.querySelector('.article-preview-body .reader');
+                const content = previewRef.current?.querySelector('.reader');
                 if (content) {
                   const text = (content as HTMLElement).innerText;
                   try { await copyToClipboard(text); showToast(t('articles.copied', '已复制全文')); } catch { showToast(t('articles.copyFailed', '复制失败')); }
@@ -282,15 +278,35 @@ export function ArticlesPage() {
               }}>
                 <span className="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></span>
               </button>
-              <button className="icon-btn" id="reader-toggle" type="button" aria-label="Typography settings" title="Typography settings">
+              <button
+                className="icon-btn"
+                id="reader-toggle"
+                type="button"
+                aria-label="Typography settings"
+                title="Typography settings"
+                onClick={() => setReaderControlsOpen((prev) => !prev)}
+              >
                 <span className="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4zM4 11h16v2H4zM4 16h16v2H4z"/></svg></span>
               </button>
-              <button className="icon-btn" id="btn-article-toggle" type="button" aria-label="Toggle list" title="Toggle list">
+              <button
+                className="icon-btn"
+                id="btn-article-toggle"
+                type="button"
+                aria-label="Toggle list"
+                title="Toggle list"
+                onClick={() => {
+                  if (isNarrowViewport() && state.mobileReading) {
+                    dispatch({ type: 'SET_MOBILE_READING', reading: false });
+                    return;
+                  }
+                  setListCollapsed((prev) => !prev);
+                }}
+              >
                 <span className="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4zM4 11h10v2H4zM4 16h16v2H4z"/></svg></span>
               </button>
             </div>
           </div>
-          <div className="reader-controls is-hidden" id="reader-controls">
+          <div className={`reader-controls${readerControlsOpen ? ' is-open' : ''}`} id="reader-controls">
             <label>
               <span>{t('reader.width', 'Width')}</span>
               <input id="reader-width" type="range" min="400" max="1200" step="10" value={config.width} onChange={(e) => updateConfig({ width: e.target.value })} />
@@ -316,17 +332,8 @@ export function ArticlesPage() {
               <span>{t('reader.hideSmallImages', 'Hide Small Images')}</span>
             </label>
           </div>
-          <ArticlePreview />
+          <ArticlePreview previewRef={previewRef} />
         </div>
-      </div>
-
-      {/* Context menus */}
-      <div className="context-menu is-hidden" id="article-context-menu">
-        <button className="context-item" id="article-menu-open" type="button">{t('articles.menu.openOriginal', 'Open original')}</button>
-        <button className="context-item" id="article-menu-copy" type="button">{t('articles.menu.copyLink', 'Copy link')}</button>
-      </div>
-      <div className="context-menu is-hidden" id="article-image-context-menu">
-        <button className="context-item" id="article-image-menu-block" type="button">{t('articles.menu.blockImage', 'Block image')}</button>
       </div>
     </section>
   );
