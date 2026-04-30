@@ -37,23 +37,22 @@
   gap: 10px;
   padding: 14px;
   border-radius: 16px;
-  background: linear-gradient(180deg, rgba(245, 240, 232, 0.94), rgba(250, 247, 241, 0.92));
-  box-shadow: var(--shadow-xs);
+  background: rgba(245, 240, 232, 0.94);
 }
 
 .login-card[data-status='waiting'],
 .login-card[data-status='scanned'],
 .login-card[data-status='starting'],
 .login-card[data-status='refresh'] {
-  background: linear-gradient(180deg, rgba(227, 237, 245, 0.9), rgba(250, 247, 241, 0.94));
+  background: rgba(227, 237, 245, 0.92);
 }
 
 .login-card[data-status='success'] {
-  background: linear-gradient(180deg, rgba(229, 239, 231, 0.92), rgba(250, 247, 241, 0.94));
+  background: rgba(229, 239, 231, 0.94);
 }
 
 .login-card[data-status='error'] {
-  background: linear-gradient(180deg, rgba(246, 228, 226, 0.92), rgba(252, 247, 241, 0.94));
+  background: rgba(246, 228, 226, 0.94);
 }
 
 .login-qr {
@@ -64,7 +63,6 @@
   background: #fff;
   object-fit: contain;
   padding: 8px;
-  box-shadow: inset 0 0 0 1px rgba(91, 85, 70, 0.08), var(--shadow-xs);
 }
 
 .login-status {
@@ -127,8 +125,7 @@
 .sync-form-section {
   padding: 12px;
   border-radius: 14px;
-  background: linear-gradient(180deg, rgba(241, 236, 227, 0.86), rgba(249, 246, 240, 0.88));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.48);
+  background: rgba(241, 236, 227, 0.9);
 }
 
 .sync-section-title {
@@ -150,8 +147,7 @@
   gap: 10px;
   padding: 14px;
   border-radius: 16px;
-  background: linear-gradient(180deg, rgba(241, 236, 227, 0.94), rgba(249, 246, 240, 0.92));
-  box-shadow: var(--shadow-xs);
+  background: rgba(241, 236, 227, 0.94);
 }
 
 .sync-summary-copy {
@@ -200,7 +196,7 @@
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--accent), #3c8c7b);
+  background: var(--accent);
 }
 
 .sync-progress-list {
@@ -216,7 +212,6 @@
   padding: 11px 13px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.72);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
 }
 
 .sync-progress-copy {
@@ -251,7 +246,6 @@
   font-size: 10px;
   font-weight: 700;
   white-space: nowrap;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
 }
 
 .sync-history-item {
@@ -273,7 +267,7 @@
 
 .sync-tone-success.sync-progress-item,
 .sync-tone-success.sync-history-item {
-  background: linear-gradient(180deg, rgba(229, 239, 231, 0.9), rgba(255, 255, 255, 0.72));
+  background: rgba(229, 239, 231, 0.9);
 }
 
 .sync-tone-danger.sync-status-badge {
@@ -283,7 +277,7 @@
 
 .sync-tone-danger.sync-progress-item,
 .sync-tone-danger.sync-history-item {
-  background: linear-gradient(180deg, rgba(246, 228, 226, 0.88), rgba(255, 255, 255, 0.72));
+  background: rgba(246, 228, 226, 0.88);
 }
 
 .sync-tone-info.sync-status-badge {
@@ -293,7 +287,7 @@
 
 .sync-tone-info.sync-progress-item,
 .sync-tone-info.sync-history-item {
-  background: linear-gradient(180deg, rgba(227, 237, 245, 0.88), rgba(255, 255, 255, 0.72));
+  background: rgba(227, 237, 245, 0.88);
 }
 
 .sync-tone-warning.sync-status-badge {
@@ -303,7 +297,7 @@
 
 .sync-tone-warning.sync-progress-item,
 .sync-tone-warning.sync-history-item {
-  background: linear-gradient(180deg, rgba(245, 234, 210, 0.88), rgba(255, 255, 255, 0.72));
+  background: rgba(245, 234, 210, 0.88);
 }
 
 .sync-tone-muted.sync-status-badge {

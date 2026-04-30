@@ -86,7 +86,7 @@ body {
   padding: 14px 16px;
   background: rgba(250, 247, 241, 0.78);
   backdrop-filter: blur(16px) saturate(1.15);
-  box-shadow: var(--shadow-soft);
+  box-shadow: 0 2px 8px rgba(40, 36, 28, 0.05);
   border-radius: 20px;
 }
 
@@ -103,7 +103,7 @@ body {
   width: 40px;
   height: 40px;
   border-radius: 14px;
-  background: linear-gradient(160deg, #356d5f 0%, var(--accent) 72%);
+  background: var(--accent);
   color: #fff;
   font-family: var(--font-display);
   font-size: 18px;
@@ -224,25 +224,25 @@ body {
   justify-content: center;
   gap: 6px;
   padding: 7px 10px;
-  background: linear-gradient(180deg, #356d5f 0%, var(--accent) 100%);
+  background: var(--accent);
   color: #fff;
-  box-shadow: 0 8px 20px rgba(41, 93, 80, 0.18);
+  box-shadow: none;
 }
 
 .btn.ghost {
   background: rgba(244, 239, 231, 0.92);
   color: var(--text);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  box-shadow: none;
 }
 
 .btn:hover,
 .icon-btn:hover {
   transform: translateY(-1px);
-  box-shadow: var(--shadow-xs);
+  box-shadow: none;
 }
 
 .btn:hover {
-  background: linear-gradient(180deg, #2d6154 0%, var(--accent-hover) 100%);
+  background: var(--accent-hover);
 }
 
 .btn.ghost:hover,
@@ -266,7 +266,7 @@ body {
   padding: 0;
   background: rgba(244, 239, 231, 0.92);
   color: var(--text);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  box-shadow: none;
 }
 
 .icon {
@@ -296,8 +296,7 @@ body {
   margin-bottom: 14px;
   padding: 13px 14px;
   border-radius: 14px;
-  background: linear-gradient(135deg, rgba(245, 234, 210, 0.96), rgba(252, 247, 237, 0.94));
-  box-shadow: var(--shadow-xs);
+  background: rgba(245, 234, 210, 0.92);
   color: #72470d;
 }
 
@@ -327,7 +326,6 @@ body {
   padding: 5px 10px;
   border-radius: 999px;
   background: rgba(243, 238, 229, 0.95);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
   color: var(--muted);
   font-size: 12px;
 }
@@ -353,10 +351,10 @@ body {
 }
 
 .panel {
-  background: linear-gradient(180deg, rgba(252, 249, 243, 0.97), rgba(248, 243, 235, 0.95));
+  background: rgba(252, 249, 243, 0.9);
   border-radius: var(--radius);
   padding: 16px;
-  box-shadow: var(--shadow-soft);
+  box-shadow: none;
 }
 
 .panel-header {
@@ -417,14 +415,13 @@ body {
   border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, 0.52);
   cursor: pointer;
-  transition: background 0.18s ease-out, box-shadow 0.18s ease-out, transform 0.18s ease-out;
+  transition: background 0.18s ease-out, transform 0.18s ease-out;
 }
 
 .list-item.is-active,
 .list-item:hover {
   transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: var(--shadow-xs);
+  background: rgba(255, 255, 255, 0.82);
 }
 
 .badge {
@@ -467,7 +464,6 @@ body {
   padding: 5px 8px;
   border-radius: 9px;
   background: rgba(244, 239, 231, 0.96);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.48);
 }
 
 .switch input {
@@ -488,8 +484,7 @@ body {
   border: none;
   border-radius: var(--radius-xs);
   padding: 6px 10px;
-  background: linear-gradient(180deg, rgba(239, 234, 225, 0.94), rgba(250, 247, 241, 0.92));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58);
+  background: rgba(239, 234, 225, 0.94);
   color: var(--text);
   font-size: 13px;
   font-family: var(--font-sans);
@@ -504,7 +499,7 @@ body {
 .group-sync-toolbar input:hover,
 .account-sync-mode:hover,
 .account-sync-days:hover {
-  background: linear-gradient(180deg, rgba(244, 239, 231, 0.96), rgba(255, 251, 245, 0.94));
+  background: rgba(244, 239, 231, 0.96);
 }
 
 .form-grid textarea {
