@@ -39,6 +39,7 @@
   "groups.rssPrompt": "RSS 地址",
   "groups.syncDefault": "分组默认更新策略",
   "groups.syncNow": "同步",
+  "groups.viewArticles": "查看分组文章",
   "groups.syncTriggered": "已触发分组同步",
   "groups.syncTriggerFailed": "触发分组同步失败",
   "groups.syncModeInherit": "跟随全局（{mode}）",

@@ -1,4 +1,5 @@
 import { memo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useGroupsState } from '../../store/groups';
 import { useI18n } from '../../i18n';
 import { apiSend } from '../../api';
@@ -16,6 +17,7 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
   const { state, dispatch } = useGroupsState();
   const { t } = useI18n();
   const { showToast } = useToast();
+  const navigate = useNavigate();
   const [syncMode, setSyncMode] = useState(account.sync_mode || '');
   const [syncDays, setSyncDays] = useState(String(account.sync_recent_days ?? syncDefaults.recent_days));
 
@@ -77,6 +79,13 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
     : t('accounts.lastUpdatedEmpty', 'No updates yet');
   const articleCountText = t('accounts.articleCount', '{n} articles').replace('{n}', String(account.article_count));
 
+  const handleViewArticles = () => {
+    const params = new URLSearchParams();
+    if (account.group_id) params.set('group', String(account.group_id));
+    params.set('account', account.biz);
+    navigate(`/articles?${params.toString()}`);
+  };
+
   return (
     <div className={`card${account.is_disabled ? ' is-disabled' : ''}`}>
       <div className="card-header">
@@ -104,7 +113,20 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
       <div className="account-meta">
         <img className="account-avatar" src={account.avatar_url} alt="" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
         <div>
-          <div className="account-name">{account.nickname}</div>
+          <div
+            className="account-name"
+            role="button"
+            tabIndex={0}
+            onClick={handleViewArticles}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                handleViewArticles();
+              }
+            }}
+          >
+            {account.nickname}
+          </div>
           <div className="account-sub">{account.alias || account.biz}</div>
           <div className="account-sub account-stats">
             <span className="account-stat">{lastUpdatedText}</span>

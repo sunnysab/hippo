@@ -55,7 +55,11 @@ export function GroupHeader({
   };
 
   const handleNameClick = () => {
-    navigate('/articles');
+    navigate(`/articles?group=${group.id}`);
+  };
+
+  const handleViewArticles = () => {
+    navigate(`/articles?group=${group.id}`);
   };
 
   const handleIdClick = async () => {
@@ -116,6 +120,9 @@ export function GroupHeader({
         </button>
         <button className="btn ghost" id="btn-group-delete" type="button" onClick={handleDelete}>
           {t('groups.delete', 'Delete')}
+        </button>
+        <button className="btn ghost" id="btn-group-articles" type="button" onClick={handleViewArticles}>
+          {t('groups.viewArticles', 'View group articles')}
         </button>
       </div>
     </div>
