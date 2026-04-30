@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_SHELL = ROOT / 'frontend' / 'src' / 'components' / 'AppShell.tsx'
+TOP_BAR = ROOT / 'frontend' / 'src' / 'components' / 'TopBar.tsx'
 ARTICLES_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'articles' / 'ArticlesPage.tsx'
 ARTICLE_FILTERS = ROOT / 'frontend' / 'src' / 'pages' / 'articles' / 'ArticleFilters.tsx'
 BATCH_ACTIONS = ROOT / 'frontend' / 'src' / 'pages' / 'groups' / 'BatchActions.tsx'
@@ -49,6 +50,14 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertIn('articles.copied', translations)
         self.assertIn('reader.serif', translations)
         self.assertNotIn("t('articles.copied', '已复制全文')", articles_page)
+
+    def test_topbar_uses_navigation_links_instead_of_tablist_role(self) -> None:
+        source = TOP_BAR.read_text(encoding='utf-8')
+
+        self.assertIn('NavLink', source)
+        self.assertNotIn('role="tablist"', source)
+        self.assertNotIn('useNavigate', source)
+        self.assertNotIn('onClick={() => navigate(tab.path)}', source)
 
 
 if __name__ == '__main__':

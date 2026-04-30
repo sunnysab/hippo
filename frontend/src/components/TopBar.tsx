@@ -1,5 +1,5 @@
 import type { RefObject } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
 import { useI18n } from '../i18n';
 
 interface TopBarProps {
@@ -11,7 +11,6 @@ interface TopBarProps {
 }
 
 export function TopBar({ topbarRef, currentTab, lastLoginAt, lastSyncAt, onRefresh }: TopBarProps) {
-  const navigate = useNavigate();
   const { t } = useI18n();
 
   const tabs = [
@@ -31,16 +30,16 @@ export function TopBar({ topbarRef, currentTab, lastLoginAt, lastSyncAt, onRefre
           </div>
         </div>
       </div>
-      <nav className="tabs" role="tablist">
+      <nav className="tabs" aria-label={t('settings.navAria', 'Primary navigation')}>
         {tabs.map((tab) => (
-          <button
+          <NavLink
             key={tab.key}
             className={`tab${currentTab === tab.key ? ' is-active' : ''}`}
             data-tab={tab.key}
-            onClick={() => navigate(tab.path)}
+            to={tab.path}
           >
             {tab.label}
-          </button>
+          </NavLink>
         ))}
       </nav>
       <div className="top-actions">
