@@ -52,7 +52,7 @@ export function ArticlePreview({ previewRef }: ArticlePreviewProps) {
   };
 
   return (
-    <div className="article-preview-body" id="article-preview" ref={previewRef}>
+    <div className={`article-preview-body${payload ? '' : ' is-empty'}`} id="article-preview" ref={previewRef}>
       {!payload ? (
         <div className="reader">
           <EmptyState message={t('articles.empty', 'Select an article to preview.')} />
