@@ -1,3 +1,4 @@
+import { memo, useEffect, useState } from 'react';
 import { useGroupsState } from '../../store/groups';
 import { useI18n } from '../../i18n';
 import { apiSend } from '../../api';
@@ -10,10 +11,12 @@ interface AccountCardProps {
   account: Account;
 }
 
-export function AccountCard({ account }: AccountCardProps) {
+export const AccountCard = memo(function AccountCard({ account }: AccountCardProps) {
   const { state, dispatch } = useGroupsState();
   const { t } = useI18n();
   const { showToast } = useToast();
+  const [syncMode, setSyncMode] = useState(account.sync_mode || '');
+  const [syncDays, setSyncDays] = useState(String(account.sync_recent_days ?? syncDefaults.recent_days));
 
   const activeGroup = state.groups.find((g) => g.id === state.selectedGroupId);
   const groupMode = activeGroup?.sync_mode || '';
@@ -30,7 +33,11 @@ export function AccountCard({ account }: AccountCardProps) {
 
   const groupRecentDays = activeGroup?.sync_recent_days;
   const baseRecentDays = groupRecentDays ?? syncDefaults.recent_days;
-  const storedMode = account.sync_mode || '';
+
+  useEffect(() => {
+    setSyncMode(account.sync_mode || '');
+    setSyncDays(String(account.sync_recent_days ?? baseRecentDays));
+  }, [account.sync_mode, account.sync_recent_days, baseRecentDays]);
 
   const handleCheck = (e: React.ChangeEvent<HTMLInputElement>) => {
     dispatch({ type: 'TOGGLE_SELECTED', biz: account.biz });
@@ -51,19 +58,26 @@ export function AccountCard({ account }: AccountCardProps) {
     }
   };
 
-  const handleModeChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const nextMode = e.target.value;
-    const daysInput = e.currentTarget.parentElement?.nextElementSibling?.querySelector('.account-sync-days') as HTMLInputElement | null;
-    if (daysInput) {
-      daysInput.disabled = nextMode !== 'recent';
-    }
+  const saveSyncSettings = async (nextMode: string, nextDays: string) => {
     const body: Record<string, unknown> = { sync_mode: nextMode || null };
     if (nextMode === 'recent') {
-      const days = parseInt(daysInput?.value || String(baseRecentDays), 10);
+      const days = parseInt(nextDays || String(baseRecentDays), 10);
       body.sync_recent_days = Number.isFinite(days) && days > 0 ? days : baseRecentDays;
     }
     try {
       await apiSend(`/api/account/${account.biz}`, 'PATCH', body);
+      dispatch({
+        type: 'UPDATE_ACCOUNT',
+        biz: account.biz,
+        patch: {
+          sync_mode: nextMode || null,
+          sync_recent_days: nextMode === 'recent'
+            ? (Number.isFinite(parseInt(nextDays || String(baseRecentDays), 10)) && parseInt(nextDays || String(baseRecentDays), 10) > 0
+              ? parseInt(nextDays || String(baseRecentDays), 10)
+              : baseRecentDays)
+            : null,
+        },
+      });
       showToast(t('accounts.syncSaved', 'Sync strategy updated.'));
     } catch {
       showToast(t('accounts.syncFailed', 'Failed to update sync strategy.'));
@@ -120,8 +134,12 @@ export function AccountCard({ account }: AccountCardProps) {
           <select
             className="account-sync-mode"
             data-biz={account.biz}
-            value={storedMode}
-            onChange={handleModeChange}
+            value={syncMode}
+            onChange={(event) => {
+              const nextMode = event.target.value;
+              setSyncMode(nextMode);
+              void saveSyncSettings(nextMode, syncDays);
+            }}
           >
             <option value="">{inheritLabel}</option>
             <option value="incremental">{t('sync.modeIncremental', 'Incremental')}</option>
@@ -135,11 +153,13 @@ export function AccountCard({ account }: AccountCardProps) {
             className="account-sync-days"
             type="number"
             min="1"
-            defaultValue={account.sync_recent_days ?? baseRecentDays}
-            disabled={storedMode !== 'recent'}
+            value={syncDays}
+            disabled={syncMode !== 'recent'}
+            onChange={(event) => setSyncDays(event.target.value)}
+            onBlur={() => { void saveSyncSettings(syncMode, syncDays); }}
           />
         </div>
       </div>
     </div>
   );
-}
+});

@@ -26,6 +26,7 @@ interface GroupsState {
 
 type GroupsAction =
   | { type: 'SET_GROUPS'; payload: Group[]; defaultGroupId: number | null }
+  | { type: 'UPDATE_GROUP'; groupId: number; patch: Partial<Group> }
   | { type: 'SELECT_GROUP'; groupId: number | null }
   | { type: 'SET_ACCOUNTS'; accounts: Account[] }
   | { type: 'UPDATE_ACCOUNT'; biz: string; patch: Partial<Account> }
@@ -52,6 +53,13 @@ function reducer(state: GroupsState, action: GroupsAction): GroupsState {
   switch (action.type) {
     case 'SET_GROUPS':
       return { ...state, groups: action.payload, defaultGroupId: action.defaultGroupId };
+    case 'UPDATE_GROUP':
+      return {
+        ...state,
+        groups: state.groups.map((group) => (
+          group.id === action.groupId ? { ...group, ...action.patch } : group
+        )),
+      };
     case 'SELECT_GROUP':
       return { ...state, selectedGroupId: action.groupId };
     case 'SET_ACCOUNTS':

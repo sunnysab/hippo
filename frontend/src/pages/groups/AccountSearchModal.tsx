@@ -4,24 +4,28 @@ import { useI18n } from '../../i18n';
 import { apiGet, apiSend } from '../../api';
 import { LoadingIndicator } from '../../components/LoadingIndicator';
 
-export function AccountSearchModal() {
+interface AccountSearchModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export function AccountSearchModal({ isOpen, onClose }: AccountSearchModalProps) {
   const { state, dispatch } = useGroupsState();
   const { t } = useI18n();
-  const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const search = useCallback(
-    async (append = false) => {
+    async (nextQuery: string, append = false) => {
       if (state.searchLoading) return;
-      if (!query || query.length < 2) {
+      if (!nextQuery || nextQuery.length < 2) {
         dispatch({ type: 'SET_SEARCH_RESULTS', results: [], append: false });
         return;
       }
       dispatch({ type: 'SET_SEARCH_LOADING', loading: true });
       try {
         const url = new URL('/api/account/search', window.location.origin);
-        url.searchParams.set('q', query);
+        url.searchParams.set('q', nextQuery);
         url.searchParams.set('page', String(state.searchPage));
         url.searchParams.set('page_size', '10');
         const payload = await apiGet(url.pathname + url.search);
@@ -41,16 +45,19 @@ export function AccountSearchModal() {
         dispatch({ type: 'SET_SEARCH_LOADING', loading: false });
       }
     },
-    [query, state.searchPage, state.searchLoading, dispatch],
+    [state.searchPage, state.searchLoading, dispatch],
   );
 
-  const handleOpen = () => setIsOpen(true);
-  const handleClose = () => {
-    setIsOpen(false);
+  const handleClose = useCallback(() => {
     setQuery('');
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
     dispatch({ type: 'SET_SEARCH_RESULTS', results: [], append: false });
     dispatch({ type: 'SET_SEARCH_PAGE', page: 1, hasMore: true });
-  };
+    onClose();
+  }, [dispatch, onClose]);
 
   const handleAdd = async (biz: string, nickname: string, alias: string | null, round_head_img: string | null) => {
     await apiSend('/api/account', 'POST', {
@@ -68,18 +75,8 @@ export function AccountSearchModal() {
       ),
       append: false,
     });
+    window.dispatchEvent(new CustomEvent('hippo:refresh'));
   };
-
-  // Watch for the add button click
-  useEffect(() => {
-    const btn = document.getElementById('btn-account-add');
-    if (btn) {
-      btn.addEventListener('click', handleOpen);
-    }
-    return () => {
-      if (btn) btn.removeEventListener('click', handleOpen);
-    };
-  }, [isOpen]);
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
@@ -90,11 +87,12 @@ export function AccountSearchModal() {
   }, [isOpen]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setQuery(e.target.value);
+    const nextQuery = e.target.value;
+    setQuery(nextQuery);
     if (timerRef.current) clearTimeout(timerRef.current);
     dispatch({ type: 'SET_SEARCH_PAGE', page: 1, hasMore: true });
     timerRef.current = setTimeout(() => {
-      void search(false);
+      void search(nextQuery, false);
     }, 300);
   };
 

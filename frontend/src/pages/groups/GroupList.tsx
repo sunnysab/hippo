@@ -10,7 +10,6 @@ interface GroupListProps {
 
 export function GroupList({ onSync }: GroupListProps) {
   const { state, dispatch } = useGroupsState();
-  const { loadAccounts } = useGroupsActions();
   const { t } = useI18n();
   const [contextGroup, setContextGroup] = useState<Group | null>(null);
   const [contextPos, setContextPos] = useState({ x: 0, y: 0 });
