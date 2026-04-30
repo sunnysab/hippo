@@ -46,7 +46,7 @@
   margin-bottom: 10px;
   padding: 14px;
   border-radius: 16px;
-  background: rgba(240, 235, 226, 0.9);
+  background: var(--surface-panel-strong);
 }
 
 .article-filter-stack {
@@ -96,7 +96,7 @@
   min-height: 24px;
   padding: 0 8px;
   border-radius: 999px;
-  background: rgba(236, 231, 221, 0.92);
+  background: var(--surface-chip);
   color: var(--muted);
   font-size: 11px;
 }
@@ -124,23 +124,23 @@
   appearance: none;
   padding: 3px 9px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.66);
+  background: var(--surface-item);
   color: var(--text);
   cursor: pointer;
-  transition: background 0.18s ease-out, box-shadow 0.18s ease-out, transform 0.18s ease-out;
+  transition: background 0.18s ease-out, transform 0.18s ease-out;
 }
 
 .article-type-facet:hover {
   transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--surface-item-hover);
 }
 
 .article-type-facet.is-active {
-  background: rgba(225, 236, 230, 0.95);
+  background: var(--surface-item-active);
 }
 
 .article-type-facet-toggle {
-  background: rgba(236, 231, 221, 0.92);
+  background: var(--surface-chip);
   color: var(--muted);
   font-weight: 700;
 }
@@ -181,7 +181,7 @@
   gap: 12px;
   padding: 11px;
   border-radius: 16px;
-  background: rgba(249, 246, 240, 0.84);
+  background: var(--surface-item);
   cursor: pointer;
   transition: background 0.18s ease-out, transform 0.18s ease-out;
 }
@@ -198,7 +198,7 @@
 .article-card:hover,
 .article-card.is-active {
   transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--surface-item-hover);
 }
 
 .article-card.is-active::before {
@@ -210,12 +210,12 @@
   height: 84px;
   border-radius: 10px;
   object-fit: cover;
-  background: var(--surface-muted);
+  background: var(--surface-chip);
 }
 
 .article-thumb.placeholder {
   display: block;
-  background: rgba(236, 231, 221, 0.95);
+  background: var(--surface-chip);
 }
 
 .article-info {
@@ -252,7 +252,7 @@
   height: 18px;
   border-radius: 5px;
   object-fit: cover;
-  background: var(--surface-muted);
+  background: var(--surface-chip);
 }
 
 .article-digest {
@@ -351,7 +351,7 @@
   gap: 10px;
   padding: 14px;
   border-radius: 16px;
-  background: rgba(252, 249, 243, 0.97);
+  background: var(--surface-panel);
   box-shadow: 0 8px 24px rgba(31, 29, 25, 0.1);
 }
 
@@ -376,7 +376,7 @@
   overflow-x: hidden;
   padding: 18px;
   border-radius: 16px;
-  background: rgba(246, 241, 232, 0.76);
+  background: var(--surface-panel-strong);
 }
 
 .article-header {
@@ -427,7 +427,7 @@
   flex: 0 0 40px;
   border-radius: 12px;
   object-fit: cover;
-  background: rgba(225, 236, 230, 0.94);
+  background: var(--surface-item-active);
 }
 
 .article-preview-avatar.placeholder {
@@ -464,7 +464,7 @@
   min-height: 26px;
   padding: 2px 8px;
   border-radius: 999px;
-  background: rgba(236, 231, 221, 0.9);
+  background: var(--surface-chip);
 }
 
 .article-preview-label {

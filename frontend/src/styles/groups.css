@@ -30,8 +30,8 @@
   position: relative;
   padding: 10px 12px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.22);
-  transition: background 0.18s ease-out, box-shadow 0.18s ease-out, transform 0.18s ease-out;
+  background: transparent;
+  transition: background 0.18s ease-out, transform 0.18s ease-out;
 }
 
 .group-list-item::before {
@@ -45,11 +45,11 @@
 
 .group-list-item:hover {
   transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.78);
+  background: var(--surface-item);
 }
 
 .group-list-item.is-active {
-  background: rgba(225, 236, 230, 0.96);
+  background: var(--surface-item-active);
 }
 
 .group-list-item.is-active::before {
@@ -64,7 +64,7 @@
 
 .group-list-item .group-sync-btn {
   border: none;
-  background: rgba(244, 239, 231, 0.94);
+  background: var(--surface-panel-strong);
   border-radius: 8px;
   width: 28px;
   height: 28px;
@@ -74,7 +74,7 @@
   color: var(--text);
   cursor: pointer;
   opacity: 0.72;
-  transition: opacity 0.18s ease-out, background 0.18s ease-out, box-shadow 0.18s ease-out, transform 0.18s ease-out;
+  transition: opacity 0.18s ease-out, background 0.18s ease-out, transform 0.18s ease-out;
 }
 
 .group-list-item:hover .group-sync-btn,
@@ -84,7 +84,7 @@
 
 .group-list-item .group-sync-btn:hover {
   transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--surface-item-hover);
 }
 
 .group-list-item .group-sync-btn svg {
@@ -127,7 +127,7 @@
   min-height: 24px;
   padding: 0 8px;
   border-radius: 999px;
-  background: rgba(236, 231, 221, 0.92);
+  background: var(--surface-chip);
   color: var(--muted);
   font-size: 10px;
   max-width: 200px;
@@ -150,7 +150,7 @@
   margin: 0 0 10px;
   padding: 12px 14px;
   border-radius: 16px;
-  background: rgba(240, 235, 226, 0.9);
+  background: var(--surface-panel-strong);
 }
 
 .group-sync-toolbar .muted {
@@ -171,7 +171,7 @@
   margin-bottom: 12px;
   padding: 12px 14px;
   border-radius: 16px;
-  background: rgba(242, 237, 229, 0.88);
+  background: var(--surface-panel-strong);
   backdrop-filter: blur(14px) saturate(1.08);
   box-shadow: none;
 }
@@ -210,13 +210,13 @@
   align-items: center;
   padding: 10px 12px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.64);
+  background: var(--surface-item);
   transition: background 0.18s ease-out, transform 0.18s ease-out;
 }
 
 .search-item:hover {
   transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--surface-item-hover);
 }
 
 .search-meta {
@@ -241,7 +241,7 @@
   min-height: 26px;
   padding: 0 9px;
   border-radius: 999px;
-  background: rgba(233, 228, 217, 0.84);
+  background: var(--surface-chip);
   color: var(--muted);
   font-size: 11px;
 }
@@ -251,7 +251,7 @@
   min-width: 132px;
   padding: 6px;
   border-radius: 10px;
-  background: rgba(252, 249, 243, 0.98);
+  background: var(--surface-panel);
   box-shadow: var(--shadow-float);
   z-index: 100;
 }
@@ -288,13 +288,13 @@
   gap: 10px;
   padding: 14px;
   border-radius: 16px;
-  background: rgba(252, 249, 243, 0.92);
+  background: var(--surface-item);
   transition: background 0.18s ease-out, transform 0.18s ease-out, opacity 0.18s ease-out;
 }
 
 .card:hover {
   transform: translateY(-1px);
-  background: rgba(255, 252, 247, 0.97);
+  background: var(--surface-item-hover);
 }
 
 .card.is-disabled {
@@ -325,7 +325,7 @@
   height: 40px;
   border-radius: 10px;
   object-fit: cover;
-  background: rgba(225, 236, 230, 0.96);
+  background: var(--surface-item-active);
   flex: none;
 }
 
@@ -366,7 +366,7 @@
 
 .account-toggle {
   border: none;
-  background: rgba(244, 239, 231, 0.92);
+  background: var(--surface-panel-strong);
   border-radius: 8px;
   width: 28px;
   height: 28px;
@@ -376,7 +376,7 @@
   color: var(--text);
   cursor: pointer;
   opacity: 0.72;
-  transition: opacity 0.18s ease-out, background 0.18s ease-out, box-shadow 0.18s ease-out, transform 0.18s ease-out;
+  transition: opacity 0.18s ease-out, background 0.18s ease-out, transform 0.18s ease-out;
 }
 
 .card:hover .account-toggle,
@@ -386,7 +386,7 @@
 
 .account-toggle:hover {
   transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--surface-item-hover);
 }
 
 .account-toggle svg {
@@ -400,7 +400,7 @@
   margin-top: 4px;
   padding: 10px 12px;
   border-radius: 12px;
-  background: rgba(240, 235, 226, 0.7);
+  background: var(--surface-panel-strong);
 }
 
 .account-sync-row {
@@ -449,7 +449,7 @@
   gap: 12px;
   padding: 18px;
   border-radius: 18px;
-  background: rgba(252, 249, 243, 0.98);
+  background: var(--surface-panel);
   box-shadow: 0 10px 28px rgba(31, 29, 25, 0.12);
 }
 
