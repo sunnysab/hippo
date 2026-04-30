@@ -1,11 +1,8 @@
-#view-settings {
-  height: calc(100vh - 154px);
-  overflow-y: auto;
-}
-
 .sync-page-shell {
+  flex: 1;
   width: min(100%, 1380px);
   margin: 0 auto;
+  min-height: 0;
   padding-bottom: 18px;
 }
 
@@ -311,10 +308,6 @@
 }
 
 @media (max-width: 1100px) {
-  #view-settings {
-    height: auto;
-  }
-
   .panel-grid {
     grid-template-columns: 1fr;
   }

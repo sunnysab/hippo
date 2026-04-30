@@ -1,4 +1,4 @@
-import { type ReactNode, useState, useEffect, useCallback } from 'react';
+import { type ReactNode, useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { TopBar } from './TopBar';
 import { apiGet } from '../api';
@@ -11,6 +11,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const { t } = useI18n();
   const { showToast } = useToast();
+  const appRef = useRef<HTMLDivElement>(null);
+  const topbarRef = useRef<HTMLElement>(null);
   const [lastLoginAt, setLastLoginAt] = useState('');
   const [lastSyncAt, setLastSyncAt] = useState('');
   const [bannerVisible, setBannerVisible] = useState(false);
@@ -63,6 +65,26 @@ export function AppShell({ children }: { children: ReactNode }) {
     };
   }, [refreshChromeMeta]);
 
+  useEffect(() => {
+    const app = appRef.current;
+    const topbar = topbarRef.current;
+    if (!app || !topbar) return;
+
+    const updateTopbarHeight = () => {
+      app.style.setProperty('--app-topbar-height', `${Math.ceil(topbar.getBoundingClientRect().height)}px`);
+    };
+
+    updateTopbarHeight();
+    const observer = new ResizeObserver(updateTopbarHeight);
+    observer.observe(topbar);
+    window.addEventListener('resize', updateTopbarHeight);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateTopbarHeight);
+    };
+  }, []);
+
   const handleRefresh = async () => {
     await refreshChromeMeta();
     window.dispatchEvent(new CustomEvent('hippo:refresh'));
@@ -83,8 +105,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [showToast]);
 
   return (
-    <div className="app">
+    <div className="app" ref={appRef}>
       <TopBar
+        topbarRef={topbarRef}
         currentTab={currentTab}
         lastLoginAt={lastLoginAt}
         lastSyncAt={lastSyncAt}

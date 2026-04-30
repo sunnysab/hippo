@@ -1,14 +1,16 @@
+import type { RefObject } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useI18n } from '../i18n';
 
 interface TopBarProps {
+  topbarRef: RefObject<HTMLElement | null>;
   currentTab: string;
   lastLoginAt: string;
   lastSyncAt: string;
   onRefresh: () => void;
 }
 
-export function TopBar({ currentTab, lastLoginAt, lastSyncAt, onRefresh }: TopBarProps) {
+export function TopBar({ topbarRef, currentTab, lastLoginAt, lastSyncAt, onRefresh }: TopBarProps) {
   const navigate = useNavigate();
   const { t } = useI18n();
 
@@ -19,7 +21,7 @@ export function TopBar({ currentTab, lastLoginAt, lastSyncAt, onRefresh }: TopBa
   ];
 
   return (
-    <header className="topbar">
+    <header className="topbar" ref={topbarRef}>
       <div className="brand">
         <span className="brand-mark">H</span>
         <div className="brand-text">

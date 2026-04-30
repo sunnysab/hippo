@@ -1,8 +1,9 @@
 .groups-layout {
   display: grid;
   grid-template-columns: minmax(300px, 0.34fr) minmax(0, 1fr);
+  flex: 1;
   gap: 12px;
-  height: calc(100vh - 154px);
+  min-height: 0;
   align-items: stretch;
   overflow: hidden;
 }
