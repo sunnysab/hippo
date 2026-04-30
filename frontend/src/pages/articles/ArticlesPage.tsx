@@ -447,8 +447,8 @@ export function ArticlesPage() {
         <div className="panel article-preview">
           <div className="panel-header article-preview-topbar">
             <div>
-              <h2>{t('articles.previewTitle', 'Reading Preview')}</h2>
-              <p className="muted">{t('articles.previewSubtitle', 'Inspect metadata and tune typography for long-form reading.')}</p>
+              <h2>{t('articles.previewTitle', 'Article Preview')}</h2>
+              <p className="muted">{t('articles.previewSubtitle', 'Review article details and adjust the reading layout.')}</p>
             </div>
             <div className="toolbar article-preview-toolbar">
               <button

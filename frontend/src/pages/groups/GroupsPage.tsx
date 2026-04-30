@@ -58,7 +58,7 @@ export function GroupsPage() {
           <div className="panel-header groups-sidebar-header">
             <div>
               <h2>{t('groups.title', 'Groups')}</h2>
-              <p className="muted">{t('groups.subtitle', 'Organize accounts into focused collections.')}</p>
+              <p className="muted">{t('groups.subtitle', 'Manage accounts by group.')}</p>
             </div>
             <button
               className="btn"
