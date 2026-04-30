@@ -66,7 +66,7 @@
 }
 
 .article-filter-grid-bottom {
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
 }
 
@@ -76,7 +76,8 @@
 
 .article-filter-summary {
   display: flex;
-  justify-content: flex-end;
+  width: 100%;
+  justify-content: flex-start;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
