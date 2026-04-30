@@ -1,5 +1,4 @@
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from 'react';
-import type { Group } from './shared';
 
 export interface Article {
   id: number;

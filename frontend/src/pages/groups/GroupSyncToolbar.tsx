@@ -1,28 +1,24 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useGroupsState } from '../../store/groups';
 import { useI18n } from '../../i18n';
 import { apiSend } from '../../api';
 import { useToast } from '../../hooks/useToast';
 import { syncDefaults } from '../../store/shared';
 import { getSyncModeLabel } from '../../utils/sync';
+import type { Group } from '../../store/shared';
 
-export function GroupSyncToolbar() {
-  const { state, dispatch } = useGroupsState();
+interface GroupSyncToolbarFieldsProps {
+  group: Group;
+}
+
+function GroupSyncToolbarFields({ group }: GroupSyncToolbarFieldsProps) {
+  const { dispatch } = useGroupsState();
   const { t } = useI18n();
   const { showToast } = useToast();
-  const [mode, setMode] = useState('');
-  const [days, setDays] = useState(String(syncDefaults.recent_days));
-
-  const group = state.groups.find((g) => g.id === state.selectedGroupId);
+  const [mode, setMode] = useState(group.sync_mode || '');
+  const [days, setDays] = useState(String(group.sync_recent_days ?? syncDefaults.recent_days));
 
   const defaultMode = syncDefaults.mode;
-  useEffect(() => {
-    if (!group) return;
-    setMode(group.sync_mode || '');
-    setDays(String(group.sync_recent_days ?? syncDefaults.recent_days));
-  }, [group]);
-
-  if (!group) return null;
 
   const handleSave = async (nextMode: string, nextDays: string) => {
     const parsedDays = parseInt(nextDays || String(syncDefaults.recent_days), 10);
@@ -80,4 +76,14 @@ export function GroupSyncToolbar() {
       />
     </div>
   );
+}
+
+export function GroupSyncToolbar() {
+  const { state } = useGroupsState();
+  const group = state.groups.find((item) => item.id === state.selectedGroupId);
+
+  if (!group) return null;
+
+  const toolbarKey = `${group.id}:${group.sync_mode || ''}:${group.sync_recent_days ?? ''}`;
+  return <GroupSyncToolbarFields key={toolbarKey} group={group} />;
 }

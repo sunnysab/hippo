@@ -31,12 +31,14 @@ export function ArticlesPage() {
   const [accountOptions, setAccountOptions] = useState<ArticleSelectOption[]>([]);
   const [listCollapsed, setListCollapsed] = useState(false);
   const [readerControlsOpen, setReaderControlsOpen] = useState(false);
+  const deferredSearch = useDeferredValue(filters.search.trim());
   const previewRef = useRef<HTMLDivElement>(null);
   const isArticleLoadingRef = useRef(state.isArticleLoading);
   const articlePageRef = useRef(state.articlePage);
   const articlePageSizeRef = useRef(state.articlePageSize);
   const articlesRef = useRef(state.articles);
-  const deferredSearch = useDeferredValue(filters.search.trim());
+  const filtersRef = useRef(filters);
+  const deferredSearchRef = useRef(deferredSearch);
 
   const isNarrowViewport = () => window.matchMedia('(max-width: 720px)').matches;
 
@@ -45,7 +47,9 @@ export function ArticlesPage() {
     articlePageRef.current = state.articlePage;
     articlePageSizeRef.current = state.articlePageSize;
     articlesRef.current = state.articles;
-  }, [state.articlePage, state.articlePageSize, state.articles, state.isArticleLoading]);
+    filtersRef.current = filters;
+    deferredSearchRef.current = deferredSearch;
+  }, [deferredSearch, filters, state.articlePage, state.articlePageSize, state.articles, state.isArticleLoading]);
 
   const loadArticles = useCallback(async (nextFilters: ArticleFiltersState, reset = true) => {
     if (isArticleLoadingRef.current) return;
@@ -100,7 +104,17 @@ export function ArticlesPage() {
   }, [setSearchParams]);
 
   const updateFilters = useCallback((patch: Partial<ArticleFiltersState>) => {
-    setFilters((prev) => ({ ...prev, ...patch }));
+    if (patch.groupId !== undefined) {
+      setAccountOptions([]);
+    }
+    setFilters((prev) => {
+      const groupChanged = patch.groupId !== undefined && patch.groupId !== prev.groupId;
+      return {
+        ...prev,
+        ...patch,
+        ...(groupChanged ? { accountBiz: '' } : null),
+      };
+    });
   }, []);
 
   const loadGroupOptions = useCallback(async () => {
@@ -111,6 +125,11 @@ export function ArticlesPage() {
       label: group.name,
     }));
     setGroupOptions(options);
+    setAccountOptions((prev) => {
+      if (!filtersRef.current.groupId) return [];
+      const exists = options.some((group) => group.value === filtersRef.current.groupId);
+      return exists ? prev : [];
+    });
     setFilters((prev) => {
       if (!prev.groupId) return prev;
       const exists = options.some((group) => group.value === prev.groupId);
@@ -119,10 +138,7 @@ export function ArticlesPage() {
   }, []);
 
   const loadAccountOptions = useCallback(async (groupId: string) => {
-    if (!groupId) {
-      setAccountOptions([]);
-      return;
-    }
+    if (!groupId) return;
 
     const payload = await apiGet(`/api/account?group_id=${groupId}&page_size=200`);
     const accounts = (payload.accounts || []) as Array<{ biz: string; nickname: string }>;
@@ -160,15 +176,18 @@ export function ArticlesPage() {
   }, [dispatch]);
 
   useEffect(() => {
-    void loadGroupOptions();
+    const timer = window.setTimeout(() => {
+      void loadGroupOptions();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [loadGroupOptions]);
 
   useEffect(() => {
-    if (!filters.groupId) {
-      setAccountOptions([]);
-      return;
-    }
-    void loadAccountOptions(filters.groupId);
+    if (!filters.groupId) return;
+    const timer = window.setTimeout(() => {
+      void loadAccountOptions(filters.groupId);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [filters.groupId, loadAccountOptions]);
 
   useEffect(() => {
@@ -176,7 +195,17 @@ export function ArticlesPage() {
   }, [filters, syncUrlParams]);
 
   useEffect(() => {
-    void loadArticles({ ...filters, search: deferredSearch }, true);
+    const nextFilters: ArticleFiltersState = {
+      groupId: filters.groupId,
+      accountBiz: filters.accountBiz,
+      itemShowType: filters.itemShowType,
+      search: deferredSearch,
+      sort: filters.sort,
+    };
+    const timer = window.setTimeout(() => {
+      void loadArticles(nextFilters, true);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [
     deferredSearch,
     filters.accountBiz,
@@ -188,15 +217,17 @@ export function ArticlesPage() {
 
   useEffect(() => {
     const handler = () => {
+      const nextFilters = filtersRef.current;
+      const nextSearch = deferredSearchRef.current;
       void loadGroupOptions();
-      if (filters.groupId) {
-        void loadAccountOptions(filters.groupId);
+      if (nextFilters.groupId) {
+        void loadAccountOptions(nextFilters.groupId);
       }
-      void loadArticles({ ...filters, search: deferredSearch }, true);
+      void loadArticles({ ...nextFilters, search: nextSearch }, true);
     };
     window.addEventListener('hippo:refresh', handler);
     return () => window.removeEventListener('hippo:refresh', handler);
-  }, [deferredSearch, filters, loadAccountOptions, loadArticles, loadGroupOptions]);
+  }, [loadAccountOptions, loadArticles, loadGroupOptions]);
 
   const getSelectedArticleLink = () => {
     const article = state.currentArticlePayload?.article ||

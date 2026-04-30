@@ -1,6 +1,5 @@
 import { createContext, useContext, useReducer, useCallback, type ReactNode, type Dispatch } from 'react';
 import type { Group, Account } from './shared';
-import { syncDefaults } from './shared';
 import { apiGet } from '../api';
 
 interface SearchResult {
@@ -141,7 +140,7 @@ export function useGroupsActions() {
       dispatch({ type: 'SELECT_GROUP', groupId: nextGroup });
     }
     return { groups, defaultGroupId: defaultId, nextGroup };
-  }, [state.selectedGroupId]);
+  }, [dispatch, state.selectedGroupId]);
 
   const loadAccounts = useCallback(async () => {
     const groupId = state.selectedGroupId;
@@ -151,7 +150,7 @@ export function useGroupsActions() {
     const payload = await apiGet(url.pathname + url.search);
     const accounts = (payload.accounts || []) as Account[];
     dispatch({ type: 'SET_ACCOUNTS', accounts });
-  }, [state.selectedGroupId]);
+  }, [dispatch, state.selectedGroupId]);
 
   return { loadGroups, loadAccounts };
 }

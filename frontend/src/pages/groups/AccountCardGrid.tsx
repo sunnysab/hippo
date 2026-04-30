@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect } from 'react';
 import { useGroupsState, useGroupsActions } from '../../store/groups';
 import { AccountCard } from './AccountCard';
 import { useI18n } from '../../i18n';
@@ -46,7 +46,15 @@ export function AccountCardGrid({ query }: AccountCardGridProps) {
   return (
     <div className="card-grid" id="account-list">
       {accounts.map((account) => (
-        <AccountCard key={account.biz} account={account} />
+        <AccountCard
+          key={[
+            account.biz,
+            account.sync_mode || '',
+            account.sync_recent_days ?? '',
+            state.selectedGroupId ?? '',
+          ].join(':')}
+          account={account}
+        />
       ))}
     </div>
   );

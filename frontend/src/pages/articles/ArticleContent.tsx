@@ -98,9 +98,13 @@ const ContentBlock = memo(function ContentBlock({
 
   if (block.type === 'heading') {
     const level = Math.min(Math.max(Number(block.level) || 2, 2), 4);
-    const Tag = `h${level}` as const;
-    // @ts-ignore
-    return <Tag dangerouslySetInnerHTML={{ __html: renderInline(block.text || '') }} />;
+    if (level === 2) {
+      return <h2 dangerouslySetInnerHTML={{ __html: renderInline(block.text || '') }} />;
+    }
+    if (level === 3) {
+      return <h3 dangerouslySetInnerHTML={{ __html: renderInline(block.text || '') }} />;
+    }
+    return <h4 dangerouslySetInnerHTML={{ __html: renderInline(block.text || '') }} />;
   }
 
   if (block.type === 'image') {

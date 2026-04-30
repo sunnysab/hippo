@@ -6,7 +6,6 @@ import { GroupSyncToolbar } from './GroupSyncToolbar';
 import { AccountCardGrid } from './AccountCardGrid';
 import { BatchActions } from './BatchActions';
 import { AccountSearchModal } from './AccountSearchModal';
-import { GroupContextMenu } from './GroupContextMenu';
 import { useI18n } from '../../i18n';
 import { apiSend } from '../../api';
 import { useToast } from '../../hooks/useToast';
@@ -30,7 +29,7 @@ export function GroupsPage() {
   // Init on mount
   useEffect(() => {
     void refresh();
-  }, []);
+  }, [refresh]);
 
   // Re-render group selects when needed
   useEffect(() => {

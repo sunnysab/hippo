@@ -1,7 +1,6 @@
-import { useEffect, useCallback, useRef, useState } from 'react';
+import { useEffect, useCallback, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useSettingsState } from '../../store/settings';
-import { useI18n } from '../../i18n';
 import { apiGet, apiSend } from '../../api';
 import { LoginPanel } from './LoginPanel';
 import { SyncSettingsPanel } from './SyncSettingsPanel';
@@ -32,26 +31,39 @@ const buildSyncTasksFingerprint = (tasks: SyncTask[]): string => {
   })));
 };
 
+interface SettingsPanelsProps {
+  initialFormState: SyncSettingsFormState;
+}
+
+function SettingsPanels({ initialFormState }: SettingsPanelsProps) {
+  const [formState, setFormState] = useState<SyncSettingsFormState>(initialFormState);
+
+  return (
+    <>
+      <LoginPanel />
+      <SyncSettingsPanel formState={formState} setFormState={setFormState as Dispatch<SetStateAction<SyncSettingsFormState>>} />
+      <EmailPanel formState={formState} setFormState={setFormState as Dispatch<SetStateAction<SyncSettingsFormState>>} />
+      <ActiveTaskPanel />
+      <SyncHistoryPanel />
+    </>
+  );
+}
+
 export function SettingsPage() {
   const location = useLocation();
   const isActive = location.pathname === '/settings';
   const { state, dispatch } = useSettingsState();
-  const { t } = useI18n();
   const lastSyncFingerprint = useRef('');
   const lastTasksFingerprint = useRef('');
-  const syncPollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loginPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [formState, setFormState] = useState<SyncSettingsFormState>(
-    () => buildSyncSettingsFormState(state.syncSettings),
-  );
 
-  const hasActiveTask = () => {
+  const hasActiveTask = useCallback(() => {
     const tasks = state.syncTasks || [];
     if (tasks.some((t) => t.status === 'running' || t.status === 'pending')) return true;
     return state.syncStatus?.status === 'running' || state.syncStatus?.status === 'pending';
-  };
+  }, [state.syncStatus?.status, state.syncTasks]);
 
-  const getSyncPollDelay = () => hasActiveTask() ? 1000 : 10000;
+  const getSyncPollDelay = useCallback(() => (hasActiveTask() ? 1000 : 10000), [hasActiveTask]);
 
   const loadSyncStatus = useCallback(async () => {
     try {
@@ -83,15 +95,7 @@ export function SettingsPage() {
     } catch { /* ignore */ }
   }, [dispatch]);
 
-  const loadLoginStatus = useCallback(async () => {
-    try {
-      const payload = await apiGet('/api/login');
-      dispatch({ type: 'SET_LOGIN_STATUS', payload: payload as unknown as LoginStatus });
-      scheduleLoginPoll((payload.status as string) || 'idle');
-    } catch { /* ignore */ }
-  }, [dispatch]);
-
-  const scheduleLoginPoll = (status: string) => {
+  const scheduleLoginPoll = useCallback((status: string) => {
     if (loginPollTimer.current) {
       clearInterval(loginPollTimer.current);
       loginPollTimer.current = null;
@@ -109,17 +113,15 @@ export function SettingsPage() {
         } catch { /* ignore */ }
       }, 2000);
     }
-  };
+  }, [dispatch]);
 
-  const scheduleSyncPoll = (delay: number) => {
-    if (syncPollTimer.current) clearTimeout(syncPollTimer.current);
-    syncPollTimer.current = setTimeout(async () => {
-      if (!isActive) return;
-      await loadSyncTasks();
-      await loadSyncStatus();
-      scheduleSyncPoll(getSyncPollDelay());
-    }, Math.max(delay, 500));
-  };
+  const loadLoginStatus = useCallback(async () => {
+    try {
+      const payload = await apiGet('/api/login');
+      dispatch({ type: 'SET_LOGIN_STATUS', payload: payload as unknown as LoginStatus });
+      scheduleLoginPoll((payload.status as string) || 'idle');
+    } catch { /* ignore */ }
+  }, [dispatch, scheduleLoginPoll]);
 
   // Init
   useEffect(() => {
@@ -127,25 +129,42 @@ export function SettingsPage() {
     void loadLoginStatus();
   }, [loadSyncSettings, loadLoginStatus]);
 
-  useEffect(() => {
-    setFormState(buildSyncSettingsFormState(state.syncSettings));
-  }, [state.syncSettings]);
-
   // Route enter/leave
   useEffect(() => {
+    let syncTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearSyncTimer = () => {
+      if (syncTimer) {
+        clearTimeout(syncTimer);
+        syncTimer = null;
+      }
+    };
+
+    const scheduleNextPoll = (delay: number) => {
+      clearSyncTimer();
+      syncTimer = setTimeout(() => {
+        void (async () => {
+          if (!isActive) return;
+          await loadSyncTasks();
+          await loadSyncStatus();
+          scheduleNextPoll(getSyncPollDelay());
+        })();
+      }, Math.max(delay, 500));
+    };
+
     if (isActive) {
       void loadSyncTasks();
       void loadSyncStatus();
-      scheduleSyncPoll(getSyncPollDelay());
+      scheduleNextPoll(getSyncPollDelay());
     } else {
-      if (syncPollTimer.current) clearTimeout(syncPollTimer.current);
       if (loginPollTimer.current) clearInterval(loginPollTimer.current);
     }
+
     return () => {
-      if (syncPollTimer.current) clearTimeout(syncPollTimer.current);
+      clearSyncTimer();
       if (loginPollTimer.current) clearInterval(loginPollTimer.current);
     };
-  }, [isActive]);
+  }, [getSyncPollDelay, isActive, loadSyncStatus, loadSyncTasks]);
 
   // Refresh handler
   useEffect(() => {
@@ -159,15 +178,20 @@ export function SettingsPage() {
     return () => window.removeEventListener('hippo:refresh', handler);
   }, [loadSyncTasks, loadSyncStatus, loadSyncSettings, loadLoginStatus]);
 
+  const initialFormState = useMemo(
+    () => buildSyncSettingsFormState(state.syncSettings),
+    [state.syncSettings],
+  );
+  const formResetKey = useMemo(
+    () => JSON.stringify(initialFormState),
+    [initialFormState],
+  );
+
   return (
     <section id="view-settings" className="view is-active">
       <div className="sync-page-shell">
         <div className="panel-grid">
-          <LoginPanel />
-          <SyncSettingsPanel formState={formState} setFormState={setFormState} />
-          <EmailPanel formState={formState} setFormState={setFormState} />
-          <ActiveTaskPanel />
-          <SyncHistoryPanel />
+          <SettingsPanels key={formResetKey} initialFormState={initialFormState} />
         </div>
       </div>
     </section>
