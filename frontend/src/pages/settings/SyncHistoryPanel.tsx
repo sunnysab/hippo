@@ -16,7 +16,6 @@ export function SyncHistoryPanel() {
       <div className="panel sync-history">
         <div className="panel-header">
           <div>
-            <div className="section-kicker">{t('sync.historyKicker', 'History')}</div>
             <h2>{t('sync.historyTitle', 'Sync History')}</h2>
             <p className="muted">{t('sync.historySubtitle', 'Recent runs and status.')}</p>
           </div>
@@ -32,7 +31,6 @@ export function SyncHistoryPanel() {
     <div className="panel sync-history">
       <div className="panel-header">
         <div>
-          <div className="section-kicker">{t('sync.historyKicker', 'History')}</div>
           <h2>{t('sync.historyTitle', 'Sync History')}</h2>
           <p className="muted">{t('sync.historySubtitle', 'Recent runs and status.')}</p>
         </div>

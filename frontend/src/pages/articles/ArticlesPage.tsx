@@ -241,7 +241,6 @@ export function ArticlesPage() {
         <div className="panel article-list">
           <div className="panel-header article-sidebar-header">
             <div>
-              <div className="section-kicker">{t('articles.libraryKicker', 'Library')}</div>
               <h2>{t('articles.title', 'Articles')}</h2>
               <p className="muted">{t('articles.librarySubtitle', 'Filter, scan, and open synced articles.')}</p>
             </div>
@@ -283,7 +282,6 @@ export function ArticlesPage() {
         <div className="panel article-preview">
           <div className="panel-header article-preview-topbar">
             <div>
-              <div className="section-kicker">{t('articles.previewKicker', 'Reader')}</div>
               <h2>{t('articles.previewTitle', 'Reading Preview')}</h2>
               <p className="muted">{t('articles.previewSubtitle', 'Inspect metadata and tune typography for long-form reading.')}</p>
             </div>

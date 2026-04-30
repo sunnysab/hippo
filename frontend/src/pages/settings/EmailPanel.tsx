@@ -60,7 +60,6 @@ export function EmailPanel({
     <div className="panel sync-email">
       <div className="panel-header">
         <div>
-          <div className="section-kicker">{t('email.settingsKicker', 'Alerts')}</div>
           <h2>{t('email.title', 'Email Settings')}</h2>
           <p className="muted">{t('email.subtitle', 'SMTP config for alert emails.')}</p>
         </div>

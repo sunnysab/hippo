@@ -27,7 +27,6 @@ export function ActiveTaskPanel() {
     <div className="panel sync-active">
       <div className="panel-header">
         <div>
-          <div className="section-kicker">{t('sync.activeKicker', 'Live Run')}</div>
           <h2>{t('sync.activeTitle', 'Active Task')}</h2>
           <p className="muted">{t('sync.activeSubtitle', 'Live progress for the current sync task.')}</p>
         </div>
