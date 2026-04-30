@@ -30,6 +30,8 @@
   position: relative;
   padding: 10px 12px;
   border-radius: 12px;
+  background: rgba(255, 255, 255, 0.22);
+  transition: background 0.18s ease-out, box-shadow 0.18s ease-out, transform 0.18s ease-out;
 }
 
 .group-list-item::before {
@@ -41,9 +43,15 @@
   background: transparent;
 }
 
+.group-list-item:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: var(--shadow-xs);
+}
+
 .group-list-item.is-active {
-  background: #fff;
-  border-color: var(--border-strong);
+  background: linear-gradient(135deg, rgba(225, 236, 230, 0.96), rgba(252, 249, 243, 0.92));
+  box-shadow: var(--shadow-xs);
 }
 
 .group-list-item.is-active::before {
@@ -57,8 +65,8 @@
 }
 
 .group-list-item .group-sync-btn {
-  border: 1px solid rgba(201, 193, 179, 0.72);
-  background: #fff;
+  border: none;
+  background: rgba(244, 239, 231, 0.94);
   border-radius: 8px;
   width: 28px;
   height: 28px;
@@ -68,7 +76,7 @@
   color: var(--text);
   cursor: pointer;
   opacity: 0.72;
-  transition: opacity 0.18s ease-out, border-color 0.18s ease-out, box-shadow 0.18s ease-out, transform 0.18s ease-out;
+  transition: opacity 0.18s ease-out, background 0.18s ease-out, box-shadow 0.18s ease-out, transform 0.18s ease-out;
 }
 
 .group-list-item:hover .group-sync-btn,
@@ -78,7 +86,8 @@
 
 .group-list-item .group-sync-btn:hover {
   transform: translateY(-1px);
-  border-color: var(--border-strong);
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: var(--shadow-xs);
 }
 
 .group-list-item .group-sync-btn svg {
@@ -120,9 +129,9 @@
   align-items: center;
   min-height: 24px;
   padding: 0 8px;
-  border: 1px solid rgba(201, 193, 179, 0.76);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(236, 231, 221, 0.92);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
   color: var(--muted);
   font-size: 10px;
   max-width: 200px;
@@ -143,10 +152,10 @@
 
 .group-sync-toolbar {
   margin: 0 0 10px;
-  padding: 10px 12px;
-  border: 1px solid rgba(222, 216, 205, 0.84);
-  border-radius: 12px;
-  background: rgba(247, 244, 238, 0.72);
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(240, 235, 226, 0.94), rgba(247, 243, 236, 0.92));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.52);
 }
 
 .group-sync-toolbar .muted {
@@ -165,11 +174,11 @@
   top: 0;
   z-index: 8;
   margin-bottom: 12px;
-  padding: 10px 12px;
-  border: 1px solid rgba(222, 216, 205, 0.84);
-  border-radius: 12px;
-  background: rgba(247, 244, 238, 0.9);
-  backdrop-filter: blur(6px);
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(242, 237, 229, 0.88);
+  backdrop-filter: blur(14px) saturate(1.08);
+  box-shadow: var(--shadow-xs);
 }
 
 .batch-actions {
@@ -187,7 +196,7 @@
   width: 1px;
   height: 22px;
   margin: 0 2px;
-  background: rgba(201, 193, 179, 0.92);
+  background: rgba(154, 146, 126, 0.18);
 }
 
 .search-results {
@@ -205,15 +214,16 @@
   gap: 10px;
   align-items: center;
   padding: 10px 12px;
-  border: 1px solid rgba(222, 216, 205, 0.84);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.96);
-  transition: border-color 0.18s ease-out, box-shadow 0.18s ease-out, transform 0.18s ease-out;
+  background: rgba(255, 255, 255, 0.64);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  transition: background 0.18s ease-out, box-shadow 0.18s ease-out, transform 0.18s ease-out;
 }
 
 .search-item:hover {
   transform: translateY(-1px);
-  border-color: var(--border-strong);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--shadow-xs);
 }
 
 .search-meta {
@@ -237,8 +247,8 @@
   align-items: center;
   min-height: 26px;
   padding: 0 9px;
-  border: 1px dashed rgba(201, 193, 179, 0.86);
   border-radius: 999px;
+  background: rgba(233, 228, 217, 0.84);
   color: var(--muted);
   font-size: 11px;
 }
@@ -247,10 +257,9 @@
   position: fixed;
   min-width: 132px;
   padding: 6px;
-  border: 1px solid rgba(201, 193, 179, 0.84);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow: var(--shadow);
+  background: rgba(252, 249, 243, 0.98);
+  box-shadow: var(--shadow-float);
   z-index: 100;
 }
 
@@ -285,15 +294,16 @@
   flex-direction: column;
   gap: 10px;
   padding: 14px;
-  border: 1px solid rgba(222, 216, 205, 0.84);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.96);
-  transition: border-color 0.18s ease-out, box-shadow 0.18s ease-out, transform 0.18s ease-out, opacity 0.18s ease-out;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(252, 249, 243, 0.95), rgba(247, 242, 234, 0.94));
+  box-shadow: var(--shadow-xs);
+  transition: background 0.18s ease-out, box-shadow 0.18s ease-out, transform 0.18s ease-out, opacity 0.18s ease-out;
 }
 
 .card:hover {
   transform: translateY(-1px);
-  border-color: var(--border-strong);
+  background: linear-gradient(180deg, rgba(255, 252, 247, 0.97), rgba(248, 244, 236, 0.96));
+  box-shadow: var(--shadow-soft);
 }
 
 .card.is-disabled {
@@ -324,8 +334,8 @@
   height: 40px;
   border-radius: 10px;
   object-fit: cover;
-  background: var(--accent-soft);
-  border: 1px solid rgba(222, 216, 205, 0.82);
+  background: linear-gradient(160deg, rgba(225, 236, 230, 0.96), rgba(247, 242, 234, 0.9));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.52);
   flex: none;
 }
 
@@ -357,7 +367,6 @@
   width: fit-content;
   min-height: 24px;
   padding: 0 8px;
-  border: 1px solid rgba(178, 67, 67, 0.14);
   border-radius: 999px;
   background: var(--danger-soft);
   color: var(--danger);
@@ -366,8 +375,8 @@
 }
 
 .account-toggle {
-  border: 1px solid rgba(201, 193, 179, 0.72);
-  background: #fff;
+  border: none;
+  background: rgba(244, 239, 231, 0.92);
   border-radius: 8px;
   width: 28px;
   height: 28px;
@@ -377,7 +386,7 @@
   color: var(--text);
   cursor: pointer;
   opacity: 0.72;
-  transition: opacity 0.18s ease-out, border-color 0.18s ease-out, box-shadow 0.18s ease-out, transform 0.18s ease-out;
+  transition: opacity 0.18s ease-out, background 0.18s ease-out, box-shadow 0.18s ease-out, transform 0.18s ease-out;
 }
 
 .card:hover .account-toggle,
@@ -387,7 +396,8 @@
 
 .account-toggle:hover {
   transform: translateY(-1px);
-  border-color: var(--border-strong);
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: var(--shadow-xs);
 }
 
 .account-toggle svg {
@@ -398,9 +408,10 @@
 .account-sync {
   display: grid;
   gap: 6px;
-  margin-top: 2px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(222, 216, 205, 0.72);
+  margin-top: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(240, 235, 226, 0.7);
 }
 
 .account-sync-row {
@@ -447,11 +458,10 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 16px;
-  border: 1px solid rgba(201, 193, 179, 0.84);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow: var(--shadow);
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(252, 249, 243, 0.98);
+  box-shadow: var(--shadow-float);
 }
 
 .modal-header {
