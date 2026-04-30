@@ -2,7 +2,7 @@ const handleAuthError = (message?: string) => {
   const t = (window as unknown as Record<string, unknown>).__hippo_t as ((k: string, f: string) => string) | undefined;
   const fallback = t ? t('login.sessionExpired', 'Session expired. Please login again.') : 'Session expired. Please login again.';
   window.dispatchEvent(new CustomEvent('hippo:toast', { detail: message || fallback }));
-  window.location.hash = '#/settings';
+  window.location.hash = '#/settings/login';
 };
 
 export const apiGet = async (path: string): Promise<Record<string, unknown>> => {

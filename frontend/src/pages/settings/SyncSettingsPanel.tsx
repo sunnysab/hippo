@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 import { useSettingsState, type SyncSettings } from '../../store/settings';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
@@ -20,14 +20,12 @@ export function SyncSettingsPanel({
   const { state, dispatch } = useSettingsState();
   const { t } = useI18n();
   const { showToast } = useToast();
-  const [collapsed, setCollapsed] = useState(true);
-  const isNarrow = window.matchMedia('(max-width: 760px)').matches;
-
   const settings = state.syncSettings;
 
   const handleSave = async () => {
     const payload = await apiSend('/api/settings', 'PATCH', buildSyncSettingsPayload(formState));
     dispatch({ type: 'SET_SYNC_SETTINGS', payload: payload as unknown as SyncSettings });
+    showToast(t('sync.saved', 'Sync settings saved.'));
   };
 
   const formatHour = (h: number) => `${String(h).padStart(2, '0')}:00`;
@@ -40,17 +38,6 @@ export function SyncSettingsPanel({
           <p className="muted">{t('sync.subtitle', 'Schedule periodic sync for accounts and articles.')}</p>
         </div>
         <div className="toolbar">
-          {isNarrow && (
-            <button
-              className="btn ghost sync-mobile-toggle"
-              id="btn-sync-settings-toggle"
-              type="button"
-              onClick={() => setCollapsed(!collapsed)}
-              aria-expanded={!collapsed}
-            >
-              {collapsed ? t('sync.showSettings', 'Show settings') : t('sync.hideSettings', 'Hide settings')}
-            </button>
-          )}
           <button className="btn" id="btn-sync-save" type="button" onClick={handleSave}>
             {t('sync.save', 'Save')}
           </button>
@@ -62,7 +49,7 @@ export function SyncSettingsPanel({
           </button>
         </div>
       </div>
-      <div className={`sync-form-sections${isNarrow && collapsed ? ' is-mobile-collapsed' : ''}`}>
+      <div className="sync-form-sections">
         <section className="sync-form-section">
           <div className="sync-section-title">{t('sync.sectionSchedule', 'Schedule')}</div>
           <div className="form-grid">
@@ -157,22 +144,6 @@ export function SyncSettingsPanel({
                 checked={formState.downloadImages}
                 onChange={(event) => setFormState((prev) => ({ ...prev, downloadImages: event.target.checked }))}
               />
-            </label>
-          </div>
-        </section>
-        <section className="sync-form-section">
-          <div className="sync-section-title">{t('sync.sectionFilter', 'Filter')}</div>
-          <div className="form-grid">
-            <label className="sync-textarea-field">
-              <span>{t('sync.articleExcludeKeywords', 'Exclude article keywords')}</span>
-              <textarea
-                id="sync-article-exclude-keywords"
-                rows={4}
-                placeholder='promo&#10;ad'
-                value={formState.articleExcludeKeywords}
-                onChange={(event) => setFormState((prev) => ({ ...prev, articleExcludeKeywords: event.target.value }))}
-              ></textarea>
-              <small className="muted">{t('sync.articleExcludeKeywordsHint', 'One keyword per line, or separate by comma / semicolon.')}</small>
             </label>
           </div>
         </section>
