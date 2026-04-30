@@ -3,21 +3,25 @@ import { useGroupsState, useGroupsActions } from '../../store/groups';
 import { useI18n } from '../../i18n';
 import { apiSend } from '../../api';
 import { copyToClipboard } from '../../utils/clipboard';
+import { useToast } from '../../hooks/useToast';
 
 interface GroupHeaderProps {
   accountQuery: string;
   onAccountQueryChange: (value: string) => void;
   onOpenAccountSearch: () => void;
+  onOpenRename: (groupId: number, name: string) => void;
 }
 
 export function GroupHeader({
   accountQuery,
   onAccountQueryChange,
   onOpenAccountSearch,
+  onOpenRename,
 }: GroupHeaderProps) {
   const { state, dispatch } = useGroupsState();
   const { loadGroups } = useGroupsActions();
   const { t } = useI18n();
+  const { showToast } = useToast();
   const navigate = useNavigate();
 
   const group = state.groups.find((g) => g.id === state.selectedGroupId);
@@ -40,13 +44,6 @@ export function GroupHeader({
     );
   }
 
-  const handleRename = async () => {
-    const name = prompt(t('groups.renamePrompt', 'New group name'), group.name);
-    if (!name) return;
-    await apiSend(`/api/group/${group.id}`, 'PATCH', { name });
-    await loadGroups();
-  };
-
   const handleDelete = async () => {
     if (!confirm(t('groups.deleteConfirm', 'Delete this group?'))) return;
     await apiSend(`/api/group/${group.id}`, 'DELETE', {});
@@ -65,6 +62,7 @@ export function GroupHeader({
   const handleIdClick = async () => {
     try {
       await copyToClipboard(String(group.id));
+      showToast(t('groups.idCopied', '分组 ID 已复制'));
     } catch { /* ignore */ }
   };
 
@@ -117,7 +115,7 @@ export function GroupHeader({
           </span>
           <span>{t('accounts.add', 'Add Account')}</span>
         </button>
-        <button className="btn ghost" id="btn-group-rename" type="button" onClick={handleRename}>
+        <button className="btn ghost" id="btn-group-rename" type="button" onClick={() => onOpenRename(group.id, group.name)}>
           {t('groups.rename', 'Rename')}
         </button>
         <button className="btn ghost" id="btn-group-delete" type="button" onClick={handleDelete}>

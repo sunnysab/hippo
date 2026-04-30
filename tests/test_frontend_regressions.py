@@ -9,6 +9,8 @@ TOP_BAR = ROOT / 'frontend' / 'src' / 'components' / 'TopBar.tsx'
 ARTICLES_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'articles' / 'ArticlesPage.tsx'
 ARTICLE_FILTERS = ROOT / 'frontend' / 'src' / 'pages' / 'articles' / 'ArticleFilters.tsx'
 BATCH_ACTIONS = ROOT / 'frontend' / 'src' / 'pages' / 'groups' / 'BatchActions.tsx'
+GROUPS_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'groups' / 'GroupsPage.tsx'
+GROUP_HEADER = ROOT / 'frontend' / 'src' / 'pages' / 'groups' / 'GroupHeader.tsx'
 MEDIA_QUERY_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useMediaQuery.ts'
 I18N_ZH = ROOT / 'frontend' / 'src' / 'i18n' / 'zh-CN.json'
 
@@ -64,6 +66,13 @@ class FrontendRegressionTest(unittest.TestCase):
 
         self.assertNotIn('alert(', source)
         self.assertIn('showToast', source)
+
+    def test_group_create_and_rename_do_not_use_native_prompt(self) -> None:
+        groups_page = GROUPS_PAGE.read_text(encoding='utf-8')
+        group_header = GROUP_HEADER.read_text(encoding='utf-8')
+
+        self.assertNotIn('prompt(', groups_page)
+        self.assertNotIn('prompt(', group_header)
 
 
 if __name__ == '__main__':
