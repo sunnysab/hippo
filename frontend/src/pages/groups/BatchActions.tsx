@@ -6,6 +6,7 @@ import { useToast } from '../../hooks/useToast';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { syncDefaults } from '../../store/shared';
 import { getSyncModeLabel } from '../../utils/sync';
+import { emitRefresh } from '../../utils/events';
 
 export function BatchActions() {
   const { state, dispatch } = useGroupsState();
@@ -51,7 +52,7 @@ export function BatchActions() {
       });
       dispatch({ type: 'CLEAR_SELECTED' });
       setTargetGroupId('');
-      window.dispatchEvent(new CustomEvent('hippo:refresh'));
+      emitRefresh();
     } catch (err) {
       if (isAuthError(err)) return;
       showToast(t('accounts.moveFailed', 'Failed to move selected accounts.'));
@@ -74,7 +75,7 @@ export function BatchActions() {
     try {
       await apiSend('/api/account/batch', 'POST', body);
       showToast(t('accounts.syncSaved', 'Sync strategy updated.'));
-      window.dispatchEvent(new CustomEvent('hippo:refresh'));
+      emitRefresh();
     } catch (err) {
       if (isAuthError(err)) return;
       showToast(t('accounts.syncFailed', 'Failed to update sync strategy.'));
@@ -171,7 +172,7 @@ export function BatchActions() {
         className="btn ghost"
         id="btn-account-refresh"
         type="button"
-        onClick={() => window.dispatchEvent(new CustomEvent('hippo:refresh'))}
+        onClick={emitRefresh}
       >
         <span>{t('actions.refresh', 'Refresh')}</span>
       </button>

@@ -9,6 +9,7 @@ import {
 } from './form';
 import { useI18n } from '../../i18n';
 import type { SettingsRouteContextValue } from './settingsRouteContext';
+import { onRefresh } from '../../utils/events';
 
 const buildSyncStatusFingerprint = (payload: Record<string, unknown> | null): string => {
   if (!payload) return '';
@@ -156,8 +157,7 @@ export function SettingsPage() {
       void loadSyncSettings();
       void loadLoginStatus();
     };
-    window.addEventListener('hippo:refresh', handler);
-    return () => window.removeEventListener('hippo:refresh', handler);
+    return onRefresh(handler);
   }, [loadSyncTasks, loadSyncStatus, loadSyncSettings, loadLoginStatus]);
 
   const initialFormState = useMemo(

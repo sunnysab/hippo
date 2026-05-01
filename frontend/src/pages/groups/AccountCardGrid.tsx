@@ -3,6 +3,7 @@ import { useGroupsState, useGroupsActions } from '../../store/groups';
 import { AccountCard } from './AccountCard';
 import { useI18n } from '../../i18n';
 import { EmptyState } from '../../components/EmptyState';
+import { onRefresh } from '../../utils/events';
 
 interface AccountCardGridProps {
   query: string;
@@ -31,8 +32,7 @@ export function AccountCardGrid({ query }: AccountCardGridProps) {
     const handler = () => {
       void loadAccounts();
     };
-    window.addEventListener('hippo:refresh', handler);
-    return () => window.removeEventListener('hippo:refresh', handler);
+    return onRefresh(handler);
   }, [loadAccounts]);
 
   if (!accounts.length) {

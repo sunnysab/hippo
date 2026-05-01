@@ -1,3 +1,5 @@
+import { emitToast } from '../utils/events';
+
 export class ApiError extends Error {
   code?: string;
   status?: number;
@@ -21,7 +23,7 @@ export const isAuthError = (error: unknown): error is ApiError => {
 const handleAuthError = (message?: string) => {
   const t = (window as unknown as Record<string, unknown>).__hippo_t as ((k: string, f: string) => string) | undefined;
   const fallback = t ? t('login.sessionExpired', 'Session expired. Please login again.') : 'Session expired. Please login again.';
-  window.dispatchEvent(new CustomEvent('hippo:toast', { detail: message || fallback }));
+  emitToast(message || fallback);
   window.location.hash = '#/settings/login';
 };
 
