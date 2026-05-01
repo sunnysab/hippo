@@ -27,6 +27,17 @@
   padding-right: 4px;
 }
 
+.groups-layout .groups-main {
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.groups-layout .groups-main .card-grid {
+  flex: none;
+  overflow: visible;
+  padding-right: 0;
+}
+
 .group-list-item {
   position: relative;
   padding: 10px 12px;
@@ -501,12 +512,18 @@
     overflow: visible;
   }
 
+  .groups-layout .panel {
+    min-height: 0;
+  }
+
   .groups-sidebar .group-list {
     max-height: 32vh;
+    min-height: 12vh;
   }
 
   .groups-main .card-grid {
     max-height: none;
+    min-height: 45vh;
   }
 
   .accounts-toolbar {
@@ -521,6 +538,11 @@
 
   .groups-sidebar .group-list {
     max-height: none;
+    min-height: 20vh;
+  }
+
+  .groups-main .card-grid {
+    min-height: 50vh;
   }
 
   .groups-sidebar-header .btn,
