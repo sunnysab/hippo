@@ -7,10 +7,9 @@ interface TopBarProps {
   currentTab: string;
   lastLoginAt: string;
   lastSyncAt: string;
-  onRefresh: () => void;
 }
 
-export function TopBar({ topbarRef, currentTab, lastLoginAt, lastSyncAt, onRefresh }: TopBarProps) {
+export function TopBar({ topbarRef, currentTab, lastLoginAt, lastSyncAt }: TopBarProps) {
   const { t } = useI18n();
 
   const tabs = [
@@ -45,14 +44,6 @@ export function TopBar({ topbarRef, currentTab, lastLoginAt, lastSyncAt, onRefre
       <div className="top-actions">
         {lastLoginAt && <div className="top-meta" id="last-login-info">{lastLoginAt}</div>}
         {lastSyncAt && <div className="top-meta" id="last-sync-info">{lastSyncAt}</div>}
-        <button className="btn ghost" id="btn-refresh" type="button" onClick={onRefresh}>
-          <span className="icon">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 12a8 8 0 0 1 13.66-5.66L20 4v6h-6l2.44-2.44A6 6 0 1 0 18 12h2a8 8 0 0 1-16 0z" />
-            </svg>
-          </span>
-          <span>{t('actions.refresh', 'Refresh')}</span>
-        </button>
       </div>
     </header>
   );
