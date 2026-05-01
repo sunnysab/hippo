@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useMemo, useRef, useState } from 'react';
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { NavLink, Outlet } from 'react-router-dom';
 import { useSettingsState } from '../../store/settings';
 import { apiGet, apiSend } from '../../api';
 import type { SyncStatus, SyncSettings, SyncTask, LoginStatus } from '../../store/settings';
@@ -33,8 +33,6 @@ const buildSyncTasksFingerprint = (tasks: SyncTask[]): string => {
 };
 
 export function SettingsPage() {
-  const location = useLocation();
-  const isActive = location.pathname.startsWith('/settings');
   const { state, dispatch } = useSettingsState();
   const lastSyncFingerprint = useRef('');
   const lastTasksFingerprint = useRef('');
@@ -134,7 +132,6 @@ export function SettingsPage() {
       clearSyncTimer();
       syncTimer = setTimeout(() => {
         void (async () => {
-          if (!isActive) return;
           await loadSyncTasks();
           await loadSyncStatus();
           scheduleNextPoll(getSyncPollDelay());
@@ -142,19 +139,15 @@ export function SettingsPage() {
       }, Math.max(delay, 500));
     };
 
-    if (isActive) {
-      void loadSyncTasks();
-      void loadSyncStatus();
-      scheduleNextPoll(getSyncPollDelay());
-    } else if (loginPollTimer.current) {
-      clearInterval(loginPollTimer.current);
-    }
+    void loadSyncTasks();
+    void loadSyncStatus();
+    scheduleNextPoll(getSyncPollDelay());
 
     return () => {
       clearSyncTimer();
       if (loginPollTimer.current) clearInterval(loginPollTimer.current);
     };
-  }, [getSyncPollDelay, isActive, loadSyncStatus, loadSyncTasks]);
+  }, [getSyncPollDelay, loadSyncStatus, loadSyncTasks]);
 
   useEffect(() => {
     const handler = () => {

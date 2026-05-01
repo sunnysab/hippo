@@ -3,6 +3,7 @@ import { useI18n } from '../../i18n';
 import { renderInline } from '../../utils/markdown';
 import { EmptyState } from '../../components/EmptyState';
 import type { ArticlePayload, ArticleContentBlock } from '../../store/articles';
+import { buildContentBlockKeys } from './contentKeys';
 
 interface ArticleContentProps {
   payload: ArticlePayload;
@@ -147,11 +148,13 @@ export function ArticleContent({ payload, hideSmall, onImageContextMenu }: Artic
     );
   }
 
+  const contentKeys = buildContentBlockKeys(content);
+
   return (
     <>
       {content.map((block, i) => (
         <ContentBlock
-          key={i}
+          key={contentKeys[i]}
           block={block}
           images={payload.images}
           hideSmall={hideSmall}

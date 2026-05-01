@@ -3,6 +3,7 @@ import { I18nProvider } from './i18n';
 import { ToastProvider } from './hooks/useToast';
 import { StoreProvider } from './store';
 import { AppShell } from './components/AppShell';
+import { AppErrorBoundary } from './components/ErrorBoundary';
 import { GroupsPage } from './pages/groups/GroupsPage';
 import { ArticlesPage } from './pages/articles/ArticlesPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
@@ -16,22 +17,24 @@ export default function App() {
     <I18nProvider>
       <ToastProvider>
         <StoreProvider>
-          <HashRouter>
-            <AppShell>
-              <Routes>
-                <Route path="/groups" element={<GroupsPage />} />
-                <Route path="/articles" element={<ArticlesPage />} />
-                <Route path="/settings" element={<SettingsPage />}>
-                  <Route index element={<Navigate to="sync" replace />} />
-                  <Route path="login" element={<SettingsLoginRoute />} />
-                  <Route path="sync" element={<SettingsSyncRoute />} />
-                  <Route path="filter" element={<SettingsFilterRoute />} />
-                  <Route path="email" element={<SettingsEmailRoute />} />
-                </Route>
-                <Route path="*" element={<Navigate to="/groups" replace />} />
-              </Routes>
-            </AppShell>
-          </HashRouter>
+          <AppErrorBoundary>
+            <HashRouter>
+              <AppShell>
+                <Routes>
+                  <Route path="/groups" element={<GroupsPage />} />
+                  <Route path="/articles" element={<ArticlesPage />} />
+                  <Route path="/settings" element={<SettingsPage />}>
+                    <Route index element={<Navigate to="sync" replace />} />
+                    <Route path="login" element={<SettingsLoginRoute />} />
+                    <Route path="sync" element={<SettingsSyncRoute />} />
+                    <Route path="filter" element={<SettingsFilterRoute />} />
+                    <Route path="email" element={<SettingsEmailRoute />} />
+                  </Route>
+                  <Route path="*" element={<Navigate to="/groups" replace />} />
+                </Routes>
+              </AppShell>
+            </HashRouter>
+          </AppErrorBoundary>
         </StoreProvider>
       </ToastProvider>
     </I18nProvider>

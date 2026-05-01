@@ -18,6 +18,7 @@
   "common.cancel": "取消",
   "common.save": "保存",
   "common.loading": "加载中...",
+  "common.unexpectedError": "发生意外错误，请刷新后重试。",
   "groups.title": "分组管理",
   "groups.subtitle": "按分组管理公众号。",
   "groups.collectionKicker": "分组",
