@@ -86,7 +86,7 @@ export function ActiveTaskPanel() {
                         </span>
                       </div>
                       <div className="account-sub">
-                        {formatRelativeTime(account.updated_at)}
+                        {formatRelativeTime(account.updated_at, t)}
                       </div>
                     </div>
                     {articleBadge ? <span className="badge">{escapeHtml(articleBadge)}</span> : null}

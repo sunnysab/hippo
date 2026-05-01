@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useRef, type ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useRef, useEffect, type ReactNode } from 'react';
 
 const ToastContext = createContext<{
   showToast: (message: string) => void;
@@ -17,6 +17,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       setVisible(false);
       setMessage(null);
     }, 2400);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
   }, []);
 
   return (

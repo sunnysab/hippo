@@ -25,7 +25,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       const loginPayload = await apiGet('/api/login');
       const lastLogin = loginPayload.last_login as Record<string, unknown> | null;
       if (lastLogin?.updated_at) {
-        const ts = formatRelativeTime(lastLogin.updated_at as string);
+        const ts = formatRelativeTime(lastLogin.updated_at as string, t);
         setLastLoginAt(ts ? t('login.lastLoginAt', 'Last login {time}').replace('{time}', ts) : '');
       } else {
         setLastLoginAt('');
@@ -46,7 +46,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       const syncPayload = await apiGet('/api/settings/status');
       const finished = syncPayload.last_finished_at as string | null;
       if (finished) {
-        const ts = formatRelativeTime(finished);
+        const ts = formatRelativeTime(finished, t);
         setLastSyncAt(ts ? t('sync.lastSyncAt', 'Last sync {time}').replace('{time}', ts) : '');
       } else {
         setLastSyncAt('');
