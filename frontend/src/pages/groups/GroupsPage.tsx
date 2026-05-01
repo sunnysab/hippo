@@ -9,7 +9,7 @@ import { AccountSearchModal } from './AccountSearchModal';
 import { GroupNameModal } from './GroupNameModal';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { useI18n } from '../../i18n';
-import { apiSend } from '../../api';
+import { apiSend, isAuthError } from '../../api';
 import { useToast } from '../../hooks/useToast';
 
 interface GroupNameDialogState {
@@ -23,7 +23,7 @@ interface GroupDeleteDialogState {
 }
 
 export function GroupsPage() {
-  const { state, dispatch } = useGroupsState();
+  const { dispatch } = useGroupsState();
   const { loadGroups } = useGroupsActions();
   const { t } = useI18n();
   const { showToast } = useToast();
@@ -33,12 +33,9 @@ export function GroupsPage() {
   const [groupDeleteDialog, setGroupDeleteDialog] = useState<GroupDeleteDialogState | null>(null);
 
   const refresh = useCallback(async () => {
-    const { nextGroup } = await loadGroups();
-    if (nextGroup && nextGroup !== state.selectedGroupId) {
-      dispatch({ type: 'SELECT_GROUP', groupId: nextGroup });
-    }
+    await loadGroups();
     // Load accounts will be triggered by the group selection effect
-  }, [loadGroups, state.selectedGroupId, dispatch]);
+  }, [loadGroups]);
 
   // Init on mount
   useEffect(() => {
@@ -60,7 +57,8 @@ export function GroupsPage() {
       await apiSend('/api/settings/run', 'POST', { group_id: groupId });
       window.location.hash = '#/settings/sync';
       showToast(t('groups.syncTriggered', 'Group sync triggered.'));
-    } catch {
+    } catch (err) {
+      if (isAuthError(err)) return;
       showToast(t('groups.syncTriggerFailed', 'Failed to trigger group sync.'));
     }
   };

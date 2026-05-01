@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useGroupsState } from '../../store/groups';
 import { useI18n } from '../../i18n';
-import { apiSend } from '../../api';
+import { apiSend, isAuthError } from '../../api';
 import { useToast } from '../../hooks/useToast';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { syncDefaults } from '../../store/shared';
@@ -44,18 +44,23 @@ export function BatchActions() {
       showToast(t('accounts.moveSelectAccounts', 'Select accounts to move.'));
       return;
     }
-    await apiSend('/api/account/move', 'POST', {
-      group_id: Number(targetGroupId),
-      biz_list: state.selectedAccounts,
-    });
-    dispatch({ type: 'CLEAR_SELECTED' });
-    setTargetGroupId('');
-    window.dispatchEvent(new CustomEvent('hippo:refresh'));
+    try {
+      await apiSend('/api/account/move', 'POST', {
+        group_id: Number(targetGroupId),
+        biz_list: state.selectedAccounts,
+      });
+      dispatch({ type: 'CLEAR_SELECTED' });
+      setTargetGroupId('');
+      window.dispatchEvent(new CustomEvent('hippo:refresh'));
+    } catch (err) {
+      if (isAuthError(err)) return;
+      showToast(t('accounts.moveFailed', 'Failed to move selected accounts.'));
+    }
   };
 
   const handleBatchSyncSettings = async () => {
     if (!count) {
-      showToast(t('accounts.moveSelectAccounts', 'Select accounts to move.'));
+      showToast(t('accounts.syncSelectAccounts', 'Select accounts to sync.'));
       return;
     }
     const body: Record<string, unknown> = {
@@ -70,21 +75,23 @@ export function BatchActions() {
       await apiSend('/api/account/batch', 'POST', body);
       showToast(t('accounts.syncSaved', 'Sync strategy updated.'));
       window.dispatchEvent(new CustomEvent('hippo:refresh'));
-    } catch {
+    } catch (err) {
+      if (isAuthError(err)) return;
       showToast(t('accounts.syncFailed', 'Failed to update sync strategy.'));
     }
   };
 
   const handleBatchGroupSync = async () => {
     if (!count) {
-      showToast(t('accounts.moveSelectAccounts', 'Select accounts to move.'));
+      showToast(t('accounts.syncSelectAccounts', 'Select accounts to sync.'));
       return;
     }
     try {
       await apiSend('/api/settings/run', 'POST', { biz_list: state.selectedAccounts });
       window.location.hash = '#/settings/sync';
       showToast(t('accounts.syncTriggered', 'Selected accounts sync started.'));
-    } catch {
+    } catch (err) {
+      if (isAuthError(err)) return;
       showToast(t('accounts.syncTriggerFailed', 'Failed to start selected accounts sync.'));
     }
   };

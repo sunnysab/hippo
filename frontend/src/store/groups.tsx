@@ -1,4 +1,13 @@
-import { createContext, useContext, useReducer, useCallback, type ReactNode, type Dispatch } from 'react';
+import {
+  createContext,
+  useContext,
+  useReducer,
+  useCallback,
+  useEffect,
+  useRef,
+  type ReactNode,
+  type Dispatch,
+} from 'react';
 import type { Group, Account } from './shared';
 import { apiGet } from '../api';
 
@@ -120,8 +129,12 @@ export function useGroupsState() {
 }
 
 export function useGroupsActions() {
-  const { dispatch } = useGroupsState();
-  const { state } = useGroupsState();
+  const { state, dispatch } = useGroupsState();
+  const selectedGroupIdRef = useRef(state.selectedGroupId);
+
+  useEffect(() => {
+    selectedGroupIdRef.current = state.selectedGroupId;
+  }, [state.selectedGroupId]);
 
   const loadGroups = useCallback(async () => {
     const payload = await apiGet('/api/group');
@@ -129,18 +142,19 @@ export function useGroupsActions() {
     const defaultId = payload.default_group_id as number | null;
     dispatch({ type: 'SET_GROUPS', payload: groups, defaultGroupId: defaultId });
 
-    let nextGroup = state.selectedGroupId;
+    const currentSelectedGroupId = selectedGroupIdRef.current;
+    let nextGroup = currentSelectedGroupId;
     if (nextGroup && !groups.some((g) => g.id === nextGroup)) {
       nextGroup = null;
     }
     if (!nextGroup && defaultId) {
       nextGroup = defaultId;
     }
-    if (nextGroup !== state.selectedGroupId) {
+    if (nextGroup !== currentSelectedGroupId) {
       dispatch({ type: 'SELECT_GROUP', groupId: nextGroup });
     }
     return { groups, defaultGroupId: defaultId, nextGroup };
-  }, [dispatch, state.selectedGroupId]);
+  }, [dispatch]);
 
   const loadAccounts = useCallback(async () => {
     const groupId = state.selectedGroupId;

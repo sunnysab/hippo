@@ -7,7 +7,7 @@ import { ArticleHeader } from './ArticleHeader';
 import { ArticleContent } from './ArticleContent';
 import { EmptyState } from '../../components/EmptyState';
 import { useToast } from '../../hooks/useToast';
-import { apiGet, apiSend } from '../../api';
+import { apiGet, apiSend, isAuthError } from '../../api';
 
 interface ArticlePreviewProps {
   previewRef: RefObject<HTMLDivElement | null>;
@@ -46,6 +46,9 @@ export function ArticlePreview({ previewRef }: ArticlePreviewProps) {
       }
       showToast(t('articles.imageBlocked', 'Image blocked.'));
       setImageContextMenu(null);
+    } catch (err) {
+      if (isAuthError(err)) return;
+      showToast((err as Error)?.message || t('articles.imageBlockFailed', 'Failed to block image.'));
     } finally {
       setIsBlockingImage(false);
     }

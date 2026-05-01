@@ -2,7 +2,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import { useSettingsState, type SyncSettings } from '../../store/settings';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
-import { apiSend } from '../../api';
+import { apiSend, isAuthError } from '../../api';
 import { buildFilterSettingsPayload, type SyncSettingsFormState } from './form';
 
 interface FilterSettingsPanelProps {
@@ -24,6 +24,7 @@ export function FilterSettingsPanel({
       dispatch({ type: 'SET_SYNC_SETTINGS', payload: payload as unknown as SyncSettings });
       showToast(t('sync.filterSaved', 'Filter settings saved.'));
     } catch (err) {
+      if (isAuthError(err)) return;
       showToast((err as Error)?.message || t('sync.filterSaveFailed', 'Failed to save filter settings.'));
     }
   };

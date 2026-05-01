@@ -2,7 +2,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import { useSettingsState, type SyncSettings } from '../../store/settings';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
-import { apiSend } from '../../api';
+import { apiSend, isAuthError } from '../../api';
 import { buildAlertSettingsPayload, type SyncSettingsFormState } from './form';
 
 interface FailureAlertPanelProps {
@@ -24,6 +24,7 @@ export function FailureAlertPanel({
       dispatch({ type: 'SET_SYNC_SETTINGS', payload: payload as unknown as SyncSettings });
       showToast(t('sync.alertSaved', 'Failure alerts saved.'));
     } catch (err) {
+      if (isAuthError(err)) return;
       showToast((err as Error)?.message || t('sync.alertSaveFailed', 'Failed to save failure alerts.'));
     }
   };

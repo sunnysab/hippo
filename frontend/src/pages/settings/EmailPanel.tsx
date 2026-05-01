@@ -2,7 +2,7 @@ import { useState, type Dispatch, type SetStateAction } from 'react';
 import { useSettingsState, type SyncSettings } from '../../store/settings';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
-import { apiSend } from '../../api';
+import { apiSend, isAuthError } from '../../api';
 import {
   buildEmailPayload,
   buildTestEmailPayload,
@@ -32,6 +32,7 @@ export function EmailPanel({
       dispatch({ type: 'SET_SYNC_SETTINGS', payload: payload as unknown as SyncSettings });
       showToast(t('email.saveSuccess', 'Email settings saved.'));
     } catch (err) {
+      if (isAuthError(err)) return;
       showToast((err as Error)?.message || t('email.saveFailed', 'Failed to save email settings.'));
     }
   };
@@ -52,6 +53,7 @@ export function EmailPanel({
       );
       showToast(t('email.testSuccess', 'Test email sent to {email}.').replace('{email}', (payload.to_email as string) || toEmail));
     } catch (err) {
+      if (isAuthError(err)) return;
       if ((err as Record<string, unknown>)?.code === 'TIMEOUT') {
         showToast(t('email.testTimeout', 'Timed out while sending test email.'));
       } else {
