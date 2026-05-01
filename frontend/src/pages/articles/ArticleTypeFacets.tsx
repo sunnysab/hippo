@@ -1,20 +1,7 @@
 import { useArticlesState } from '../../store/articles';
 import { useI18n } from '../../i18n';
 import { escapeHtml } from '../../utils/format';
-import { ITEM_SHOW_TYPE_META } from '../../utils/constants';
-
-function getItemShowTypeLabel(value: number, t: (k: string, f: string) => string) {
-  const meta = ITEM_SHOW_TYPE_META[value];
-  if (!meta) return t('articles.meta.unknown', 'Unknown');
-  return t(meta.key, meta.fallback);
-}
-
-function renderBadge(value: number, t: (k: string, f: string) => string, compact = false) {
-  const meta = ITEM_SHOW_TYPE_META[value];
-  if (!meta) return '';
-  const compactClass = compact ? ' item-show-type-badge-compact' : '';
-  return `<span class="item-show-type-badge item-show-type-${meta.tone}${compactClass}">${escapeHtml(getItemShowTypeLabel(value, t))}</span>`;
-}
+import { ItemShowTypeBadge } from './ItemShowTypeBadge';
 
 interface ArticleTypeFacetsProps {
   activeType: string;
@@ -73,10 +60,10 @@ export function ArticleTypeFacets({ activeType, onChange }: ArticleTypeFacetsPro
             className={`article-type-facet${activeType === item.value ? ' is-active' : ''}`}
             type="button"
             onClick={() => onChange(item.value)}
-            dangerouslySetInnerHTML={{
-              __html: `${renderBadge(typeValue, t, true)} <span class="article-type-facet-count">${escapeHtml((item.count || 0).toLocaleString('zh-CN'))}</span>`,
-            }}
-          />
+          >
+            <ItemShowTypeBadge value={typeValue} compact />
+            <span className="article-type-facet-count">{escapeHtml((item.count || 0).toLocaleString('zh-CN'))}</span>
+          </button>
         );
       })}
       {isCollapsible && (

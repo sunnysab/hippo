@@ -398,7 +398,7 @@ export function ArticlesPage() {
   const getSelectedArticleLink = () => {
     const article = state.currentArticlePayload?.article ||
       state.articles.find((a) => a.id === state.selectedArticleId);
-    return article?.source_url || (article as unknown as Record<string, string>)?.link || '';
+    return article?.source_url || article?.link || '';
   };
 
   return (
