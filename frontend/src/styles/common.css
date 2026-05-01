@@ -163,6 +163,7 @@ body {
   font-size: 12px;
   font-weight: 600;
   color: var(--muted);
+  text-decoration: none;
   cursor: pointer;
   transition: color 0.18s ease-out, opacity 0.18s ease-out, transform 0.18s ease-out;
 }
