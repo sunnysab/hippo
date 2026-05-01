@@ -44,11 +44,7 @@ export function GroupHeader({
     );
   }
 
-  const handleNameClick = () => {
-    navigate(`/articles?group=${group.id}`);
-  };
-
-  const handleViewArticles = () => {
+  const handleOpenArticles = () => {
     navigate(`/articles?group=${group.id}`);
   };
 
@@ -68,7 +64,7 @@ export function GroupHeader({
             id="group-current-name"
             type="button"
             title={group.name}
-            onClick={handleNameClick}
+            onClick={handleOpenArticles}
           >
             {group.name}
           </button>
@@ -114,7 +110,7 @@ export function GroupHeader({
         <button className="btn ghost" id="btn-group-delete" type="button" onClick={() => onOpenDelete(group.id)}>
           {t('groups.delete', 'Delete')}
         </button>
-        <button className="btn ghost" id="btn-group-articles" type="button" onClick={handleViewArticles}>
+        <button className="btn ghost" id="btn-group-articles" type="button" onClick={handleOpenArticles}>
           {t('groups.viewArticles', 'View group articles')}
         </button>
       </div>
