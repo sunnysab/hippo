@@ -76,7 +76,7 @@ export function LoginPanel() {
           src={qrCodeSrc}
         />
         <div className="login-meta" id="login-meta">
-          {lastLogin?.nickname ? `${t('login.lastLogin', 'Last login')}: ${lastLogin.nickname} · ${formatRelativeTime(lastLogin.updated_at as string)}` : ''}
+          {lastLogin?.nickname ? `${t('login.lastLogin', 'Last login')}: ${lastLogin.nickname} · ${formatRelativeTime(lastLogin.updated_at as string, t)}` : ''}
         </div>
       </div>
     </div>

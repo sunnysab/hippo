@@ -47,12 +47,7 @@ export function AccountCardGrid({ query }: AccountCardGridProps) {
     <div className="card-grid" id="account-list">
       {accounts.map((account) => (
         <AccountCard
-          key={[
-            account.biz,
-            account.sync_mode || '',
-            account.sync_recent_days ?? '',
-            state.selectedGroupId ?? '',
-          ].join(':')}
+          key={account.biz}
           account={account}
         />
       ))}

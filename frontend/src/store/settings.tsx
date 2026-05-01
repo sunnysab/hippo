@@ -67,8 +67,6 @@ interface SettingsState {
   syncSettings: SyncSettings | null;
   syncTasks: SyncTask[];
   loginStatus: LoginStatus | null;
-  syncPollTimer: ReturnType<typeof setInterval> | null;
-  loginPollTimer: ReturnType<typeof setInterval> | null;
 }
 
 type SettingsAction =
@@ -82,8 +80,6 @@ const initialState: SettingsState = {
   syncSettings: null,
   syncTasks: [],
   loginStatus: null,
-  syncPollTimer: null,
-  loginPollTimer: null,
 };
 
 function reducer(state: SettingsState, action: SettingsAction): SettingsState {

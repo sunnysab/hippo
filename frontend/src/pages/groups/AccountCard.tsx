@@ -75,7 +75,7 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
     }
   };
 
-  const lastSynced = formatRelativeTime(account.last_synced_at);
+  const lastSynced = formatRelativeTime(account.last_synced_at, t);
   const lastUpdatedText = lastSynced
     ? t('accounts.lastUpdated', 'Last update {time}').replace('{time}', lastSynced)
     : t('accounts.lastUpdatedEmpty', 'No updates yet');
