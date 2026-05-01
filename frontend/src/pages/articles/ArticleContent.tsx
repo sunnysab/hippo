@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef } from 'react';
 import { useI18n } from '../../i18n';
-import { renderInline } from '../../utils/markdown';
+import { renderInlineNodes } from '../../utils/markdown';
 import { EmptyState } from '../../components/EmptyState';
 import type { ArticlePayload, ArticleContentBlock } from '../../store/articles';
 import { buildContentBlockKeys } from './contentKeys';
@@ -94,18 +94,18 @@ const ContentBlock = memo(function ContentBlock({
   onImageContextMenu,
 }: ContentBlockProps) {
   if (block.type === 'paragraph') {
-    return <p dangerouslySetInnerHTML={{ __html: renderInline(block.text || '') }} />;
+    return <p>{renderInlineNodes(block.text || '')}</p>;
   }
 
   if (block.type === 'heading') {
     const level = Math.min(Math.max(Number(block.level) || 2, 2), 4);
     if (level === 2) {
-      return <h2 dangerouslySetInnerHTML={{ __html: renderInline(block.text || '') }} />;
+      return <h2>{renderInlineNodes(block.text || '')}</h2>;
     }
     if (level === 3) {
-      return <h3 dangerouslySetInnerHTML={{ __html: renderInline(block.text || '') }} />;
+      return <h3>{renderInlineNodes(block.text || '')}</h3>;
     }
-    return <h4 dangerouslySetInnerHTML={{ __html: renderInline(block.text || '') }} />;
+    return <h4>{renderInlineNodes(block.text || '')}</h4>;
   }
 
   if (block.type === 'image') {
