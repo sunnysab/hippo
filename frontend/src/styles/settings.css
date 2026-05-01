@@ -433,14 +433,20 @@
     gap: 10px;
   }
 
+  .settings-sidebar-header .btn {
+    width: 100%;
+  }
+
   .settings-nav-list {
     flex-direction: row;
     overflow-x: auto;
-    padding-bottom: 2px;
+    padding-bottom: 4px;
+    gap: 6px;
   }
 
   .settings-nav-item {
-    min-width: min(220px, 72vw);
+    min-width: min(170px, 64vw);
+    flex: none;
   }
 
   .sync-login .toolbar,
@@ -481,5 +487,9 @@
 
   .login-qr {
     width: min(180px, 100%);
+  }
+
+  .settings-panel-grid {
+    padding-bottom: 12px;
   }
 }
