@@ -15,6 +15,7 @@ import type { Article, ArticlePayload } from '../../store/articles';
 import { ARTICLE_SORT_PUBLISH_AT_DESC } from '../../utils/constants';
 import { copyToClipboard } from '../../utils/clipboard';
 import { createLatestOnly } from '../../utils/latest';
+import { onRefresh } from '../../utils/events';
 import {
   areArticleFiltersEqual,
   buildArticleRouteStateFromSearchParams,
@@ -376,8 +377,7 @@ export function ArticlesPage() {
       void loadArticles({ ...nextFilters, search: nextSearch }, true);
       void resolveArticleTarget();
     };
-    window.addEventListener('hippo:refresh', handler);
-    return () => window.removeEventListener('hippo:refresh', handler);
+    return onRefresh(handler);
   }, [loadAccountOptions, loadArticles, loadGroupOptions, resolveArticleTarget]);
 
   useEffect(() => {

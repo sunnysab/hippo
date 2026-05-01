@@ -11,6 +11,7 @@ import { ConfirmModal } from '../../components/ConfirmModal';
 import { useI18n } from '../../i18n';
 import { apiSend, isAuthError } from '../../api';
 import { useToast } from '../../hooks/useToast';
+import { onRefresh } from '../../utils/events';
 
 interface GroupNameDialogState {
   mode: 'create' | 'rename';
@@ -47,8 +48,7 @@ export function GroupsPage() {
     const handler = () => {
       void loadGroups();
     };
-    window.addEventListener('hippo:refresh', handler);
-    return () => window.removeEventListener('hippo:refresh', handler);
+    return onRefresh(handler);
   }, [loadGroups]);
 
   // Handle group sync actions

@@ -5,6 +5,7 @@ import { apiGet } from '../api';
 import { useI18n } from '../i18n';
 import { useToast } from '../hooks/useToast';
 import { formatRelativeTime } from '../utils/format';
+import { onToast } from '../utils/events';
 
 export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation();
@@ -95,12 +96,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   // Listen for toast events from the API layer
   useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as string;
-      showToast(detail);
-    };
-    window.addEventListener('hippo:toast', handler);
-    return () => window.removeEventListener('hippo:toast', handler);
+    return onToast(showToast);
   }, [showToast]);
 
   return (

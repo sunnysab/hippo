@@ -3,6 +3,7 @@ import { useGroupsState } from '../../store/groups';
 import { useI18n } from '../../i18n';
 import { apiGet, apiSend } from '../../api';
 import { LoadingIndicator } from '../../components/LoadingIndicator';
+import { emitRefresh } from '../../utils/events';
 
 interface AccountSearchModalProps {
   isOpen: boolean;
@@ -75,7 +76,7 @@ export function AccountSearchModal({ isOpen, onClose }: AccountSearchModalProps)
       ),
       append: false,
     });
-    window.dispatchEvent(new CustomEvent('hippo:refresh'));
+    emitRefresh();
   };
 
   useEffect(() => {
