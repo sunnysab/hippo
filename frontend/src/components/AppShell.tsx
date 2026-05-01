@@ -89,11 +89,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const handleRefresh = async () => {
-    await refreshChromeMeta();
-    window.dispatchEvent(new CustomEvent('hippo:refresh'));
-  };
-
   const handleBannerLogin = () => {
     navigate('/settings/login');
   };
@@ -115,7 +110,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         currentTab={currentTab}
         lastLoginAt={lastLoginAt}
         lastSyncAt={lastSyncAt}
-        onRefresh={handleRefresh}
       />
       <main className="content">
         <div className={`banner${bannerVisible ? '' : ' is-hidden'}`} id="status-banner">

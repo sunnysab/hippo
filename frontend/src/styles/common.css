@@ -558,6 +558,19 @@ body {
   .topbar {
     gap: 14px;
     padding: 10px 12px;
+    flex-wrap: wrap;
+  }
+
+  .brand {
+    flex-shrink: 0;
+    max-width: 100%;
+  }
+
+  .brand-subtitle {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
   }
 
   .tabs {
@@ -618,25 +631,20 @@ body {
 
   .top-actions {
     width: 100%;
-    display: grid;
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-wrap: wrap;
     gap: 6px;
   }
 
   .top-meta {
-    width: 100%;
+    flex: 0 1 auto;
     min-width: 0;
-    justify-content: center;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  #btn-refresh {
-    width: 100%;
-  }
-
   .content {
-    padding: calc(var(--app-topbar-height) + 10px) 0 12px;
+    padding: calc(var(--app-topbar-height) + 14px) 0 16px;
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
