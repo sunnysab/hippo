@@ -2,7 +2,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import { useSettingsState, type SyncSettings } from '../../store/settings';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
-import { apiSend } from '../../api';
+import { apiSend, isAuthError } from '../../api';
 import {
   buildSyncSettingsPayload,
   type SyncSettingsFormState,
@@ -23,9 +23,14 @@ export function SyncSettingsPanel({
   const settings = state.syncSettings;
 
   const handleSave = async () => {
-    const payload = await apiSend('/api/settings', 'PATCH', buildSyncSettingsPayload(formState));
-    dispatch({ type: 'SET_SYNC_SETTINGS', payload: payload as unknown as SyncSettings });
-    showToast(t('sync.saved', 'Sync settings saved.'));
+    try {
+      const payload = await apiSend('/api/settings', 'PATCH', buildSyncSettingsPayload(formState));
+      dispatch({ type: 'SET_SYNC_SETTINGS', payload: payload as unknown as SyncSettings });
+      showToast(t('sync.saved', 'Sync settings saved.'));
+    } catch (err) {
+      if (isAuthError(err)) return;
+      showToast((err as Error)?.message || t('sync.saveFailed', 'Failed to save sync settings.'));
+    }
   };
 
   const formatHour = (h: number) => `${String(h).padStart(2, '0')}:00`;
@@ -42,8 +47,13 @@ export function SyncSettingsPanel({
             {t('sync.save', 'Save')}
           </button>
           <button className="btn ghost" id="btn-sync-run" type="button" onClick={async () => {
-            await apiSend('/api/settings/run', 'POST', {});
-            showToast(t('sync.runningProgress', 'Processing sync task'));
+            try {
+              await apiSend('/api/settings/run', 'POST', {});
+              showToast(t('sync.runningProgress', 'Processing sync task'));
+            } catch (err) {
+              if (isAuthError(err)) return;
+              showToast((err as Error)?.message || t('sync.runFailed', 'Failed to start sync task.'));
+            }
           }}>
             {t('sync.run', 'Run Now')}
           </button>

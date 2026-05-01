@@ -14,6 +14,7 @@ import { LoadingIndicator } from '../../components/LoadingIndicator';
 import type { Article, ArticlePayload } from '../../store/articles';
 import { ARTICLE_SORT_PUBLISH_AT_DESC } from '../../utils/constants';
 import { copyToClipboard } from '../../utils/clipboard';
+import { createLatestOnly } from '../../utils/latest';
 import {
   areArticleFiltersEqual,
   buildArticleRouteStateFromSearchParams,
@@ -58,6 +59,16 @@ export function ArticlesPage() {
   const deferredSearchRef = useRef(deferredSearch);
   const skipNextArticleTargetResolveRef = useRef(false);
   const pendingRouteTargetRef = useRef<{ articleId: string; wxArticleId: string } | null>(null);
+  const latestArticleDetailRef = useRef(createLatestOnly<{
+    id: number;
+    payload: ArticlePayload;
+    openMobileReader: boolean;
+  }>(({ id, payload, openMobileReader }) => {
+    dispatch({ type: 'SELECT_ARTICLE', id, payload });
+    if (openMobileReader) {
+      dispatch({ type: 'SET_MOBILE_READING', reading: true });
+    }
+  }));
 
   const isNarrowViewport = useMediaQuery('(max-width: 720px)');
 
@@ -198,11 +209,11 @@ export function ArticlesPage() {
     setArticleIdParam(String(id));
     setWxArticleIdParam('');
     dispatch({ type: 'SELECT_ARTICLE', id, payload: null });
-    const payload = await apiGet(`/api/article/${id}`);
-    dispatch({ type: 'SELECT_ARTICLE', id, payload: payload as unknown as ArticlePayload });
-    if (isNarrowViewport) {
-      dispatch({ type: 'SET_MOBILE_READING', reading: true });
-    }
+    await latestArticleDetailRef.current(async () => ({
+      id,
+      payload: await apiGet(`/api/article/${id}`) as unknown as ArticlePayload,
+      openMobileReader: isNarrowViewport,
+    }));
   }, [dispatch, isNarrowViewport]);
 
   const resetFilters = useCallback(async () => {
@@ -234,12 +245,13 @@ export function ArticlesPage() {
         dispatch({ type: 'SELECT_ARTICLE', id: null, payload: null });
         return;
       }
-      dispatch({ type: 'SELECT_ARTICLE', id: Number(articleId), payload: null });
-      const payload = await apiGet(`/api/article/${articleId}`);
-      dispatch({ type: 'SELECT_ARTICLE', id: Number(articleId), payload: payload as unknown as ArticlePayload });
-      if (isNarrowViewport) {
-        dispatch({ type: 'SET_MOBILE_READING', reading: true });
-      }
+      const numericArticleId = Number(articleId);
+      dispatch({ type: 'SELECT_ARTICLE', id: numericArticleId, payload: null });
+      await latestArticleDetailRef.current(async () => ({
+        id: numericArticleId,
+        payload: await apiGet(`/api/article/${articleId}`) as unknown as ArticlePayload,
+        openMobileReader: isNarrowViewport,
+      }));
       return;
     }
 
@@ -261,15 +273,11 @@ export function ArticlesPage() {
     }
 
     dispatch({ type: 'SELECT_ARTICLE', id: article.id, payload: null });
-    const detailPayload = await apiGet(`/api/article/${article.id}`);
-    dispatch({
-      type: 'SELECT_ARTICLE',
+    await latestArticleDetailRef.current(async () => ({
       id: article.id,
-      payload: detailPayload as unknown as ArticlePayload,
-    });
-    if (isNarrowViewport) {
-      dispatch({ type: 'SET_MOBILE_READING', reading: true });
-    }
+      payload: await apiGet(`/api/article/${article.id}`) as unknown as ArticlePayload,
+      openMobileReader: isNarrowViewport,
+    }));
   }, [articleIdParam, dispatch, isNarrowViewport, wxArticleIdParam]);
 
   useEffect(() => {

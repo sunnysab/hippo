@@ -2,7 +2,7 @@ import { memo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGroupsState } from '../../store/groups';
 import { useI18n } from '../../i18n';
-import { apiSend } from '../../api';
+import { apiSend, isAuthError } from '../../api';
 import { useToast } from '../../hooks/useToast';
 import { formatRelativeTime } from '../../utils/format';
 import { syncDefaults } from '../../store/shared';
@@ -45,7 +45,8 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
           ? t('accounts.syncDisabledToast', 'Sync disabled.')
           : t('accounts.syncEnabledToast', 'Sync enabled.'),
       );
-    } catch {
+    } catch (err) {
+      if (isAuthError(err)) return;
       showToast(t('accounts.syncToggleFailed', 'Failed to update sync status.'));
     }
   };
@@ -68,7 +69,8 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
         },
       });
       showToast(t('accounts.syncSaved', 'Sync strategy updated.'));
-    } catch {
+    } catch (err) {
+      if (isAuthError(err)) return;
       showToast(t('accounts.syncFailed', 'Failed to update sync strategy.'));
     }
   };

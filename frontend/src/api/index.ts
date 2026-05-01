@@ -1,3 +1,23 @@
+export class ApiError extends Error {
+  code?: string;
+  status?: number;
+
+  constructor(message: string, options: { code?: string; status?: number } = {}) {
+    super(message);
+    this.name = 'ApiError';
+    this.code = options.code;
+    this.status = options.status;
+  }
+}
+
+const createApiError = (message: string, options: { code?: string; status?: number } = {}) => {
+  return new ApiError(message, options);
+};
+
+export const isAuthError = (error: unknown): error is ApiError => {
+  return error instanceof ApiError && error.code === 'AUTH_REQUIRED';
+};
+
 const handleAuthError = (message?: string) => {
   const t = (window as unknown as Record<string, unknown>).__hippo_t as ((k: string, f: string) => string) | undefined;
   const fallback = t ? t('login.sessionExpired', 'Session expired. Please login again.') : 'Session expired. Please login again.';
@@ -11,8 +31,12 @@ export const apiGet = async (path: string): Promise<Record<string, unknown>> => 
     const payload = await res.json().catch(() => ({})) as Record<string, string>;
     if (res.status === 401) {
       handleAuthError(payload.error);
+      throw createApiError(payload.error || 'Authentication required', {
+        code: 'AUTH_REQUIRED',
+        status: res.status,
+      });
     }
-    throw new Error(payload.error || `Request failed: ${res.status}`);
+    throw createApiError(payload.error || `Request failed: ${res.status}`, { status: res.status });
   }
   return res.json() as Promise<Record<string, unknown>>;
 };
@@ -39,9 +63,7 @@ export const apiSend = async (
     });
   } catch (err) {
     if (withTimeout && (err as Error)?.name === 'AbortError') {
-      const timeoutErr = new Error('Request timeout');
-      (timeoutErr as unknown as Record<string, unknown>).code = 'TIMEOUT';
-      throw timeoutErr;
+      throw createApiError('Request timeout', { code: 'TIMEOUT' });
     }
     throw err;
   } finally {
@@ -51,8 +73,12 @@ export const apiSend = async (
     const payload = await res.json().catch(() => ({})) as Record<string, string>;
     if (res.status === 401) {
       handleAuthError(payload.error);
+      throw createApiError(payload.error || 'Authentication required', {
+        code: 'AUTH_REQUIRED',
+        status: res.status,
+      });
     }
-    throw new Error(payload.error || `Request failed: ${res.status}`);
+    throw createApiError(payload.error || `Request failed: ${res.status}`, { status: res.status });
   }
   if (res.status === 204) return {};
   return res.json() as Promise<Record<string, unknown>>;

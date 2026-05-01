@@ -1,6 +1,6 @@
 import { useSettingsState, type LoginStatus } from '../../store/settings';
 import { useI18n } from '../../i18n';
-import { apiSend } from '../../api';
+import { apiSend, isAuthError } from '../../api';
 import { formatRelativeTime } from '../../utils/format';
 import { getSyncTone } from '../../utils/sync';
 
@@ -22,13 +22,21 @@ export function LoginPanel() {
   const startLogin = async () => {
     const currentStatus = loginStatus?.status || 'idle';
     const force = ['starting', 'waiting', 'scanned', 'refresh'].includes(currentStatus);
-    const payload = await apiSend('/api/login/start', 'POST', { force });
-    dispatch({ type: 'SET_LOGIN_STATUS', payload: payload as unknown as LoginStatus });
+    try {
+      const payload = await apiSend('/api/login/start', 'POST', { force });
+      dispatch({ type: 'SET_LOGIN_STATUS', payload: payload as unknown as LoginStatus });
+    } catch (err) {
+      if (isAuthError(err)) return;
+    }
   };
 
   const cancelLogin = async () => {
-    const payload = await apiSend('/api/login/cancel', 'POST', {});
-    dispatch({ type: 'SET_LOGIN_STATUS', payload: payload as unknown as LoginStatus });
+    try {
+      const payload = await apiSend('/api/login/cancel', 'POST', {});
+      dispatch({ type: 'SET_LOGIN_STATUS', payload: payload as unknown as LoginStatus });
+    } catch (err) {
+      if (isAuthError(err)) return;
+    }
   };
 
   const getStatusLabel = () => {

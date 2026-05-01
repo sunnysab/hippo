@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useGroupsState } from '../../store/groups';
 import { useI18n } from '../../i18n';
-import { apiSend } from '../../api';
+import { apiSend, isAuthError } from '../../api';
 import { useToast } from '../../hooks/useToast';
 import { syncDefaults } from '../../store/shared';
 import { getSyncModeLabel } from '../../utils/sync';
@@ -38,7 +38,8 @@ function GroupSyncToolbarFields({ group }: GroupSyncToolbarFieldsProps) {
         },
       });
       showToast(t('groups.syncSaved', 'Default sync updated.'));
-    } catch {
+    } catch (err) {
+      if (isAuthError(err)) return;
       showToast(t('groups.syncFailed', 'Failed to update default sync.'));
     }
   };
