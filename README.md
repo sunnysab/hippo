@@ -1,4 +1,4 @@
-# WeChat 文章导出 CLI (Python 版)
+# Hippo 使用说明
 
 基于 [Typer](https://typer.tiangolo.com) 的命令行工具，用于管理公众号、同步文章列表、下载文章内容，数据存储使用 PostgreSQL。
 
@@ -11,6 +11,7 @@
 ```bash
 python -m venv .venv
 source .venv/bin/activate          # Windows 使用 .venv\Scripts\activate
+cp .env.example .env
 pip install -r requirements-cli.txt
 python -m hippo --help
 ```
@@ -31,22 +32,30 @@ npm --prefix frontend ci
 npm --prefix frontend run build
 ```
 
+如果是重新 clone 的环境，先恢复 `.env`：
+
+```bash
+cp .env.example .env
+```
+
+另外，`frontend/dist` 不会跟随仓库保存，需要通过前面的前端构建命令重新生成。
+
 ### 方式 C：Docker
 
 ```bash
-# Build image
+# 构建镜像
 docker build -t hippo .
 
-# Run CLI with PostgreSQL
+# 运行 CLI
 docker run -it --rm -e HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname" hippo --help
 
-# Example: login
+# 登录示例
 docker run -it --rm -e HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname" hippo login
 
-# Example: sync articles
+# 同步文章示例
 docker run -it --rm -e HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname" hippo article sync-all
 
-# Run web service
+# 启动 Web 服务
 docker run --rm -p 8000:8000 \
   -e HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname" \
   hippo
@@ -209,9 +218,9 @@ ExecStart=/home/sab/hippo/.venv/bin/python -m hippo serve --no-tcp --unix-socket
 
 ---
 
-## Download Articles
+## 下载文章
 
-### Basic usage
+### 基本用法
 
 ```bash
 python -m hippo article sync --biz <fakeid>
@@ -219,22 +228,22 @@ python -m hippo article sync-all
 python -m hippo article download "https://mp.weixin.qq.com/..."
 ```
 
-- `article sync` / `sync-all`: download content based on the synced article list
-- `article download`: download a single article URL
+- `article sync` / `sync-all`：基于已同步的文章列表下载正文
+- `article download`：下载单篇文章链接
 
-### Worker configuration
+### Worker 配置
 
-- Article HTML can be fetched via a Cloudflare Worker (images are still direct):
-  - `--worker-prefix`: worker prefix or template (`{url}` placeholder), defaults to `HIPPO_ARTICLE_WORKER`
-  - `--worker-proxy`: proxy for worker requests (HTTP/SOCKS5), defaults to `HIPPO_ARTICLE_WORKER_PROXY`
-  - `--workers`: article download concurrency, defaults to `HIPPO_ARTICLE_MAX_CONNECTIONS` (alias: `--worker-max-connections`)
+- 文章 HTML 可通过 Cloudflare Worker 抓取，图片仍然直连。
+- `--worker-prefix`：Worker 前缀或模板，支持 `{url}` 占位符，默认读取 `HIPPO_ARTICLE_WORKER`
+- `--worker-proxy`：Worker 请求代理（HTTP/SOCKS5），默认读取 `HIPPO_ARTICLE_WORKER_PROXY`
+- `--workers`：文章下载并发数，默认读取 `HIPPO_ARTICLE_MAX_CONNECTIONS`，别名 `--worker-max-connections`
 
-### Download behavior
-- Article HTML fetch retries up to 5 times before skipping the article.
-- Image downloads run on 2 background threads and retry up to 3 times.
-- Failed image downloads are marked in `article_images.failed_*` and can be retried via `article backfill-images`.
-- For `sync-all`, each account waits for its image queue to finish before moving to the next account.
-- If interrupted with Ctrl+C, any queued images are marked as failed for later backfill.
+### 下载行为
+- 文章 HTML 最多重试 5 次，之后跳过该文章
+- 图片下载使用 2 个后台线程，最多重试 3 次
+- 图片下载失败会记录到 `article_images.failed_*`，后续可通过 `article backfill-images` 重试
+- 执行 `sync-all` 时，每个账号会等待当前图片队列完成后再处理下一个账号
+- 如果被 Ctrl+C 中断，队列中尚未完成的图片会被标记为失败，方便后续补偿
 
 ---
 
@@ -341,7 +350,7 @@ hippo -v account sync-all
 
 ## 配置与路径
 
-### Environment variables
+### 环境变量
 
 核心配置：`hippo/config.py`
 
@@ -350,36 +359,36 @@ hippo -v account sync-all
 | `HIPPO_PG_DSN` | PostgreSQL DSN |
 | `HIPPO_PG_JIEBA_WARMUP` | 是否在新建 PG 连接时预热 `jiebaqry`（默认 `1`） |
 | `HIPPO_PG_JIEBA_WARMUP_TEXT` | 预热分词使用的文本（默认 `hippo`） |
-| `HIPPO_ARTICLE_WORKER` | 文章 HTML worker 前缀或模板 |
-| `HIPPO_ARTICLE_WORKER_PROXY` | worker 访问代理 |
-| `HIPPO_ARTICLE_MAX_CONNECTIONS` | worker 最大并发连接数 |
+| `HIPPO_ARTICLE_WORKER` | 文章 HTML Worker 前缀或模板 |
+| `HIPPO_ARTICLE_WORKER_PROXY` | Worker 访问代理 |
+| `HIPPO_ARTICLE_MAX_CONNECTIONS` | Worker 最大并发连接数 |
 
-## Backfill missing images (PostgreSQL)
+## 回填缺失图片（PostgreSQL）
 
-If you have pending `article_images` rows without binary data, you can backfill them:
+如果 `article_images` 表里已经有记录，但还没有二进制图片内容，可以用下面的命令补齐：
 
 ```bash
 python scripts/fill_pg_images.py --pg-dsn "postgresql://user:pass@host:5432/dbname"
 ```
 
-CLI alternative:
+也可以直接走 CLI：
 
 ```bash
 python -m hippo article backfill-images --pg-dsn "postgresql://user:pass@host:5432/dbname"
 ```
 
-Optional flags:
-- `--limit 1000` to cap the number of images per run
-- `--workers 8` to control concurrent downloads
-- `--retries 3` to control download retries
-- `--dry-run` to list targets without writing
+常用参数：
+- `--limit 1000`：限制单次处理的图片数量
+- `--workers 8`：控制并发下载数
+- `--retries 3`：控制下载重试次数
+- `--dry-run`：只列出目标，不写入数据
 
-### Article HTML proxy (images stay direct)
+### 文章 HTML 代理（图片仍然直连）
 
-- `HIPPO_ARTICLE_WORKER`: Cloudflare Workers relay for article HTML, e.g. `https://c0c0.sunnysab.workers.dev/?url=` or `https://c0c0.sunnysab.workers.dev/?url={url}`.
-- `HIPPO_ARTICLE_WORKER_PROXY`: Optional HTTP/SOCKS5 proxy for reaching the worker (e.g. `http://192.168.133.201:8080/`); omit to access the worker directly.
-- `HIPPO_ARTICLE_MAX_CONNECTIONS`: Optional max concurrent connections to the worker client (e.g. `2`) to keep proxy usage under control.
-- When the downloader sees `https://mp.weixin.qq.com/s/...`, it requests the worker URL (with the encoded article URL) using the configured proxy; images are fetched without any proxy using the original URLs.
+- `HIPPO_ARTICLE_WORKER`：Cloudflare Workers 中转地址，例如 `https://c0c0.sunnysab.workers.dev/?url=` 或 `https://c0c0.sunnysab.workers.dev/?url={url}`
+- `HIPPO_ARTICLE_WORKER_PROXY`：访问 Worker 时使用的可选 HTTP/SOCKS5 代理，例如 `http://192.168.133.201:8080/`
+- `HIPPO_ARTICLE_MAX_CONNECTIONS`：Worker 客户端最大并发连接数，例如 `2`
+- 下载器遇到 `https://mp.weixin.qq.com/s/...` 时，会把编码后的文章 URL 拼到 Worker 地址上请求；图片仍然直接请求原始地址，不经过代理
 
 ---
 
