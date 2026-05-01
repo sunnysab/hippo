@@ -73,9 +73,9 @@ export function ArticleList({ onSelect, onLoadMore }: ArticleListProps) {
             className="context-item"
             id="article-menu-open"
             type="button"
-            disabled={!contextMenu.article.source_url && !(contextMenu.article as unknown as Record<string, string>).link}
+            disabled={!contextMenu.article.source_url && !contextMenu.article.link}
             onClick={() => {
-              const link = contextMenu.article.source_url || (contextMenu.article as unknown as Record<string, string>).link || '';
+              const link = contextMenu.article.source_url || contextMenu.article.link || '';
               if (link) window.open(link, '_blank', 'noopener,noreferrer');
               setContextMenu(null);
             }}
@@ -88,9 +88,9 @@ export function ArticleList({ onSelect, onLoadMore }: ArticleListProps) {
             className="context-item"
             id="article-menu-copy"
             type="button"
-            disabled={!contextMenu.article.source_url && !(contextMenu.article as unknown as Record<string, string>).link}
+            disabled={!contextMenu.article.source_url && !contextMenu.article.link}
             onClick={async () => {
-              const link = contextMenu.article.source_url || (contextMenu.article as unknown as Record<string, string>).link || '';
+              const link = contextMenu.article.source_url || contextMenu.article.link || '';
               if (!link) return;
               try { await copyToClipboard(link); showToast(t('articles.linkCopied', 'Link copied.')); } catch { showToast(link); }
               setContextMenu(null);
