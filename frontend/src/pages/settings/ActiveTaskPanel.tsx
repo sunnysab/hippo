@@ -61,7 +61,7 @@ export function ActiveTaskPanel() {
               </div>
               <div className="sync-summary-side">
                 {activeTask.accounts_total > 0 && (
-                  <span className="badge">{activeTask.accounts_done || 0}/{activeTask.accounts_total}</span>
+                  <span className="meta-count">{activeTask.accounts_done || 0}/{activeTask.accounts_total}</span>
                 )}
               </div>
             </div>
@@ -89,7 +89,7 @@ export function ActiveTaskPanel() {
                         {formatRelativeTime(account.updated_at, t)}
                       </div>
                     </div>
-                    {articleBadge ? <span className="badge">{escapeHtml(articleBadge)}</span> : null}
+                    {articleBadge ? <span className="meta-count">{escapeHtml(articleBadge)}</span> : null}
                   </div>
                 );
               })}

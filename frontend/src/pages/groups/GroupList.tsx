@@ -58,7 +58,7 @@ export function GroupList({ onSync }: GroupListProps) {
                   <path d="M12 6V3L8 7l4 4V8c2.2 0 4 1.8 4 4a4 4 0 0 1-4 4 4 4 0 0 1-3.8-2.6l-1.9.6A6 6 0 0 0 12 20a6 6 0 0 0 0-12z"/>
                 </svg>
               </button>
-              <span className="badge">{group.account_count || 0}</span>
+              <span className="meta-count">{group.account_count || 0}</span>
             </div>
           </div>
         ))}

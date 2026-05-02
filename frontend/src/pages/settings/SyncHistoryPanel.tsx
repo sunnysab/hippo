@@ -58,7 +58,7 @@ export function SyncHistoryPanel() {
                 <div className="account-sub">{escapeHtml(started)}</div>
                 {error && <div className="account-sub">{escapeHtml(error)}</div>}
               </div>
-              <span className="badge">+{escapeHtml(String(saved))}</span>
+              <span className="meta-count">+{escapeHtml(String(saved))}</span>
             </div>
           );
         })}
