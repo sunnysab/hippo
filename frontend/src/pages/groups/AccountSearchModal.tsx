@@ -139,7 +139,7 @@ export function AccountSearchModal({ isOpen, onClose }: AccountSearchModalProps)
               </div>
               <div className="search-actions">
                 {item.is_added ? (
-                  <span className="search-tag">{t('accounts.searchAdded', 'Added')}</span>
+                  <span className="meta-note">{t('accounts.searchAdded', 'Added')}</span>
                 ) : (
                   <button
                     className="btn ghost search-add"

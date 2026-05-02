@@ -6,16 +6,16 @@
   --bg: #ece7dd;
   --bg-elevated: #f6f1e8;
   --surface: rgba(252, 249, 243, 0.92);
-  --surface-panel: rgba(252, 249, 243, 0.9);
-  --surface-panel-strong: rgba(244, 239, 231, 0.92);
+  --surface-panel: rgba(252, 249, 243, 0.88);
+  --surface-panel-strong: rgba(244, 239, 231, 0.84);
   --surface-muted: #f2ece2;
   --surface-soft: rgba(246, 241, 232, 0.88);
   --surface-strong: #e8e1d4;
-  --surface-chip: rgba(236, 231, 221, 0.92);
-  --surface-chip-soft: rgba(243, 238, 229, 0.95);
-  --surface-item: rgba(255, 255, 255, 0.62);
-  --surface-item-hover: rgba(255, 255, 255, 0.84);
-  --surface-item-active: rgba(225, 236, 230, 0.95);
+  --surface-chip: rgba(236, 231, 221, 0.78);
+  --surface-chip-soft: rgba(243, 238, 229, 0.84);
+  --surface-item: rgba(255, 255, 255, 0.48);
+  --surface-item-hover: rgba(255, 255, 255, 0.68);
+  --surface-item-active: rgba(225, 236, 230, 0.74);
   --text: #1f251f;
   --muted: #677265;
   --muted-soft: #919988;
@@ -97,7 +97,8 @@ body {
   padding: 12px 16px;
   background: var(--surface-panel);
   backdrop-filter: blur(16px) saturate(1.15);
-  box-shadow: 0 2px 8px rgba(40, 36, 28, 0.05);
+  border: 1px solid var(--border);
+  box-shadow: none;
   border-radius: var(--radius);
 }
 
@@ -376,7 +377,8 @@ body {
 
 .panel {
   background: var(--surface-panel);
-  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
   padding: 16px;
   box-shadow: none;
 }
@@ -433,16 +435,41 @@ body {
   background: var(--surface-item-hover);
 }
 
-.badge {
+.meta-count {
   display: inline-flex;
   align-items: center;
-  min-height: 20px;
-  padding: 0 7px;
-  border-radius: 999px;
-  background: var(--surface-chip);
-  color: #324037;
+  min-height: 18px;
+  padding: 0;
+  background: none;
+  color: var(--muted);
   font-size: 11px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+.meta-note,
+.meta-note-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.meta-note-button {
+  appearance: none;
+  cursor: pointer;
+  font-family: var(--font-sans);
+}
+
+.meta-note-button:hover {
+  color: var(--text);
 }
 
 .empty-state {

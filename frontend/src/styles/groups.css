@@ -57,15 +57,22 @@
 
 .group-list-item:hover {
   transform: translateY(var(--lift-hover));
-  background: var(--surface-item);
+  background: rgba(41, 93, 80, 0.04);
 }
 
 .group-list-item.is-active {
-  background: var(--surface-item-active);
+  background: none;
+  box-shadow: inset 0 0 0 1px rgba(41, 93, 80, 0.14);
 }
 
 .group-list-item.is-active::before {
   background: var(--accent);
+}
+
+.group-list-item.is-active .account-name,
+.group-list-item.is-active .account-sub,
+.group-list-item.is-active .meta-count {
+  color: var(--text);
 }
 
 .group-list-item .group-item-actions {
@@ -136,17 +143,18 @@
 .group-id {
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: var(--surface-chip);
+  min-height: 18px;
+  padding: 0;
+  border: none;
+  background: none;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+  font-variant-numeric: tabular-nums;
 }
 
 .group-id:disabled {
@@ -218,7 +226,8 @@
   align-items: center;
   padding: 10px 12px;
   border-radius: var(--radius-control);
-  background: var(--surface-item);
+  border: 1px solid var(--border);
+  background: none;
   transition: background 0.18s ease-out, transform 0.18s ease-out;
 }
 
@@ -241,17 +250,6 @@
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.search-tag {
-  display: inline-flex;
-  align-items: center;
-  min-height: 26px;
-  padding: 0 9px;
-  border-radius: 999px;
-  background: var(--surface-chip);
-  color: var(--muted);
-  font-size: 11px;
 }
 
 .context-menu {
@@ -296,18 +294,20 @@
   gap: 10px;
   padding: 14px;
   border-radius: var(--radius-lg);
-  background: var(--surface-item);
+  border: 1px solid var(--border);
+  background: none;
   transition: background 0.18s ease-out, transform 0.18s ease-out, opacity 0.18s ease-out;
 }
 
 .card:hover {
   transform: translateY(var(--lift-hover));
-  background: var(--surface-item-hover);
+  background: rgba(255, 255, 255, 0.34);
 }
 
 .card.is-disabled {
   opacity: 0.74;
-  background: rgba(253, 236, 236, 0.7);
+  border-color: rgba(161, 74, 74, 0.18);
+  background: rgba(253, 236, 236, 0.22);
 }
 
 .card-header {
@@ -408,7 +408,8 @@
   margin-top: 4px;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
-  background: var(--surface-panel-strong);
+  border: 1px solid var(--border);
+  background: none;
 }
 
 .account-sync-row {

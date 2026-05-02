@@ -47,7 +47,7 @@ export function ArticleFilterSummary({
     <div className="article-filter-summary" id="article-filter-summary">
       <strong>{escapeHtml(totalLabel)}</strong>
       {tags.map((tag, i) => (
-        <span key={i} className="article-summary-pill">{escapeHtml(tag)}</span>
+        <span key={i} className="meta-note">{escapeHtml(tag)}</span>
       ))}
     </div>
   );

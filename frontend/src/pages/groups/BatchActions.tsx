@@ -167,7 +167,7 @@ export function BatchActions() {
           {t('accounts.groupSync', 'Sync')}
         </button>
       </div>
-      <span className="badge" id="batch-count">{count}</span>
+      <span className="meta-count" id="batch-count">{count}</span>
       <button
         className="btn ghost"
         id="btn-account-refresh"

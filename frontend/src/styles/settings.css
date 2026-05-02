@@ -53,15 +53,21 @@
 
 .settings-nav-item:hover {
   transform: translateY(var(--lift-hover));
-  background: var(--surface-item);
+  background: rgba(41, 93, 80, 0.04);
 }
 
 .settings-nav-item.is-active {
-  background: var(--surface-item-active);
+  background: none;
+  box-shadow: inset 0 0 0 1px rgba(41, 93, 80, 0.14);
 }
 
 .settings-nav-item.is-active::before {
   background: var(--accent);
+}
+
+.settings-nav-item.is-active .settings-nav-label,
+.settings-nav-item.is-active .settings-nav-summary {
+  color: var(--text);
 }
 
 .settings-nav-label {
@@ -125,22 +131,23 @@
   gap: 10px;
   padding: 14px;
   border-radius: var(--radius-lg);
-  background: var(--surface-panel-strong);
+  border: 1px solid var(--border);
+  background: none;
 }
 
 .login-card[data-status='waiting'],
 .login-card[data-status='scanned'],
 .login-card[data-status='starting'],
 .login-card[data-status='refresh'] {
-  background: rgba(227, 237, 245, 0.92);
+  border-color: rgba(47, 99, 143, 0.24);
 }
 
 .login-card[data-status='success'] {
-  background: rgba(229, 239, 231, 0.94);
+  border-color: rgba(53, 107, 71, 0.26);
 }
 
 .login-card[data-status='error'] {
-  background: rgba(246, 228, 226, 0.94);
+  border-color: rgba(161, 74, 74, 0.26);
 }
 
 .login-qr {
@@ -220,7 +227,8 @@
 .sync-form-section {
   padding: 12px;
   border-radius: var(--radius-sm);
-  background: var(--surface-panel-strong);
+  border: 1px solid var(--border);
+  background: none;
 }
 
 .sync-section-title {
@@ -240,9 +248,10 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
-  padding: 14px;
-  border-radius: var(--radius-lg);
-  background: var(--surface-panel-strong);
+  padding: 0 0 12px;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
 }
 
 .sync-summary-copy {
@@ -271,10 +280,10 @@
 .sync-inline-pill {
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: var(--surface-chip);
+  min-height: 18px;
+  padding: 0;
+  border-radius: 0;
+  background: none;
   color: var(--muted);
   font-size: 11px;
 }
@@ -306,7 +315,8 @@
   gap: 10px;
   padding: 11px 13px;
   border-radius: var(--radius-sm);
-  background: var(--surface-item);
+  border: 1px solid var(--border);
+  background: none;
 }
 
 .sync-progress-copy {
@@ -338,6 +348,7 @@
   min-height: 22px;
   padding: 0 8px;
   border-radius: 999px;
+  border: 1px solid currentColor;
   font-size: 10px;
   font-weight: 700;
   white-space: nowrap;
@@ -347,6 +358,8 @@
   align-items: flex-start;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: none;
 }
 
 .sync-history-copy {
@@ -356,52 +369,56 @@
 }
 
 .sync-tone-success.sync-status-badge {
-  background: var(--success-soft);
+  background: rgba(229, 239, 231, 0.32);
   color: var(--success);
 }
 
 .sync-tone-success.sync-progress-item,
 .sync-tone-success.sync-history-item {
-  background: rgba(229, 239, 231, 0.9);
+  border-color: rgba(53, 107, 71, 0.22);
+  box-shadow: inset 3px 0 0 rgba(53, 107, 71, 0.78);
 }
 
 .sync-tone-danger.sync-status-badge {
-  background: var(--danger-soft);
+  background: rgba(246, 228, 226, 0.28);
   color: var(--danger);
 }
 
 .sync-tone-danger.sync-progress-item,
 .sync-tone-danger.sync-history-item {
-  background: rgba(246, 228, 226, 0.88);
+  border-color: rgba(161, 74, 74, 0.22);
+  box-shadow: inset 3px 0 0 rgba(161, 74, 74, 0.78);
 }
 
 .sync-tone-info.sync-status-badge {
-  background: var(--info-soft);
+  background: rgba(227, 237, 245, 0.28);
   color: var(--info);
 }
 
 .sync-tone-info.sync-progress-item,
 .sync-tone-info.sync-history-item {
-  background: rgba(227, 237, 245, 0.88);
+  border-color: rgba(47, 99, 143, 0.22);
+  box-shadow: inset 3px 0 0 rgba(47, 99, 143, 0.72);
 }
 
 .sync-tone-warning.sync-status-badge {
-  background: var(--warning-soft);
+  background: rgba(245, 234, 210, 0.32);
   color: var(--warning);
 }
 
 .sync-tone-warning.sync-progress-item,
 .sync-tone-warning.sync-history-item {
-  background: rgba(245, 234, 210, 0.88);
+  border-color: rgba(140, 100, 40, 0.22);
+  box-shadow: inset 3px 0 0 rgba(140, 100, 40, 0.72);
 }
 
 .sync-tone-muted.sync-status-badge {
-  background: var(--surface-muted);
+  background: rgba(242, 236, 226, 0.34);
   color: var(--muted);
 }
 
 .sync-tone-neutral.sync-status-badge {
-  background: var(--surface-chip);
+  background: rgba(236, 231, 221, 0.28);
   color: var(--muted);
 }
 

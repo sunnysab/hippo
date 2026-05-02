@@ -45,6 +45,7 @@ export function ArticleTypeFacets({ activeType, onChange }: ArticleTypeFacetsPro
       <button
         className={`article-type-facet${activeType ? '' : ' is-active'}`}
         type="button"
+        aria-pressed={activeType ? 'false' : 'true'}
         onClick={() => onChange('')}
       >
         <span className="item-show-type-badge item-show-type-share item-show-type-badge-compact">
@@ -59,6 +60,7 @@ export function ArticleTypeFacets({ activeType, onChange }: ArticleTypeFacetsPro
             key={item.value}
             className={`article-type-facet${activeType === item.value ? ' is-active' : ''}`}
             type="button"
+            aria-pressed={activeType === item.value ? 'true' : 'false'}
             onClick={() => onChange(item.value)}
           >
             <ItemShowTypeBadge value={typeValue} compact />

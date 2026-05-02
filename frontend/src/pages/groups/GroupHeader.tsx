@@ -34,7 +34,7 @@ export function GroupHeader({
             <button className="group-name" id="group-current-name" type="button" disabled>
               {t('groups.currentTitle', 'Group')}
             </button>
-            <button className="group-id" id="group-current-id" type="button" disabled>
+            <button className="group-id meta-note-button" id="group-current-id" type="button" disabled>
               {t('groups.currentIdEmpty', 'ID')}
             </button>
           </div>
@@ -69,7 +69,7 @@ export function GroupHeader({
             {group.name}
           </button>
           <button
-            className="group-id"
+            className="group-id meta-note-button"
             id="group-current-id"
             type="button"
             onClick={handleIdClick}
