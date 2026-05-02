@@ -1178,10 +1178,10 @@ def _list_article_images(storage: PostgresStorage, article_id: int) -> list[dict
     return images
 
 
-def _ensure_image_hash(storage: PostgresStorage, image_id: int) -> dict[str, Any]:
+def _ensure_image_hash(storage: PostgresStorage, image_id: int, *, allow_origin_fetch: bool = True) -> dict[str, Any]:
     try:
         with storage.transaction():
-            return ensure_image_hash(storage, image_id)
+            return ensure_image_hash(storage, image_id, allow_origin_fetch=allow_origin_fetch)
     except LookupError as exc:
         raise ApiError(str(exc), status=404) from exc
     except RuntimeError as exc:
@@ -1193,21 +1193,7 @@ def _ensure_article_image_hashes(
     article_id: int,
     images: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    if not storage.images.has_blocked_hashes():
-        return images
-    missing_ids = [
-        int(image['id'])
-        for image in images
-        if image.get('hash_algo') != IMAGE_HASH_ALGO or not image.get('content_hash')
-    ]
-    if not missing_ids:
-        return images
-    for image_id in missing_ids:
-        try:
-            _ensure_image_hash(storage, image_id)
-        except ApiError as exc:
-            logger.warning('Image hash hydration failed (id=%s): %s', image_id, exc)
-    return storage.images.get_article_images(article_id)
+    return images
 
 
 def _filter_blocked_content_blocks(
