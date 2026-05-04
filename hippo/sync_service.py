@@ -23,15 +23,18 @@ async def _run_backfill_images() -> None:
         from .cli import _backfill_article_images_async
     except Exception:
         return
-    await _backfill_article_images_async(
-        pg_dsn=None,
-        limit=None,
-        workers=4,
-        retries=3,
-        sleep_base=0.5,
-        retry_failed=False,
-        dry_run=False,
-    )
+    try:
+        await _backfill_article_images_async(
+            pg_dsn=None,
+            limit=None,
+            workers=4,
+            retries=3,
+            sleep_base=0.5,
+            retry_failed=False,
+            dry_run=False,
+        )
+    except Exception:
+        _logger.exception('Background image backfill failed.')
 from .sync_types import (
     NullSyncObserver,
     SyncAccountResult,

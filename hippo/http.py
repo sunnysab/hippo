@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import ssl
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Optional
 from urllib.parse import quote, urlparse
 
+import certifi
 import httpx
 
 from .config import (
@@ -49,6 +51,28 @@ class WorkerURLTransport(httpx.AsyncBaseTransport):
 class MPClient(AbstractAsyncContextManager):
     """Tiny async wrapper around httpx for the few endpoints we need."""
 
+    @staticmethod
+    def _build_async_client(**kwargs: Any) -> httpx.AsyncClient:
+        try:
+            return httpx.AsyncClient(**kwargs)
+        except FileNotFoundError as exc:
+            verify_paths = ssl.get_default_verify_paths()
+            fallback_verify = certifi.where()
+            logger.warning(
+                'System CA bundle unavailable (cafile=%s, capath=%s); retrying with certifi bundle %s: %s',
+                verify_paths.cafile,
+                verify_paths.capath,
+                fallback_verify,
+                exc,
+            )
+            try:
+                return httpx.AsyncClient(**{**kwargs, 'verify': fallback_verify})
+            except FileNotFoundError as fallback_exc:
+                raise RuntimeError(
+                    'Failed to initialize HTTP TLS trust store '
+                    f'(cafile={verify_paths.cafile}, capath={verify_paths.capath}, certifi={fallback_verify})'
+                ) from fallback_exc
+
     def __init__(
         self,
         *,
@@ -57,7 +81,11 @@ class MPClient(AbstractAsyncContextManager):
         article_worker_proxy: Optional[str] = ARTICLE_WORKER_PROXY,
         article_max_connections: Optional[int] = ARTICLE_WORKER_MAX_CONNECTIONS,
     ) -> None:
-        self.client = httpx.AsyncClient(timeout=timeout, headers=HEADERS, follow_redirects=True)
+        self.client = self._build_async_client(
+            timeout=timeout,
+            headers=HEADERS,
+            follow_redirects=True,
+        )
         self.article_worker = article_worker.rstrip("/") if article_worker else None
         self.article_client: Optional[httpx.AsyncClient] = None
         if self.article_worker or article_worker_proxy:
@@ -72,7 +100,7 @@ class MPClient(AbstractAsyncContextManager):
                 transport_kwargs["limits"] = limits
             transport = httpx.AsyncHTTPTransport(**transport_kwargs)
             wrapped_transport = WorkerURLTransport(transport, self.article_worker)
-            self.article_client = httpx.AsyncClient(
+            self.article_client = self._build_async_client(
                 timeout=timeout,
                 headers=HEADERS,
                 follow_redirects=True,
