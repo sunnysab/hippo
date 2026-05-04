@@ -1,6 +1,7 @@
 import { useSettingsState, type LoginStatus } from '../../store/settings';
 import { useI18n } from '../../i18n';
 import { apiSend, isAuthError } from '../../api';
+import { emitRefresh } from '../../utils/events';
 import { formatRelativeTime } from '../../utils/format';
 import { getSyncTone } from '../../utils/sync';
 
@@ -25,6 +26,7 @@ export function LoginPanel() {
     try {
       const payload = await apiSend('/api/login/start', 'POST', { force });
       dispatch({ type: 'SET_LOGIN_STATUS', payload: payload as unknown as LoginStatus });
+      emitRefresh();
     } catch (err) {
       if (isAuthError(err)) return;
     }
@@ -34,6 +36,7 @@ export function LoginPanel() {
     try {
       const payload = await apiSend('/api/login/cancel', 'POST', {});
       dispatch({ type: 'SET_LOGIN_STATUS', payload: payload as unknown as LoginStatus });
+      emitRefresh();
     } catch (err) {
       if (isAuthError(err)) return;
     }
@@ -73,7 +76,7 @@ export function LoginPanel() {
           id="login-qr"
           className={`login-qr${qrcodeUrl ? '' : ' is-hidden'}`}
           alt="QR"
-          src={qrCodeSrc}
+          src={qrCodeSrc || undefined}
         />
         <div className="login-meta" id="login-meta">
           {lastLogin?.nickname ? `${t('login.lastLogin', 'Last login')}: ${lastLogin.nickname} · ${formatRelativeTime(lastLogin.updated_at as string, t)}` : ''}
