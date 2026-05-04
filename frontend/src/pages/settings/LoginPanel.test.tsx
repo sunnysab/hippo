@@ -75,4 +75,42 @@ describe('LoginPanel', () => {
     });
     expect(emitRefreshMock).toHaveBeenCalledTimes(1);
   });
+
+  it('uses updated_at to bust the QR code cache when waiting status repeats', () => {
+    settingsStateMock.mockReturnValue({
+      state: {
+        loginStatus: {
+          status: 'waiting',
+          message: 'Scan the QR code with WeChat',
+          updated_at: '2026-05-04T14:21:29.715668+00:00',
+          qrcode_url: '/api/login/qrcode',
+          last_login: null,
+        },
+      },
+      dispatch: dispatchMock,
+    });
+
+    const view = render(<LoginPanel />);
+    expect(screen.getByAltText('QR').getAttribute('src')).toContain(
+      encodeURIComponent('2026-05-04T14:21:29.715668+00:00'),
+    );
+
+    settingsStateMock.mockReturnValue({
+      state: {
+        loginStatus: {
+          status: 'waiting',
+          message: 'Scan the QR code with WeChat',
+          updated_at: '2026-05-04T14:21:31.428912+00:00',
+          qrcode_url: '/api/login/qrcode',
+          last_login: null,
+        },
+      },
+      dispatch: dispatchMock,
+    });
+
+    view.rerender(<LoginPanel />);
+    expect(screen.getByAltText('QR').getAttribute('src')).toContain(
+      encodeURIComponent('2026-05-04T14:21:31.428912+00:00'),
+    );
+  });
 });
