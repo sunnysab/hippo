@@ -178,6 +178,7 @@
   "sync.save": "保存设置",
   "sync.saved": "同步设置已保存",
   "sync.run": "运行",
+  "sync.runQueued": "同步任务已进入队列",
   "sync.showSettings": "展开设置",
   "sync.hideSettings": "收起设置",
   "sync.sectionSchedule": "调度",
