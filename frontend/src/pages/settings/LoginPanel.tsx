@@ -12,10 +12,11 @@ export function LoginPanel() {
   const loginStatus = state.loginStatus;
   const status = loginStatus?.status || 'idle';
   const message = loginStatus?.message || '';
+  const updatedAt = loginStatus?.updated_at || '';
   const qrcodeUrl = loginStatus?.qrcode_url;
   const lastLogin = loginStatus?.last_login;
   const qrCodeSrc = qrcodeUrl
-    ? `${qrcodeUrl}${qrcodeUrl.includes('?') ? '&' : '?'}v=${encodeURIComponent(`${status}:${message}`)}`
+    ? `${qrcodeUrl}${qrcodeUrl.includes('?') ? '&' : '?'}v=${encodeURIComponent(updatedAt || `${status}:${message}`)}`
     : '';
 
   const isInProgress = ['starting', 'waiting', 'scanned', 'refresh'].includes(status);
