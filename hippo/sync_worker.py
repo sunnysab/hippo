@@ -234,6 +234,16 @@ def _parse_meta_datetime(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def recover_stale_running_jobs(
+    storage: PostgresStorage,
+    *,
+    stale_after_minutes: int = 15,
+) -> int:
+    return storage.sync_jobs.recover_stale_running_jobs(
+        stale_after_minutes=stale_after_minutes,
+    )
+
+
 def maybe_enqueue_scheduled_job(storage: PostgresStorage) -> bool:
     settings = get_sync_settings(storage)
     if not settings.get('enabled'):
@@ -306,11 +316,11 @@ async def run_sync_worker(
     while True:
         with open_storage() as storage:
             with storage.transaction():
+                recover_stale_running_jobs(storage)
                 maybe_enqueue_scheduled_job(storage)
             handled = await run_worker_once(storage=storage, worker_id=resolved_worker_id)
         if handled:
             continue
         await asyncio.sleep(max(float(poll_interval), 0.2))
 
-
-__all__ = ['maybe_enqueue_scheduled_job', 'run_sync_worker', 'run_worker_once']
+__all__ = ['maybe_enqueue_scheduled_job', 'recover_stale_running_jobs', 'run_sync_worker', 'run_worker_once']
