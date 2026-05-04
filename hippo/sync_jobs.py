@@ -229,6 +229,26 @@ class SyncJobRepository:
                 (worker_id, task_id),
             )
 
+    def recover_stale_running_jobs(self, *, stale_after_minutes: int = 15) -> int:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE sync_jobs
+                SET status = 'failed',
+                    error = 'worker_stopped',
+                    phase = NULL,
+                    current_account = NULL,
+                    current_article = NULL,
+                    finished_at = clock_timestamp(),
+                    locked_by = NULL,
+                    locked_at = NULL
+                WHERE status = 'running'
+                  AND locked_at < NOW() - (%s * INTERVAL '1 minute')
+                """,
+                (max(int(stale_after_minutes), 1),),
+            )
+            return int(cur.rowcount or 0)
+
     def update_progress(
         self,
         task_id: str,

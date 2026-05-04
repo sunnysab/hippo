@@ -20,6 +20,7 @@ class _FakeSyncJobs:
         self.finished: list[dict] = []
         self.progress_updates: list[dict] = []
         self.active_job = False
+        self.recovered: list[int] = []
 
     def create_job(
         self,
@@ -91,6 +92,11 @@ class _FakeSyncJobs:
                 'result': result,
             }
         )
+
+    def recover_stale_running_jobs(self, *, stale_after_minutes: int = 15) -> int:
+        self.recovered.append(stale_after_minutes)
+        self.active_job = False
+        return 1
 
 
 class _FakeMeta:
@@ -362,6 +368,52 @@ class SyncJobQueueTest(unittest.TestCase):
 
         joined = '\n'.join(conn.queries)
         self.assertIn('clock_timestamp()', joined)
+
+    def test_sync_job_repository_recovers_stale_running_jobs(self) -> None:
+        from hippo.sync_jobs import SyncJobRepository
+
+        class _Cursor:
+            def __init__(self, queries: list[str]) -> None:
+                self._queries = queries
+                self.rowcount = 3
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return None
+
+            def execute(self, query: str, params=None) -> None:
+                self._queries.append(query)
+
+        class _Conn:
+            def __init__(self) -> None:
+                self.queries: list[str] = []
+
+            def cursor(self, **kwargs):
+                return _Cursor(self.queries)
+
+        conn = _Conn()
+        repo = SyncJobRepository(conn)
+
+        recovered = repo.recover_stale_running_jobs()
+
+        self.assertEqual(recovered, 3)
+        joined = '\n'.join(conn.queries)
+        self.assertIn("WHERE status = 'running'", joined)
+        self.assertIn("locked_at < NOW() - (%s * INTERVAL '1 minute')", joined)
+        self.assertIn("status = 'failed'", joined)
+
+    def test_worker_recovers_stale_running_jobs_before_processing(self) -> None:
+        from hippo.sync_worker import recover_stale_running_jobs
+
+        sync_jobs = _FakeSyncJobs()
+        storage = _FakeStorage(sync_jobs)
+
+        recovered = recover_stale_running_jobs(storage)
+
+        self.assertEqual(recovered, 1)
+        self.assertEqual(sync_jobs.recovered, [15])
 
     def test_bulk_sync_continues_after_non_login_account_failure(self) -> None:
         config = SyncConfig(
