@@ -313,9 +313,9 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
-  padding: 11px 13px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
+  padding: 10px 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
   background: none;
 }
 
@@ -387,8 +387,6 @@
 }
 
 .sync-tone-success.sync-progress-item {
-  border-color: rgba(53, 107, 71, 0.22);
-  box-shadow: inset 3px 0 0 rgba(53, 107, 71, 0.78);
 }
 
 .sync-tone-danger.sync-status-badge {
@@ -397,8 +395,6 @@
 }
 
 .sync-tone-danger.sync-progress-item {
-  border-color: rgba(161, 74, 74, 0.22);
-  box-shadow: inset 3px 0 0 rgba(161, 74, 74, 0.78);
 }
 
 .sync-tone-info.sync-status-badge {
@@ -407,8 +403,6 @@
 }
 
 .sync-tone-info.sync-progress-item {
-  border-color: rgba(47, 99, 143, 0.22);
-  box-shadow: inset 3px 0 0 rgba(47, 99, 143, 0.72);
 }
 
 .sync-tone-warning.sync-status-badge {
@@ -417,8 +411,6 @@
 }
 
 .sync-tone-warning.sync-progress-item {
-  border-color: rgba(140, 100, 40, 0.22);
-  box-shadow: inset 3px 0 0 rgba(140, 100, 40, 0.72);
 }
 
 .sync-tone-muted.sync-status-badge {
