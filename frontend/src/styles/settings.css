@@ -369,9 +369,9 @@
 
 .sync-history-item {
   align-items: flex-start;
-  padding: 10px 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
+  padding: 10px 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
   background: none;
 }
 
@@ -386,8 +386,7 @@
   color: var(--success);
 }
 
-.sync-tone-success.sync-progress-item,
-.sync-tone-success.sync-history-item {
+.sync-tone-success.sync-progress-item {
   border-color: rgba(53, 107, 71, 0.22);
   box-shadow: inset 3px 0 0 rgba(53, 107, 71, 0.78);
 }
@@ -397,8 +396,7 @@
   color: var(--danger);
 }
 
-.sync-tone-danger.sync-progress-item,
-.sync-tone-danger.sync-history-item {
+.sync-tone-danger.sync-progress-item {
   border-color: rgba(161, 74, 74, 0.22);
   box-shadow: inset 3px 0 0 rgba(161, 74, 74, 0.78);
 }
@@ -408,8 +406,7 @@
   color: var(--info);
 }
 
-.sync-tone-info.sync-progress-item,
-.sync-tone-info.sync-history-item {
+.sync-tone-info.sync-progress-item {
   border-color: rgba(47, 99, 143, 0.22);
   box-shadow: inset 3px 0 0 rgba(47, 99, 143, 0.72);
 }
@@ -419,8 +416,7 @@
   color: var(--warning);
 }
 
-.sync-tone-warning.sync-progress-item,
-.sync-tone-warning.sync-history-item {
+.sync-tone-warning.sync-progress-item {
   border-color: rgba(140, 100, 40, 0.22);
   box-shadow: inset 3px 0 0 rgba(140, 100, 40, 0.72);
 }
