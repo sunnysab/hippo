@@ -39,26 +39,24 @@ export function SyncHistoryPanel() {
         {history.map((entry: Record<string, unknown>, i: number) => {
           const status = (entry.status as string) || 'unknown';
           const toneClass = `sync-tone-${getSyncTone(status)}`;
-          const saved = entry.saved || 0;
+          const saved = Number(entry.saved || 0);
           const started = entry.started_at
             ? new Date(entry.started_at as string).toLocaleString('zh-CN')
             : '-';
           const error = entry.error as string | undefined;
+          const label = saved > 0 ? `+${saved} 篇` : started;
           return (
             <div key={i} className={`list-item sync-history-item ${toneClass}`}>
               <div className="sync-history-copy">
                 <div className="sync-history-top">
-                  <div className="account-name">
-                    {t(`sync.status.${status}`, status)}
-                  </div>
+                  <div className="account-name">{escapeHtml(label)}</div>
                   <span className={`sync-status-badge ${toneClass}`}>
-                    {t(`sync.status.${status}`, status)}
+                    {t(`sync.status.${status}`, '未知')}
                   </span>
                 </div>
                 <div className="account-sub">{escapeHtml(started)}</div>
                 {error && <div className="account-sub">{escapeHtml(error)}</div>}
               </div>
-              <span className="meta-count">+{escapeHtml(String(saved))}</span>
             </div>
           );
         })}

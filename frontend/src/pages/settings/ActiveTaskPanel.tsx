@@ -35,11 +35,11 @@ export function ActiveTaskPanel() {
     setCancellingTaskId(activeTask.task_id);
     try {
       await apiSend(`/api/settings/tasks/${activeTask.task_id}/cancel`, 'POST', {});
-      showToast(t('sync.cancelled', 'Sync cancelled'));
+      showToast(t('sync.cancelled', '同步已取消'));
       emitRefresh();
     } catch (err) {
       if (isAuthError(err)) return;
-      showToast((err as Error)?.message || t('sync.cancelFailed', 'Failed to cancel sync'));
+      showToast((err as Error)?.message || t('sync.cancelFailed', '取消失败'));
       setCancelling(false);
       setCancellingTaskId(null);
     }
@@ -49,9 +49,9 @@ export function ActiveTaskPanel() {
   const canCancel = !isCancelling && activeTask && (activeTask.status === 'running' || activeTask.status === 'pending');
 
   const phaseLabel = (phase: string | undefined | null): string => {
-    if (phase === 'listing') return t('sync.phaseListing', 'Listing');
-    if (phase === 'content') return t('sync.phaseContent', 'Downloading content');
-    if (phase === 'images') return t('sync.phaseImages', 'Downloading images');
+    if (phase === 'listing') return t('sync.phase.listing', '抓列表');
+    if (phase === 'content') return t('sync.phase.content', '下正文');
+    if (phase === 'images') return t('sync.phase.images', '下图片');
     return '';
   };
 
@@ -65,7 +65,7 @@ export function ActiveTaskPanel() {
         {canCancel ? (
           <div className="toolbar">
             <button className="btn ghost" type="button" onClick={handleCancel} disabled={isCancelling}>
-              {isCancelling ? t('sync.cancelling', 'Cancelling…') : t('sync.cancel', 'Cancel')}
+              {isCancelling ? t('sync.cancelling', '取消中…') : t('sync.cancel', '取消')}
             </button>
           </div>
         ) : null}
@@ -81,13 +81,13 @@ export function ActiveTaskPanel() {
                   <div className="account-name">
                     {escapeHtml(
                       (activeTask.status === 'pending'
-                        ? t('sync.pendingTitle', 'Queued {name}')
-                        : t('sync.runningTitle', 'Syncing {name}')
-                      ).replace('{name}', activeTask.current_account?.nickname || activeTask.current_account?.biz || t('sync.runningProgress', 'Processing'))
+                        ? t('sync.pendingTitle', '排队中 {name}')
+                        : t('sync.runningTitle', '正在同步 {name}')
+                      ).replace('{name}', activeTask.current_account?.nickname || activeTask.current_account?.biz || t('sync.runningProgress', '处理中'))
                     )}
                   </div>
                   <span className={`sync-status-badge sync-tone-${getSyncTone(activeTask.status)}`}>
-                    {t(`sync.status.${activeTask.status || 'running'}`, activeTask.status || 'running')}
+                    {t(`sync.status.${activeTask.status || 'running'}`, '同步中')}
                   </span>
                   {activeTask.phase && (
                     <span className="sync-phase-badge">{phaseLabel(activeTask.phase)}</span>
@@ -124,7 +124,7 @@ export function ActiveTaskPanel() {
                       <div className="sync-progress-title-row">
                         <div className="account-name">{escapeHtml(account.nickname || account.biz || '-')}</div>
                         <span className={`sync-progress-status sync-status-badge ${toneClass}`}>
-                          {t(`sync.status.${account.status}`, account.status)}
+                          {t(`sync.status.${account.status}`, account.status || '')}
                         </span>
                       </div>
                       <div className="account-sub">
