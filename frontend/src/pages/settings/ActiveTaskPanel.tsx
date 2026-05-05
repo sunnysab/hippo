@@ -113,7 +113,11 @@ export function ActiveTaskPanel() {
               </div>
             )}
             <div className="sync-progress-list">
-              {(activeTask.accounts || []).slice(0, 8).map((account) => {
+              {(activeTask.accounts || []).sort((a, b) => {
+                const ta = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+                const tb = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+                return tb - ta;
+              }).slice(0, 8).map((account) => {
                 const toneClass = `sync-tone-${getSyncTone(account.status)}`;
                 const articleBadge = account.article_total !== null && account.article_total !== undefined
                   ? `${account.article_current || 0}/${account.article_total}`
