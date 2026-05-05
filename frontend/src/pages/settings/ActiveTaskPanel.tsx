@@ -13,6 +13,7 @@ export function ActiveTaskPanel() {
   const { showToast } = useToast();
   const [now, setNow] = useState(() => Date.now());
   const [cancelling, setCancelling] = useState(false);
+  const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -31,6 +32,7 @@ export function ActiveTaskPanel() {
   const handleCancel = async () => {
     if (!activeTask) return;
     setCancelling(true);
+    setCancellingTaskId(activeTask.task_id);
     try {
       await apiSend(`/api/settings/tasks/${activeTask.task_id}/cancel`, 'POST', {});
       showToast(t('sync.cancelled', 'Sync cancelled'));
@@ -39,10 +41,12 @@ export function ActiveTaskPanel() {
       if (isAuthError(err)) return;
       showToast((err as Error)?.message || t('sync.cancelFailed', 'Failed to cancel sync'));
       setCancelling(false);
+      setCancellingTaskId(null);
     }
   };
 
-  const canCancel = activeTask && (activeTask.status === 'running' || activeTask.status === 'pending');
+  const isCancelling = cancelling && activeTask?.task_id === cancellingTaskId;
+  const canCancel = !isCancelling && activeTask && (activeTask.status === 'running' || activeTask.status === 'pending');
 
   const phaseLabel = (phase: string | undefined | null): string => {
     if (phase === 'listing') return t('sync.phaseListing', 'Listing');
@@ -60,8 +64,8 @@ export function ActiveTaskPanel() {
         </div>
         {canCancel ? (
           <div className="toolbar">
-            <button className="btn ghost" type="button" onClick={handleCancel} disabled={cancelling}>
-              {cancelling ? t('sync.cancelling', 'Cancelling…') : t('sync.cancel', 'Cancel')}
+            <button className="btn ghost" type="button" onClick={handleCancel} disabled={isCancelling}>
+              {isCancelling ? t('sync.cancelling', 'Cancelling…') : t('sync.cancel', 'Cancel')}
             </button>
           </div>
         ) : null}
