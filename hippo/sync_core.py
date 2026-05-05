@@ -149,6 +149,8 @@ async def sync_account_core(
                             raise
                         if login_flow is None:
                             raise
+                        if _get_cancel_event().is_set():
+                            raise SyncInterrupted('sync cancelled')
                         await login_flow(timeout=300, poll_interval=2)
                         session = storage.sessions.get_login_session()
                         continue
@@ -159,6 +161,8 @@ async def sync_account_core(
                         wait_seconds = 15 if freq_attempt == 1 else min(15 + 5 * (freq_attempt - 1), 60)
                         observer.on_log(f"触发频率控制，等待 {wait_seconds} 秒后重试")
                         await asyncio.sleep(wait_seconds)
+                        if _get_cancel_event().is_set():
+                            raise SyncInterrupted('sync cancelled')
                         continue
                     raise
                 except (httpx.ReadTimeout, httpx.TimeoutException, httpx.TransportError) as exc:
@@ -166,6 +170,8 @@ async def sync_account_core(
                     if attempt >= 3:
                         raise RuntimeError(f"网络请求超时或失败：{exc}") from exc
                     await asyncio.sleep(min(2**attempt, 5))
+                    if _get_cancel_event().is_set():
+                        raise SyncInterrupted('sync cancelled')
             request_count += 1
             if request_count % 60 == 0:
                 observer.on_log("达到 60 次请求，等待 15 秒")

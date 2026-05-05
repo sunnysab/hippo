@@ -2142,7 +2142,8 @@ def cancel_sync_task(
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
     """Cancel a running or queued sync task."""
-    cancelled = storage.sync_jobs.cancel_job(task_id)
+    with storage.transaction():
+        cancelled = storage.sync_jobs.cancel_job(task_id)
     if not cancelled:
         raise ApiError("Task not found or not in a cancellable state", status=404)
     request_sync_cancel()

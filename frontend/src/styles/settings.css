@@ -354,6 +354,19 @@
   white-space: nowrap;
 }
 
+.sync-phase-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(222, 216, 205, 0.45);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .sync-history-item {
   align-items: flex-start;
   padding: 10px 12px;

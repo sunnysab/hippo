@@ -745,6 +745,8 @@ class ArticleSyncService:
         details: list[SyncAccountResult] = []
 
         for account in accounts:
+            if _get_cancel_event().is_set():
+                break
             if on_account_start:
                 on_account_start(account)
             if on_account_stage:
@@ -801,6 +803,8 @@ class ArticleSyncService:
                 summary_rows.append((result.nickname or result.biz, summary.total_saved))
 
             if config.download_content and self._downloader and records:
+                if _get_cancel_event().is_set():
+                    raise SyncInterrupted('sync cancelled')
                 if on_account_stage:
                     on_account_stage(account, 'content')
                 candidates = {item.article_id: item for item in records}
