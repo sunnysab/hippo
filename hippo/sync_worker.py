@@ -10,6 +10,7 @@ from typing import Any
 
 from .models import AccountCredential
 from .storage import PostgresStorage, open_storage
+from .sync_core import request_sync_cancel
 from .sync_jobs import SyncJobState
 from .sync_service import (
     SYNC_STARTED_KEY,
@@ -267,6 +268,18 @@ def maybe_enqueue_scheduled_job(storage: PostgresStorage) -> bool:
     return True
 
 
+async def _poll_cancel(task_id: str, poll_interval: float = 1.0) -> None:
+    while True:
+        try:
+            with open_storage() as storage:
+                if storage.sync_jobs.is_cancelling(task_id):
+                    request_sync_cancel()
+                    return
+        except Exception:
+            pass
+        await asyncio.sleep(poll_interval)
+
+
 async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
     job = storage.sync_jobs.claim_next_job(worker_id=worker_id)
     if not job:
@@ -274,36 +287,49 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
     with storage.transaction():
         storage.sync_jobs.mark_running(job.task_id, worker_id=worker_id)
     tracker = _WorkerProgressTracker(storage=storage, task_id=job.task_id)
+    poll_task = asyncio.create_task(_poll_cancel(job.task_id))
     try:
-        result = await run_sync_job(
-            group_id=job.group_id,
-            biz_list=list(job.biz_list) if job.biz_list else None,
-            observer_factory=lambda account, _: _WorkerObserver(tracker=tracker, account=account),
-            on_account_start=tracker.on_account_start,
-            on_account_done=tracker.on_account_done,
-            on_accounts_loaded=tracker.on_accounts_loaded,
-            on_account_stage=tracker.on_account_stage,
-            on_lock_acquired=tracker.on_lock_acquired,
-            on_images_start=tracker.on_images_start,
-            on_images_done=tracker.on_images_done,
-        )
-    except Exception as exc:
+        try:
+            result = await run_sync_job(
+                group_id=job.group_id,
+                biz_list=list(job.biz_list) if job.biz_list else None,
+                observer_factory=lambda account, _: _WorkerObserver(tracker=tracker, account=account),
+                on_account_start=tracker.on_account_start,
+                on_account_done=tracker.on_account_done,
+                on_accounts_loaded=tracker.on_accounts_loaded,
+                on_account_stage=tracker.on_account_stage,
+                on_lock_acquired=tracker.on_lock_acquired,
+                on_images_start=tracker.on_images_start,
+                on_images_done=tracker.on_images_done,
+            )
+        except Exception as exc:
+            with storage.transaction():
+                storage.sync_jobs.mark_finished(
+                    job.task_id,
+                    status='failed',
+                    error=str(exc),
+                    result=None,
+                )
+            return True
+        tracker.set_report(result)
+        # If the job was cancelled, record that instead of the normal status
+        with open_storage() as check_storage:
+            was_cancelled = check_storage.sync_jobs.is_cancelling(job.task_id)
+        final_status = 'cancelled' if was_cancelled else str(result.status.get('status') or 'success')
+        final_error = 'Cancelled by user' if was_cancelled else result.error
         with storage.transaction():
             storage.sync_jobs.mark_finished(
                 job.task_id,
-                status='failed',
-                error=str(exc),
-                result=None,
+                status=final_status,
+                error=final_error,
+                result=_normalize_report(result),
             )
-        return True
-    tracker.set_report(result)
-    with storage.transaction():
-        storage.sync_jobs.mark_finished(
-            job.task_id,
-            status=str(result.status.get('status') or 'success'),
-            error=result.error,
-            result=_normalize_report(result),
-        )
+    finally:
+        poll_task.cancel()
+        try:
+            await poll_task
+        except asyncio.CancelledError:
+            pass
     return True
 
 

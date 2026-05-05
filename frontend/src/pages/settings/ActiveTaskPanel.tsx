@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react';
 import { useSettingsState } from '../../store/settings';
 import { useI18n } from '../../i18n';
+import { useToast } from '../../hooks/useToast';
+import { apiSend, isAuthError } from '../../api';
 import { escapeHtml, formatRelativeTime } from '../../utils/format';
 import { getSyncTone } from '../../utils/sync';
+import { emitRefresh } from '../../utils/events';
 
 export function ActiveTaskPanel() {
   const { state } = useSettingsState();
   const { t } = useI18n();
+  const { showToast } = useToast();
   const [now, setNow] = useState(() => Date.now());
+  const [cancelling, setCancelling] = useState(false);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -23,6 +28,22 @@ export function ActiveTaskPanel() {
 
   const activeTask = getActiveTask();
 
+  const handleCancel = async () => {
+    if (!activeTask) return;
+    setCancelling(true);
+    try {
+      await apiSend(`/api/settings/tasks/${activeTask.task_id}/cancel`, 'POST', {});
+      showToast(t('sync.cancelled', 'Sync cancelled'));
+      emitRefresh();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      showToast((err as Error)?.message || t('sync.cancelFailed', 'Failed to cancel sync'));
+      setCancelling(false);
+    }
+  };
+
+  const canCancel = activeTask && (activeTask.status === 'running' || activeTask.status === 'pending');
+
   return (
     <div className="panel sync-active">
       <div className="panel-header">
@@ -30,6 +51,13 @@ export function ActiveTaskPanel() {
           <h2>{t('sync.activeTitle', 'Active Task')}</h2>
           <p className="muted">{t('sync.activeSubtitle', 'Live progress for the current sync task.')}</p>
         </div>
+        {canCancel ? (
+          <div className="toolbar">
+            <button className="btn ghost" type="button" onClick={handleCancel} disabled={cancelling}>
+              {cancelling ? t('sync.cancelling', 'Cancelling…') : t('sync.cancel', 'Cancel')}
+            </button>
+          </div>
+        ) : null}
       </div>
       <div className="sync-active-body" id="sync-active-task">
         {!activeTask ? (

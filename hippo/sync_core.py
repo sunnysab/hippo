@@ -20,6 +20,24 @@ class SyncInterrupted(RuntimeError):
     pass
 
 
+_cancel_event: asyncio.Event | None = None
+
+
+def _get_cancel_event() -> asyncio.Event:
+    global _cancel_event
+    if _cancel_event is None:
+        _cancel_event = asyncio.Event()
+    return _cancel_event
+
+
+def request_sync_cancel() -> None:
+    _get_cancel_event().set()
+
+
+def reset_sync_cancel() -> None:
+    _get_cancel_event().clear()
+
+
 logger = get_logger(__name__)
 
 
@@ -113,6 +131,8 @@ async def sync_account_core(
     current_progress = offset
 
     while True:
+        if _get_cancel_event().is_set():
+            raise SyncInterrupted('sync cancelled')
         try:
             attempt = 0
             freq_attempt = 0

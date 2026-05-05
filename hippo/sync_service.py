@@ -15,7 +15,14 @@ from .file_storage import FileStorageError
 from .wechat_api import WeChatApiClient
 from .models import AccountCredential, ArticleRecord
 from .storage import PostgresStorage, open_storage
-from .sync_core import is_freq_control, is_login_error, sync_account_core
+from .sync_core import (
+    SyncInterrupted,
+    _get_cancel_event,
+    is_freq_control,
+    is_login_error,
+    reset_sync_cancel,
+    sync_account_core,
+)
 
 # Optional background image backfill after scheduled sync
 async def _run_backfill_images() -> None:
@@ -278,13 +285,20 @@ def _persist_sync_outcome(
     report: SyncReport,
 ) -> dict[str, Any]:
     if error:
-        status = 'login_required' if is_login_error(error) else 'failed'
-        set_sync_state(storage, status=status, error=error, finished_at=finished_at)
+        cancelled = error == 'Cancelled by user'
+        if is_login_error(error):
+            status = 'login_required'
+        elif cancelled:
+            status = 'cancelled'
+        else:
+            status = 'failed'
+        set_sync_state(storage, status=status, error='' if cancelled else error, finished_at=finished_at)
         if status == 'login_required':
             with storage.transaction():
                 storage.meta.set(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
     else:
         status = 'success'
+        cancelled = False
         set_sync_state(storage, status='success', error='', finished_at=finished_at)
         with storage.transaction():
             storage.meta.delete(ALERT_SENT_KEY)
@@ -301,21 +315,22 @@ def _persist_sync_outcome(
         {
             'started_at': started_at,
             'finished_at': finished_at,
-            'status': 'login_required' if error and is_login_error(error) else ('failed' if error else 'success'),
-            'error': error or '',
+            'status': status,
+            'error': '' if cancelled else (error or ''),
             'saved': report.total_saved,
             'downloaded': report.downloaded,
             'skipped_accounts': skipped_accounts,
             'failed_accounts': failed_accounts,
         },
     )
-    _send_sync_alert(
-        storage,
-        status=status,
-        error=error or '',
-        started_at=started_at,
-        finished_at=finished_at,
-    )
+    if not cancelled:
+        _send_sync_alert(
+            storage,
+            status=status,
+            error=error or '',
+            started_at=started_at,
+            finished_at=finished_at,
+        )
     return get_sync_status(storage)
 
 
@@ -654,6 +669,8 @@ class ArticleSyncService:
                 collect_existing_ids=bool(config.download_content),
                 observer=collector or observer,
             )
+        except SyncInterrupted:
+            raise
         except RuntimeError as exc:
             message = str(exc)
             if is_freq_control(message) and allow_freq_skip:
@@ -733,17 +750,31 @@ class ArticleSyncService:
             if on_account_stage:
                 on_account_stage(account, 'listing')
             observer = observer_factory(account, bulk) if observer_factory else NullSyncObserver()
-            result, records, summary = await self.sync_account(
-                account=account,
-                config=config,
-                bulk=bulk,
-                use_resume=use_resume,
-                shared_since=shared_since,
-                shared_until=shared_until,
-                observer=observer,
-                group_defaults=group_defaults,
-                allow_freq_skip=allow_freq_skip,
-            )
+            try:
+                result, records, summary = await self.sync_account(
+                    account=account,
+                    config=config,
+                    bulk=bulk,
+                    use_resume=use_resume,
+                    shared_since=shared_since,
+                    shared_until=shared_until,
+                    observer=observer,
+                    group_defaults=group_defaults,
+                    allow_freq_skip=allow_freq_skip,
+                )
+            except SyncInterrupted:
+                if on_account_done:
+                    cancelled_result = SyncAccountResult(
+                        biz=account.biz,
+                        nickname=account.nickname or account.biz,
+                        saved=0,
+                        completed=False,
+                        skipped=False,
+                        failed=False,
+                        error=None,
+                    )
+                    on_account_done(cancelled_result, None)
+                break
             details.append(result)
             if result.failed:
                 failed_accounts += 1
@@ -850,6 +881,7 @@ async def run_sync_job(
             )
     if on_lock_acquired:
         on_lock_acquired()
+    reset_sync_cancel()
     started_at = _utc_now_iso()
     empty_report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
     with open_storage() as storage:
@@ -944,6 +976,8 @@ async def run_sync_job(
                     except Exception as exc:
                         error = str(exc)
                         report = empty_report
+                    if _get_cancel_event().is_set() and not error:
+                        error = 'Cancelled by user'
                     if settings.get('download_images') and app.downloader:
                         if on_images_start:
                             on_images_start()
