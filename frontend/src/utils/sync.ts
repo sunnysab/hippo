@@ -16,6 +16,7 @@ export const getSyncTone = (status: string): string => {
     return 'info';
   }
   if (status === 'pending') return 'warning';
+  if (status === 'cancelling' || status === 'cancelled') return 'warning';
   if (status === 'skipped') return 'muted';
   return 'neutral';
 };

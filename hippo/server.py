@@ -36,6 +36,7 @@ from .wechat_api import SessionExpiredError, WeChatApiClient
 from .models import AccountCredential
 from .rss import build_rss_xml, query_rss_items
 from .storage import PostgresStorage, open_storage
+from .sync_core import request_sync_cancel
 from .sync_service import (
     SyncScheduler,
     get_sync_settings as load_sync_settings,
@@ -2133,6 +2134,20 @@ def get_sync_task(
     if not state:
         raise ApiError("Task not found", status=404)
     return state.to_dict()
+
+
+@router.post("/settings/tasks/{task_id}/cancel")
+def cancel_sync_task(
+    task_id: str,
+    storage: PostgresStorage = Depends(_get_storage),
+) -> dict[str, Any]:
+    """Cancel a running or queued sync task."""
+    cancelled = storage.sync_jobs.cancel_job(task_id)
+    if not cancelled:
+        raise ApiError("Task not found or not in a cancellable state", status=404)
+    request_sync_cancel()
+    state = storage.sync_jobs.get_job(task_id)
+    return state.to_dict() if state else {}
 
 
 @router.get("/settings")

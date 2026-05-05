@@ -289,6 +289,41 @@ class SyncJobRepository:
                 ),
             )
 
+    def cancel_job(self, task_id: str) -> bool:
+        """Request cancellation for a queued or running job.
+
+        Returns True if the job was found and cancelled, False otherwise.
+        """
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                UPDATE sync_jobs
+                SET status = CASE
+                        WHEN status = 'queued' THEN 'cancelled'
+                        WHEN status = 'running' THEN 'cancelling'
+                        ELSE status
+                    END,
+                    finished_at = CASE
+                        WHEN status = 'queued' THEN clock_timestamp()
+                        ELSE finished_at
+                    END
+                WHERE id = %s
+                  AND status IN ('queued', 'running')
+                RETURNING status
+                """,
+                (task_id,),
+            )
+            row = cur.fetchone()
+        return row is not None
+
+    def is_cancelling(self, task_id: str) -> bool:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM sync_jobs WHERE id = %s AND status = 'cancelling'",
+                (task_id,),
+            )
+            return cur.fetchone() is not None
+
     def mark_finished(
         self,
         task_id: str,
