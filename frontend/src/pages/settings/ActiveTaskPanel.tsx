@@ -44,6 +44,13 @@ export function ActiveTaskPanel() {
 
   const canCancel = activeTask && (activeTask.status === 'running' || activeTask.status === 'pending');
 
+  const phaseLabel = (phase: string | undefined | null): string => {
+    if (phase === 'listing') return t('sync.phaseListing', 'Listing');
+    if (phase === 'content') return t('sync.phaseContent', 'Downloading content');
+    if (phase === 'images') return t('sync.phaseImages', 'Downloading images');
+    return '';
+  };
+
   return (
     <div className="panel sync-active">
       <div className="panel-header">
@@ -78,6 +85,9 @@ export function ActiveTaskPanel() {
                   <span className={`sync-status-badge sync-tone-${getSyncTone(activeTask.status)}`}>
                     {t(`sync.status.${activeTask.status || 'running'}`, activeTask.status || 'running')}
                   </span>
+                  {activeTask.phase && (
+                    <span className="sync-phase-badge">{phaseLabel(activeTask.phase)}</span>
+                  )}
                 </div>
                 <div className="account-sub">
                   {activeTask.started_at || activeTask.created_at
@@ -114,7 +124,7 @@ export function ActiveTaskPanel() {
                         </span>
                       </div>
                       <div className="account-sub">
-                        {formatRelativeTime(account.updated_at, t)}
+                        {[phaseLabel(account.phase), formatRelativeTime(account.updated_at, t)].filter(Boolean).join(' · ')}
                       </div>
                     </div>
                     {articleBadge ? <span className="meta-count">{escapeHtml(articleBadge)}</span> : null}

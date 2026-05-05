@@ -52,17 +52,18 @@ class _WorkerProgressTracker:
         self._report: dict[str, Any] | None = None
 
     def _save(self) -> None:
-        self._storage.sync_jobs.update_progress(
-            self._task_id,
-            phase=self._phase,
-            accounts_total=self._accounts_total,
-            accounts_done=self._accounts_done,
-            current_account=self._current_account,
-            current_article=self._current_article,
-            last_log=self._last_log,
-            accounts=list(self._accounts.values()),
-            report=self._report,
-        )
+        with self._storage.transaction():
+            self._storage.sync_jobs.update_progress(
+                self._task_id,
+                phase=self._phase,
+                accounts_total=self._accounts_total,
+                accounts_done=self._accounts_done,
+                current_account=self._current_account,
+                current_article=self._current_article,
+                last_log=self._last_log,
+                accounts=list(self._accounts.values()),
+                report=self._report,
+            )
 
     def _progress_for(self, account: AccountCredential) -> dict[str, Any]:
         progress = self._accounts.get(account.biz)
