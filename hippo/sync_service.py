@@ -58,6 +58,7 @@ from .utils import (
     parse_iso_date_to_timestamp,
     save_meta_json,
     should_skip_by_time,
+    utc_now_iso,
 )
 
 SYNC_STATUS_KEY = 'sync:last_status'
@@ -315,10 +316,6 @@ def _persist_sync_outcome(
             finished_at=finished_at,
         )
     return get_sync_status(storage)
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _to_utc_dt(value: datetime) -> datetime:
@@ -868,7 +865,7 @@ async def run_sync_job(
     if on_lock_acquired:
         on_lock_acquired()
     reset_sync_cancel()
-    started_at = _utc_now_iso()
+    started_at = utc_now_iso()
     empty_report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
     with open_storage() as storage:
         if _should_skip_for_login(storage):
@@ -881,7 +878,7 @@ async def run_sync_job(
             storage.sessions.get_login_session()
         except Exception as exc:
             error = str(exc)
-            finished_at = _utc_now_iso()
+            finished_at = utc_now_iso()
             set_sync_state(storage, status='login_required', error=error, finished_at=finished_at)
             with storage.transaction():
                 storage.meta.set(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
@@ -987,7 +984,7 @@ async def run_sync_job(
         except Exception as exc:
             _logger.warning('Failed to rollback storage connection: %s', exc)
 
-        finished_at = _utc_now_iso()
+        finished_at = utc_now_iso()
         try:
             status = _persist_sync_outcome(
                 storage,

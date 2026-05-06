@@ -22,6 +22,7 @@ from ..sync_types import (
     SyncReport,
     SyncSummary,
 )
+from ..utils import utc_now_iso
 
 
 class TqdmSyncObserver(NullSyncObserver):
@@ -116,10 +117,6 @@ def _status_label(saved: int, completed: bool) -> str:
     if completed:
         return '成功'
     return '未完成'
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _append_cli_sync_history(
@@ -306,7 +303,7 @@ async def sync_account_articles(
         skip_minutes=skip_time,
     )
     _validate_cli_config(config)
-    started_at = _utc_now_iso()
+    started_at = utc_now_iso()
     with open_storage() as storage:
         account = storage.accounts.get_account(biz)
         typer.echo(f'开始同步 {account.nickname} 的文章')
@@ -318,7 +315,7 @@ async def sync_account_articles(
                 bulk=False,
                 login_flow=login_flow,
             )
-            finished_at = _utc_now_iso()
+            finished_at = utc_now_iso()
             _append_cli_sync_history(
                 storage,
                 started_at=started_at,
@@ -327,7 +324,7 @@ async def sync_account_articles(
                 saved=report.total_saved,
             )
         except SyncRunError as exc:
-            finished_at = _utc_now_iso()
+            finished_at = utc_now_iso()
             status = 'login_required' if exc.login_required else 'failed'
             _append_cli_sync_history(
                 storage,
@@ -339,7 +336,7 @@ async def sync_account_articles(
             )
             raise typer.Exit(code=1)
         except SyncInterrupted:
-            finished_at = _utc_now_iso()
+            finished_at = utc_now_iso()
             _append_cli_sync_history(
                 storage,
                 started_at=started_at,
@@ -392,7 +389,7 @@ async def sync_all_accounts(
             header += f' 每页间隔 {sleep_seconds} 秒'
         typer.echo(header)
 
-        started_at = _utc_now_iso()
+        started_at = utc_now_iso()
         try:
             report = await perform_sync(
                 storage=storage,
@@ -401,7 +398,7 @@ async def sync_all_accounts(
                 bulk=True,
                 login_flow=login_flow,
             )
-            finished_at = _utc_now_iso()
+            finished_at = utc_now_iso()
             _append_cli_sync_history(
                 storage,
                 started_at=started_at,
@@ -410,7 +407,7 @@ async def sync_all_accounts(
                 saved=report.total_saved,
             )
         except SyncRunError as exc:
-            finished_at = _utc_now_iso()
+            finished_at = utc_now_iso()
             status = 'login_required' if exc.login_required else 'failed'
             _append_cli_sync_history(
                 storage,
@@ -422,7 +419,7 @@ async def sync_all_accounts(
             )
             raise typer.Exit(code=1)
         except SyncInterrupted:
-            finished_at = _utc_now_iso()
+            finished_at = utc_now_iso()
             _append_cli_sync_history(
                 storage,
                 started_at=started_at,
@@ -481,7 +478,7 @@ async def sync_group_accounts(
             header += f' 每页间隔 {sleep_seconds} 秒'
         typer.echo(header)
 
-        started_at = _utc_now_iso()
+        started_at = utc_now_iso()
         try:
             report = await perform_sync(
                 storage=storage,
@@ -490,7 +487,7 @@ async def sync_group_accounts(
                 bulk=True,
                 login_flow=login_flow,
             )
-            finished_at = _utc_now_iso()
+            finished_at = utc_now_iso()
             _append_cli_sync_history(
                 storage,
                 started_at=started_at,
@@ -499,7 +496,7 @@ async def sync_group_accounts(
                 saved=report.total_saved,
             )
         except SyncRunError as exc:
-            finished_at = _utc_now_iso()
+            finished_at = utc_now_iso()
             status = 'login_required' if exc.login_required else 'failed'
             _append_cli_sync_history(
                 storage,
@@ -511,7 +508,7 @@ async def sync_group_accounts(
             )
             raise typer.Exit(code=1)
         except SyncInterrupted:
-            finished_at = _utc_now_iso()
+            finished_at = utc_now_iso()
             _append_cli_sync_history(
                 storage,
                 started_at=started_at,

@@ -12,10 +12,7 @@ from typing import Any
 from .models import AccountCredential, ArticleRecord
 from .sync_service import SYNC_RUN_LOCK, SyncJobResult, run_sync_job
 from .sync_types import SyncAccountResult, SyncObserver, SyncSummary
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from .utils import utc_now_iso
 
 
 def _article_snapshot(record: ArticleRecord | None) -> dict[str, Any] | None:
@@ -46,7 +43,7 @@ class AccountProgress:
     updated_at: str | None = None
 
     def touch(self) -> None:
-        self.updated_at = _utc_now_iso()
+        self.updated_at = utc_now_iso()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -69,7 +66,7 @@ class AccountProgress:
 class SyncTaskState:
     task_id: str
     status: str = "pending"
-    created_at: str = field(default_factory=_utc_now_iso)
+    created_at: str = field(default_factory=utc_now_iso)
     started_at: str | None = None
     finished_at: str | None = None
     error: str | None = None
@@ -224,7 +221,7 @@ class SyncTaskManager:
             with self._lock:
                 state.status = "running"
                 if not state.started_at:
-                    state.started_at = _utc_now_iso()
+                    state.started_at = utc_now_iso()
                 state.last_log = None
 
         def on_accounts_loaded(accounts: list[AccountCredential]) -> None:
@@ -317,14 +314,14 @@ class SyncTaskManager:
                 status = str(result.status.get("status") or "success")
                 state.status = status
                 state.error = result.error
-                state.finished_at = _utc_now_iso()
+                state.finished_at = utc_now_iso()
                 state.current_account = None
                 state.phase = None
         except Exception as exc:
             with self._lock:
                 state.status = "failed"
                 state.error = str(exc)
-                state.finished_at = _utc_now_iso()
+                state.finished_at = utc_now_iso()
                 state.current_account = None
                 state.phase = None
 

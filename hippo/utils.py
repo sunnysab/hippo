@@ -137,6 +137,10 @@ def ensure_default_group(storage: PostgresStorage, *, name: str = 'Default') -> 
     return default_group
 
 
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 __all__ = [
     'fetchall_rows',
     'fetchone_row',
@@ -148,4 +152,5 @@ __all__ = [
     'save_meta_json',
     'should_skip_by_time',
     'slugify',
+    'utc_now_iso',
 ]
