@@ -584,20 +584,6 @@ def _delete_group(storage: PostgresStorage, group_id: int) -> None:
         raise ApiError(str(exc), status=400)
 
 
-def _build_search_clause(
-    *,
-    terms: list[str],
-    fields: list[str],
-) -> tuple[str, list[Any]]:
-    clauses: list[str] = []
-    params: list[Any] = []
-    for term in terms:
-        like = f"%{term}%"
-        clause = " OR ".join([f"{field} ILIKE %s" for field in fields])
-        clauses.append(f"({clause})")
-        params.extend([like for _ in fields])
-    return " AND ".join(clauses), params
-
 
 def _tokenize_query(text: str) -> list[str]:
     trimmed = text.strip()

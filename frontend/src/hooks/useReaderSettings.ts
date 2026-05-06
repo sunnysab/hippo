@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 
-interface ReaderConfig {
+export interface ReaderConfig {
   width: string;
   font: string;
   lineHeight: string;
