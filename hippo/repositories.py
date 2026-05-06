@@ -214,6 +214,142 @@ class AccountRepository:
         if updated == 0:
             raise LookupError(f'Account {biz} not found')
 
+    def list_accounts_paginated(
+        self,
+        *,
+        group_id: int | None = None,
+        search_tokens: list[str] | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict[str, Any]:
+        where: list[str] = []
+        params: list[Any] = []
+        if group_id is not None:
+            where.append("a.group_id = %s")
+            params.append(group_id)
+        if search_tokens:
+            clauses: list[str] = []
+            for term in search_tokens:
+                like = f"%{term}%"
+                clause = " OR ".join([
+                    "a.nickname ILIKE %s",
+                    "a.alias ILIKE %s",
+                    "a.biz ILIKE %s",
+                ])
+                clauses.append(f"({clause})")
+                params.extend([like, like, like])
+            where.append(" AND ".join(clauses))
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+        offset = max(page - 1, 0) * page_size
+        query_sql = (
+            "WITH filtered_accounts AS ("
+            " SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,"
+            " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days,"
+            " a.article_count"
+            " FROM accounts a"
+            f" {where_sql}"
+            " ORDER BY a.nickname ASC"
+            " LIMIT %s OFFSET %s"
+            ")"
+            " SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,"
+            " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,"
+            " COALESCE(a.article_count, 0) AS article_count,"
+            " (ai.data IS NOT NULL) AS avatar_ready"
+            " FROM filtered_accounts a"
+            " LEFT JOIN account_groups g ON g.id = a.group_id"
+            " LEFT JOIN avatar_images ai ON ai.biz = a.biz"
+            " ORDER BY a.nickname ASC"
+        )
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(query_sql, params + [page_size, offset])
+            rows = [dict(row) for row in cur.fetchall()]
+        for row in rows:
+            row["avatar_url"] = f"/api/account/{row['biz']}/avatar"
+        count_sql = f"SELECT COUNT(*) AS total FROM accounts a {where_sql}"
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(count_sql, params)
+            total_row = cur.fetchone()
+        total = int(total_row["total"]) if total_row else 0
+        return {"accounts": rows, "page": page, "page_size": page_size, "total": total}
+
+    def get_account_detail(self, biz: str) -> dict[str, Any]:
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                "SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,"
+                " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,"
+                " COALESCE(a.article_count, 0) AS article_count,"
+                " (ai.data IS NOT NULL) AS avatar_ready"
+                " FROM accounts a"
+                " LEFT JOIN account_groups g ON g.id = a.group_id"
+                " LEFT JOIN avatar_images ai ON ai.biz = a.biz"
+                " WHERE a.biz = %s",
+                (biz,),
+            )
+            row = cur.fetchone()
+        if not row:
+            raise LookupError('Account not found')
+        result = dict(row)
+        result["avatar_url"] = f"/api/account/{result['biz']}/avatar"
+        return result
+
+    def update_account_fields(self, biz: str, **updates: Any) -> None:
+        fields: list[str] = []
+        params: list[Any] = []
+        mapping = {
+            'nickname': 'nickname',
+            'alias': 'alias',
+            'round_head_img': 'round_head_img',
+            'group_id': 'group_id',
+            'is_disabled': 'is_disabled',
+            'sync_mode': 'sync_mode',
+            'sync_recent_days': 'sync_recent_days',
+        }
+        for key, column in mapping.items():
+            if key in updates:
+                fields.append(f"{column} = %s")
+                params.append(updates[key])
+        if not fields:
+            raise ValueError('No fields to update')
+        fields.append('updated_at = NOW()')
+        params.append(biz)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE accounts SET {', '.join(fields)} WHERE biz = %s",
+                params,
+            )
+            if cur.rowcount == 0:
+                raise LookupError('Account not found')
+
+    def move_accounts(self, biz_list: list[str], group_id: int) -> int:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "UPDATE accounts SET group_id = %s, updated_at = NOW() WHERE biz = ANY(%s)",
+                (group_id, biz_list),
+            )
+            return cur.rowcount
+
+    def batch_update_fields(self, biz_list: list[str], **updates: Any) -> int:
+        fields: list[str] = []
+        params: list[Any] = []
+        mapping = {
+            'sync_mode': 'sync_mode',
+            'sync_recent_days': 'sync_recent_days',
+        }
+        for key, column in mapping.items():
+            if key in updates:
+                fields.append(f"{column} = %s")
+                params.append(updates[key])
+        if not fields:
+            raise ValueError('No fields to update')
+        fields.append('updated_at = NOW()')
+        params.append(biz_list)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE accounts SET {', '.join(fields)} WHERE biz = ANY(%s)",
+                params,
+            )
+            return cur.rowcount
+
 
 class GroupRepository:
     def __init__(self, conn: psycopg.Connection) -> None:
