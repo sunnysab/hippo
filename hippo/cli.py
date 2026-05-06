@@ -1143,7 +1143,7 @@ def list_articles(
     rows: list[list[str]] = []
     for article in articles:
         publish_date = (
-            datetime.utcfromtimestamp(article.publish_at).strftime("%Y-%m-%d")
+            datetime.fromtimestamp(article.publish_at, tz=timezone.utc).strftime("%Y-%m-%d")
             if article.publish_at
             else "-"
         )
