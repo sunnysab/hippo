@@ -20,8 +20,6 @@ from .repositories import (
 )
 from .sync_jobs import SyncJobRepository
 
-load_env()
-
 SCHEMA_VERSION = '17'
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'schema' / 'postgres.sql'
