@@ -30,55 +30,6 @@ SCHEMA_VERSION = '17'
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'schema' / 'postgres.sql'
 
 
-ARTICLES_COLUMN_CHECK_QUERY = """
-SELECT column_name
-FROM information_schema.columns
-WHERE table_name = 'articles'
-AND column_name IN (
-    'url_token',
-    'clean_html',
-    'content_markdown',
-    'content_json'
-)
-"""
-
-
-ARTICLE_CONTENT_MIGRATION_QUERY = """
-INSERT INTO article_content
-    (article_pk, url_token, clean_html, content_markdown, content_json,
-     created_at, updated_at)
-SELECT
-    id,
-    url_token,
-    clean_html,
-    content_markdown,
-    content_json::jsonb,
-    created_at,
-    updated_at
-FROM articles
-WHERE url_token IS NOT NULL
-   OR clean_html IS NOT NULL
-   OR content_markdown IS NOT NULL
-   OR content_json IS NOT NULL
-ON CONFLICT (article_pk) DO UPDATE SET
-    url_token=EXCLUDED.url_token,
-    clean_html=EXCLUDED.clean_html,
-    content_markdown=EXCLUDED.content_markdown,
-    content_json=EXCLUDED.content_json,
-    updated_at=EXCLUDED.updated_at
-"""
-
-
-DROP_ARTICLE_LEGACY_COLUMNS = """
-ALTER TABLE articles
-DROP COLUMN IF EXISTS url_token,
-DROP COLUMN IF EXISTS clean_html,
-DROP COLUMN IF EXISTS content_markdown,
-DROP COLUMN IF EXISTS content_json,
-DROP COLUMN IF EXISTS cover_image_id
-"""
-
-
 UPSERT_SCHEMA_VERSION = """
 INSERT INTO meta(key, value)
 VALUES ('schema_version', %s)
@@ -317,18 +268,6 @@ class PostgresStorage(AbstractContextManager):
                     preview = f'{preview}...'
                 _log_db_init(f'sql {idx}/{total}: {preview}')
                 cur.execute(statement)
-            cur.execute(ARTICLES_COLUMN_CHECK_QUERY)
-            existing_columns = {row[0] for row in cur.fetchall()}
-            if {
-                "url_token",
-                "clean_html",
-                "content_markdown",
-                "content_json",
-            }.issubset(existing_columns):
-                _log_db_init('migrate article_content')
-                cur.execute(ARTICLE_CONTENT_MIGRATION_QUERY)
-            _log_db_init('drop legacy article columns')
-            cur.execute(DROP_ARTICLE_LEGACY_COLUMNS)
             _log_db_init('update schema version')
             cur.execute(UPSERT_SCHEMA_VERSION, (SCHEMA_VERSION,))
         self.conn.commit()
