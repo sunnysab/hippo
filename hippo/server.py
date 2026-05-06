@@ -43,7 +43,7 @@ from .sync_service import (
     get_sync_status as load_sync_status,
     set_sync_settings as save_sync_settings,
 )
-from .utils import ensure_default_group, fetchall_rows, fetchone_row, parse_iso_date_to_timestamp
+from .utils import ensure_default_group, fetchall_rows, fetchone_row, parse_iso_date_to_timestamp, utc_now_iso
 from .login_service import save_login_session
 
 DEFAULT_HOST = "127.0.0.1"
@@ -346,10 +346,6 @@ def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
     return {key: _normalize_value(value) for key, value in record.items()}
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _get_login_info(storage: PostgresStorage) -> dict[str, Any] | None:
     row = fetchone_row(
         storage,
@@ -386,7 +382,7 @@ class LoginManager:
                 self._qrcode = None
             self._status = "starting"
             self._message = "Requesting QR code"
-            self._updated_at = _utc_now_iso()
+            self._updated_at = utc_now_iso()
         sid = f"{int(time_module.time() * 1000)}{random.randint(100, 999)}"
         try:
             async with MPClient(timeout=15.0) as client:
@@ -398,13 +394,13 @@ class LoginManager:
                 self._qrcode = qrcode_bytes
                 self._status = "waiting"
                 self._message = "Scan the QR code with WeChat"
-                self._updated_at = _utc_now_iso()
+                self._updated_at = utc_now_iso()
             return self._snapshot()
         except Exception as exc:
             with self._lock:
                 self._status = "error"
                 self._message = str(exc)
-                self._updated_at = _utc_now_iso()
+                self._updated_at = utc_now_iso()
             raise ApiError(str(exc)) from exc
 
     def get_qrcode(self) -> bytes:
@@ -440,7 +436,7 @@ class LoginManager:
                         self._message = "Login success"
                         self._uuid_cookie = None
                         self._qrcode = None
-                        self._updated_at = _utc_now_iso()
+                        self._updated_at = utc_now_iso()
                     return self._snapshot()
                 if status in (2, 3):
                     qrcode_bytes = await api_client.fetch_login_qrcode(uuid_cookie)
@@ -448,19 +444,19 @@ class LoginManager:
                         self._qrcode = qrcode_bytes
                         self._status = "refresh"
                         self._message = "QR code refreshed"
-                        self._updated_at = _utc_now_iso()
+                        self._updated_at = utc_now_iso()
                     return self._snapshot()
                 if status in (4, 6):
                     with self._lock:
                         self._status = "scanned"
                         self._message = "Scan success, waiting for confirmation"
-                        self._updated_at = _utc_now_iso()
+                        self._updated_at = utc_now_iso()
                     return self._snapshot()
                 if status == 5:
                     with self._lock:
                         self._status = "error"
                         self._message = "Account cannot login without email"
-                        self._updated_at = _utc_now_iso()
+                        self._updated_at = utc_now_iso()
                     return self._snapshot()
         except ApiError:
             raise
@@ -468,7 +464,7 @@ class LoginManager:
             with self._lock:
                 self._status = "error"
                 self._message = str(exc)
-                self._updated_at = _utc_now_iso()
+                self._updated_at = utc_now_iso()
             raise ApiError(str(exc)) from exc
         return self._snapshot()
 
@@ -478,7 +474,7 @@ class LoginManager:
             self._qrcode = None
             self._status = "idle"
             self._message = ""
-            self._updated_at = _utc_now_iso()
+            self._updated_at = utc_now_iso()
 
 
 
@@ -1261,7 +1257,7 @@ def _upsert_avatar_url(storage: PostgresStorage, biz: str, url: str) -> None:
                     avatar_url=EXCLUDED.avatar_url,
                     updated_at=EXCLUDED.updated_at
                 """,
-                (biz, url, _utc_now_iso()),
+                (biz, url, utc_now_iso()),
             )
 
 
@@ -1285,7 +1281,7 @@ def _store_avatar(
                     data=EXCLUDED.data,
                     updated_at=EXCLUDED.updated_at
                 """,
-                (biz, avatar_url, content_type, psycopg.Binary(data), _utc_now_iso()),
+                (biz, avatar_url, content_type, psycopg.Binary(data), utc_now_iso()),
             )
 
 

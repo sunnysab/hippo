@@ -23,10 +23,7 @@ from .sync_service import (
 )
 from .sync_tasks import _article_snapshot
 from .sync_types import SyncAccountResult, SyncObserver, SyncSummary
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from .utils import utc_now_iso
 
 
 def _normalize_report(result: SyncJobResult) -> dict[str, Any]:
@@ -86,7 +83,7 @@ class _WorkerProgressTracker:
         return progress
 
     def _touch(self, progress: dict[str, Any]) -> None:
-        progress['updated_at'] = _utc_now_iso()
+        progress['updated_at'] = utc_now_iso()
 
     def on_lock_acquired(self) -> None:
         self._last_log = None
