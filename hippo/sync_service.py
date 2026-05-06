@@ -394,7 +394,6 @@ def _select_missing_content(
             pass
         _logger.warning('Failed to query article content IDs (biz=%s): %s', biz, exc)
         return articles
-    return articles
 
 
 def _to_utc_timestamp(value: datetime | None) -> int | None:
