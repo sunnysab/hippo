@@ -12,7 +12,6 @@ from urllib.parse import parse_qs, urljoin, urlparse
 from bs4 import BeautifulSoup
 import httpx
 
-from .env import load_env
 from .http import MPClient
 from .image_store import ArticleImageStore
 from .logger import get_logger
@@ -20,8 +19,6 @@ from .models import AccountCredential, ArticleRecord, DownloadResult
 from .storage import PostgresStorage
 from .utils import slugify
 from .wechat_parser import parse_wechat_article
-
-load_env()
 
 logger = get_logger(__name__)
 
