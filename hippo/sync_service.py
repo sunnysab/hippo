@@ -700,10 +700,9 @@ class ArticleSyncService:
         observer_factory: Callable[[AccountCredential, bool], SyncObserver] | None = None,
         group_defaults: dict[int, dict[str, Any]] | None = None,
         allow_freq_skip: bool = False,
-        on_account_start: Callable[[AccountCredential], None] | None = None,
-        on_account_done: Callable[[SyncAccountResult, SyncSummary | None], None] | None = None,
-        on_account_stage: Callable[[AccountCredential, str], None] | None = None,
+        observer: SyncJobObserver | None = None,
     ) -> SyncReport:
+        job_observer = observer or NullSyncJobObserver()
         shared_since, shared_until = self._resolve_shared_window(config)
         total_saved = 0
         total_downloaded = 0
@@ -714,11 +713,9 @@ class ArticleSyncService:
         for account in accounts:
             if _get_cancel_event().is_set():
                 break
-            if on_account_start:
-                on_account_start(account)
-            if on_account_stage:
-                on_account_stage(account, 'listing')
-            observer = observer_factory(account, bulk) if observer_factory else NullSyncObserver()
+            job_observer.on_account_start(account)
+            job_observer.on_account_stage(account, 'listing')
+            page_observer = observer_factory(account, bulk) if observer_factory else NullSyncObserver()
             try:
                 result, records, summary = await self.sync_account(
                     account=account,
@@ -727,32 +724,29 @@ class ArticleSyncService:
                     use_resume=use_resume,
                     shared_since=shared_since,
                     shared_until=shared_until,
-                    observer=observer,
+                    observer=page_observer,
                     group_defaults=group_defaults,
                     allow_freq_skip=allow_freq_skip,
                 )
             except SyncInterrupted:
-                if on_account_done:
-                    cancelled_result = SyncAccountResult(
-                        biz=account.biz,
-                        nickname=account.nickname or account.biz,
-                        saved=0,
-                        completed=False,
-                        skipped=False,
-                        failed=False,
-                        error=None,
-                    )
-                    on_account_done(cancelled_result, None)
+                cancelled_result = SyncAccountResult(
+                    biz=account.biz,
+                    nickname=account.nickname or account.biz,
+                    saved=0,
+                    completed=False,
+                    skipped=False,
+                    failed=False,
+                    error=None,
+                )
+                job_observer.on_account_done(cancelled_result, None)
                 break
             details.append(result)
             if result.failed:
                 failed_accounts += 1
-                if on_account_done:
-                    on_account_done(result, summary)
+                job_observer.on_account_done(result, summary)
                 continue
             if result.skipped and not bulk:
-                if on_account_done:
-                    on_account_done(result, summary)
+                job_observer.on_account_done(result, summary)
                 return SyncReport(
                     total_saved=0,
                     summary=[],
@@ -761,8 +755,7 @@ class ArticleSyncService:
                     failed_accounts=failed_accounts,
                 )
             if result.skipped:
-                if on_account_done:
-                    on_account_done(result, summary)
+                job_observer.on_account_done(result, summary)
                 continue
 
             if summary:
@@ -772,8 +765,7 @@ class ArticleSyncService:
             if config.download_content and self._downloader and records:
                 if _get_cancel_event().is_set():
                     raise SyncInterrupted('sync cancelled')
-                if on_account_stage:
-                    on_account_stage(account, 'content')
+                job_observer.on_account_stage(account, 'content')
                 candidates = {item.article_id: item for item in records}
                 missing_articles = _select_missing_content(
                     self._storage,
@@ -790,8 +782,7 @@ class ArticleSyncService:
                         skip_if_downloaded=True,
                     )
                     total_downloaded += len(results)
-            if on_account_done:
-                on_account_done(result, summary)
+            job_observer.on_account_done(result, summary)
 
         return SyncReport(
             total_saved=total_saved,
@@ -923,9 +914,7 @@ async def run_sync_job(
                             group_defaults=group_defaults,
                             allow_freq_skip=True,
                             observer_factory=observer_factory,
-                            on_account_start=job_observer.on_account_start,
-                            on_account_done=job_observer.on_account_done,
-                            on_account_stage=job_observer.on_account_stage,
+                            observer=job_observer,
                         )
                     except SyncRunError as exc:
                         error = str(exc)
