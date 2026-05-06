@@ -1164,44 +1164,11 @@ def _ensure_image_hash(storage: PostgresStorage, image_id: int, *, allow_origin_
         raise ApiError(str(exc), status=502) from exc
 
 
-def _ensure_article_image_hashes(
-    storage: PostgresStorage,
-    article_id: int,
-    images: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return images
-
-
-def _filter_blocked_content_blocks(
-    content_blocks: list[dict[str, Any]],
-    blocked_image_ids: set[int],
-) -> list[dict[str, Any]]:
-    filtered: list[dict[str, Any]] = []
-    for block in content_blocks:
-        image_id = None
-        if isinstance(block, dict):
-            raw_image_id = block.get('image_id')
-            if raw_image_id not in (None, ''):
-                try:
-                    image_id = int(raw_image_id)
-                except (TypeError, ValueError):
-                    image_id = None
-        if (
-            isinstance(block, dict)
-            and block.get('type') == 'image'
-            and image_id in blocked_image_ids
-        ):
-            continue
-        filtered.append(block)
-    return filtered
-
-
 def _get_visible_article_images(
     storage: PostgresStorage,
     article_id: int,
 ) -> tuple[list[dict[str, Any]], set[int]]:
     images = storage.images.get_article_images(article_id)
-    images = _ensure_article_image_hashes(storage, article_id, images)
     blocked_image_ids = storage.images.list_blocked_image_ids(article_id)
     visible_images = [image for image in images if int(image['id']) not in blocked_image_ids]
     return visible_images, blocked_image_ids
