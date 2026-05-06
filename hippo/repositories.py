@@ -540,156 +540,153 @@ class ArticleRepository:
     ) -> None:
         now = _utc_now_dt()
         normalized_cover: str | None = None
-        try:
-            with self._conn.cursor() as cur:
-                if cover_url is not None:
-                    cover_id = self._normalize_cover_id(cover_url)
-                    if cover_id is not None:
-                        cur.execute(
-                            'SELECT orig_url FROM article_images WHERE id = %s',
-                            (cover_id,),
-                        )
-                        row = cur.fetchone()
-                        if row and row[0]:
-                            normalized_cover = str(row[0]).strip()
-                    else:
-                        normalized_cover = str(cover_url).strip()
-                if normalized_cover:
-                    has_cover = any(
-                        image.get('kind') == 'cover'
-                        and str(image.get('orig_url') or '') == normalized_cover
-                        for image in images
+        with self._conn.cursor() as cur:
+            if cover_url is not None:
+                cover_id = self._normalize_cover_id(cover_url)
+                if cover_id is not None:
+                    cur.execute(
+                        'SELECT orig_url FROM article_images WHERE id = %s',
+                        (cover_id,),
                     )
-                    if not has_cover:
-                        images = [
-                            {
-                                'orig_url': normalized_cover,
-                                'kind': 'cover',
-                                'position': 0,
-                                'content_type': None,
-                                'data': None,
-                            },
-                            *images,
-                        ]
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        normalized_cover = str(row[0]).strip()
+                else:
+                    normalized_cover = str(cover_url).strip()
+            if normalized_cover:
+                has_cover = any(
+                    image.get('kind') == 'cover'
+                    and str(image.get('orig_url') or '') == normalized_cover
+                    for image in images
+                )
+                if not has_cover:
+                    images = [
+                        {
+                            'orig_url': normalized_cover,
+                            'kind': 'cover',
+                            'position': 0,
+                            'content_type': None,
+                            'data': None,
+                        },
+                        *images,
+                    ]
+            cur.execute(
+                """
+                INSERT INTO articles (
+                    biz, article_id, title, item_show_type, author, digest, cover, link, source_url,
+                    publish_at, raw_json, created_at, updated_at
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s
+                )
+                ON CONFLICT (biz, article_id) DO UPDATE SET
+                    title=EXCLUDED.title,
+                    item_show_type=COALESCE(EXCLUDED.item_show_type, articles.item_show_type),
+                    author=EXCLUDED.author,
+                    digest=EXCLUDED.digest,
+                    link=EXCLUDED.link,
+                    source_url=EXCLUDED.source_url,
+                    publish_at=EXCLUDED.publish_at,
+                    raw_json=EXCLUDED.raw_json,
+                    updated_at=EXCLUDED.updated_at
+                RETURNING id
+                """,
+                (
+                    article.biz,
+                    article.article_id,
+                    title,
+                    item_show_type,
+                    article.author,
+                    article.digest,
+                    None,
+                    article.link,
+                    article.source_url,
+                    article.publish_at,
+                    json.dumps(article.raw, ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+            article_pk = cur.fetchone()[0]
+
+            cur.execute('DELETE FROM article_images WHERE article_pk = %s', (article_pk,))
+            image_id_map: dict[str, int] = {}
+            seen_orig_urls: set[str] = set()
+            cover_id: int | None = None
+            for image in images:
+                orig_url = image.get('orig_url')
+                if orig_url:
+                    orig_url = str(orig_url)
+                    if orig_url in seen_orig_urls:
+                        continue
+                    seen_orig_urls.add(orig_url)
                 cur.execute(
                     """
-                    INSERT INTO articles (
-                        biz, article_id, title, item_show_type, author, digest, cover, link, source_url,
-                        publish_at, raw_json, created_at, updated_at
-                    )
-                    VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s
-                    )
-                    ON CONFLICT (biz, article_id) DO UPDATE SET
-                        title=EXCLUDED.title,
-                        item_show_type=COALESCE(EXCLUDED.item_show_type, articles.item_show_type),
-                        author=EXCLUDED.author,
-                        digest=EXCLUDED.digest,
-                        link=EXCLUDED.link,
-                        source_url=EXCLUDED.source_url,
-                        publish_at=EXCLUDED.publish_at,
-                        raw_json=EXCLUDED.raw_json,
-                        updated_at=EXCLUDED.updated_at
+                    INSERT INTO article_images
+                        (article_pk, position, kind, orig_url, content_type, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
-                        article.biz,
-                        article.article_id,
-                        title,
-                        item_show_type,
-                        article.author,
-                        article.digest,
-                        None,
-                        article.link,
-                        article.source_url,
-                        article.publish_at,
-                        json.dumps(article.raw, ensure_ascii=False),
-                        now,
-                        now,
-                    ),
-                )
-                article_pk = cur.fetchone()[0]
-
-                cur.execute('DELETE FROM article_images WHERE article_pk = %s', (article_pk,))
-                image_id_map: dict[str, int] = {}
-                seen_orig_urls: set[str] = set()
-                cover_id: int | None = None
-                for image in images:
-                    orig_url = image.get('orig_url')
-                    if orig_url:
-                        orig_url = str(orig_url)
-                        if orig_url in seen_orig_urls:
-                            continue
-                        seen_orig_urls.add(orig_url)
-                    cur.execute(
-                        """
-                        INSERT INTO article_images
-                            (article_pk, position, kind, orig_url, content_type, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        RETURNING id
-                        """,
-                        (
-                            article_pk,
-                            image.get('position', 0),
-                            image.get('kind', 'inline'),
-                            orig_url,
-                            image.get('content_type'),
-                            now,
-                        ),
-                    )
-                    image_id = cur.fetchone()[0]
-                    if orig_url:
-                        image_id_map[orig_url] = image_id
-                    if image.get('kind') == 'cover' and cover_id is None:
-                        cover_id = int(image_id)
-
-                updated_blocks: list[dict] = []
-                for block in content_blocks:
-                    if block.get('type') == 'image':
-                        orig_url = block.get('orig_url')
-                        image_id = image_id_map.get(str(orig_url)) if orig_url else None
-                        updated = dict(block)
-                        if image_id is not None:
-                            updated['image_id'] = image_id
-                        updated_blocks.append(updated)
-                    else:
-                        updated_blocks.append(block)
-
-                cur.execute(
-                    """
-                    INSERT INTO article_content
-                        (article_pk, url_token, clean_html, content_markdown, content_json, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (article_pk) DO UPDATE SET
-                        url_token=EXCLUDED.url_token,
-                        clean_html=EXCLUDED.clean_html,
-                        content_markdown=EXCLUDED.content_markdown,
-                        content_json=EXCLUDED.content_json,
-                        updated_at=EXCLUDED.updated_at
-                    """,
-                    (
                         article_pk,
-                        url_token,
-                        clean_html,
-                        content_markdown,
-                        Json(updated_blocks),
-                        now,
+                        image.get('position', 0),
+                        image.get('kind', 'inline'),
+                        orig_url,
+                        image.get('content_type'),
                         now,
                     ),
                 )
-                if cover_id is not None:
-                    cur.execute(
-                        "UPDATE articles SET cover = %s, updated_at = %s WHERE id = %s",
-                        (cover_id, now, article_pk),
-                    )
+                image_id = cur.fetchone()[0]
+                if orig_url:
+                    image_id_map[orig_url] = image_id
+                if image.get('kind') == 'cover' and cover_id is None:
+                    cover_id = int(image_id)
+
+            updated_blocks: list[dict] = []
+            for block in content_blocks:
+                if block.get('type') == 'image':
+                    orig_url = block.get('orig_url')
+                    image_id = image_id_map.get(str(orig_url)) if orig_url else None
+                    updated = dict(block)
+                    if image_id is not None:
+                        updated['image_id'] = image_id
+                    updated_blocks.append(updated)
                 else:
-                    cur.execute(
-                        "UPDATE articles SET cover = NULL, updated_at = %s WHERE id = %s",
-                        (now, article_pk),
-                    )
-        except Exception:
-            raise
+                    updated_blocks.append(block)
+
+            cur.execute(
+                """
+                INSERT INTO article_content
+                    (article_pk, url_token, clean_html, content_markdown, content_json, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (article_pk) DO UPDATE SET
+                    url_token=EXCLUDED.url_token,
+                    clean_html=EXCLUDED.clean_html,
+                    content_markdown=EXCLUDED.content_markdown,
+                    content_json=EXCLUDED.content_json,
+                    updated_at=EXCLUDED.updated_at
+                """,
+                (
+                    article_pk,
+                    url_token,
+                    clean_html,
+                    content_markdown,
+                    Json(updated_blocks),
+                    now,
+                    now,
+                ),
+            )
+            if cover_id is not None:
+                cur.execute(
+                    "UPDATE articles SET cover = %s, updated_at = %s WHERE id = %s",
+                    (cover_id, now, article_pk),
+                )
+            else:
+                cur.execute(
+                    "UPDATE articles SET cover = NULL, updated_at = %s WHERE id = %s",
+                    (now, article_pk),
+                )
 
     def has_article_content(self, biz: str, article_id: str) -> bool:
         with self._conn.cursor() as cur:
@@ -896,28 +893,25 @@ class ImageRepository:
         content_type: str | None,
         s3_key: str,
     ) -> None:
-        try:
-            with self._conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE article_images
-                    SET content_type = %s,
-                        s3_key = %s,
-                        failed_at = NULL,
-                        failed_reason = NULL,
-                        updated_at = %s
-                    WHERE article_pk = %s AND orig_url = %s
-                    """,
-                    (
-                        content_type,
-                        s3_key,
-                        _utc_now_dt(),
-                        article_pk,
-                        orig_url,
-                    ),
-                )
-        except Exception:
-            raise
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE article_images
+                SET content_type = %s,
+                    s3_key = %s,
+                    failed_at = NULL,
+                    failed_reason = NULL,
+                    updated_at = %s
+                WHERE article_pk = %s AND orig_url = %s
+                """,
+                (
+                    content_type,
+                    s3_key,
+                    _utc_now_dt(),
+                    article_pk,
+                    orig_url,
+                ),
+            )
 
     def mark_article_image_failed(
         self,
@@ -929,34 +923,31 @@ class ImageRepository:
         trimmed = reason.strip()
         if len(trimmed) > 5000:
             trimmed = trimmed[:5000]
-        try:
-            with self._conn.cursor() as cur:
-                cur.execute(
-                    'SELECT id FROM articles WHERE biz = %s AND article_id = %s',
-                    (biz, article_id),
-                )
-                row = cur.fetchone()
-                if not row:
-                    return
-                article_pk = row[0]
-                cur.execute(
-                    """
-                    UPDATE article_images
-                    SET failed_at = %s,
-                        failed_reason = %s,
-                        updated_at = %s
-                    WHERE article_pk = %s AND orig_url = %s
-                    """,
-                    (
-                        _utc_now_dt(),
-                        trimmed,
-                        _utc_now_dt(),
-                        article_pk,
-                        orig_url,
-                    ),
-                )
-        except Exception:
-            raise
+        with self._conn.cursor() as cur:
+            cur.execute(
+                'SELECT id FROM articles WHERE biz = %s AND article_id = %s',
+                (biz, article_id),
+            )
+            row = cur.fetchone()
+            if not row:
+                return
+            article_pk = row[0]
+            cur.execute(
+                """
+                UPDATE article_images
+                SET failed_at = %s,
+                    failed_reason = %s,
+                    updated_at = %s
+                WHERE article_pk = %s AND orig_url = %s
+                """,
+                (
+                    _utc_now_dt(),
+                    trimmed,
+                    _utc_now_dt(),
+                    article_pk,
+                    orig_url,
+                ),
+            )
 
 
 def _to_utc_dt(value: datetime) -> datetime:
