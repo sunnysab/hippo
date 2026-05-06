@@ -885,7 +885,7 @@ def delete_account(
     storage: PostgresStorage = Depends(_get_storage),
 ) -> Response:
     """
-    删除指定公众号及其关联数据。
+    删除指定公众号及其关联的文章、图片和 S3 资源。
 
     Args:
         biz (str): 公众号唯一标识。
@@ -896,6 +896,15 @@ def delete_account(
     Raises:
         ApiError: 如果公众号未找到。
     """
+    s3_keys = storage.images.list_s3_keys_for_account(biz)
+    if s3_keys:
+        try:
+            from .file_storage import S3FileStorage
+            s3 = S3FileStorage()
+            deleted = s3.delete_objects(s3_keys)
+            logger.info("Deleted %d S3 objects for account %s", deleted, biz)
+        except Exception as exc:
+            logger.warning("S3 cleanup for account %s failed, deleting DB records anyway: %s", biz, exc)
     with storage.transaction():
         removed = storage.accounts.remove_account(biz)
     if removed == 0:
