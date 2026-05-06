@@ -642,13 +642,6 @@ def _require_nonempty(value: Optional[str], message: str) -> None:
         raise typer.Exit(code=2)
 
 
-def _resolve_pg_dsn() -> str:
-    load_env()
-    pg_dsn = os.environ.get("HIPPO_PG_DSN")
-    if not pg_dsn:
-        raise typer.BadParameter("Missing HIPPO_PG_DSN.")
-    return pg_dsn
-
 
 def _build_image_store(storage: PostgresStorage, *, enabled: bool) -> ArticleImageService | None:
     if not enabled:
@@ -1201,8 +1194,6 @@ async def _sync_article_download_async(
     workers: Optional[int],
     image_workers: Optional[int],
 ) -> None:
-    _resolve_pg_dsn()
-
     since_timestamp = _parse_since(since)
     with open_storage() as storage:
         try:
@@ -1313,8 +1304,6 @@ async def _sync_all_article_download_async(
     workers: Optional[int],
     image_workers: Optional[int],
 ) -> None:
-    _resolve_pg_dsn()
-
     since_timestamp = _parse_since(since)
     total_downloads = 0
     with open_storage() as storage:
@@ -1430,7 +1419,6 @@ async def _download_article_async(
     if not url:
         typer.echo("请提供文章 URL。示例：python -m hippo article download \"https://mp.weixin.qq.com/...\"")
         raise typer.Exit(code=2)
-    _resolve_pg_dsn()
     with open_storage() as storage:
         try:
             container = build_downloader_container(
