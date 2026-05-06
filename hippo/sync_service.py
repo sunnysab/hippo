@@ -968,6 +968,7 @@ async def run_sync_job(
                         if on_images_done:
                             on_images_done()
         except Exception as exc:
+            _logger.exception('Sync job failed unexpectedly')
             error = str(exc)
             report = empty_report
 
