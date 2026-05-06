@@ -31,38 +31,6 @@ CREATE TABLE IF NOT EXISTS accounts (
     updated_at TIMESTAMPTZ NOT NULL
 );
 
-ALTER TABLE accounts
-ADD COLUMN IF NOT EXISTS is_disabled BOOLEAN NOT NULL DEFAULT FALSE;
-
-ALTER TABLE accounts
-ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES account_groups(id) ON DELETE SET NULL;
-
-ALTER TABLE accounts
-ADD COLUMN IF NOT EXISTS sync_mode TEXT;
-
-ALTER TABLE accounts
-ADD COLUMN IF NOT EXISTS sync_recent_days INTEGER;
-
-ALTER TABLE accounts
-ADD COLUMN IF NOT EXISTS article_count BIGINT NOT NULL DEFAULT 0;
-
-ALTER TABLE account_groups
-ADD COLUMN IF NOT EXISTS article_count BIGINT NOT NULL DEFAULT 0;
-
-ALTER TABLE accounts
-DROP COLUMN IF EXISTS is_default;
-
-ALTER TABLE accounts
-DROP COLUMN IF EXISTS uin,
-DROP COLUMN IF EXISTS key,
-DROP COLUMN IF EXISTS pass_ticket;
-
-ALTER TABLE account_groups
-ADD COLUMN IF NOT EXISTS sync_mode TEXT;
-
-ALTER TABLE account_groups
-ADD COLUMN IF NOT EXISTS sync_recent_days INTEGER;
-
 CREATE INDEX IF NOT EXISTS idx_accounts_group
 ON accounts (group_id);
 
@@ -79,13 +47,11 @@ CREATE TABLE IF NOT EXISTS articles (
     source_url TEXT,
     publish_at BIGINT,
     raw_json TEXT NOT NULL,
+    search_vector tsvector,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
     UNIQUE (biz, article_id)
 );
-
-ALTER TABLE articles
-ADD COLUMN IF NOT EXISTS item_show_type INTEGER;
 
 CREATE TABLE IF NOT EXISTS article_content (
     id SERIAL PRIMARY KEY,
@@ -98,9 +64,6 @@ CREATE TABLE IF NOT EXISTS article_content (
     updated_at TIMESTAMPTZ NOT NULL,
     UNIQUE (article_pk)
 );
-
-ALTER TABLE articles
-ADD COLUMN IF NOT EXISTS search_vector tsvector;
 
 CREATE OR REPLACE FUNCTION build_article_search_vector(
     title TEXT,
@@ -215,14 +178,6 @@ CREATE TABLE IF NOT EXISTS article_images (
     UNIQUE (article_pk, orig_url)
 );
 
-ALTER TABLE article_images
-ADD COLUMN IF NOT EXISTS hash_algo TEXT,
-ADD COLUMN IF NOT EXISTS content_hash TEXT,
-ADD COLUMN IF NOT EXISTS s3_key TEXT,
-ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ,
-ADD COLUMN IF NOT EXISTS failed_reason TEXT,
-DROP COLUMN IF EXISTS data;
-
 CREATE INDEX IF NOT EXISTS idx_article_images_pending
 ON article_images (id)
 WHERE (s3_key IS NULL OR s3_key = '') AND orig_url IS NOT NULL;
@@ -270,8 +225,6 @@ ON sync_jobs (status, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_sync_jobs_trigger_type_status
 ON sync_jobs (trigger_type, status, created_at DESC);
-
-DROP INDEX IF EXISTS idx_article_content_article_pk;
 
 CREATE INDEX IF NOT EXISTS idx_accounts_nickname_trgm
 ON accounts USING GIN (nickname gin_trgm_ops);
