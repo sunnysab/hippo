@@ -14,6 +14,7 @@ from ..storage import PostgresStorage, open_storage
 from ..sync_core import SyncInterrupted
 from ..sync_service import ArticleSyncService, SyncRunError, append_sync_history, set_sync_state
 from ..sync_types import (
+    NullSyncJobObserver,
     NullSyncObserver,
     SyncAccountResult,
     SyncConfig,
@@ -23,6 +24,14 @@ from ..sync_types import (
     SyncSummary,
 )
 from ..utils import utc_now_iso
+
+
+class _CliSyncJobObserver(NullSyncJobObserver):
+    def __init__(self, on_done: Callable[[SyncAccountResult, SyncSummary | None], None]) -> None:
+        self._on_done = on_done
+
+    def on_account_done(self, result: SyncAccountResult, summary: SyncSummary | None) -> None:
+        self._on_done(result, summary)
 
 
 class TqdmSyncObserver(NullSyncObserver):
@@ -257,13 +266,16 @@ async def perform_sync(
             on_login_required=_handle_login_expired,
         )
         try:
+            cli_observer = _CliSyncJobObserver(
+                on_done=lambda result, _: close_account_progress(biz=result.biz, detail=result),
+            )
             report = await service.sync_accounts(
                 accounts=accounts,
                 config=config,
                 bulk=bulk,
                 use_resume=bulk,
                 observer_factory=observer_factory,
-                on_account_done=lambda result, _: close_account_progress(biz=result.biz, detail=result),
+                observer=cli_observer,
             )
         finally:
             if report:
