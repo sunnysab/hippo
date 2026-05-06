@@ -71,6 +71,7 @@ function GroupSyncToolbarFields({ group }: GroupSyncToolbarFieldsProps) {
         id="group-sync-days"
         min="1"
         value={days}
+        className={mode !== 'recent' ? 'account-sync-if-recent' : 'account-sync-if-recent is-visible'}
         disabled={mode !== 'recent'}
         onChange={(event) => setDays(event.target.value)}
         onBlur={() => { void handleSave(mode, days); }}

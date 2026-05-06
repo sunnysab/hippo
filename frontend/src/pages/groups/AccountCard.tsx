@@ -161,7 +161,7 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
             <option value="full">{t('sync.modeFull', 'Full')}</option>
           </select>
         </div>
-        <div className="account-sync-row">
+        <div className={`account-sync-row account-sync-if-recent${syncMode === 'recent' ? ' is-visible' : ''}`}>
           <span className="account-sync-label">{t('accounts.syncRecentDays', 'Recent days')}</span>
           <input
             className="account-sync-days"
