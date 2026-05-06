@@ -6,7 +6,7 @@ import asyncio
 import os
 import re
 from contextlib import AbstractAsyncContextManager
-from typing import Iterable
+from typing import Awaitable, Callable, Iterable
 from urllib.parse import parse_qs, urljoin, urlparse
 
 from bs4 import BeautifulSoup
@@ -215,6 +215,318 @@ def _attach_image_block_metadata(
     return updated_blocks
 
 
+# ---------------------------------------------------------------------------
+# ArticleFetcher – HTTP fetching with retry logic
+# ---------------------------------------------------------------------------
+
+
+class ArticleFetcher:
+    def __init__(self, client: MPClient) -> None:
+        self._client = client
+
+    async def fetch_article_html(self, url: str) -> str:
+        last_exc: Exception | None = None
+        for attempt in range(_ARTICLE_MAX_RETRIES):
+            try:
+                logger.debug("Fetching article (attempt %d/%d): %s", attempt + 1, _ARTICLE_MAX_RETRIES, url)
+                return await self._client.fetch_article_html(url)
+            except Exception as exc:
+                last_exc = exc
+                backoff = min(2 ** attempt, _RETRY_BACKOFF_MAX)
+                jitter = backoff * 0.1 * (0.5 + 0.5 * (attempt % 2))
+                wait_time = backoff + jitter
+                logger.warning(
+                    "Fetch failed (attempt %d/%d) for %s: %s - retrying in %.1fs",
+                    attempt + 1,
+                    _ARTICLE_MAX_RETRIES,
+                    url,
+                    exc,
+                    wait_time,
+                )
+                if attempt < _ARTICLE_MAX_RETRIES - 1:
+                    await asyncio.sleep(wait_time)
+        logger.error("Failed to fetch article after %d retries: %s", _ARTICLE_MAX_RETRIES, url)
+        raise RuntimeError(f"下载失败：{last_exc}") from last_exc
+
+    async def download_from_url(
+        self,
+        url: str,
+        *,
+        persist: Callable[[ArticleRecord, str], Awaitable[DownloadResult]],
+        title: str | None = None,
+    ) -> DownloadResult:
+        raw_html = await self.fetch_article_html(url)
+        inferred_title = title or _extract_title(raw_html) or "WeChat Article"
+        token = _extract_url_token(url)
+        stub = ArticleRecord(
+            biz="adhoc",
+            article_id=token or slugify(inferred_title),
+            title=inferred_title,
+            item_show_type=None,
+            author=None,
+            digest=None,
+            cover=None,
+            link=url,
+            source_url=url,
+            publish_at=None,
+            raw={"source": "adhoc"},
+        )
+        return await persist(stub, raw_html)
+
+    async def download_with_retry(
+        self,
+        article: ArticleRecord,
+        *,
+        persist: Callable[[ArticleRecord, str], Awaitable[DownloadResult]],
+    ) -> DownloadResult:
+        last_exc: Exception | None = None
+        for attempt in range(_ARTICLE_MAX_RETRIES):
+            try:
+                logger.debug(
+                    "Downloading article (attempt %d/%d): %s - %s",
+                    attempt + 1,
+                    _ARTICLE_MAX_RETRIES,
+                    article.article_id,
+                    article.title,
+                )
+                html = await self._client.fetch_article_html(article.link)
+                result = await persist(article, html)
+                logger.info("Successfully downloaded article: %s - %s", article.article_id, article.title)
+                return result
+            except Exception as exc:
+                last_exc = exc
+                backoff = min(2 ** attempt, _RETRY_BACKOFF_MAX)
+                jitter = backoff * 0.1 * (0.5 + 0.5 * (attempt % 2))
+                wait_time = backoff + jitter
+                logger.warning(
+                    "Download failed (attempt %d/%d) for %s: %s - retrying in %.1fs",
+                    attempt + 1,
+                    _ARTICLE_MAX_RETRIES,
+                    article.article_id,
+                    exc,
+                    wait_time,
+                )
+                if attempt < _ARTICLE_MAX_RETRIES - 1:
+                    await asyncio.sleep(wait_time)
+        logger.error("Failed to download article after %d retries: %s - %s", _ARTICLE_MAX_RETRIES, article.article_id, article.title)
+        raise RuntimeError(f"下载失败：{last_exc}") from last_exc
+
+
+# ---------------------------------------------------------------------------
+# ImageDownloadManager – image download queue and concurrency
+# ---------------------------------------------------------------------------
+
+
+class ImageDownloadManager:
+    def __init__(
+        self,
+        *,
+        client: MPClient,
+        image_store: ArticleImageStore | None,
+        storage: PostgresStorage | None,
+        workers: int | None = None,
+        enabled: bool = True,
+    ) -> None:
+        self._client = client
+        self._image_store = image_store
+        self._storage = storage
+        self._enabled = enabled
+        self._workers = workers if workers and workers > 0 else _IMAGE_WORKERS
+        self._semaphore = asyncio.Semaphore(self._workers)
+        self._total = 0
+        self._done = 0
+        self._lock = asyncio.Lock()
+        self._abort = False
+        self._max_retries = _IMAGE_MAX_RETRIES
+
+    async def stats(self) -> tuple[int, int]:
+        async with self._lock:
+            return self._total, self._done
+
+    async def _mark_total(self, count: int) -> None:
+        if count <= 0:
+            return
+        async with self._lock:
+            self._total += count
+
+    async def _mark_done(self) -> None:
+        async with self._lock:
+            self._done += 1
+
+    def _record_failure(self, *, article: ArticleRecord, orig_url: str, reason: str) -> None:
+        if self._image_store and orig_url:
+            self._image_store.mark_failed(
+                biz=article.biz,
+                article_id=article.article_id,
+                orig_url=orig_url,
+                reason=reason,
+            )
+            return
+        if self._storage and orig_url:
+            self._storage.images.mark_article_image_failed(
+                article.biz,
+                article.article_id,
+                orig_url,
+                reason,
+            )
+
+    async def _download_one(
+        self,
+        *,
+        article: ArticleRecord,
+        resolved_url: str,
+        orig_url: str,
+        referer: str,
+    ) -> None:
+        if self._abort:
+            _log_download_error(
+                stage="asset_download",
+                article=article,
+                error="aborted",
+                asset_url=orig_url,
+                resolved_url=resolved_url,
+                referer=referer,
+            )
+            await self._mark_done()
+            return
+        if not _is_http_url(str(resolved_url)):
+            reason = f"Invalid URL scheme (non-http): {resolved_url}"
+            _log_download_error(
+                stage="asset_download",
+                article=article,
+                error=reason,
+                asset_url=orig_url,
+                resolved_url=resolved_url,
+                referer=referer,
+            )
+            self._record_failure(article=article, orig_url=orig_url, reason=reason)
+            await self._mark_done()
+            return
+
+        async with self._semaphore:
+            for attempt in range(1, self._max_retries + 1):
+                if self._abort:
+                    _log_download_error(
+                        stage="asset_download",
+                        article=article,
+                        error="aborted",
+                        asset_url=orig_url,
+                        resolved_url=resolved_url,
+                        referer=referer,
+                    )
+                    await self._mark_done()
+                    return
+                try:
+                    data, content_type = await self._client.download_binary_with_type(
+                        resolved_url, referer=referer
+                    )
+                    if self._image_store and orig_url:
+                        self._image_store.store(
+                            biz=article.biz,
+                            article_id=article.article_id,
+                            orig_url=orig_url,
+                            content_type=content_type,
+                            data=data,
+                        )
+                    elif orig_url:
+                        reason = 'Image store not configured'
+                        self._record_failure(article=article, orig_url=orig_url, reason=reason)
+                        await self._mark_done()
+                        return
+                    await self._mark_done()
+                    return
+                except Exception as exc:
+                    is_http_400_or_404 = False
+                    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+                        status = exc.response.status_code
+                        is_http_400_or_404 = status in (400, 404)
+                    if is_http_400_or_404 or attempt >= self._max_retries:
+                        _log_download_error(
+                            stage="asset_download",
+                            article=article,
+                            error=str(exc),
+                            asset_url=orig_url,
+                            resolved_url=resolved_url,
+                            referer=referer,
+                        )
+                        self._record_failure(article=article, orig_url=orig_url, reason=str(exc))
+                        await self._mark_done()
+                        return
+                    await asyncio.sleep(min(2 ** attempt, _RETRY_BACKOFF_MAX))
+
+    async def download_images_for_article(
+        self,
+        article: ArticleRecord,
+        urls: list[str],
+        *,
+        referer: str,
+    ) -> None:
+        if not urls or not self._enabled:
+            return
+        await self._mark_total(len(urls))
+        async with asyncio.TaskGroup() as tg:
+            for resolved in urls:
+                tg.create_task(
+                    self._download_one(
+                        article=article,
+                        resolved_url=resolved,
+                        orig_url=resolved,
+                        referer=referer,
+                    )
+                )
+
+    async def enqueue(self, article: ArticleRecord, url_map: dict[str, str], *, referer: str) -> None:
+        if not url_map:
+            return
+        seen: set[str] = set()
+        urls: list[str] = []
+        for resolved in url_map.values():
+            if not resolved or resolved in seen:
+                continue
+            seen.add(resolved)
+            urls.append(resolved)
+        await self.download_images_for_article(article, urls, referer=referer)
+
+    async def wait_for_images(self) -> None:
+        return None
+
+    async def wait_for_images_with_progress(self, *, label: str = "下载图片") -> None:
+        total, done = await self.stats()
+        if total == 0 or done >= total:
+            return
+        try:
+            from tqdm import tqdm
+        except Exception:
+            return
+        bar = tqdm(
+            total=total,
+            desc=label,
+            unit="张",
+            dynamic_ncols=True,
+            leave=True,
+        )
+        try:
+            while True:
+                total, done = await self.stats()
+                if total > bar.total:
+                    bar.total = total
+                bar.n = done
+                bar.refresh()
+                if done >= total:
+                    break
+                await asyncio.sleep(0.2)
+        finally:
+            bar.close()
+
+    async def abort(self) -> None:
+        self._abort = True
+
+
+# ---------------------------------------------------------------------------
+# ArticleDownloader – orchestrator
+# ---------------------------------------------------------------------------
+
+
 class ArticleDownloader(AbstractAsyncContextManager):
     def __init__(
         self,
@@ -235,23 +547,21 @@ class ArticleDownloader(AbstractAsyncContextManager):
             article_max_connections=article_max_connections,
         )
         self.storage = storage
-        self._image_store = image_store
-        self._enable_image_worker = enable_image_worker
         self._article_workers = (
             article_max_connections if article_max_connections and article_max_connections > 0 else 1
         )
-        self._image_workers = image_workers if image_workers and image_workers > 0 else _IMAGE_WORKERS
-        self._image_semaphore = asyncio.Semaphore(self._image_workers)
-        self._image_total = 0
-        self._image_done = 0
-        self._image_lock = asyncio.Lock()
-        self._image_abort = False
-        self._image_max_retries = _IMAGE_MAX_RETRIES
-        
+        self._fetcher = ArticleFetcher(self.client)
+        self._image_mgr = ImageDownloadManager(
+            client=self.client,
+            image_store=image_store,
+            storage=storage,
+            workers=image_workers,
+            enabled=enable_image_worker,
+        )
         logger.info(
             "ArticleDownloader initialized: article_workers=%d, image_workers=%d",
             self._article_workers,
-            self._image_workers,
+            self._image_mgr._workers,
         )
 
     async def __aenter__(self) -> ArticleDownloader:
@@ -270,35 +580,10 @@ class ArticleDownloader(AbstractAsyncContextManager):
         return None
 
     async def wait_for_images_with_progress(self, *, label: str = "下载图片") -> None:
-        total, done = await self._image_stats()
-        if total == 0 or done >= total:
-            return
-        try:
-            from tqdm import tqdm
-        except Exception:
-            return
-        bar = tqdm(
-            total=total,
-            desc=label,
-            unit="张",
-            dynamic_ncols=True,
-            leave=True,
-        )
-        try:
-            while True:
-                total, done = await self._image_stats()
-                if total > bar.total:
-                    bar.total = total
-                bar.n = done
-                bar.refresh()
-                if done >= total:
-                    break
-                await asyncio.sleep(0.2)
-        finally:
-            bar.close()
+        await self._image_mgr.wait_for_images_with_progress(label=label)
 
     async def abort_image_queue(self) -> None:
-        self._image_abort = True
+        await self._image_mgr.abort()
 
     # ------------------------------------------------------------------
     async def download_many(
@@ -364,7 +649,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                         results.append(result)
                     except Exception as exc:
                         failed += 1
-                        self._log_download_error(
+                        _log_download_error(
                             stage="article_download",
                             article=article,
                             error=str(exc),
@@ -404,7 +689,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                         result = await task
                     except Exception as exc:
                         failed += 1
-                        self._log_download_error(
+                        _log_download_error(
                             stage="article_download",
                             article=article,
                             error=str(exc),
@@ -438,28 +723,16 @@ class ArticleDownloader(AbstractAsyncContextManager):
         record_images_only: bool = False,
         title: str | None = None,
     ) -> DownloadResult:
-        raw_html = await self._fetch_with_retry(url)
-        inferred_title = title or _extract_title(raw_html) or "WeChat Article"
-        token = _extract_url_token(url)
-        stub = ArticleRecord(
-            biz="adhoc",
-            article_id=token or slugify(inferred_title),
-            title=inferred_title,
-            item_show_type=None,
-            author=None,
-            digest=None,
-            cover=None,
-            link=url,
-            source_url=url,
-            publish_at=None,
-            raw={"source": "adhoc"},
-        )
-        self._ensure_adhoc_account(stub.biz)
-        return await self._persist_article(
-            stub,
-            raw_html=raw_html,
-            with_images=with_images,
-            record_images_only=record_images_only,
+        self._ensure_adhoc_account("adhoc")
+        return await self._fetcher.download_from_url(
+            url,
+            persist=lambda article, raw_html: self._persist_article(
+                article,
+                raw_html=raw_html,
+                with_images=with_images,
+                record_images_only=record_images_only,
+            ),
+            title=title,
         )
 
     def _ensure_adhoc_account(self, biz: str) -> None:
@@ -492,34 +765,6 @@ class ArticleDownloader(AbstractAsyncContextManager):
         else:
             upsert_account(credential)
 
-    async def _fetch_with_retry(self, url: str) -> str:
-        last_exc: Exception | None = None
-        for attempt in range(_ARTICLE_MAX_RETRIES):
-            try:
-                logger.debug("Fetching article (attempt %d/%d): %s", attempt + 1, _ARTICLE_MAX_RETRIES, url)
-                return await self.client.fetch_article_html(url)
-            except Exception as exc:
-                last_exc = exc
-                # Calculate backoff time with jitter
-                backoff = min(2 ** attempt, _RETRY_BACKOFF_MAX)
-                jitter = backoff * 0.1 * (0.5 + 0.5 * (attempt % 2))
-                wait_time = backoff + jitter
-                
-                logger.warning(
-                    "Fetch failed (attempt %d/%d) for %s: %s - retrying in %.1fs",
-                    attempt + 1,
-                    _ARTICLE_MAX_RETRIES,
-                    url,
-                    exc,
-                    wait_time,
-                )
-                
-                if attempt < _ARTICLE_MAX_RETRIES - 1:
-                    await asyncio.sleep(wait_time)
-        
-        logger.error("Failed to fetch article after %d retries: %s", _ARTICLE_MAX_RETRIES, url)
-        raise RuntimeError(f"下载失败：{last_exc}") from last_exc
-
     async def _download_with_retry(
         self,
         article: ArticleRecord,
@@ -527,47 +772,15 @@ class ArticleDownloader(AbstractAsyncContextManager):
         with_images: bool,
         record_images_only: bool,
     ) -> DownloadResult:
-        last_exc: Exception | None = None
-        for attempt in range(_ARTICLE_MAX_RETRIES):
-            try:
-                logger.debug(
-                    "Downloading article (attempt %d/%d): %s - %s",
-                    attempt + 1,
-                    _ARTICLE_MAX_RETRIES,
-                    article.article_id,
-                    article.title,
-                )
-                html = await self.client.fetch_article_html(article.link)
-                result = await self._persist_article(
-                    article,
-                    raw_html=html,
-                    with_images=with_images,
-                    record_images_only=record_images_only,
-                )
-                logger.info("Successfully downloaded article: %s - %s", article.article_id, article.title)
-                return result
-            except Exception as exc:
-                last_exc = exc
-                # Calculate backoff time with jitter
-                backoff = min(2 ** attempt, _RETRY_BACKOFF_MAX)
-                # Add small jitter to avoid thundering herd
-                jitter = backoff * 0.1 * (0.5 + 0.5 * (attempt % 2))
-                wait_time = backoff + jitter
-                
-                logger.warning(
-                    "Download failed (attempt %d/%d) for %s: %s - retrying in %.1fs",
-                    attempt + 1,
-                    _ARTICLE_MAX_RETRIES,
-                    article.article_id,
-                    exc,
-                    wait_time,
-                )
-                
-                if attempt < _ARTICLE_MAX_RETRIES - 1:
-                    await asyncio.sleep(wait_time)
-        
-        logger.error("Failed to download article after %d retries: %s - %s", _ARTICLE_MAX_RETRIES, article.article_id, article.title)
-        raise RuntimeError(f"下载失败：{last_exc}") from last_exc
+        return await self._fetcher.download_with_retry(
+            article,
+            persist=lambda art, raw_html: self._persist_article(
+                art,
+                raw_html=raw_html,
+                with_images=with_images,
+                record_images_only=record_images_only,
+            ),
+        )
 
     # ------------------------------------------------------------------
     async def _persist_article(
@@ -590,9 +803,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         url_map: dict[str, str] = {}
         referer = article.link or "https://mp.weixin.qq.com/"
         if with_images or record_images_only:
-            asset_count, url_map = self._collect_image_urls(
-                clean_html, referer=referer
-            )
+            asset_count, url_map = _collect_image_urls(clean_html, referer=referer)
         markdown_content = parsed_article.markdown
         pg_error: Exception | None = None
         try:
@@ -611,9 +822,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
             raise pg_error
 
         if with_images and url_map:
-            await self._enqueue_image_downloads(
-                article, url_map, referer=referer
-            )
+            await self._image_mgr.enqueue(article, url_map, referer=referer)
 
         return DownloadResult(article=article, asset_count=asset_count)
 
@@ -716,230 +925,81 @@ class ArticleDownloader(AbstractAsyncContextManager):
                     return False
         return False
 
-    def _collect_image_urls(
-        self, html: str, *, referer: str
-    ) -> tuple[int, dict[str, str]]:
-        soup = BeautifulSoup(html, "html.parser")
-        count = 0
-        url_map: dict[str, str] = {}
 
-        def add_url(url: str) -> None:
-            nonlocal count
-            resolved = _resolve_asset_url(url, base=referer)
-            if not resolved:
-                return
-            if url in url_map:
-                return
-            count += 1
-            url_map[url] = resolved
+# Module-level helpers ------------------------------------------------------
 
-        for img in soup.find_all("img"):
-            src = img.get("src") or img.get("data-src")
-            if not src or src.startswith("data:"):
+
+def _collect_image_urls(html: str, *, referer: str) -> tuple[int, dict[str, str]]:
+    soup = BeautifulSoup(html, "html.parser")
+    count = 0
+    url_map: dict[str, str] = {}
+
+    def add_url(url: str) -> None:
+        nonlocal count
+        resolved = _resolve_asset_url(url, base=referer)
+        if not resolved:
+            return
+        if url in url_map:
+            return
+        count += 1
+        url_map[url] = resolved
+
+    for img in soup.find_all("img"):
+        src = img.get("src") or img.get("data-src")
+        if not src or src.startswith("data:"):
+            continue
+        add_url(src)
+
+    def extract_from_style(text: str) -> None:
+        for match in _URL_PATTERN.finditer(text):
+            candidate = match.group("url").strip()
+            if not candidate or candidate.startswith("data:"):
                 continue
-            add_url(src)
+            add_url(candidate)
 
-        def extract_from_style(text: str) -> None:
-            for match in _URL_PATTERN.finditer(text):
-                candidate = match.group("url").strip()
-                if not candidate or candidate.startswith("data:"):
-                    continue
-                add_url(candidate)
+    for node in soup.find_all(style=True):
+        style = node.get("style") or ""
+        if "url(" not in style:
+            continue
+        extract_from_style(style)
 
-        for node in soup.find_all(style=True):
-            style = node.get("style") or ""
-            if "url(" not in style:
-                continue
-            extract_from_style(style)
+    for style_tag in soup.find_all("style"):
+        content = style_tag.string
+        if not content or "url(" not in content:
+            continue
+        extract_from_style(content)
 
-        for style_tag in soup.find_all("style"):
-            content = style_tag.string
-            if not content or "url(" not in content:
-                continue
-            extract_from_style(content)
-
-        return count, url_map
-
-    async def _image_stats(self) -> tuple[int, int]:
-        async with self._image_lock:
-            return self._image_total, self._image_done
-
-    async def _mark_image_total(self, count: int) -> None:
-        if count <= 0:
-            return
-        async with self._image_lock:
-            self._image_total += count
-
-    async def _mark_image_done(self) -> None:
-        async with self._image_lock:
-            self._image_done += 1
-
-    def _record_image_failure(self, *, article: ArticleRecord, orig_url: str, reason: str) -> None:
-        if self._image_store and orig_url:
-            self._image_store.mark_failed(
-                biz=article.biz,
-                article_id=article.article_id,
-                orig_url=orig_url,
-                reason=reason,
-            )
-            return
-        if self.storage and orig_url:
-            self.storage.images.mark_article_image_failed(
-                article.biz,
-                article.article_id,
-                orig_url,
-                reason,
-            )
-
-    async def _download_one_image(
-        self,
-        *,
-        article: ArticleRecord,
-        resolved_url: str,
-        orig_url: str,
-        referer: str,
-    ) -> None:
-        if self._image_abort:
-            self._log_download_error(
-                stage="asset_download",
-                article=article,
-                error="aborted",
-                asset_url=orig_url,
-                resolved_url=resolved_url,
-                referer=referer,
-            )
-            await self._mark_image_done()
-            return
-        if not _is_http_url(str(resolved_url)):
-            reason = f"Invalid URL scheme (non-http): {resolved_url}"
-            self._log_download_error(
-                stage="asset_download",
-                article=article,
-                error=reason,
-                asset_url=orig_url,
-                resolved_url=resolved_url,
-                referer=referer,
-            )
-            self._record_image_failure(article=article, orig_url=orig_url, reason=reason)
-            await self._mark_image_done()
-            return
-
-        async with self._image_semaphore:
-            for attempt in range(1, self._image_max_retries + 1):
-                if self._image_abort:
-                    self._log_download_error(
-                        stage="asset_download",
-                        article=article,
-                        error="aborted",
-                        asset_url=orig_url,
-                        resolved_url=resolved_url,
-                        referer=referer,
-                    )
-                    await self._mark_image_done()
-                    return
-                try:
-                    data, content_type = await self.client.download_binary_with_type(
-                        resolved_url, referer=referer
-                    )
-                    if self._image_store and orig_url:
-                        self._image_store.store(
-                            biz=article.biz,
-                            article_id=article.article_id,
-                            orig_url=orig_url,
-                            content_type=content_type,
-                            data=data,
-                        )
-                    elif orig_url:
-                        reason = 'Image store not configured'
-                        self._record_image_failure(article=article, orig_url=orig_url, reason=reason)
-                        await self._mark_image_done()
-                        return
-                    await self._mark_image_done()
-                    return
-                except Exception as exc:
-                    is_http_400_or_404 = False
-                    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
-                        status = exc.response.status_code
-                        is_http_400_or_404 = status in (400, 404)
-                    if is_http_400_or_404 or attempt >= self._image_max_retries:
-                        self._log_download_error(
-                            stage="asset_download",
-                            article=article,
-                            error=str(exc),
-                            asset_url=orig_url,
-                            resolved_url=resolved_url,
-                            referer=referer,
-                        )
-                        self._record_image_failure(article=article, orig_url=orig_url, reason=str(exc))
-                        await self._mark_image_done()
-                        return
-                    await asyncio.sleep(min(2 ** attempt, _RETRY_BACKOFF_MAX))
-
-    async def _download_images_for_article(
-        self,
-        article: ArticleRecord,
-        urls: list[str],
-        *,
-        referer: str,
-    ) -> None:
-        if not urls or not self._enable_image_worker:
-            return
-        await self._mark_image_total(len(urls))
-        async with asyncio.TaskGroup() as tg:
-            for resolved in urls:
-                tg.create_task(
-                    self._download_one_image(
-                        article=article,
-                        resolved_url=resolved,
-                        orig_url=resolved,
-                        referer=referer,
-                    )
-                )
-
-    async def _enqueue_image_downloads(
-        self, article: ArticleRecord, url_map: dict[str, str], *, referer: str
-    ) -> None:
-        if not url_map:
-            return
-        seen: set[str] = set()
-        urls: list[str] = []
-        for resolved in url_map.values():
-            if not resolved or resolved in seen:
-                continue
-            seen.add(resolved)
-            urls.append(resolved)
-        await self._download_images_for_article(article, urls, referer=referer)
-
-    def _log_download_error(
-        self,
-        *,
-        stage: str,
-        article: ArticleRecord,
-        error: str,
-        asset_url: str | None = None,
-        resolved_url: str | None = None,
-        referer: str | None = None,
-    ) -> None:
-        payload = {
-            "stage": stage,
-            "error": error,
-            "article": {
-                "biz": article.biz,
-                "article_id": article.article_id,
-                "title": article.title,
-                "link": article.link,
-            },
-        }
-        if asset_url:
-            payload["asset_url"] = asset_url
-        if resolved_url:
-            payload["resolved_url"] = resolved_url
-        if referer:
-            payload["referer"] = referer
-        logger.warning("Download error: %s", payload)
+    return count, url_map
 
 
-# Helper functions ---------------------------------------------------------
+def _log_download_error(
+    *,
+    stage: str,
+    article: ArticleRecord,
+    error: str,
+    asset_url: str | None = None,
+    resolved_url: str | None = None,
+    referer: str | None = None,
+) -> None:
+    payload = {
+        "stage": stage,
+        "error": error,
+        "article": {
+            "biz": article.biz,
+            "article_id": article.article_id,
+            "title": article.title,
+            "link": article.link,
+        },
+    }
+    if asset_url:
+        payload["asset_url"] = asset_url
+    if resolved_url:
+        payload["resolved_url"] = resolved_url
+    if referer:
+        payload["referer"] = referer
+    logger.warning("Download error: %s", payload)
+
+
 def _extract_title(raw_html: str) -> str | None:
     soup = BeautifulSoup(raw_html, "html.parser")
     if soup.title and soup.title.string:
@@ -950,4 +1010,4 @@ def _extract_title(raw_html: str) -> str | None:
     return None
 
 
-__all__ = ["ArticleDownloader"]
+__all__ = ["ArticleDownloader", "ArticleFetcher", "ImageDownloadManager"]

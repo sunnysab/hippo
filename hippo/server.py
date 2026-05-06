@@ -540,72 +540,48 @@ def _list_groups(storage: PostgresStorage) -> list[dict[str, Any]]:
 
 
 def _get_group(storage: PostgresStorage, group_id: int) -> dict[str, Any]:
-    row = fetchone_row(
-        storage,
-        """
-        SELECT
-            g.id,
-            g.name,
-            g.sync_mode,
-            g.sync_recent_days,
-            COALESCE(g.article_count, 0) AS article_count,
-            COUNT(a.biz) AS account_count
-        FROM account_groups g
-        LEFT JOIN accounts a ON a.group_id = g.id
-        WHERE g.id = %s
-        GROUP BY g.id, g.name, g.sync_mode, g.sync_recent_days, g.article_count
-        """,
-        [group_id],
-        normalize=_normalize_record,
-    )
-    if not row:
+    try:
+        group = storage.groups.get_group(group_id)
+    except LookupError:
         raise ApiError("Group not found", status=404)
-    return row
+    return {
+        'id': group.id,
+        'name': group.name,
+        'sync_mode': group.sync_mode,
+        'sync_recent_days': group.sync_recent_days,
+        'article_count': group.article_count,
+        'account_count': group.account_count,
+    }
 
 
 def _update_group(storage: PostgresStorage, group_id: int, updates: dict[str, Any]) -> dict[str, Any]:
-    fields: list[str] = []
-    params: list[Any] = []
-    mapping = {
-        'name': 'name',
-        'sync_mode': 'sync_mode',
-        'sync_recent_days': 'sync_recent_days',
-    }
-    for key, column in mapping.items():
-        if key in updates:
-            fields.append(f"{column} = %s")
-            params.append(updates[key])
-    if not fields:
+    if not updates:
         raise ApiError('No fields to update')
-    fields.append('updated_at = NOW()')
-    params.append(group_id)
-    with storage.transaction():
-        with storage.conn.cursor() as cur:
-            cur.execute(
-                f"UPDATE account_groups SET {', '.join(fields)} WHERE id = %s",
-                params,
-            )
-            updated = cur.rowcount
-            if updated == 0:
-                raise ApiError('Group not found', status=404)
-    return _get_group(storage, group_id)
+    try:
+        group = storage.groups.update_group(group_id, **updates)
+    except LookupError:
+        raise ApiError('Group not found', status=404)
+    except ValueError as exc:
+        raise ApiError(str(exc))
+    return {
+        'id': group.id,
+        'name': group.name,
+        'sync_mode': group.sync_mode,
+        'sync_recent_days': group.sync_recent_days,
+        'article_count': group.article_count,
+        'account_count': group.account_count,
+    }
 
 
 def _delete_group(storage: PostgresStorage, group_id: int) -> None:
     default_group = ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
     default_id = default_group.id
-    if group_id == default_id:
-        raise ApiError("Default group cannot be deleted", status=400)
-    with storage.transaction():
-        with storage.conn.cursor() as cur:
-            cur.execute(
-                "UPDATE accounts SET group_id = %s WHERE group_id = %s",
-                (default_id, group_id),
-            )
-            cur.execute("DELETE FROM account_groups WHERE id = %s", (group_id,))
-            deleted = cur.rowcount
-            if deleted == 0:
-                raise ApiError("Group not found", status=404)
+    try:
+        storage.groups.delete_group(group_id, default_id)
+    except LookupError:
+        raise ApiError("Group not found", status=404)
+    except ValueError as exc:
+        raise ApiError(str(exc), status=400)
 
 
 def _build_search_clause(
@@ -655,81 +631,28 @@ def _list_accounts(
     page: int,
     page_size: int,
 ) -> dict[str, Any]:
-    where: list[str] = []
-    params: list[Any] = []
-    if group_id is not None:
-        where.append("a.group_id = %s")
-        params.append(group_id)
+    search_tokens: list[str] | None = None
     if query:
         tokens = _tokenize_query(query)
         if tokens:
-            clause, values = _build_search_clause(
-                terms=tokens,
-                fields=["a.nickname", "a.alias", "a.biz"],
-            )
-            where.append(clause)
-            params.extend(values)
-    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
-    limit_sql = "LIMIT %s OFFSET %s"
-    offset = max(page - 1, 0) * page_size
-    query_sql = (
-        ""
-        "WITH filtered_accounts AS ("
-        " SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,"
-        " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days,"
-        " a.article_count"
-        " FROM accounts a"
-        f" {where_sql}"
-        " ORDER BY a.nickname ASC"
-        f" {limit_sql}"
-        ")"
-        " SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,"
-        " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,"
-        " COALESCE(a.article_count, 0) AS article_count,"
-        " (ai.data IS NOT NULL) AS avatar_ready"
-        " FROM filtered_accounts a"
-        " LEFT JOIN account_groups g ON g.id = a.group_id"
-        " LEFT JOIN avatar_images ai ON ai.biz = a.biz"
-        " ORDER BY a.nickname ASC"
+            search_tokens = tokens
+    return storage.accounts.list_accounts_paginated(
+        group_id=group_id,
+        search_tokens=search_tokens,
+        page=page,
+        page_size=page_size,
     )
-    rows = fetchall_rows(storage, query_sql, params + [page_size, offset], normalize=_normalize_record)
-    for row in rows:
-        row["avatar_url"] = f"/api/account/{row['biz']}/avatar"
-    count_sql = (
-        "SELECT COUNT(*) AS total FROM accounts a"
-        f" {where_sql}"
-    )
-    total_row = fetchone_row(storage, count_sql, params, normalize=_normalize_record)
-    total = int(total_row["total"]) if total_row else 0
-    return {"accounts": rows, "page": page, "page_size": page_size, "total": total}
 
 
 def _get_account(storage: PostgresStorage, biz: str) -> dict[str, Any]:
-    row = fetchone_row(
-        storage,
-        (
-            ""
-            "SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,"
-            " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,"
-            " COALESCE(a.article_count, 0) AS article_count,"
-            " (ai.data IS NOT NULL) AS avatar_ready"
-            " FROM accounts a"
-            " LEFT JOIN account_groups g ON g.id = a.group_id"
-            " LEFT JOIN avatar_images ai ON ai.biz = a.biz"
-            " WHERE a.biz = %s"
-        ),
-        [biz],
-        normalize=_normalize_record,
-    )
-    if not row:
+    try:
+        return storage.accounts.get_account_detail(biz)
+    except LookupError:
         raise ApiError("Account not found", status=404)
-    row["avatar_url"] = f"/api/account/{row['biz']}/avatar"
-    return row
 
 
 def _update_account(storage: PostgresStorage, biz: str, payload: dict[str, Any]) -> dict[str, Any]:
-    fields: list[str] = []
-    params: list[Any] = []
+    updates: dict[str, Any] = {}
     mapping = {
         'nickname': 'nickname',
         'alias': 'alias',
@@ -739,8 +662,7 @@ def _update_account(storage: PostgresStorage, biz: str, payload: dict[str, Any])
         'sync_mode': 'sync_mode',
         'sync_recent_days': 'sync_recent_days',
     }
-
-    for key, column in mapping.items():
+    for key in mapping:
         if key in payload:
             value = payload[key]
             if key == 'is_disabled':
@@ -749,23 +671,13 @@ def _update_account(storage: PostgresStorage, biz: str, payload: dict[str, Any])
                 value = _normalize_sync_mode(value)
             if key == 'sync_recent_days':
                 value = _normalize_recent_days(value)
-            fields.append(f"{column} = %s")
-            params.append(value)
-
-    if not fields:
+            updates[key] = value
+    if not updates:
         raise ApiError("No fields to update")
-
-    fields.append("updated_at = NOW()")
-
-    params.append(biz)
-
-    query = f"UPDATE accounts SET {', '.join(fields)} WHERE biz = %s"
-    with storage.transaction():
-        with storage.conn.cursor() as cur:
-            cur.execute(query, params)
-            updated = cur.rowcount
-            if updated == 0:
-                raise ApiError("Account not found", status=404)
+    try:
+        storage.accounts.update_account_fields(biz, **updates)
+    except LookupError:
+        raise ApiError("Account not found", status=404)
     return _get_account(storage, biz)
 
 
@@ -1635,11 +1547,7 @@ def move_accounts(
         default_group = ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
         group_id = default_group.id
     with storage.transaction():
-        with storage.conn.cursor() as cur:
-            cur.execute(
-                "UPDATE accounts SET group_id = %s, updated_at = NOW() WHERE biz = ANY(%s)",
-                (group_id, biz_list),
-            )
+        storage.accounts.move_accounts(biz_list, group_id)
     return {"updated": len(biz_list)}
 
 
@@ -1667,25 +1575,8 @@ def batch_update_accounts(
         updates['sync_recent_days'] = _normalize_recent_days(body.get('sync_recent_days'))
     if not updates:
         raise ApiError('No fields to update')
-    fields: list[str] = []
-    params: list[Any] = []
-    mapping = {
-        'sync_mode': 'sync_mode',
-        'sync_recent_days': 'sync_recent_days',
-    }
-    for key, column in mapping.items():
-        if key in updates:
-            fields.append(f"{column} = %s")
-            params.append(updates[key])
-    fields.append('updated_at = NOW()')
-    params.append(biz_list)
     with storage.transaction():
-        with storage.conn.cursor() as cur:
-            cur.execute(
-                f"UPDATE accounts SET {', '.join(fields)} WHERE biz = ANY(%s)",
-                params,
-            )
-            updated = cur.rowcount
+        updated = storage.accounts.batch_update_fields(biz_list, **updates)
     return {'updated': updated}
 
 
