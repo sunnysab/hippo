@@ -2466,10 +2466,10 @@ def create_app(
 
     @app.exception_handler(Exception)
     async def _handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
-        logger.exception("API error")
+        logger.exception("Unexpected error: %s %s", request.method, request.url.path)
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"error": str(exc)},
+            content={"error": "Internal server error"},
         )
 
     app.include_router(router)
