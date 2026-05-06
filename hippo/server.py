@@ -609,7 +609,6 @@ def _delete_group(storage: PostgresStorage, group_id: int) -> None:
 
 def _build_search_clause(
     *,
-    is_postgres: bool,
     terms: list[str],
     fields: list[str],
 ) -> tuple[str, list[Any]]:
@@ -617,10 +616,7 @@ def _build_search_clause(
     params: list[Any] = []
     for term in terms:
         like = f"%{term}%"
-        if is_postgres:
-            clause = " OR ".join([f"{field} ILIKE %s" for field in fields])
-        else:
-            clause = " OR ".join([f"{field} ILIKE %s" for field in fields])
+        clause = " OR ".join([f"{field} ILIKE %s" for field in fields])
         clauses.append(f"({clause})")
         params.extend([like for _ in fields])
     return " AND ".join(clauses), params
@@ -667,7 +663,6 @@ def _list_accounts(
         tokens = _tokenize_query(query)
         if tokens:
             clause, values = _build_search_clause(
-                is_postgres=True,
                 terms=tokens,
                 fields=["a.nickname", "a.alias", "a.biz"],
             )
