@@ -52,14 +52,8 @@ from .sync_types import (
     SyncReport,
     SyncSummary,
 )
-from .utils import (
-    fetchall_rows,
-    load_meta_json,
-    parse_iso_date_to_timestamp,
-    save_meta_json,
-    should_skip_by_time,
-    utc_now_iso,
-)
+from .storage import fetchall_rows, load_meta_json, save_meta_json
+from .utils import parse_iso_date_to_timestamp, should_skip_by_time, utc_now_iso
 
 SYNC_STATUS_KEY = 'sync:last_status'
 SYNC_ERROR_KEY = 'sync:last_error'

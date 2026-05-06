@@ -7,7 +7,7 @@ from email.message import EmailMessage
 from typing import Any
 
 from .storage import PostgresStorage
-from .utils import load_meta_json, save_meta_json
+from .storage import load_meta_json, save_meta_json
 
 _EMAIL_SETTINGS_KEY = 'email:settings'
 

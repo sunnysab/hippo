@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from contextlib import AbstractContextManager
 from pathlib import Path
+from typing import Any, Callable, Sequence
 
+from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
+
+from .models import AccountGroup
 
 from .env import load_env
 from .repositories import (
@@ -374,3 +379,73 @@ class StorageTransaction(AbstractContextManager):
             self._conn.rollback()
         else:
             self._conn.commit()
+
+
+def fetchall_rows(
+    storage: PostgresStorage,
+    query: str,
+    params: Sequence[Any],
+    *,
+    normalize: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    with storage.conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(query, params)
+        rows = cur.fetchall()
+    if normalize:
+        return [normalize(dict(row)) for row in rows]
+    return [dict(row) for row in rows]
+
+
+def fetchone_row(
+    storage: PostgresStorage,
+    query: str,
+    params: Sequence[Any],
+    *,
+    normalize: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    with storage.conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(query, params)
+        row = cur.fetchone()
+    if not row:
+        return None
+    record = dict(row)
+    return normalize(record) if normalize else record
+
+
+def load_meta_json(storage: PostgresStorage, key: str, default: Any) -> Any:
+    raw = storage.meta.get(key)
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return default
+
+
+def save_meta_json(storage: PostgresStorage, key: str, value: Any) -> None:
+    storage.meta.set(key, json.dumps(value, ensure_ascii=False))
+
+
+def ensure_default_group(storage: PostgresStorage, *, name: str = 'Default') -> AccountGroup:
+    with storage.transaction():
+        default_group = storage.groups.upsert_group(name)
+        default_id = default_group.id
+        with storage.conn.cursor() as cur:
+            cur.execute(
+                'UPDATE accounts SET group_id = %s WHERE group_id IS NULL',
+                (default_id,),
+            )
+    return default_group
+
+
+__all__ = [
+    'PostgresStorage',
+    'StorageInitError',
+    'StorageTransaction',
+    'ensure_default_group',
+    'fetchall_rows',
+    'fetchone_row',
+    'load_meta_json',
+    'open_storage',
+    'save_meta_json',
+]
