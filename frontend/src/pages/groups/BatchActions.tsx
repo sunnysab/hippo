@@ -208,7 +208,7 @@ export function BatchActions() {
     <ConfirmModal
       isOpen={showDeleteModal}
       title={t('accounts.deleteConfirmTitle', 'Confirm delete')}
-      message={t('accounts.deleteConfirmMessage', 'Delete {count} accounts and all their articles/images. This cannot be undone.')
+      message={t('accounts.deleteBatchConfirmMessage', 'Delete {count} accounts and all their articles/images. This cannot be undone.')
         .replace('{count}', String(count))}
       confirmLabel={t('accounts.delete', 'Delete')}
       onClose={() => setShowDeleteModal(false)}
