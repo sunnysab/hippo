@@ -4,7 +4,6 @@ import { useGroupsState } from '../../store/groups';
 import { useI18n } from '../../i18n';
 import { apiSend, isAuthError } from '../../api';
 import { useToast } from '../../hooks/useToast';
-import { ConfirmModal } from '../../components/ConfirmModal';
 import { formatRelativeTime } from '../../utils/format';
 import { syncDefaults } from '../../store/shared';
 import { getSyncModeLabel } from '../../utils/sync';
@@ -21,8 +20,6 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
   const navigate = useNavigate();
   const [syncMode, setSyncMode] = useState(account.sync_mode || '');
   const [syncDays, setSyncDays] = useState(String(account.sync_recent_days ?? syncDefaults.recent_days));
-
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   const activeGroup = state.groups.find((g) => g.id === state.selectedGroupId);
   const groupMode = activeGroup?.sync_mode || '';
@@ -51,17 +48,6 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
     } catch (err) {
       if (isAuthError(err)) return;
       showToast(t('accounts.syncToggleFailed', 'Failed to update sync status.'));
-    }
-  };
-
-  const handleDelete = async () => {
-    try {
-      await apiSend(`/api/account/${account.biz}`, 'DELETE', {});
-      dispatch({ type: 'REMOVE_ACCOUNT', biz: account.biz });
-      showToast(t('accounts.deleteSuccess', 'Deleted account with articles and images.'));
-    } catch (err) {
-      if (isAuthError(err)) return;
-      showToast(t('accounts.deleteFailed', 'Failed to delete account.'));
     }
   };
 
@@ -124,15 +110,6 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
             ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
             : <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>
           }
-        </button>
-        <button
-          className="account-delete"
-          type="button"
-          title={t('accounts.delete', 'Delete')}
-          aria-label={t('accounts.delete', 'Delete')}
-          onClick={() => setShowDeleteModal(true)}
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
         </button>
       </div>
       <div className="account-meta">
@@ -197,16 +174,6 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
           />
         </div>
       </div>
-      <ConfirmModal
-        isOpen={showDeleteModal}
-        title={t('accounts.deleteConfirmTitle', 'Confirm delete')}
-        message={t('accounts.deleteConfirmMessage', 'Delete account "{name}" with {articleCount} articles and all images. This cannot be undone.')
-          .replace('{name}', account.nickname)
-          .replace('{articleCount}', String(account.article_count))}
-        confirmLabel={t('accounts.delete', 'Delete')}
-        onClose={() => setShowDeleteModal(false)}
-        onConfirm={handleDelete}
-      />
     </div>
   );
 });

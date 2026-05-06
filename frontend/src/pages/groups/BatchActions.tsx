@@ -4,6 +4,7 @@ import { useI18n } from '../../i18n';
 import { apiSend, isAuthError } from '../../api';
 import { useToast } from '../../hooks/useToast';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
+import { ConfirmModal } from '../../components/ConfirmModal';
 import { syncDefaults } from '../../store/shared';
 import { getSyncModeLabel } from '../../utils/sync';
 import { emitRefresh } from '../../utils/events';
@@ -16,6 +17,7 @@ export function BatchActions() {
   const [targetGroupId, setTargetGroupId] = useState('');
   const [syncMode, setSyncMode] = useState('');
   const [syncDays, setSyncDays] = useState(String(syncDefaults.recent_days));
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const isNarrow = useMediaQuery('(max-width: 720px)');
 
   const count = state.selectedAccounts.length;
@@ -97,11 +99,33 @@ export function BatchActions() {
     }
   };
 
+  const handleDelete = async () => {
+    const bizList = state.selectedAccounts;
+    let failed = 0;
+    for (const biz of bizList) {
+      try {
+        await apiSend(`/api/account/${biz}`, 'DELETE', {});
+        dispatch({ type: 'REMOVE_ACCOUNT', biz });
+      } catch (err) {
+        if (isAuthError(err)) return;
+        failed++;
+      }
+    }
+    dispatch({ type: 'CLEAR_SELECTED' });
+    if (failed === 0) {
+      showToast(t('accounts.deleteSuccess', 'Deleted {n} accounts with articles and images.').replace('{n}', String(bizList.length)));
+    } else {
+      showToast(t('accounts.deleteFailed', 'Failed to delete {failed}/{total} accounts.').replace('{failed}', String(failed)).replace('{total}', String(bizList.length)));
+    }
+    emitRefresh();
+  };
+
   const allChecked = state.accounts.length > 0 && count === state.accounts.length;
   const indeterminate = count > 0 && count < state.accounts.length;
 
   return (
-    <div className="toolbar accounts-toolbar">
+    <>
+      <div className="toolbar accounts-toolbar">
       <label className="switch inline">
         <input
           type="checkbox"
@@ -166,6 +190,10 @@ export function BatchActions() {
         <button className="btn ghost" id="btn-batch-group-sync" type="button" onClick={handleBatchGroupSync}>
           {t('accounts.groupSync', 'Sync')}
         </button>
+        <div className="batch-divider"></div>
+        <button className="btn ghost" id="btn-batch-delete" type="button" onClick={() => setShowDeleteModal(true)}>
+          {t('accounts.delete', 'Delete')}
+        </button>
       </div>
       <span className="meta-count" id="batch-count">{count}</span>
       <button
@@ -177,5 +205,15 @@ export function BatchActions() {
         <span>{t('actions.refresh', 'Refresh')}</span>
       </button>
     </div>
+    <ConfirmModal
+      isOpen={showDeleteModal}
+      title={t('accounts.deleteConfirmTitle', 'Confirm delete')}
+      message={t('accounts.deleteConfirmMessage', 'Delete {count} accounts and all their articles/images. This cannot be undone.')
+        .replace('{count}', String(count))}
+      confirmLabel={t('accounts.delete', 'Delete')}
+      onClose={() => setShowDeleteModal(false)}
+      onConfirm={handleDelete}
+    />
+    </>
   );
 }
