@@ -168,23 +168,6 @@ def _seconds_until_window_start(now: datetime, *, start_hour: int, end_hour: int
     return max((target - now).total_seconds(), 1.0)
 
 
-def _build_sync_config(settings: dict[str, Any]) -> SyncConfig:
-    return SyncConfig(
-        mode=None,
-        page_size=_DEFAULT_PAGE_SIZE,
-        sleep_seconds=float(settings.get('sleep_seconds') or 0),
-        reset=False,
-        recent_days=None,
-        since_date=None,
-        until_date=None,
-        force=False,
-        skip_minutes=settings.get('skip_minutes'),
-        download_content=bool(settings.get('download_content')),
-        download_images=bool(settings.get('download_images')),
-        content_limit=None,
-    )
-
-
 def get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
     settings = load_meta_json(storage, SYNC_SETTINGS_KEY, default_sync_settings())
     defaults = default_sync_settings()
