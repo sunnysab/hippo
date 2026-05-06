@@ -1152,6 +1152,19 @@ class ImageRepository:
                 ),
             )
 
+    def list_s3_keys_for_account(self, biz: str) -> list[str]:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT i.s3_key
+                FROM article_images i
+                JOIN articles a ON a.id = i.article_pk
+                WHERE a.biz = %s AND i.s3_key IS NOT NULL AND i.s3_key <> ''
+                """,
+                (biz,),
+            )
+            return [row[0] for row in cur.fetchall()]
+
 
 def _to_utc_dt(value: datetime) -> datetime:
     if value.tzinfo is None:
