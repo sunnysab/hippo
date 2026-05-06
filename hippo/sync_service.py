@@ -167,9 +167,6 @@ def get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
     merged['article_exclude_keywords'] = _normalize_article_exclude_keywords(
         merged.get('article_exclude_keywords'),
     )
-    # Remove legacy fields that are no longer supported by the settings UI.
-    for key in ('mode', 'recent_days', 'page_size', 'content_limit', 'since', 'until'):
-        merged.pop(key, None)
     return merged
 
 
