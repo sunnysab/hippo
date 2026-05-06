@@ -88,7 +88,7 @@ class SyncObserver(Protocol):
         ...
 
 
-class NullSyncObserver:
+class NullSyncObserver(SyncObserver):
     def on_log(self, message: str) -> None:
         return None
 
