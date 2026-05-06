@@ -43,7 +43,8 @@ from .sync_service import (
     get_sync_status as load_sync_status,
     set_sync_settings as save_sync_settings,
 )
-from .utils import ensure_default_group, fetchall_rows, fetchone_row, parse_iso_date_to_timestamp, utc_now_iso
+from .storage import ensure_default_group, fetchall_rows, fetchone_row
+from .utils import parse_iso_date_to_timestamp, utc_now_iso
 from .login_service import save_login_session
 
 DEFAULT_HOST = "127.0.0.1"

@@ -10,7 +10,8 @@ from typing import Any, Iterable
 from xml.sax.saxutils import escape
 
 from .storage import PostgresStorage, open_storage
-from .utils import ensure_default_group, fetchall_rows, parse_iso_date_to_timestamp
+from .storage import ensure_default_group, fetchall_rows
+from .utils import parse_iso_date_to_timestamp
 
 DEFAULT_GROUP_NAME = "Default"
 

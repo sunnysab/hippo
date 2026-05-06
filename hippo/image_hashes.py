@@ -10,7 +10,7 @@ from typing import Any
 
 from .s3 import build_image_key, fetch_object_bytes, get_s3_client, upload_object_bytes
 from .storage import PostgresStorage, open_storage
-from .utils import fetchone_row
+from .storage import fetchone_row
 from .http import MPClient
 
 IMAGE_HASH_ALGO = 'sha256'

@@ -219,6 +219,73 @@ class GroupRepository:
     def __init__(self, conn: psycopg.Connection) -> None:
         self._conn = conn
 
+    def get_group(self, group_id: int) -> AccountGroup:
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT
+                    g.id,
+                    g.name,
+                    g.sync_mode,
+                    g.sync_recent_days,
+                    COALESCE(g.article_count, 0) AS article_count,
+                    COUNT(a.biz) AS account_count
+                FROM account_groups g
+                LEFT JOIN accounts a ON a.group_id = g.id
+                WHERE g.id = %s
+                GROUP BY g.id, g.name, g.sync_mode, g.sync_recent_days, g.article_count
+                """,
+                (group_id,),
+            )
+            row = cur.fetchone()
+        if not row:
+            raise LookupError('Group not found')
+        return AccountGroup(
+            id=row['id'],
+            name=row['name'],
+            account_count=row['account_count'],
+            article_count=row.get('article_count') or 0,
+            sync_mode=row.get('sync_mode'),
+            sync_recent_days=row.get('sync_recent_days'),
+        )
+
+    def update_group(self, group_id: int, **updates: Any) -> AccountGroup:
+        fields: list[str] = []
+        params: list[Any] = []
+        mapping = {
+            'name': 'name',
+            'sync_mode': 'sync_mode',
+            'sync_recent_days': 'sync_recent_days',
+        }
+        for key, column in mapping.items():
+            if key in updates:
+                fields.append(f"{column} = %s")
+                params.append(updates[key])
+        if not fields:
+            raise ValueError('No fields to update')
+        fields.append('updated_at = NOW()')
+        params.append(group_id)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE account_groups SET {', '.join(fields)} WHERE id = %s",
+                params,
+            )
+            if cur.rowcount == 0:
+                raise LookupError('Group not found')
+        return self.get_group(group_id)
+
+    def delete_group(self, group_id: int, default_group_id: int) -> None:
+        if group_id == default_group_id:
+            raise ValueError('Default group cannot be deleted')
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "UPDATE accounts SET group_id = %s WHERE group_id = %s",
+                (default_group_id, group_id),
+            )
+            cur.execute("DELETE FROM account_groups WHERE id = %s", (group_id,))
+            if cur.rowcount == 0:
+                raise LookupError('Group not found')
+
     def upsert_group(self, name: str) -> AccountGroup:
         trimmed = name.strip()
         if not trimmed:

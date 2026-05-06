@@ -2,16 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import re
 import unicodedata
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Any, Callable, Sequence
-
-from psycopg.rows import dict_row
-
-from .models import AccountGroup
-from .storage import PostgresStorage
 
 _slug_pattern = re.compile(r"[^a-z0-9-]+")
 
@@ -66,51 +59,6 @@ def parse_iso_date_to_timestamp(
     return int(dt.timestamp())
 
 
-def fetchall_rows(
-    storage: PostgresStorage,
-    query: str,
-    params: Sequence[Any],
-    *,
-    normalize: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
-) -> list[dict[str, Any]]:
-    with storage.conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(query, params)
-        rows = cur.fetchall()
-    if normalize:
-        return [normalize(dict(row)) for row in rows]
-    return [dict(row) for row in rows]
-
-
-def fetchone_row(
-    storage: PostgresStorage,
-    query: str,
-    params: Sequence[Any],
-    *,
-    normalize: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
-) -> dict[str, Any] | None:
-    with storage.conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(query, params)
-        row = cur.fetchone()
-    if not row:
-        return None
-    record = dict(row)
-    return normalize(record) if normalize else record
-
-
-def load_meta_json(storage: PostgresStorage, key: str, default: Any) -> Any:
-    raw = storage.meta.get(key)
-    if not raw:
-        return default
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return default
-
-
-def save_meta_json(storage: PostgresStorage, key: str, value: Any) -> None:
-    storage.meta.set(key, json.dumps(value, ensure_ascii=False))
-
-
 def should_skip_by_time(last_synced_at: datetime | None, skip_minutes: int | None) -> bool:
     if not skip_minutes or skip_minutes <= 0:
         return False
@@ -125,31 +73,14 @@ def should_skip_by_time(last_synced_at: datetime | None, skip_minutes: int | Non
     return synced_at >= threshold
 
 
-def ensure_default_group(storage: PostgresStorage, *, name: str = 'Default') -> AccountGroup:
-    with storage.transaction():
-        default_group = storage.groups.upsert_group(name)
-        default_id = default_group.id
-        with storage.conn.cursor() as cur:
-            cur.execute(
-                'UPDATE accounts SET group_id = %s WHERE group_id IS NULL',
-                (default_id,),
-            )
-    return default_group
-
-
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 __all__ = [
-    'fetchall_rows',
-    'fetchone_row',
-    'ensure_default_group',
     'format_table',
-    'load_meta_json',
     'parse_iso_date_to_timestamp',
     'parse_iso_datetime_to_timestamp',
-    'save_meta_json',
     'should_skip_by_time',
     'slugify',
     'utc_now_iso',
