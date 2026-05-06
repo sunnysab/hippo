@@ -29,31 +29,6 @@ def _ensure_avatar_images_table(storage: PostgresStorage) -> None:
                 )
                 """
             )
-        _migrate_legacy_avatar_tables(storage)
-
-
-def _migrate_legacy_avatar_tables(storage: PostgresStorage) -> None:
-    with storage.conn.cursor() as cur:
-        cur.execute("SELECT to_regclass('public.account_images')")
-        has_account_images = cur.fetchone()[0] is not None
-        if has_account_images:
-            cur.execute(
-                """
-                INSERT INTO avatar_images (biz, content_type, data, updated_at)
-                SELECT biz, content_type, data, updated_at FROM account_images
-                ON CONFLICT (biz) DO NOTHING
-                """
-            )
-        cur.execute("SELECT to_regclass('public.account_search_images')")
-        has_search_images = cur.fetchone()[0] is not None
-        if has_search_images:
-            cur.execute(
-                """
-                INSERT INTO avatar_images (biz, avatar_url, content_type, data, updated_at)
-                SELECT biz, avatar_url, content_type, data, updated_at FROM account_search_images
-                ON CONFLICT (biz) DO NOTHING
-                """
-            )
 
 
 def _get_avatar_row(storage: PostgresStorage, biz: str) -> dict[str, Any] | None:
