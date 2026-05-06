@@ -27,19 +27,11 @@ from .sync_core import (
 # Optional background image backfill after scheduled sync
 async def _run_backfill_images() -> None:
     try:
-        from .cli import _backfill_article_images_async
+        from .image_backfill import backfill_article_images
     except Exception:
         return
     try:
-        await _backfill_article_images_async(
-            pg_dsn=None,
-            limit=None,
-            workers=4,
-            retries=3,
-            sleep_base=0.5,
-            retry_failed=False,
-            dry_run=False,
-        )
+        await backfill_article_images()
     except Exception:
         _logger.exception('Background image backfill failed.')
 from .sync_types import (
