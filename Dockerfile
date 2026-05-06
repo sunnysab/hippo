@@ -14,9 +14,7 @@ LABEL maintainer="hippo"
 LABEL description="Hippo WeChat article service"
 
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /app
 
@@ -24,13 +22,14 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
 COPY pyproject.toml uv.lock README.md __init__.py ./
 COPY hippo/ ./hippo/
 COPY schema/ ./schema/
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
-RUN pip install --upgrade pip setuptools wheel \
-    && pip install .
+RUN uv sync --frozen --no-dev
 
 EXPOSE 8000
 
