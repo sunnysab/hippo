@@ -43,7 +43,8 @@ type GroupsAction =
   | { type: 'CLEAR_SELECTED' }
   | { type: 'SET_SEARCH_RESULTS'; results: SearchResult[]; append: boolean }
   | { type: 'SET_SEARCH_LOADING'; loading: boolean }
-  | { type: 'SET_SEARCH_PAGE'; page: number; hasMore: boolean };
+  | { type: 'SET_SEARCH_PAGE'; page: number; hasMore: boolean }
+  | { type: 'REMOVE_ACCOUNT'; biz: string };
 
 const initialState: GroupsState = {
   groups: [],
@@ -101,6 +102,12 @@ function reducer(state: GroupsState, action: GroupsAction): GroupsState {
       };
     case 'SET_SEARCH_LOADING':
       return { ...state, searchLoading: action.loading };
+    case 'REMOVE_ACCOUNT':
+      return {
+        ...state,
+        accounts: state.accounts.filter((a) => a.biz !== action.biz),
+        selectedAccounts: state.selectedAccounts.filter((b) => b !== action.biz),
+      };
     case 'SET_SEARCH_PAGE':
       return { ...state, searchPage: action.page, searchHasMore: action.hasMore };
     default:
