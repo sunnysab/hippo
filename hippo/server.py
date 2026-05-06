@@ -777,6 +777,53 @@ def _update_account(storage: PostgresStorage, biz: str, payload: dict[str, Any])
     return _get_account(storage, biz)
 
 
+def _build_article_where_clause(
+    *,
+    group_id: int | None,
+    biz: str | None,
+    item_show_type: int | None,
+    query: str | None,
+    exclude_keywords: list[str] | None,
+    since_ts: int | None,
+    until_ts: int | None,
+    article_id: str | None = None,
+) -> tuple[str, list[Any], str, list[str]]:
+    where: list[str] = []
+    params: list[Any] = []
+    query_text = query.strip() if query else ''
+    query_tsquery_sql, query_tsquery_params = _build_article_search_tsquery(query_text)
+
+    if article_id:
+        where.append('a.article_id = %s')
+        params.append(article_id)
+    if group_id is not None:
+        where.append('acc.group_id = %s')
+        params.append(group_id)
+    if biz:
+        where.append('a.biz = %s')
+        params.append(biz)
+    if item_show_type is not None:
+        clause, clause_params = _build_item_show_type_where_clause(item_show_type)
+        where.append(clause)
+        params.extend(clause_params)
+    if query_tsquery_sql:
+        where.append(f'a.search_vector @@ {query_tsquery_sql}')
+        params.extend(query_tsquery_params)
+    exclude_clause, exclude_params = _build_article_exclude_keywords_where_clause(exclude_keywords)
+    if exclude_clause:
+        where.append(exclude_clause)
+        params.extend(exclude_params)
+    if since_ts is not None:
+        where.append('a.publish_at >= %s')
+        params.append(since_ts)
+    if until_ts is not None:
+        where.append('a.publish_at <= %s')
+        params.append(until_ts)
+
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ''
+    return where_sql, params, query_tsquery_sql, query_tsquery_params
+
+
 def _build_article_query(
     *,
     storage: PostgresStorage,
@@ -792,47 +839,26 @@ def _build_article_query(
     offset: int,
     article_id: str | None = None,
 ) -> tuple[str, list[Any]]:
-    where: list[str] = []
-    params: list[Any] = []
     select_params: list[Any] = []
     rank_select = ""
     order_sql = "ORDER BY a.publish_at DESC NULLS LAST, a.id DESC"
-    query_text = query.strip() if query else ''
-    query_tsquery_sql, query_tsquery_params = _build_article_search_tsquery(query_text)
 
-    if article_id:
-        where.append("a.article_id = %s")
-        params.append(article_id)
+    where_sql, params, query_tsquery_sql, query_tsquery_params = _build_article_where_clause(
+        group_id=group_id,
+        biz=biz,
+        item_show_type=item_show_type,
+        query=query,
+        exclude_keywords=exclude_keywords,
+        since_ts=since_ts,
+        until_ts=until_ts,
+        article_id=article_id,
+    )
 
-    if group_id is not None:
-        where.append("acc.group_id = %s")
-        params.append(group_id)
-    if biz:
-        where.append("a.biz = %s")
-        params.append(biz)
-    if item_show_type is not None:
-        clause, clause_params = _build_item_show_type_where_clause(item_show_type)
-        where.append(clause)
-        params.extend(clause_params)
-    if query_tsquery_sql:
-        where.append(f"a.search_vector @@ {query_tsquery_sql}")
-        params.extend(query_tsquery_params)
-    exclude_clause, exclude_params = _build_article_exclude_keywords_where_clause(exclude_keywords)
-    if exclude_clause:
-        where.append(exclude_clause)
-        params.extend(exclude_params)
     if sort_mode == ARTICLE_SORT_RELEVANCE_DESC and query_tsquery_sql:
         rank_select = f", ts_rank(a.search_vector, {query_tsquery_sql}) AS rank"
         select_params.extend(query_tsquery_params)
         order_sql = "ORDER BY rank DESC, a.publish_at DESC NULLS LAST, a.id DESC"
-    if since_ts is not None:
-        where.append("a.publish_at >= %s")
-        params.append(since_ts)
-    if until_ts is not None:
-        where.append("a.publish_at <= %s")
-        params.append(until_ts)
 
-    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     limit_sql = "LIMIT %s OFFSET %s"
 
     image_sql = (
@@ -877,39 +903,16 @@ def _count_articles(
     until_ts: int | None,
     article_id: str | None = None,
 ) -> int:
-    where: list[str] = []
-    params: list[Any] = []
-    query_text = query.strip() if query else ''
-    query_tsquery_sql, query_tsquery_params = _build_article_search_tsquery(query_text)
-
-    if article_id:
-        where.append('a.article_id = %s')
-        params.append(article_id)
-    if group_id is not None:
-        where.append('acc.group_id = %s')
-        params.append(group_id)
-    if biz:
-        where.append('a.biz = %s')
-        params.append(biz)
-    if item_show_type is not None:
-        clause, clause_params = _build_item_show_type_where_clause(item_show_type)
-        where.append(clause)
-        params.extend(clause_params)
-    if query_tsquery_sql:
-        where.append(f'a.search_vector @@ {query_tsquery_sql}')
-        params.extend(query_tsquery_params)
-    exclude_clause, exclude_params = _build_article_exclude_keywords_where_clause(exclude_keywords)
-    if exclude_clause:
-        where.append(exclude_clause)
-        params.extend(exclude_params)
-    if since_ts is not None:
-        where.append('a.publish_at >= %s')
-        params.append(since_ts)
-    if until_ts is not None:
-        where.append('a.publish_at <= %s')
-        params.append(until_ts)
-
-    where_sql = f"WHERE {' AND '.join(where)}" if where else ''
+    where_sql, params, _tsquery_sql, _tsquery_params = _build_article_where_clause(
+        group_id=group_id,
+        biz=biz,
+        item_show_type=item_show_type,
+        query=query,
+        exclude_keywords=exclude_keywords,
+        since_ts=since_ts,
+        until_ts=until_ts,
+        article_id=article_id,
+    )
     row = fetchone_row(
         storage,
         (
@@ -935,35 +938,16 @@ def _count_article_item_show_type_facets(
     until_ts: int | None,
     article_id: str | None = None,
 ) -> list[dict[str, int]]:
-    where: list[str] = []
-    params: list[Any] = []
-    query_text = query.strip() if query else ''
-    query_tsquery_sql, query_tsquery_params = _build_article_search_tsquery(query_text)
-
-    if article_id:
-        where.append('a.article_id = %s')
-        params.append(article_id)
-    if group_id is not None:
-        where.append('acc.group_id = %s')
-        params.append(group_id)
-    if biz:
-        where.append('a.biz = %s')
-        params.append(biz)
-    if query_tsquery_sql:
-        where.append(f'a.search_vector @@ {query_tsquery_sql}')
-        params.extend(query_tsquery_params)
-    exclude_clause, exclude_params = _build_article_exclude_keywords_where_clause(exclude_keywords)
-    if exclude_clause:
-        where.append(exclude_clause)
-        params.extend(exclude_params)
-    if since_ts is not None:
-        where.append('a.publish_at >= %s')
-        params.append(since_ts)
-    if until_ts is not None:
-        where.append('a.publish_at <= %s')
-        params.append(until_ts)
-
-    where_sql = f"WHERE {' AND '.join(where)}" if where else ''
+    where_sql, params, _tsquery_sql, _tsquery_params = _build_article_where_clause(
+        group_id=group_id,
+        biz=biz,
+        item_show_type=None,
+        query=query,
+        exclude_keywords=exclude_keywords,
+        since_ts=since_ts,
+        until_ts=until_ts,
+        article_id=article_id,
+    )
     rows = fetchall_rows(
         storage,
         (
