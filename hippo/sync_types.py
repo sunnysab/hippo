@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from .models import AccountCredential
 
 
 class SyncMode(str, Enum):
@@ -105,10 +108,58 @@ class NullSyncObserver(SyncObserver):
         return None
 
 
+class SyncJobObserver(Protocol):
+    def on_lock_acquired(self) -> None:
+        ...
+
+    def on_accounts_loaded(self, accounts: list[AccountCredential]) -> None:
+        ...
+
+    def on_account_start(self, account: AccountCredential) -> None:
+        ...
+
+    def on_account_stage(self, account: AccountCredential, stage: str) -> None:
+        ...
+
+    def on_account_done(self, result: SyncAccountResult, summary: SyncSummary | None) -> None:
+        ...
+
+    def on_images_start(self) -> None:
+        ...
+
+    def on_images_done(self) -> None:
+        ...
+
+
+class NullSyncJobObserver:
+    def on_lock_acquired(self) -> None:
+        return None
+
+    def on_accounts_loaded(self, accounts: list[AccountCredential]) -> None:
+        return None
+
+    def on_account_start(self, account: AccountCredential) -> None:
+        return None
+
+    def on_account_stage(self, account: AccountCredential, stage: str) -> None:
+        return None
+
+    def on_account_done(self, result: SyncAccountResult, summary: SyncSummary | None) -> None:
+        return None
+
+    def on_images_start(self) -> None:
+        return None
+
+    def on_images_done(self) -> None:
+        return None
+
+
 __all__ = [
     'NullSyncObserver',
+    'NullSyncJobObserver',
     'SyncConfig',
     'SyncAccountResult',
+    'SyncJobObserver',
     'SyncMode',
     'SyncObserver',
     'SyncPlan',
