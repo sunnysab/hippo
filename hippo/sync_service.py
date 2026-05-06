@@ -35,9 +35,11 @@ async def _run_backfill_images() -> None:
     except Exception:
         _logger.exception('Background image backfill failed.')
 from .sync_types import (
+    NullSyncJobObserver,
     NullSyncObserver,
     SyncAccountResult,
     SyncConfig,
+    SyncJobObserver,
     SyncMode,
     SyncObserver,
     SyncPlan,
@@ -822,34 +824,21 @@ async def run_sync_job(
     group_id: int | None = None,
     biz_list: list[str] | None = None,
     observer_factory: Callable[[AccountCredential, bool], SyncObserver] | None = None,
-    on_account_start: Callable[[AccountCredential], None] | None = None,
-    on_account_done: Callable[[SyncAccountResult, SyncSummary | None], None] | None = None,
-    on_accounts_loaded: Callable[[list[AccountCredential]], None] | None = None,
-    on_account_stage: Callable[[AccountCredential, str], None] | None = None,
+    observer: SyncJobObserver | None = None,
     lock: asyncio.Lock | None = None,
-    on_lock_acquired: Callable[[], None] | None = None,
-    on_images_start: Callable[[], None] | None = None,
-    on_images_done: Callable[[], None] | None = None,
 ) -> SyncJobResult:
+    job_observer = observer or NullSyncJobObserver()
     if lock:
         async with lock:
-            if on_lock_acquired:
-                on_lock_acquired()
+            job_observer.on_lock_acquired()
             return await run_sync_job(
                 group_id=group_id,
                 biz_list=biz_list,
                 observer_factory=observer_factory,
-                on_account_start=on_account_start,
-                on_account_done=on_account_done,
-                on_accounts_loaded=on_accounts_loaded,
-                on_account_stage=on_account_stage,
+                observer=job_observer,
                 lock=None,
-                on_lock_acquired=None,
-                on_images_start=on_images_start,
-                on_images_done=on_images_done,
             )
-    if on_lock_acquired:
-        on_lock_acquired()
+    job_observer.on_lock_acquired()
     reset_sync_cancel()
     started_at = utc_now_iso()
     empty_report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
@@ -897,8 +886,7 @@ async def run_sync_job(
             if biz_list is not None:
                 allowed_biz = set(biz_list)
                 accounts = [account for account in accounts if account.biz in allowed_biz]
-            if on_accounts_loaded:
-                on_accounts_loaded(accounts)
+            job_observer.on_accounts_loaded(accounts)
 
             group_rows = fetchall_rows(
                 storage,
@@ -935,9 +923,9 @@ async def run_sync_job(
                             group_defaults=group_defaults,
                             allow_freq_skip=True,
                             observer_factory=observer_factory,
-                            on_account_start=on_account_start,
-                            on_account_done=on_account_done,
-                            on_account_stage=on_account_stage,
+                            on_account_start=job_observer.on_account_start,
+                            on_account_done=job_observer.on_account_done,
+                            on_account_stage=job_observer.on_account_stage,
                         )
                     except SyncRunError as exc:
                         error = str(exc)
@@ -948,11 +936,9 @@ async def run_sync_job(
                     if _get_cancel_event().is_set() and not error:
                         error = 'Cancelled by user'
                     if settings.get('download_images') and app.downloader:
-                        if on_images_start:
-                            on_images_start()
+                        job_observer.on_images_start()
                         await app.downloader.wait_for_images()
-                        if on_images_done:
-                            on_images_done()
+                        job_observer.on_images_done()
         except Exception as exc:
             _logger.exception('Sync job failed unexpectedly')
             error = str(exc)

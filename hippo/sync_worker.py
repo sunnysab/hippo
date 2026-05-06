@@ -292,13 +292,7 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
                 group_id=job.group_id,
                 biz_list=list(job.biz_list) if job.biz_list else None,
                 observer_factory=lambda account, _: _WorkerObserver(tracker=tracker, account=account),
-                on_account_start=tracker.on_account_start,
-                on_account_done=tracker.on_account_done,
-                on_accounts_loaded=tracker.on_accounts_loaded,
-                on_account_stage=tracker.on_account_stage,
-                on_lock_acquired=tracker.on_lock_acquired,
-                on_images_start=tracker.on_images_start,
-                on_images_done=tracker.on_images_done,
+                observer=tracker,
             )
         except Exception as exc:
             with storage.transaction():
