@@ -258,6 +258,14 @@
   background: var(--surface-chip);
 }
 
+.article-account-name {
+  cursor: pointer;
+}
+
+.article-account-name:hover {
+  text-decoration: underline;
+}
+
 .article-digest {
   color: var(--muted);
   font-size: 11px;
