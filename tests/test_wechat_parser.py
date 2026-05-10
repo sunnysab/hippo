@@ -133,6 +133,66 @@ class WechatParserSamplesTest(unittest.TestCase):
         self.assertIn('25:40', parsed.markdown)
         self.assertIn('Engineering Notes', parsed.markdown)
 
+    def test_parses_audio_briefing_digest_as_structured_body(self) -> None:
+        raw_html = self._build_raw_html(
+            {
+                'item_show_type': 7,
+                'title': '5月6日行业快讯',
+                'digest': '\n'.join(
+                    [
+                        '<a data-unique-id="" data-timestamp="0" class="wx_audio_timepoint_tag">00:00</a> IBM在Think 2026上发布了企业级AI新功能',
+                        '<a data-unique-id="" data-timestamp="415" class="wx_audio_timepoint_tag">06:55</a> PVM研究为大型视觉语言模型解决了长序列生成难题',
+                    ]
+                ),
+                'audio_info': {
+                    'audio_infos': [
+                        {
+                            'audio_id': 'demo-audio-id',
+                            'title': '5月6日行业快讯',
+                            'play_length': 2292,
+                        }
+                    ]
+                },
+                'media_duration': '38:12',
+                'link': 'https://mp.weixin.qq.com/s/demo-audio-briefing',
+            }
+        )
+
+        parsed = parse_wechat_article(raw_html, article_url=_ARTICLE_URL)
+        title, _cover_local, blocks, body_markdown = _parse_markdown_blocks(parsed.markdown)
+
+        self.assertEqual(parsed.item_show_type, 7)
+        self.assertEqual(title, '5月6日行业快讯')
+        self.assertNotIn('&lt;a', parsed.clean_html)
+        self.assertIn('class="wx_audio_timepoint_tag"', parsed.clean_html)
+        self.assertIn('00:00', body_markdown)
+        self.assertTrue(any(block.get('type') == 'paragraph' and 'IBM在Think 2026' in block.get('text', '') for block in blocks))
+
+    def test_parses_audio_share_metadata_from_audio_info_payload(self) -> None:
+        raw_html = self._build_raw_html(
+            {
+                'item_show_type': 7,
+                'title': '5月6日行业快讯',
+                'digest': '一档行业音频快讯。',
+                'audio_info': {
+                    'audio_infos': [
+                        {
+                            'audio_id': 'demo-audio-id',
+                            'title': '5月6日行业快讯',
+                            'play_length': 2292,
+                        }
+                    ]
+                },
+                'media_duration': '38:12',
+                'link': 'https://mp.weixin.qq.com/s/demo-audio-briefing',
+            }
+        )
+
+        parsed = parse_wechat_article(raw_html, article_url=_ARTICLE_URL)
+
+        self.assertIn('38:12', parsed.clean_html)
+        self.assertIn('Source: https://mp.weixin.qq.com/s/demo-audio-briefing', parsed.markdown)
+
     def test_parses_short_share_with_cover_and_source(self) -> None:
         raw_html = self._build_raw_html(
             {
@@ -186,6 +246,39 @@ class WechatParserSamplesTest(unittest.TestCase):
         self.assertIn('[![](https://img.test/x.png)](https://mp.weixin.qq.com/s/demo)', body_markdown)
         self.assertNotIn('\n[\n', body_markdown)
         self.assertNotIn('](https://mp.weixin.qq.com/s/demo)', [block.get('text') for block in blocks if block.get('type') == 'paragraph'])
+
+    def test_parse_markdown_blocks_splits_audio_timestamp_lines(self) -> None:
+        markdown = '\n'.join(
+            [
+                '# 5月6日行业快讯',
+                '',
+                '[00:00](https://mp.weixin.qq.com/s/demo) IBM在Think 2026上发布了企业级AI新功能',
+                '[06:55](https://mp.weixin.qq.com/s/demo) PVM研究为大型视觉语言模型解决了长序列生成难题',
+                '[10:15](https://mp.weixin.qq.com/s/demo) Silk指出了公有云存储的危机',
+            ]
+        )
+
+        title, _cover_local, blocks, body_markdown = _parse_markdown_blocks(markdown)
+
+        self.assertEqual(title, '5月6日行业快讯')
+        self.assertEqual(
+            blocks,
+            [
+                {'type': 'paragraph', 'text': '[00:00](https://mp.weixin.qq.com/s/demo) IBM在Think 2026上发布了企业级AI新功能'},
+                {'type': 'paragraph', 'text': '[06:55](https://mp.weixin.qq.com/s/demo) PVM研究为大型视觉语言模型解决了长序列生成难题'},
+                {'type': 'paragraph', 'text': '[10:15](https://mp.weixin.qq.com/s/demo) Silk指出了公有云存储的危机'},
+            ],
+        )
+        self.assertEqual(
+            body_markdown,
+            '\n'.join(
+                [
+                    '[00:00](https://mp.weixin.qq.com/s/demo) IBM在Think 2026上发布了企业级AI新功能',
+                    '[06:55](https://mp.weixin.qq.com/s/demo) PVM研究为大型视觉语言模型解决了长序列生成难题',
+                    '[10:15](https://mp.weixin.qq.com/s/demo) Silk指出了公有云存储的危机',
+                ]
+            ),
+        )
 
 
 if __name__ == '__main__':
