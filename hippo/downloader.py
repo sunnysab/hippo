@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 from bs4 import BeautifulSoup
 import httpx
 
-from .http import MPClient
+from .http import MPClient, ArticleContentUnavailableError
 from .image_store import ArticleImageStore
 from .logger import get_logger
 from .models import AccountCredential, ArticleRecord, DownloadResult
@@ -254,6 +254,8 @@ class ArticleFetcher:
             try:
                 logger.debug("Fetching article (attempt %d/%d): %s", attempt + 1, _ARTICLE_MAX_RETRIES, url)
                 return await self._client.fetch_article_html(url)
+            except ArticleContentUnavailableError:
+                raise
             except Exception as exc:
                 last_exc = exc
                 backoff = min(2 ** attempt, _RETRY_BACKOFF_MAX)
@@ -317,6 +319,8 @@ class ArticleFetcher:
                 result = await persist(article, html)
                 logger.info("Successfully downloaded article: %s - %s", article.article_id, article.title)
                 return result
+            except ArticleContentUnavailableError:
+                raise
             except Exception as exc:
                 last_exc = exc
                 backoff = min(2 ** attempt, _RETRY_BACKOFF_MAX)
