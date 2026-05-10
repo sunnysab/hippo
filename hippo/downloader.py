@@ -104,6 +104,8 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
     heading_pattern = re.compile(r"^(#{1,6})\s+(.*)$")
     link_pattern = re.compile(r"^[*-]\s+(https?://\S+)$")
     linked_image_closing_pattern = re.compile(r"^\]\(([^)]+)\)$")
+    timestamped_link_line_pattern = re.compile(r"^\[\d{1,2}:\d{2}(?::\d{2})?\]\(https?://[^)]+\)\s+\S")
+    code_fence_pattern = re.compile(r"^(```+|~~~+)")
 
     def flush_paragraph() -> None:
         nonlocal paragraph
@@ -180,6 +182,28 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
             flush_paragraph()
             url = link_match.group(1)
             blocks.append({"type": "link", "text": url, "href": url})
+            body_lines.append(stripped)
+            index += 1
+            continue
+        fence_match = code_fence_pattern.match(stripped)
+        if fence_match:
+            flush_paragraph()
+            fence = fence_match.group(1)  # ``` or ~~~
+            code_lines: list[str] = [line]
+            index += 1
+            while index < len(lines):
+                code_lines.append(lines[index])
+                if lines[index].strip().startswith(fence):
+                    index += 1
+                    break
+                index += 1
+            code_text = "\n".join(code_lines)
+            blocks.append({"type": "code", "text": code_text})
+            body_lines.append(code_text)
+            continue
+        if timestamped_link_line_pattern.match(stripped):
+            flush_paragraph()
+            blocks.append({"type": "paragraph", "text": stripped})
             body_lines.append(stripped)
             index += 1
             continue

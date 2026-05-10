@@ -119,6 +119,16 @@ const ContentBlock = memo(function ContentBlock({
     );
   }
 
+  if (block.type === 'code') {
+    const codeText = (block.text || '')
+      .replace(/^```+[^\n]*\n?/, '')
+      .replace(/\n?```+$/, '')
+      .trimEnd();
+    return (
+      <pre className="code-block"><code>{codeText}</code></pre>
+    );
+  }
+
   return null;
 });
 

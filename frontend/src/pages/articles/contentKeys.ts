@@ -6,6 +6,8 @@ const buildContentBlockSignature = (block: ArticleContentBlock): string => {
       return `heading:${String(block.level || '')}:${block.text || ''}`;
     case 'image':
       return `image:${String(block.image_id || '')}:${block.alt || ''}`;
+    case 'code':
+      return `code:${block.text || ''}`;
     case 'paragraph':
     default:
       return `paragraph:${block.text || ''}`;

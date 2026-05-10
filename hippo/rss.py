@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -75,7 +76,12 @@ def _extract_description(raw: Any, image_base: str | None) -> str:
         if not isinstance(block, dict):
             continue
         block_type = block.get("type")
-        if block_type == "paragraph" and block.get("text"):
+        if block_type == "code" and block.get("text"):
+            code_text = str(block.get("text"))
+            if code_text.strip():
+                escaped = html.escape(code_text, quote=False)
+                parts.append(f"<pre><code>{escaped}</code></pre>")
+        elif block_type == "paragraph" and block.get("text"):
             parts.append(f"<p>{_text_to_html(str(block.get('text')))}</p>")
         elif block_type == "heading" and block.get("text"):
             level = min(max(int(block.get("level") or 2), 2), 4)
