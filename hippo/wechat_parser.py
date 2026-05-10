@@ -407,6 +407,13 @@ def _render_music_share_body(cgi_data: dict[str, Any]) -> str:
 
 
 def _render_audio_share_body(cgi_data: dict[str, Any]) -> str:
+    rich_body = _extract_audio_rich_body_html(cgi_data)
+    if rich_body:
+        return (
+            '<section class="wechat-content wechat-content-audio-article">'
+            f'{rich_body}'
+            '</section>'
+        )
     payload = _extract_audio_share_payload(cgi_data)
     return _render_media_share_body(
         label=_SHARE_TYPE_LABELS[7],
@@ -669,6 +676,7 @@ def _extract_audio_share_payload(cgi_data: dict[str, Any]) -> dict[str, str]:
         _collect_candidate_mappings(
             cgi_data,
             'audio_page_info',
+            'audio_info',
             'voice_info',
             'voice_in_appmsg',
             'voice_in_appmsg_list_json',
@@ -695,7 +703,14 @@ def _extract_audio_share_payload(cgi_data: dict[str, Any]) -> dict[str, str]:
         'creator': _pick_text(candidate, ('nickname',), ('author',), ('nick_name',), ('biz_nickname',)),
         'album': _pick_text(candidate, ('appmsgalbuminfo', 'title'), ('album_name',), ('topic_name',)),
         'duration': _format_duration(
-            _pick_text(candidate, ('play_length',), ('duration',), ('duration_ms',), ('time',))
+            _pick_text(
+                candidate,
+                ('play_length',),
+                ('duration',),
+                ('duration_ms',),
+                ('time',),
+            )
+            or _pick_text(cgi_data, ('media_duration',))
         ),
         'cover_url': _pick_url(candidate, ('cover_url',), ('cover',), ('img_url',), ('hd_cover_img',), ('pic_url',)),
         'description': description,
@@ -746,7 +761,7 @@ def _collect_candidate_mappings(cgi_data: dict[str, Any], *root_keys: str) -> li
 def _flatten_candidate_value(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, dict):
         items = [value]
-        for list_key in ('list', 'voice_in_appmsg'):
+        for list_key in ('list', 'voice_in_appmsg', 'audio_infos'):
             nested = value.get(list_key)
             if isinstance(nested, list):
                 items.extend(item for item in nested if isinstance(item, dict))
@@ -754,6 +769,17 @@ def _flatten_candidate_value(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, list):
         return [item for item in value if isinstance(item, dict)]
     return []
+
+
+def _extract_audio_rich_body_html(cgi_data: dict[str, Any]) -> str:
+    for key in ('content_noencode', 'digest'):
+        raw = str(cgi_data.get(key) or '').strip()
+        if not raw:
+            continue
+        if 'wx_audio_timepoint_tag' not in raw and '<' not in raw:
+            continue
+        return _normalize_content_fragment(raw, article_url=_pick_text(cgi_data, ('link',)))
+    return ''
 
 
 def _select_best_mapping(candidates: list[dict[str, Any]], *, score_paths: tuple[tuple[str, ...], ...]) -> dict[str, Any]:
