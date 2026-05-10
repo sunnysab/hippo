@@ -274,21 +274,21 @@ def _set_location(ctx: quickjs.Context, article_url: str) -> None:
 
 def _extract_title(cgi_data: dict[str, Any], *, fallback_title: str | None) -> str:
     item_show_type = _normalize_int(cgi_data.get('item_show_type'))
-    title = str(cgi_data.get('title') or '').strip()
+    title = html.unescape(str(cgi_data.get('title') or '').strip())
     if item_show_type == 10:
         text_page_info = cgi_data.get('text_page_info') or {}
         if _normalize_int(text_page_info.get('is_user_title')) == 1 and title:
             return title
         if fallback_title:
-            return fallback_title.strip() or _TITLE_FALLBACK
+            return html.unescape(fallback_title.strip()) or _TITLE_FALLBACK
         return _TITLE_FALLBACK
     if title:
         return title
     derived_title = _derive_title_from_type(cgi_data, item_show_type=item_show_type)
     if derived_title:
-        return derived_title
+        return html.unescape(derived_title)
     if fallback_title:
-        stripped = fallback_title.strip()
+        stripped = html.unescape(fallback_title.strip())
         if stripped:
             return stripped
     return _TITLE_FALLBACK
