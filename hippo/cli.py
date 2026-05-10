@@ -499,6 +499,7 @@ def _backfill_range(
     dry_run: bool = False,
     echo_lock: threading.Lock | None = None,
     worker_id: int | None = None,
+    resume: bool = False,
 ) -> tuple[int, int]:
     label = f'[worker {worker_id}] ' if worker_id is not None else ''
     processed = 0
@@ -524,6 +525,8 @@ def _backfill_range(
             if end_pk is not None:
                 select_sql += ' AND article_pk <= %s'
                 params.append(end_pk)
+            if resume:
+                select_sql += ' AND content_json IS NULL'
             select_sql += ' ORDER BY article_pk ASC LIMIT %s'
             params.append(current_batch_size)
 
@@ -624,6 +627,9 @@ def backfill_content_json(
     workers: int = typer.Option(
         1, min=1, help='Number of parallel workers (threads)'
     ),
+    resume: bool = typer.Option(
+        False, help='Only process rows where content_json is NULL (skip already backfilled)'
+    ),
 ) -> None:
     resolved_dsn = pg_dsn or os.environ.get('HIPPO_PG_DSN')
     if not resolved_dsn:
@@ -638,6 +644,7 @@ def backfill_content_json(
             limit=limit,
             batch_size=1 if article_pk is not None else batch_size,
             dry_run=dry_run,
+            resume=resume,
         )
         if processed == 0:
             typer.echo('No article_content rows matched.')
@@ -652,15 +659,19 @@ def backfill_content_json(
         return
 
     typer.echo('Loading matching article_pks...')
+    resume_clause = ' AND content_json IS NULL' if resume else ''
     with PostgresStorage(resolved_dsn, auto_init=False) as storage:
         with storage.conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                f"""
                 SELECT article_pk
                 FROM article_content
                 WHERE content_markdown IS NOT NULL
                   AND btrim(content_markdown) <> ''
+                  {resume_clause}
                 ORDER BY article_pk ASC
-            """)
+                """
+            )
             all_pks = [int(row[0]) for row in cur.fetchall()]
         storage.rollback()
 
