@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import concurrent.futures
 import inspect
 import json
 import os
 import random
+import threading
 import time
 import functools
 from io import BytesIO
@@ -416,37 +418,27 @@ def backfill_item_show_type(
     typer.echo(f'Backfilled item_show_type for {updated} articles.')
 
 
-@db_app.command('backfill-content-json')
-def backfill_content_json(
-    pg_dsn: Optional[str] = typer.Option(
-        None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'
-    ),
-    article_pk: Optional[int] = typer.Option(
-        None, min=1, help='Only backfill a specific article_pk'
-    ),
-    limit: Optional[int] = typer.Option(
-        None, min=1, help='Optional max row count to backfill per run'
-    ),
-    batch_size: int = typer.Option(
-        1000, min=1, help='Row batch size used during backfill'
-    ),
-    dry_run: bool = typer.Option(
-        False, help='Preview affected row count without writing changes'
-    ),
-) -> None:
-    resolved_dsn = pg_dsn or os.environ.get('HIPPO_PG_DSN')
-    if not resolved_dsn:
-        typer.echo('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
-        raise typer.Exit(code=2)
+def _backfill_range(
+    resolved_dsn: str,
+    *,
+    start_pk: int = 0,
+    end_pk: int | None = None,
+    limit: int | None = None,
+    batch_size: int = 1000,
+    dry_run: bool = False,
+    echo_lock: threading.Lock | None = None,
+    worker_id: int | None = None,
+) -> tuple[int, int]:
+    label = f'[worker {worker_id}] ' if worker_id is not None else ''
     processed = 0
     updated = 0
-    last_article_pk = 0
+    last_article_pk = start_pk
     with PostgresStorage(resolved_dsn, auto_init=False) as storage:
         while True:
             remaining = None if limit is None else max(limit - processed, 0)
             if remaining == 0:
                 break
-            current_batch_size = 1 if article_pk is not None else batch_size
+            current_batch_size = batch_size
             if remaining is not None:
                 current_batch_size = min(current_batch_size, remaining)
 
@@ -455,14 +447,12 @@ def backfill_content_json(
             FROM article_content
             WHERE content_markdown IS NOT NULL
               AND btrim(content_markdown) <> ''
+              AND article_pk > %s
             """
-            params: list[Any] = []
-            if article_pk is not None:
-                select_sql += ' AND article_pk = %s'
-                params.append(article_pk)
-            else:
-                select_sql += ' AND article_pk > %s'
-                params.append(last_article_pk)
+            params: list[Any] = [last_article_pk]
+            if end_pk is not None:
+                select_sql += ' AND article_pk <= %s'
+                params.append(end_pk)
             select_sql += ' ORDER BY article_pk ASC LIMIT %s'
             params.append(current_batch_size)
 
@@ -518,9 +508,6 @@ def backfill_content_json(
 
             if dry_run:
                 updated += len(updates)
-                typer.echo(
-                    f'Dry run progress: processed {processed} articles, would update {updated}.'
-                )
             else:
                 if updates:
                     with storage.transaction():
@@ -543,23 +530,132 @@ def backfill_content_json(
                                 ],
                             )
                 updated += len(updates)
-                typer.echo(
-                    f'Backfill progress: processed {processed} articles, updated {updated}.'
-                )
 
-            if article_pk is not None:
-                break
+            msg = (
+                f'{label}Dry run progress: processed {processed} articles, would update {updated}.'
+                if dry_run
+                else f'{label}Backfill progress: processed {processed} articles, updated {updated}.'
+            )
+            if echo_lock:
+                with echo_lock:
+                    typer.echo(msg)
+            else:
+                typer.echo(msg)
 
-    if processed == 0:
+    return processed, updated
+
+
+@db_app.command('backfill-content-json')
+def backfill_content_json(
+    pg_dsn: Optional[str] = typer.Option(
+        None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'
+    ),
+    article_pk: Optional[int] = typer.Option(
+        None, min=1, help='Only backfill a specific article_pk'
+    ),
+    limit: Optional[int] = typer.Option(
+        None, min=1, help='Optional max row count to backfill per run'
+    ),
+    batch_size: int = typer.Option(
+        1000, min=1, help='Row batch size used during backfill'
+    ),
+    dry_run: bool = typer.Option(
+        False, help='Preview affected row count without writing changes'
+    ),
+    workers: int = typer.Option(
+        1, min=1, help='Number of parallel workers (threads)'
+    ),
+) -> None:
+    resolved_dsn = pg_dsn or os.environ.get('HIPPO_PG_DSN')
+    if not resolved_dsn:
+        typer.echo('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
+        raise typer.Exit(code=2)
+
+    if article_pk is not None or workers <= 1:
+        processed, updated = _backfill_range(
+            resolved_dsn,
+            start_pk=article_pk - 1 if article_pk else 0,
+            end_pk=article_pk if article_pk else None,
+            limit=limit,
+            batch_size=1 if article_pk is not None else batch_size,
+            dry_run=dry_run,
+        )
+        if processed == 0:
+            typer.echo('No article_content rows matched.')
+            return
+        if updated == 0:
+            typer.echo('No article_content rows needed backfill.')
+            return
+        if dry_run:
+            typer.echo(f'Would backfill content_json for {updated} articles.')
+            return
+        typer.echo(f'Backfilled content_json for {updated} articles.')
+        return
+
+    with PostgresStorage(resolved_dsn, auto_init=False) as storage:
+        with storage.conn.cursor() as cur:
+            cur.execute("""
+                SELECT MIN(article_pk), MAX(article_pk)
+                FROM article_content
+                WHERE content_markdown IS NOT NULL
+                  AND btrim(content_markdown) <> ''
+            """)
+            row = cur.fetchone()
+        storage.rollback()
+
+    if not row or row[0] is None:
         typer.echo('No article_content rows matched.')
         return
-    if updated == 0:
+
+    min_pk, max_pk = int(row[0]), int(row[1])
+    if min_pk == max_pk:
+        workers = 1
+
+    per_worker_limit = None if limit is None else max(1, limit // workers)
+    range_size = max(1, (max_pk - min_pk + 1) // workers)
+
+    echo_lock = threading.Lock()
+    results: list[tuple[int, int, int, int]] = []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        futures: list[concurrent.futures.Future[tuple[int, int]]] = []
+        for w in range(workers):
+            w_start = min_pk + w * range_size
+            w_end = max_pk if w == workers - 1 else w_start + range_size - 1
+            future = executor.submit(
+                _backfill_range,
+                resolved_dsn=resolved_dsn,
+                start_pk=w_start - 1,
+                end_pk=w_end,
+                limit=per_worker_limit,
+                batch_size=batch_size,
+                dry_run=dry_run,
+                echo_lock=echo_lock,
+                worker_id=w + 1,
+            )
+            futures.append(future)
+
+        total_processed = 0
+        total_updated = 0
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                p, u = future.result()
+                total_processed += p
+                total_updated += u
+            except Exception as exc:
+                typer.echo(f'Worker failed: {exc}')
+                raise typer.Exit(code=1)
+
+    if total_processed == 0:
+        typer.echo('No article_content rows matched.')
+        return
+    if total_updated == 0:
         typer.echo('No article_content rows needed backfill.')
         return
     if dry_run:
-        typer.echo(f'Would backfill content_json for {updated} articles.')
+        typer.echo(f'Would backfill content_json for {total_updated} articles across {workers} workers.')
         return
-    typer.echo(f'Backfilled content_json for {updated} articles.')
+    typer.echo(f'Backfilled content_json for {total_updated} articles with {workers} workers.')
 
 
 app.add_typer(accounts_app, name="account")

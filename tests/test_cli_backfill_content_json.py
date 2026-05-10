@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, ANY
 
 from hippo.cli import backfill_content_json
 
@@ -10,6 +10,7 @@ class _FakeCursor:
     def __init__(self, conn: '_FakeConn') -> None:
         self._conn = conn
         self._result: list[tuple] = []
+        self._sql: str = ''
 
     def __enter__(self) -> '_FakeCursor':
         return self
@@ -18,12 +19,19 @@ class _FakeCursor:
         return None
 
     def execute(self, sql: str, params=None) -> None:  # type: ignore[no-untyped-def]
+        self._sql = sql
         normalized_sql = ' '.join(sql.split())
+        if normalized_sql.startswith(
+            'SELECT MIN(article_pk), MAX(article_pk)'
+        ):
+            self._result = [(1, 10)]
+            return
         if normalized_sql.startswith(
             'SELECT article_pk, content_markdown, content_json FROM article_content'
         ):
-            last_article_pk = int(params[0])
-            limit = int(params[1])
+            last_article_pk = params[0]
+            end_pk = params[1] if len(params) >= 3 and 'article_pk <=' in normalized_sql else None
+            limit = params[-1]
             self._result = self._conn.select_article_content(last_article_pk, limit)
             return
         if normalized_sql.startswith(
@@ -37,13 +45,16 @@ class _FakeCursor:
     def fetchall(self) -> list[tuple]:
         return list(self._result)
 
+    def fetchone(self) -> tuple | None:
+        return self._result[0] if self._result else None
+
     def executemany(self, sql: str, params_seq) -> None:  # type: ignore[no-untyped-def]
         self._conn.executed_updates.extend(list(params_seq))
 
 
 class _FakeConn:
-    def __init__(self) -> None:
-        self.article_rows = {
+    def __init__(self, *, article_rows_map: dict | None = None) -> None:
+        self.article_rows = article_rows_map or {
             0: [
                 (1, 'one', [{'type': 'paragraph', 'text': 'old'}]),
                 (2, 'two', None),
@@ -56,7 +67,7 @@ class _FakeConn:
         self.rollback_count = 0
         self.executed_updates: list[tuple] = []
 
-    def cursor(self) -> _FakeCursor:
+    def cursor(self) -> '_FakeCursor':
         return _FakeCursor(self)
 
     def rollback(self) -> None:
@@ -134,6 +145,7 @@ class BackfillContentJsonCommandTest(unittest.TestCase):
                 batch_size=2,
                 limit=3,
                 dry_run=True,
+                workers=1,
             )
 
         self.assertEqual(
@@ -147,6 +159,55 @@ class BackfillContentJsonCommandTest(unittest.TestCase):
         self.assertEqual(len(_FakeStorage.instances), 1)
         self.assertEqual(_FakeStorage.instances[0].conn.rollback_count, 4)
         self.assertEqual(_FakeStorage.instances[0].conn.executed_updates, [])
+
+    def test_multi_worker_parallel_execution(self) -> None:
+        outputs: list[str] = []
+
+        with (
+            patch('hippo.cli.PostgresStorage', _FakeStorage),
+            patch('hippo.cli._parse_markdown_blocks', side_effect=_fake_parse_markdown_blocks),
+            patch(
+                'hippo.cli._attach_image_block_metadata',
+                side_effect=_fake_attach_image_block_metadata,
+            ),
+            patch('hippo.cli.typer.echo', side_effect=outputs.append),
+        ):
+            backfill_content_json(
+                pg_dsn='postgresql://example',
+                article_pk=None,
+                batch_size=100,
+                limit=None,
+                dry_run=True,
+                workers=2,
+            )
+
+        self.assertIn(
+            'Would backfill content_json for 2 articles across 2 workers.',
+            outputs,
+        )
+
+    def test_single_article_skips_parallel(self) -> None:
+        outputs: list[str] = []
+
+        with (
+            patch('hippo.cli.PostgresStorage', _FakeStorage),
+            patch('hippo.cli._parse_markdown_blocks', side_effect=_fake_parse_markdown_blocks),
+            patch(
+                'hippo.cli._attach_image_block_metadata',
+                side_effect=_fake_attach_image_block_metadata,
+            ),
+            patch('hippo.cli.typer.echo', side_effect=outputs.append),
+        ):
+            backfill_content_json(
+                pg_dsn='postgresql://example',
+                article_pk=1,
+                batch_size=100,
+                limit=None,
+                dry_run=False,
+                workers=4,
+            )
+
+        self.assertIn('Backfilled content_json for 1 articles.', outputs)
 
 
 if __name__ == '__main__':
