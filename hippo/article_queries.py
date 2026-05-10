@@ -596,7 +596,7 @@ def _get_visible_article_images(
         for image in images:
             if not image.get('content_hash'):
                 try:
-                    ensure_image_hash(storage, int(image['id']), allow_origin_fetch=False)
+                    ensure_image_hash(storage, int(image['id']))
                 except Exception:
                     logger.warning('Failed to ensure hash for image %s', image['id'])
     blocked_image_ids = storage.images.list_blocked_image_ids(article_id)
