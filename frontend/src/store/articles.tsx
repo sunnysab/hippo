@@ -23,7 +23,7 @@ export interface Article {
 }
 
 export interface ArticleContentBlock {
-  type: 'paragraph' | 'heading' | 'image';
+  type: 'paragraph' | 'heading' | 'image' | 'code';
   text?: string;
   level?: number;
   image_id?: number;
