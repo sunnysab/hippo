@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -18,6 +19,8 @@ from .storage import PostgresStorage, fetchall_rows, fetchone_row
 from .image_hashes import IMAGE_HASH_ALGO, ensure_image_hash, fetch_image_bytes
 from .rss import build_rss_xml, query_rss_items
 from .utils import parse_iso_date_to_timestamp, utc_now_iso
+
+logger = logging.getLogger(__name__)
 
 
 ARTICLE_SORT_PUBLISH_AT_DESC = 'publish_at_desc'
@@ -589,6 +592,13 @@ def _get_visible_article_images(
     article_id: int,
 ) -> tuple[list[dict[str, Any]], set[int]]:
     images = storage.images.get_article_images(article_id)
+    if storage.images.has_blocked_hashes():
+        for image in images:
+            if not image.get('content_hash'):
+                try:
+                    ensure_image_hash(storage, int(image['id']), allow_origin_fetch=False)
+                except Exception:
+                    logger.warning('Failed to ensure hash for image %s', image['id'])
     blocked_image_ids = storage.images.list_blocked_image_ids(article_id)
     visible_images = [image for image in images if int(image['id']) not in blocked_image_ids]
     return visible_images, blocked_image_ids

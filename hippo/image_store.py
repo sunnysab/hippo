@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Callable, Protocol
 
 from .file_storage import FileStorage
+from .image_hashes import IMAGE_HASH_ALGO, compute_image_content_hash
 from .repositories import ImageRepository
+
+logger = logging.getLogger(__name__)
 
 
 class ArticleImageStore(Protocol):
@@ -68,6 +72,15 @@ class ArticleImageService:
                 content_type=content_type,
                 s3_key=s3_key,
             )
+            try:
+                content_hash = compute_image_content_hash(data)
+                self._image_repo.save_image_hash(
+                    image_id=target.image_id,
+                    hash_algo=IMAGE_HASH_ALGO,
+                    content_hash=content_hash,
+                )
+            except Exception:
+                logger.warning('Failed to save hash for image %s', target.image_id)
 
         if self._transaction:
             with self._transaction():
