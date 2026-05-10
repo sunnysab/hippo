@@ -78,7 +78,13 @@ def _extract_description(raw: Any, image_base: str | None) -> str:
         block_type = block.get("type")
         if block_type == "code" and block.get("text"):
             code_text = str(block.get("text"))
-            if code_text.strip():
+            code_lines = code_text.split('\n')
+            if code_lines and code_lines[0].strip().startswith(('```', '~~~')):
+                code_lines = code_lines[1:]
+            if code_lines and code_lines[-1].strip().startswith(('```', '~~~')):
+                code_lines = code_lines[:-1]
+            code_text = '\n'.join(code_lines).strip()
+            if code_text:
                 escaped = html.escape(code_text, quote=False)
                 parts.append(f"<pre><code>{escaped}</code></pre>")
         elif block_type == "paragraph" and block.get("text"):

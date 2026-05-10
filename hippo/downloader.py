@@ -197,6 +197,8 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
                     index += 1
                     break
                 index += 1
+            else:
+                logger.warning("Unterminated code fence in markdown, capturing until end")
             code_text = "\n".join(code_lines)
             blocks.append({"type": "code", "text": code_text})
             body_lines.append(code_text)
