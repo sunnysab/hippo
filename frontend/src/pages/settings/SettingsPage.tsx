@@ -87,13 +87,22 @@ export function SettingsPage() {
       clearInterval(loginPollTimer.current);
       loginPollTimer.current = null;
     }
-    if (['waiting', 'scanned', 'refresh', 'starting'].includes(status)) {
+    if (['waiting', 'scanned', 'refresh', 'starting', 'confirmed'].includes(status)) {
       loginPollTimer.current = setInterval(async () => {
         try {
           const payload = await apiSend('/api/login/poll', 'POST', {});
           dispatch({ type: 'SET_LOGIN_STATUS', payload: payload as unknown as LoginStatus });
           const nextStatus = (payload.status as string) || 'idle';
-          if (['success', 'error', 'idle'].includes(nextStatus)) {
+          if (nextStatus === 'confirmed') {
+            try {
+              const result = await apiSend('/api/login/finalize', 'POST', {});
+              dispatch({ type: 'SET_LOGIN_STATUS', payload: result as unknown as LoginStatus });
+              if (loginPollTimer.current) clearInterval(loginPollTimer.current);
+              loginPollTimer.current = null;
+            } catch {
+              /* ignore */
+            }
+          } else if (['success', 'error', 'idle'].includes(nextStatus)) {
             if (loginPollTimer.current) clearInterval(loginPollTimer.current);
             loginPollTimer.current = null;
           }

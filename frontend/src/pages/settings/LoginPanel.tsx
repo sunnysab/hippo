@@ -19,11 +19,11 @@ export function LoginPanel() {
     ? `${qrcodeUrl}${qrcodeUrl.includes('?') ? '&' : '?'}v=${encodeURIComponent(updatedAt || `${status}:${message}`)}`
     : '';
 
-  const isInProgress = ['starting', 'waiting', 'scanned', 'refresh'].includes(status);
+  const isInProgress = ['starting', 'waiting', 'scanned', 'refresh', 'confirmed'].includes(status);
 
   const startLogin = async () => {
     const currentStatus = loginStatus?.status || 'idle';
-    const force = ['starting', 'waiting', 'scanned', 'refresh'].includes(currentStatus);
+    const force = ['starting', 'waiting', 'scanned', 'refresh', 'confirmed'].includes(currentStatus);
     try {
       const payload = await apiSend('/api/login/start', 'POST', { force });
       dispatch({ type: 'SET_LOGIN_STATUS', payload: payload as unknown as LoginStatus });

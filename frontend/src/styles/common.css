@@ -316,6 +316,11 @@ body {
   color: #72470d;
 }
 
+.banner.is-error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .banner.is-hidden {
   display: none;
 }
