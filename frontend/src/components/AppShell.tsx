@@ -18,6 +18,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [lastSyncAt, setLastSyncAt] = useState('');
   const [bannerVisible, setBannerVisible] = useState(false);
   const [bannerText, setBannerText] = useState('');
+  const [bannerError, setBannerError] = useState(false);
 
   const currentTab = location.pathname.split('/').filter(Boolean)[0] || 'groups';
 
@@ -31,18 +32,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       } else {
         setLastLoginAt('');
       }
-      const loginStatus = loginPayload.status as string;
-      if (loginStatus === 'login_required' || loginStatus === 'failed') {
-        if (loginStatus === 'login_required') {
-          setBannerText(t('sync.loginRequired', 'Login required. Please re-login.'));
-          setBannerVisible(true);
-        } else {
-          setBannerText(t('sync.failed', 'Sync failed. Please check login.'));
-          setBannerVisible(true);
-        }
-      } else {
-        setBannerVisible(false);
-      }
 
       const syncPayload = await apiGet('/api/settings/status');
       const finished = syncPayload.last_finished_at as string | null;
@@ -51,6 +40,28 @@ export function AppShell({ children }: { children: ReactNode }) {
         setLastSyncAt(ts ? t('sync.lastSyncAt', 'Last sync {time}').replace('{time}', ts) : '');
       } else {
         setLastSyncAt('');
+      }
+
+      const lastError = syncPayload.last_error as string | null;
+      if (lastError) {
+        setBannerText(lastError);
+        setBannerVisible(true);
+        setBannerError(true);
+      } else {
+        const loginStatus = loginPayload.status as string;
+        if (loginStatus === 'login_required' || loginStatus === 'failed') {
+          if (loginStatus === 'login_required') {
+            setBannerText(t('sync.loginRequired', 'Login required. Please re-login.'));
+            setBannerVisible(true);
+          } else {
+            setBannerText(t('sync.failed', 'Sync failed. Please check login.'));
+            setBannerVisible(true);
+          }
+          setBannerError(false);
+        } else {
+          setBannerVisible(false);
+          setBannerError(false);
+        }
       }
     } catch {
       /* ignore errors during meta refresh */
@@ -108,7 +119,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         lastSyncAt={lastSyncAt}
       />
       <main className="content">
-        <div className={`banner${bannerVisible ? '' : ' is-hidden'}`} id="status-banner">
+        <div className={`banner${bannerVisible ? '' : ' is-hidden'}${bannerError ? ' is-error' : ''}`} id="status-banner">
           <div className="banner-text" id="banner-text">{bannerText}</div>
           <button
             className="btn ghost"

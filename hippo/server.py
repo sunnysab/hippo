@@ -299,16 +299,9 @@ class LoginManager:
                     raise ApiError("Login status error")
                 status = resp.get("status")
                 if status == 1:
-                    session = await api_client.finalize_login(uuid_cookie)
-                    info = await api_client.fetch_login_info(session)
-                    session.nickname = info.get("nickname") or None
-                    session.avatar = info.get("avatar") or None
-                    save_login_session(storage, session)
                     with self._lock:
-                        self._status = "success"
-                        self._message = "Login success"
-                        self._uuid_cookie = None
-                        self._qrcode = None
+                        self._status = "confirmed"
+                        self._message = "Confirmed, completing login..."
                         self._updated_at = utc_now_iso()
                     return self._snapshot()
                 if status in (2, 3):
@@ -340,6 +333,35 @@ class LoginManager:
                 self._updated_at = utc_now_iso()
             raise ApiError(str(exc)) from exc
         return self._snapshot()
+
+    async def finalize(self, storage: PostgresStorage) -> dict[str, Any]:
+        with self._lock:
+            uuid_cookie = self._uuid_cookie
+        if not uuid_cookie:
+            raise ApiError("Login not started", status=400)
+        try:
+            async with MPClient(timeout=15.0) as client:
+                api_client = WeChatApiClient(client)
+                session = await api_client.finalize_login(uuid_cookie)
+                info = await api_client.fetch_login_info(session)
+                session.nickname = info.get("nickname") or None
+                session.avatar = info.get("avatar") or None
+                save_login_session(storage, session)
+                with self._lock:
+                    self._status = "success"
+                    self._message = "Login success"
+                    self._uuid_cookie = None
+                    self._qrcode = None
+                    self._updated_at = utc_now_iso()
+                return self._snapshot()
+        except ApiError:
+            raise
+        except Exception as exc:
+            with self._lock:
+                self._status = "error"
+                self._message = str(exc)
+                self._updated_at = utc_now_iso()
+            raise ApiError(str(exc)) from exc
 
     def cancel(self) -> None:
         with self._lock:
@@ -1144,6 +1166,24 @@ async def login_poll(
         dict: 更新后的登录状态。
     """
     snapshot = await manager.poll(storage)
+    info = _get_login_info(storage)
+    return {
+        **snapshot,
+        "qrcode_url": "/api/login/qrcode" if snapshot.get("has_qrcode") else None,
+        "last_login": info,
+    }
+
+
+@router.post("/login/finalize")
+async def login_finalize(
+    storage: PostgresStorage = Depends(_get_storage),
+    manager: "LoginManager" = Depends(_get_login_manager),
+) -> dict[str, Any]:
+    """
+    完成登录（在二维码被确认后调用）。
+    调用微信 bizlogin 接口完成最终登录，获取 token。
+    """
+    snapshot = await manager.finalize(storage)
     info = _get_login_info(storage)
     return {
         **snapshot,

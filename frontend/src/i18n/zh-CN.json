@@ -168,6 +168,7 @@
   "login.status.waiting": "请使用微信扫码",
   "login.status.scanned": "扫码成功，等待确认",
   "login.status.refresh": "二维码已刷新",
+  "login.status.confirmed": "已确认，正在完成登录",
   "login.status.success": "登录成功",
   "login.status.error": "登录失败",
   "login.sessionExpired": "登录已过期，请重新登录。",
