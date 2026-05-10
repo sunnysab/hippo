@@ -13,6 +13,7 @@ import socket
 import stat
 import threading
 import time as time_module
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Generator
@@ -44,6 +45,7 @@ from .sync_service import (
     set_sync_settings as save_sync_settings,
 )
 from .storage import ensure_default_group, fetchall_rows, fetchone_row
+from .container import build_downloader_container
 from .utils import parse_iso_date_to_timestamp, utc_now_iso
 from .login_service import save_login_session
 from .article_queries import (
@@ -1109,6 +1111,93 @@ def block_image(
         dict: Blocking result and resolved hash.
     """
     return _block_image(storage, image_id)
+
+
+_refetch_tasks: dict[str, dict[str, Any]] = {}
+_refetch_lock = threading.Lock()
+
+
+def _cleanup_refetch_tasks() -> None:
+    now = time_module.monotonic()
+    with _refetch_lock:
+        stale = [
+            tid for tid, t in _refetch_tasks.items()
+            if t.get('status') in ('done', 'error')
+            and now - t.get('finished_at', 0) > 300
+        ]
+        for tid in stale:
+            del _refetch_tasks[tid]
+
+
+@router.get("/article/refetch/{task_id}")
+def get_refetch_status(task_id: str) -> dict[str, Any]:
+    _cleanup_refetch_tasks()
+    with _refetch_lock:
+        task = _refetch_tasks.get(task_id)
+    if not task:
+        raise ApiError("Task not found", status=404)
+    return dict(task)
+
+
+@router.post("/article/{article_id}/refetch")
+def refetch_article(
+    article_id: int,
+    storage: PostgresStorage = Depends(_get_storage),
+) -> dict[str, Any]:
+    row = fetchone_row(
+        storage,
+        "SELECT link FROM articles WHERE id = %s",
+        [article_id],
+    )
+    if not row:
+        raise ApiError("Article not found", status=404)
+    link = row.get('link')
+    if not link:
+        raise ApiError("Article has no source URL", status=400)
+
+    task_id = uuid.uuid4().hex
+    started_at = time_module.monotonic()
+    with _refetch_lock:
+        _refetch_tasks[task_id] = {
+            'task_id': task_id,
+            'status': 'running',
+            'phase': 'downloading',
+            'started_at': started_at,
+            'error': None,
+        }
+    _cleanup_refetch_tasks()
+
+    def _run() -> None:
+        async def _do() -> None:
+            with open_storage() as thread_storage:
+                container = build_downloader_container(
+                    storage=thread_storage,
+                    enable_images=True,
+                )
+                async with container as app:
+                    downloader = app.downloader
+                    if not downloader:
+                        raise RuntimeError("Downloader not initialized")
+                    await downloader.download_from_url(str(link), with_images=True)
+            with _refetch_lock:
+                _refetch_tasks[task_id]['status'] = 'done'
+                _refetch_tasks[task_id]['phase'] = 'done'
+                _refetch_tasks[task_id]['finished_at'] = time_module.monotonic()
+
+        try:
+            asyncio.run(_do())
+        except Exception as exc:
+            logger.warning('Article refetch failed (task=%s): %s', task_id, exc)
+            with _refetch_lock:
+                _refetch_tasks[task_id]['status'] = 'error'
+                _refetch_tasks[task_id]['phase'] = 'error'
+                _refetch_tasks[task_id]['error'] = str(exc)
+                _refetch_tasks[task_id]['finished_at'] = time_module.monotonic()
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    return {'task_id': task_id, 'status': 'started'}
 
 
 @router.get("/login")
