@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch, ANY
+from unittest.mock import patch
 
 from hippo.cli import backfill_content_json
 
@@ -27,10 +27,24 @@ class _FakeCursor:
             self._result = [(1, 10)]
             return
         if normalized_sql.startswith(
+            'SELECT article_pk FROM article_content'
+        ):
+            last_article_pk = params[0] if params else 0
+            self._result = self._conn.select_all_pks(last_article_pk)
+            return
+        if (
+            normalized_sql.startswith(
+                'SELECT article_pk, content_markdown, content_json FROM article_content'
+            )
+            and 'article_pk = ANY(%s)' in normalized_sql
+        ):
+            article_pks = [int(value) for value in params[0]]
+            self._result = self._conn.select_article_content_by_pks(article_pks)
+            return
+        if normalized_sql.startswith(
             'SELECT article_pk, content_markdown, content_json FROM article_content'
         ):
             last_article_pk = params[0]
-            end_pk = params[1] if len(params) >= 3 and 'article_pk <=' in normalized_sql else None
             limit = params[-1]
             self._result = self._conn.select_article_content(last_article_pk, limit)
             return
@@ -54,6 +68,11 @@ class _FakeCursor:
 
 class _FakeConn:
     def __init__(self, *, article_rows_map: dict | None = None) -> None:
+        self._article_content_map = {
+            1: (1, 'one', [{'type': 'paragraph', 'text': 'old'}]),
+            2: (2, 'two', None),
+            3: (3, 'three', [{'type': 'paragraph', 'text': 'three'}]),
+        }
         self.article_rows = article_rows_map or {
             0: [
                 (1, 'one', [{'type': 'paragraph', 'text': 'old'}]),
@@ -72,6 +91,16 @@ class _FakeConn:
 
     def rollback(self) -> None:
         self.rollback_count += 1
+
+    def select_all_pks(self, last_article_pk: int) -> list[tuple]:
+        return [(pk,) for pk in sorted(self._article_content_map) if pk > last_article_pk]
+
+    def select_article_content_by_pks(self, article_pks: list[int]) -> list[tuple]:
+        return [
+            self._article_content_map[pk]
+            for pk in sorted(article_pks)
+            if pk in self._article_content_map
+        ]
 
     def select_article_content(self, last_article_pk: int, limit: int) -> list[tuple]:
         return list(self.article_rows.get(last_article_pk, []))[:limit]

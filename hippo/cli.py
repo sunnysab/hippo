@@ -418,6 +418,77 @@ def backfill_item_show_type(
     typer.echo(f'Backfilled item_show_type for {updated} articles.')
 
 
+def _process_batch(
+    storage: Any,
+    rows: list[tuple],
+    *,
+    dry_run: bool,
+) -> tuple[int, int]:
+    article_pks = [int(row[0]) for row in rows]
+
+    with storage.conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT article_pk, id, orig_url
+            FROM article_images
+            WHERE article_pk = ANY(%s)
+              AND orig_url IS NOT NULL
+            """,
+            (article_pks,),
+        )
+        image_rows = cur.fetchall()
+    storage.rollback()
+
+    image_id_maps: dict[int, dict[str, int]] = {}
+    for current_article_pk, image_id, orig_url in image_rows:
+        image_id_maps.setdefault(int(current_article_pk), {})[str(orig_url)] = int(image_id)
+
+    updates: list[tuple[str, list[dict], int]] = []
+    for current_article_pk, content_markdown, existing_content_json in rows:
+        markdown = str(content_markdown or '').strip()
+        if not markdown:
+            continue
+        _title, _cover_local, blocks, normalized_markdown = _parse_markdown_blocks(markdown)
+        rebuilt_blocks = _attach_image_block_metadata(
+            blocks,
+            resolve_url=lambda value: value.strip() if isinstance(value, str) else None,
+            image_id_by_url=image_id_maps.get(int(current_article_pk)),
+        )
+        current_content_json = existing_content_json
+        if isinstance(current_content_json, str):
+            try:
+                current_content_json = json.loads(current_content_json)
+            except json.JSONDecodeError:
+                current_content_json = None
+        if rebuilt_blocks != current_content_json or normalized_markdown != markdown:
+            updates.append((normalized_markdown, rebuilt_blocks, int(current_article_pk)))
+
+    batch_updated = len(updates)
+
+    if not dry_run and updates:
+        with storage.transaction():
+            with storage.conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    UPDATE article_content
+                    SET content_markdown = %s,
+                        content_json = %s::jsonb,
+                        updated_at = NOW()
+                    WHERE article_pk = %s
+                    """,
+                    [
+                        (
+                            normalized_markdown,
+                            json.dumps(rebuilt_blocks, ensure_ascii=False),
+                            current_article_pk,
+                        )
+                        for normalized_markdown, rebuilt_blocks, current_article_pk in updates
+                    ],
+                )
+
+    return len(rows), batch_updated
+
+
 def _backfill_range(
     resolved_dsn: str,
     *,
@@ -464,72 +535,60 @@ def _backfill_range(
             if not rows:
                 break
 
-            article_pks = [int(row[0]) for row in rows]
-            last_article_pk = article_pks[-1]
+            batch_processed, batch_updated = _process_batch(storage, rows, dry_run=dry_run)
+            processed += batch_processed
+            updated += batch_updated
+            last_article_pk = int(rows[-1][0])
+
+            msg = (
+                f'{label}Dry run progress: processed {processed} articles, would update {updated}.'
+                if dry_run
+                else f'{label}Backfill progress: processed {processed} articles, updated {updated}.'
+            )
+            if echo_lock:
+                with echo_lock:
+                    typer.echo(msg)
+            else:
+                typer.echo(msg)
+
+    return processed, updated
+
+
+def _backfill_pks(
+    resolved_dsn: str,
+    *,
+    article_pks: list[int],
+    batch_size: int = 1000,
+    dry_run: bool = False,
+    echo_lock: threading.Lock | None = None,
+    worker_id: int | None = None,
+) -> tuple[int, int]:
+    label = f'[worker {worker_id}] ' if worker_id is not None else ''
+    processed = 0
+    updated = 0
+    with PostgresStorage(resolved_dsn, auto_init=False) as storage:
+        for i in range(0, len(article_pks), batch_size):
+            batch_pks = article_pks[i:i + batch_size]
 
             with storage.conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT article_pk, id, orig_url
-                    FROM article_images
+                    SELECT article_pk, content_markdown, content_json
+                    FROM article_content
                     WHERE article_pk = ANY(%s)
-                      AND orig_url IS NOT NULL
+                    ORDER BY article_pk ASC
                     """,
-                    (article_pks,),
+                    (batch_pks,),
                 )
-                image_rows = cur.fetchall()
+                rows = cur.fetchall()
             storage.rollback()
 
-            image_id_maps: dict[int, dict[str, int]] = {}
-            for current_article_pk, image_id, orig_url in image_rows:
-                image_id_maps.setdefault(int(current_article_pk), {})[str(orig_url)] = int(image_id)
+            if not rows:
+                continue
 
-            updates: list[tuple[str, list[dict], int]] = []
-            for current_article_pk, content_markdown, existing_content_json in rows:
-                markdown = str(content_markdown or '').strip()
-                if not markdown:
-                    continue
-                _title, _cover_local, blocks, normalized_markdown = _parse_markdown_blocks(markdown)
-                rebuilt_blocks = _attach_image_block_metadata(
-                    blocks,
-                    resolve_url=lambda value: value.strip() if isinstance(value, str) else None,
-                    image_id_by_url=image_id_maps.get(int(current_article_pk)),
-                )
-                current_content_json = existing_content_json
-                if isinstance(current_content_json, str):
-                    try:
-                        current_content_json = json.loads(current_content_json)
-                    except json.JSONDecodeError:
-                        current_content_json = None
-                if rebuilt_blocks != current_content_json or normalized_markdown != markdown:
-                    updates.append((normalized_markdown, rebuilt_blocks, int(current_article_pk)))
-
-            processed += len(rows)
-
-            if dry_run:
-                updated += len(updates)
-            else:
-                if updates:
-                    with storage.transaction():
-                        with storage.conn.cursor() as cur:
-                            cur.executemany(
-                                """
-                                UPDATE article_content
-                                SET content_markdown = %s,
-                                    content_json = %s::jsonb,
-                                    updated_at = NOW()
-                                WHERE article_pk = %s
-                                """,
-                                [
-                                    (
-                                        normalized_markdown,
-                                        json.dumps(rebuilt_blocks, ensure_ascii=False),
-                                        current_article_pk,
-                                    )
-                                    for normalized_markdown, rebuilt_blocks, current_article_pk in updates
-                                ],
-                            )
-                updated += len(updates)
+            batch_processed, batch_updated = _process_batch(storage, rows, dry_run=dry_run)
+            processed += batch_processed
+            updated += batch_updated
 
             msg = (
                 f'{label}Dry run progress: processed {processed} articles, would update {updated}.'
@@ -592,42 +651,45 @@ def backfill_content_json(
         typer.echo(f'Backfilled content_json for {updated} articles.')
         return
 
+    typer.echo('Loading matching article_pks...')
     with PostgresStorage(resolved_dsn, auto_init=False) as storage:
         with storage.conn.cursor() as cur:
             cur.execute("""
-                SELECT MIN(article_pk), MAX(article_pk)
+                SELECT article_pk
                 FROM article_content
                 WHERE content_markdown IS NOT NULL
                   AND btrim(content_markdown) <> ''
+                ORDER BY article_pk ASC
             """)
-            row = cur.fetchone()
+            all_pks = [int(row[0]) for row in cur.fetchall()]
         storage.rollback()
 
-    if not row or row[0] is None:
+    if not all_pks:
         typer.echo('No article_content rows matched.')
         return
 
-    min_pk, max_pk = int(row[0]), int(row[1])
-    if min_pk == max_pk:
-        workers = 1
+    if limit is not None:
+        all_pks = all_pks[:limit]
 
-    per_worker_limit = None if limit is None else max(1, limit // workers)
-    range_size = max(1, (max_pk - min_pk + 1) // workers)
+    total_pks = len(all_pks)
+    typer.echo(f'Found {total_pks} matching rows, distributing across {workers} workers.')
+
+    chunk_size = max(1, total_pks // workers)
 
     echo_lock = threading.Lock()
-    results: list[tuple[int, int, int, int]] = []
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
         futures: list[concurrent.futures.Future[tuple[int, int]]] = []
         for w in range(workers):
-            w_start = min_pk + w * range_size
-            w_end = max_pk if w == workers - 1 else w_start + range_size - 1
+            start = w * chunk_size
+            end = start + chunk_size if w < workers - 1 else total_pks
+            chunk = all_pks[start:end]
+            if not chunk:
+                continue
             future = executor.submit(
-                _backfill_range,
+                _backfill_pks,
                 resolved_dsn=resolved_dsn,
-                start_pk=w_start - 1,
-                end_pk=w_end,
-                limit=per_worker_limit,
+                article_pks=chunk,
                 batch_size=batch_size,
                 dry_run=dry_run,
                 echo_lock=echo_lock,
