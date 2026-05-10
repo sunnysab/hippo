@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import time
 from dataclasses import dataclass
@@ -268,10 +269,10 @@ def _build_article(biz: str, comm: dict, item: dict, *, index: int) -> ArticleRe
     return ArticleRecord(
         biz=biz,
         article_id=article_id,
-        title=item.get("title") or "(untitled)",
+        title=html.unescape(item.get("title") or "(untitled)"),
         item_show_type=item.get("item_show_type"),
-        author=item.get("author"),
-        digest=item.get("digest"),
+        author=html.unescape(item.get("author") or "") or None,
+        digest=html.unescape(item.get("digest") or "") or None,
         cover=_normalize_article_url(item.get("cover")),
         link=link,
         source_url=_normalize_article_url(item.get("source_url")),
@@ -309,10 +310,10 @@ def parse_appmsg_publish(fakeid: str, payload: Dict[str, Any]) -> List[ArticleRe
                 ArticleRecord(
                     biz=fakeid,
                     article_id=article_id,
-                    title=appmsg.get("title") or "(untitled)",
+                    title=html.unescape(appmsg.get("title") or "(untitled)"),
                     item_show_type=appmsg.get("item_show_type"),
-                    author=appmsg.get("author_name"),
-                    digest=appmsg.get("digest"),
+                    author=html.unescape(appmsg.get("author_name") or "") or None,
+                    digest=html.unescape(appmsg.get("digest") or "") or None,
                     cover=_normalize_article_url(appmsg.get("cover") or appmsg.get("cover_img")),
                     link=link,
                     source_url=None,
