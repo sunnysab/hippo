@@ -33,7 +33,7 @@ const normalizeSafeUrl = (urlStr: string) => {
 const renderLineNodes = (line: string, lineIndex: number): ReactNode[] => {
   const normalizedLine = line.replace(/\\\|/g, '|');
   const nodes: ReactNode[] = [];
-  const pattern = /\[([^\]]+)\]\(([^)]+)\)|\*\*(.+?)\*\*|\*(.+?)\*/g;
+  const pattern = /\[([^\]]+)\]\(([^)]+)\)|\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`/g;
   let cursor = 0;
   let matchIndex = 0;
 
@@ -65,6 +65,8 @@ const renderLineNodes = (line: string, lineIndex: number): ReactNode[] => {
       nodes.push(createElement('strong', { key: `strong-${lineIndex}-${matchIndex}` }, match[3]));
     } else if (match[4]) {
       nodes.push(createElement('em', { key: `em-${lineIndex}-${matchIndex}` }, match[4]));
+    } else if (match[5]) {
+      nodes.push(createElement('code', { key: `code-${lineIndex}-${matchIndex}` }, match[5]));
     } else {
       nodes.push(match[0]);
     }
