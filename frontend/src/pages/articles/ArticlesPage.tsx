@@ -79,6 +79,7 @@ export function ArticlesPage() {
           <ArticleList
             onSelect={selectArticle}
             onLoadMore={() => loadArticles({ ...filters, search: deferredSearch }, false)}
+            onFilterByAccount={(biz) => updateFilters({ accountBiz: biz })}
           />
         </div>
 

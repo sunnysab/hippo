@@ -8,6 +8,7 @@ interface ArticleCardProps {
   isActive: boolean;
   onClick: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
+  onAccountClick?: (biz: string) => void;
 }
 
 export const ArticleCard = memo(function ArticleCard({
@@ -15,6 +16,7 @@ export const ArticleCard = memo(function ArticleCard({
   isActive,
   onClick,
   onContextMenu,
+  onAccountClick,
 }: ArticleCardProps) {
   const thumb = article.image_id ? `/api/image/${article.image_id}` : '';
   const avatar = article.account_avatar_url || '';
@@ -48,7 +50,14 @@ export const ArticleCard = memo(function ArticleCard({
           {avatar ? (
             <img className="article-avatar" src={avatar} alt="" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
           ) : null}
-          <span>{escapeHtml(article.account_nickname || '')}</span>
+          <span
+            className="article-account-name"
+            title="按此公众号筛选"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAccountClick?.(article.biz);
+            }}
+          >{escapeHtml(article.account_nickname || '')}</span>
           <span>{escapeHtml(formatDate(article.publish_at))}</span>
         </div>
         <div className="article-digest" title={digest}>{digest}</div>

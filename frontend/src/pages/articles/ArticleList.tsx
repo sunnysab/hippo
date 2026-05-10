@@ -11,9 +11,10 @@ import type { Article } from '../../store/articles';
 interface ArticleListProps {
   onSelect: (id: number) => Promise<void>;
   onLoadMore: () => Promise<void>;
+  onFilterByAccount?: (biz: string) => void;
 }
 
-export function ArticleList({ onSelect, onLoadMore }: ArticleListProps) {
+export function ArticleList({ onSelect, onLoadMore, onFilterByAccount }: ArticleListProps) {
   const { state } = useArticlesState();
   const { t } = useI18n();
   const { showToast } = useToast();
@@ -58,6 +59,7 @@ export function ArticleList({ onSelect, onLoadMore }: ArticleListProps) {
               e.preventDefault();
               setContextMenu({ article, x: e.clientX, y: e.clientY });
             }}
+            onAccountClick={onFilterByAccount}
           />
         ))}
       </div>
