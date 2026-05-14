@@ -17,7 +17,7 @@ export function AccountCardGrid({ query }: AccountCardGridProps) {
   const accounts = normalizedQuery
     ? state.accounts.filter((account) => (
       account.nickname.toLowerCase().includes(normalizedQuery) ||
-      account.alias.toLowerCase().includes(normalizedQuery) ||
+      (account.alias || '').toLowerCase().includes(normalizedQuery) ||
       account.biz.toLowerCase().includes(normalizedQuery)
     ))
     : state.accounts;

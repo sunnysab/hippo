@@ -10,7 +10,7 @@ export interface Group {
 export interface Account {
   biz: string;
   nickname: string;
-  alias: string;
+  alias: string | null;
   round_head_img: string;
   avatar_url: string;
   group_id: number;

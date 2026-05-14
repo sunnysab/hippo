@@ -461,9 +461,15 @@ def _list_accounts(
 
 def _get_account(storage: PostgresStorage, biz: str) -> dict[str, Any]:
     try:
-        return storage.accounts.get_account_detail(biz)
+        return _normalize_account_payload(storage.accounts.get_account_detail(biz))
     except LookupError:
         raise ApiError("Account not found", status=404)
+
+
+def _normalize_account_payload(account: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(account)
+    normalized["alias"] = normalized.get("alias") or ""
+    return normalized
 
 
 def _update_account(storage: PostgresStorage, biz: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -755,6 +761,7 @@ def list_accounts(
         page=max(page, 1),
         page_size=min(max(page_size, 1), 200),
     )
+    payload["accounts"] = [_normalize_account_payload(account) for account in payload.get("accounts", [])]
     return payload
 
 
@@ -797,13 +804,13 @@ def create_account(
                 sync_recent_days=sync_recent_days,
             )
         )
-    return {
+    return _normalize_account_payload({
         "biz": account.biz,
         "nickname": account.nickname,
         "alias": account.alias,
         "round_head_img": account.round_head_img,
         "group_id": account.group_id,
-    }
+    })
 
 
 @router.post("/account/move")
