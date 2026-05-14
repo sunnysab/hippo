@@ -1,5 +1,4 @@
 import { useI18n } from '../../i18n';
-import { escapeHtml } from '../../utils/format';
 import { ITEM_SHOW_TYPE_META } from '../../utils/constants';
 import type {
   ArticleFiltersState,
@@ -12,6 +11,15 @@ interface ArticleFilterSummaryProps {
   accountOptions: ArticleSelectOption[];
   total: number;
 }
+
+const decodeUrlEncodedValue = (value: string): string => {
+  const normalized = value.trim().replace(/\+/g, ' ');
+  try {
+    return decodeURIComponent(normalized);
+  } catch {
+    return value.trim();
+  }
+};
 
 export function ArticleFilterSummary({
   filters,
@@ -37,7 +45,12 @@ export function ArticleFilterSummary({
     tags.push(t('articles.summary.filteredByType', 'Type: {type}').replace('{type}', label));
   }
   if (filters.search.trim()) {
-    tags.push(t('articles.summary.keyword', 'Search: {value}').replace('{value}', filters.search.trim()));
+    tags.push(
+      t('articles.summary.keyword', 'Search: {value}').replace(
+        '{value}',
+        decodeUrlEncodedValue(filters.search),
+      ),
+    );
   }
   if (!tags.length) {
     tags.push(t('articles.summary.allTypes', 'Across all article types'));
@@ -45,9 +58,9 @@ export function ArticleFilterSummary({
 
   return (
     <div className="article-filter-summary" id="article-filter-summary">
-      <strong>{escapeHtml(totalLabel)}</strong>
+      <strong>{totalLabel}</strong>
       {tags.map((tag, i) => (
-        <span key={i} className="meta-note">{escapeHtml(tag)}</span>
+        <span key={i} className="meta-note">{tag}</span>
       ))}
     </div>
   );
