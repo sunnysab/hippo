@@ -199,6 +199,7 @@ def _send_sync_alert(
     error: str,
     started_at: str,
     finished_at: str,
+    report: SyncReport | None = None,
 ) -> None:
     if not error or storage.meta.get(ALERT_SENT_KEY):
         return
@@ -206,7 +207,23 @@ def _send_sync_alert(
     if not sync_settings.get('alert_enabled') or not sync_settings.get('alert_email'):
         return
     subject = 'Hippo sync failed'
-    body = f'Status: {status}\nError: {error}\nStarted: {started_at}\nFinished: {finished_at}'
+    lines = [
+        f'Status: {status}',
+        f'Error: {error}',
+        f'Started: {started_at}',
+        f'Finished: {finished_at}',
+    ]
+    if report is not None:
+        lines.append(f'Saved: {report.total_saved}')
+        lines.append(f'Downloaded: {report.downloaded}')
+        if report.accounts_total > 0:
+            lines.append(f'Progress: {report.accounts_done}/{report.accounts_total}')
+        current_account = report.current_account or {}
+        current_nickname = str(current_account.get('nickname') or '').strip()
+        current_biz = str(current_account.get('biz') or '').strip()
+        if current_nickname or current_biz:
+            lines.append(f'Current account: {current_nickname or current_biz}')
+    body = '\n'.join(lines)
     try:
         email_settings = get_email_settings(storage)
         send_email(email_settings, to_email=str(sync_settings.get('alert_email')), subject=subject, body=body)
@@ -290,6 +307,9 @@ def _persist_sync_outcome(
             'downloaded': report.downloaded,
             'skipped_accounts': skipped_accounts,
             'failed_accounts': failed_accounts,
+            'accounts_total': report.accounts_total,
+            'accounts_done': report.accounts_done,
+            'current_account': report.current_account,
         },
     )
     if not cancelled:
@@ -299,6 +319,7 @@ def _persist_sync_outcome(
             error=error or '',
             started_at=started_at,
             finished_at=finished_at,
+            report=report,
         )
     return get_sync_status(storage)
 
@@ -393,9 +414,16 @@ def _today_str() -> str:
 
 
 class SyncRunError(RuntimeError):
-    def __init__(self, message: str, *, login_required: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        login_required: bool = False,
+        report: SyncReport | None = None,
+    ) -> None:
         super().__init__(message)
         self.login_required = login_required
+        self.report = report
 
 
 class PageCollector(NullSyncObserver):
@@ -701,11 +729,30 @@ class ArticleSyncService:
     ) -> SyncReport:
         job_observer = observer or NullSyncJobObserver()
         shared_since, shared_until = self._resolve_shared_window(config)
+        accounts_total = len(accounts)
         total_saved = 0
         total_downloaded = 0
         failed_accounts = 0
         summary_rows: list[tuple[str, int]] = []
         details: list[SyncAccountResult] = []
+
+        def _build_report(*, current_account: AccountCredential | None = None) -> SyncReport:
+            current = None
+            if current_account is not None:
+                current = {
+                    'biz': current_account.biz,
+                    'nickname': current_account.nickname or current_account.biz,
+                }
+            return SyncReport(
+                total_saved=total_saved,
+                summary=list(summary_rows),
+                details=list(details),
+                downloaded=total_downloaded,
+                failed_accounts=failed_accounts,
+                accounts_total=accounts_total,
+                accounts_done=len(details),
+                current_account=current,
+            )
 
         for account in accounts:
             if _get_cancel_event().is_set():
@@ -725,6 +772,12 @@ class ArticleSyncService:
                     group_defaults=group_defaults,
                     allow_freq_skip=allow_freq_skip,
                 )
+            except SyncRunError as exc:
+                raise SyncRunError(
+                    str(exc),
+                    login_required=exc.login_required,
+                    report=_build_report(current_account=account),
+                ) from exc
             except SyncInterrupted:
                 cancelled_result = SyncAccountResult(
                     biz=account.biz,
@@ -750,6 +803,8 @@ class ArticleSyncService:
                     details=details,
                     downloaded=0,
                     failed_accounts=failed_accounts,
+                    accounts_total=accounts_total,
+                    accounts_done=len(details),
                 )
             if result.skipped:
                 job_observer.on_account_done(result, summary)
@@ -787,6 +842,8 @@ class ArticleSyncService:
             details=details,
             downloaded=total_downloaded,
             failed_accounts=failed_accounts,
+            accounts_total=accounts_total,
+            accounts_done=len(details),
         )
 
 
@@ -915,7 +972,7 @@ async def run_sync_job(
                         )
                     except SyncRunError as exc:
                         error = str(exc)
-                        report = empty_report
+                        report = exc.report or empty_report
                     except Exception as exc:
                         error = str(exc)
                         report = empty_report

@@ -484,6 +484,67 @@ class SyncJobQueueTest(unittest.TestCase):
         self.assertTrue(report.details[0].failed)
         self.assertEqual(report.details[0].error, 'invalid args')
 
+    def test_bulk_sync_login_required_error_carries_partial_report(self) -> None:
+        from hippo.sync_service import SyncRunError
+
+        config = SyncConfig(
+            mode=SyncMode.full,
+            page_size=5,
+            sleep_seconds=0,
+            reset=False,
+            recent_days=None,
+            since_date=None,
+            until_date=None,
+            force=False,
+            skip_minutes=None,
+            download_content=False,
+            download_images=False,
+            content_limit=None,
+        )
+        accounts = [
+            SimpleNamespace(biz='biz-1', nickname='First'),
+            SimpleNamespace(biz='biz-2', nickname='Second'),
+        ]
+        service = ArticleSyncService(storage=SimpleNamespace(), client=SimpleNamespace())
+        service.sync_account = AsyncMock(
+            side_effect=[
+                (
+                    SimpleNamespace(
+                        biz='biz-1',
+                        nickname='First',
+                        saved=3,
+                        completed=True,
+                        skipped=False,
+                        skip_reason=None,
+                        failed=False,
+                        error=None,
+                    ),
+                    [],
+                    SyncSummary(total_saved=3, page_count=1, completed=True),
+                ),
+                SyncRunError('invalid session', login_required=True),
+            ]
+        )
+
+        with self.assertRaises(SyncRunError) as ctx:
+            asyncio.run(
+                service.sync_accounts(
+                    accounts=accounts,
+                    config=config,
+                    bulk=True,
+                    use_resume=False,
+                )
+            )
+
+        self.assertEqual(ctx.exception.report.total_saved, 3)
+        self.assertEqual(ctx.exception.report.summary, [('First', 3)])
+        self.assertEqual(ctx.exception.report.accounts_done, 1)
+        self.assertEqual(ctx.exception.report.accounts_total, 2)
+        self.assertEqual(
+            ctx.exception.report.current_account,
+            {'biz': 'biz-2', 'nickname': 'Second'},
+        )
+
     def test_worker_tracker_marks_failed_account_status(self) -> None:
         from hippo.sync_worker import _WorkerProgressTracker
 
@@ -550,6 +611,37 @@ class SyncJobQueueTest(unittest.TestCase):
         self.assertEqual(status['status'], 'success')
         self.assertEqual(storage.meta.get('sync:last_error'), '')
         self.assertIn('failed_accounts', storage.meta.get('sync:history') or '')
+        mock_alert.assert_called_once()
+
+    def test_persist_sync_outcome_records_partial_progress_for_login_required(self) -> None:
+        storage = _FakeStorage(_FakeSyncJobs())
+        report = SyncReport(
+            total_saved=12,
+            summary=[('First', 7), ('Second', 5)],
+            details=[],
+            downloaded=10,
+            failed_accounts=0,
+            accounts_total=237,
+            accounts_done=180,
+            current_account={'biz': 'biz-181', 'nickname': '烟台大学'},
+        )
+
+        with patch('hippo.sync_service._send_sync_alert') as mock_alert:
+            status = _persist_sync_outcome(
+                storage,
+                started_at='2026-05-14T03:00:17.444228+00:00',
+                finished_at='2026-05-14T03:11:41.277604+00:00',
+                error='invalid session',
+                report=report,
+            )
+
+        history = storage.meta.get('sync:history') or ''
+        self.assertEqual(status['status'], 'login_required')
+        self.assertIn('"saved": 12', history)
+        self.assertIn('"downloaded": 10', history)
+        self.assertIn('"accounts_total": 237', history)
+        self.assertIn('"accounts_done": 180', history)
+        self.assertIn('烟台大学', history)
         mock_alert.assert_called_once()
 
 

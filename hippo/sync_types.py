@@ -72,6 +72,9 @@ class SyncReport:
     details: list[SyncAccountResult]
     downloaded: int = 0
     failed_accounts: int = 0
+    accounts_total: int = 0
+    accounts_done: int = 0
+    current_account: dict[str, Any] | None = None
 
 
 class SyncObserver(Protocol):
