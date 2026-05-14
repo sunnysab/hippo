@@ -110,6 +110,7 @@ def _get_pool(dsn: str) -> ConnectionPool:
         conninfo=dsn,
         min_size=min_conn,
         max_size=max_conn,
+        open=True,
         kwargs={'options': ' '.join(options)},
         configure=_warmup_jieba_parser,
     )
