@@ -14,7 +14,7 @@ import { apiGet } from '../api';
 interface SearchResult {
   biz: string;
   nickname: string;
-  alias: string;
+  alias: string | null;
   round_head_img: string;
   avatar_url: string;
   is_added: boolean;
