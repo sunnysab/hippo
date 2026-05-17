@@ -71,7 +71,7 @@ describe('visual hierarchy semantics', () => {
 
     const { container } = render(
       <>
-        <GroupList onSync={vi.fn()} />
+        <GroupList onSync={vi.fn()} onSelect={vi.fn()} />
         <BatchActions />
       </>,
     );

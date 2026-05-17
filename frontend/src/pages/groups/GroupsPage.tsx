@@ -1,4 +1,5 @@
-import { useEffect, useCallback, useState } from 'react';
+import { useEffect, useCallback, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useGroupsState, useGroupsActions } from '../../store/groups';
 import { GroupList } from './GroupList';
 import { GroupHeader } from './GroupHeader';
@@ -23,15 +24,44 @@ interface GroupDeleteDialogState {
   groupId: number;
 }
 
+const parseRouteGroupId = (value: string | null): number | null => {
+  if (!value || !/^\d+$/.test(value)) {
+    return null;
+  }
+  const numericValue = Number(value);
+  return numericValue > 0 ? numericValue : null;
+};
+
 export function GroupsPage() {
-  const { dispatch } = useGroupsState();
+  const { state, dispatch } = useGroupsState();
   const { loadGroups } = useGroupsActions();
   const { t } = useI18n();
   const { showToast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [accountQuery, setAccountQuery] = useState('');
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [groupNameDialog, setGroupNameDialog] = useState<GroupNameDialogState | null>(null);
   const [groupDeleteDialog, setGroupDeleteDialog] = useState<GroupDeleteDialogState | null>(null);
+  const routeGroupId = parseRouteGroupId(searchParams.get('group'));
+  const routeGroupParam = useMemo(() => searchParams.get('group') || '', [searchParams]);
+
+  const syncGroupRoute = useCallback((groupId: number | null) => {
+    const nextGroup = groupId != null ? String(groupId) : '';
+    if (routeGroupParam === nextGroup) return;
+
+    const nextParams = new URLSearchParams(searchParams);
+    if (nextGroup) {
+      nextParams.set('group', nextGroup);
+    } else {
+      nextParams.delete('group');
+    }
+    setSearchParams(nextParams, { replace: true });
+  }, [routeGroupParam, searchParams, setSearchParams]);
+
+  const selectGroup = useCallback((groupId: number | null) => {
+    dispatch({ type: 'SELECT_GROUP', groupId });
+    syncGroupRoute(groupId);
+  }, [dispatch, syncGroupRoute]);
 
   const refresh = useCallback(async () => {
     await loadGroups();
@@ -50,6 +80,26 @@ export function GroupsPage() {
     };
     return onRefresh(handler);
   }, [loadGroups]);
+
+  useEffect(() => {
+    if (!state.groups.length) return;
+
+    const groupExists = (groupId: number | null) => (
+      groupId != null && state.groups.some((group) => group.id === groupId)
+    );
+
+    let nextGroupId = state.selectedGroupId;
+    if (routeGroupId != null) {
+      nextGroupId = groupExists(routeGroupId) ? routeGroupId : (groupExists(state.defaultGroupId) ? state.defaultGroupId : null);
+    } else if (!groupExists(state.selectedGroupId)) {
+      nextGroupId = groupExists(state.defaultGroupId) ? state.defaultGroupId : null;
+    }
+
+    if (nextGroupId !== state.selectedGroupId) {
+      dispatch({ type: 'SELECT_GROUP', groupId: nextGroupId });
+    }
+    syncGroupRoute(nextGroupId);
+  }, [dispatch, routeGroupId, state.defaultGroupId, state.groups, state.selectedGroupId, syncGroupRoute]);
 
   // Handle group sync actions
   const handleGroupSync = async (groupId: number) => {
@@ -78,7 +128,7 @@ export function GroupsPage() {
   const handleConfirmGroupDelete = async () => {
     if (!groupDeleteDialog) return;
     await apiSend(`/api/group/${groupDeleteDialog.groupId}`, 'DELETE', {});
-    dispatch({ type: 'SELECT_GROUP', groupId: null });
+    selectGroup(null);
     await loadGroups();
   };
 
@@ -103,7 +153,7 @@ export function GroupsPage() {
               <span>{t('groups.create', 'New Group')}</span>
             </button>
           </div>
-          <GroupList onSync={handleGroupSync} />
+          <GroupList onSync={handleGroupSync} onSelect={selectGroup} />
         </div>
 
         <div className="panel groups-main">
