@@ -79,6 +79,14 @@ class FrontendRegressionTest(unittest.TestCase):
 
         self.assertNotIn('confirm(', source)
 
+    def test_groups_page_syncs_selected_group_with_route_query(self) -> None:
+        source = GROUPS_PAGE.read_text(encoding='utf-8')
+
+        self.assertIn("useSearchParams", source)
+        self.assertIn("searchParams.get('group')", source)
+        self.assertIn("nextParams.set('group', nextGroup)", source)
+        self.assertIn("dispatch({ type: 'SELECT_GROUP', groupId: nextGroupId })", source)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import { useGroupsState } from '../../store/groups';
 import { useI18n } from '../../i18n';
 import { GroupContextMenu } from './GroupContextMenu';
@@ -6,20 +6,14 @@ import type { Group } from '../../store/shared';
 
 interface GroupListProps {
   onSync: (groupId: number) => void;
+  onSelect: (groupId: number) => void;
 }
 
-export function GroupList({ onSync }: GroupListProps) {
-  const { state, dispatch } = useGroupsState();
+export function GroupList({ onSync, onSelect }: GroupListProps) {
+  const { state } = useGroupsState();
   const { t } = useI18n();
   const [contextGroup, setContextGroup] = useState<Group | null>(null);
   const [contextPos, setContextPos] = useState({ x: 0, y: 0 });
-
-  const selectGroup = useCallback(
-    (groupId: number) => {
-      dispatch({ type: 'SELECT_GROUP', groupId });
-    },
-    [dispatch],
-  );
 
   const handleContextMenu = (e: React.MouseEvent, group: Group) => {
     e.preventDefault();
@@ -34,7 +28,7 @@ export function GroupList({ onSync }: GroupListProps) {
           <div
             key={group.id}
             className={`list-item group-list-item${state.selectedGroupId === group.id ? ' is-active' : ''}`}
-            onClick={() => selectGroup(group.id)}
+            onClick={() => onSelect(group.id)}
             onContextMenu={(e) => handleContextMenu(e, group)}
           >
             <div>
