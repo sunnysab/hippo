@@ -129,81 +129,6 @@ def _load_schema_sql() -> str:
         raise StorageInitError(f'Schema file not found: {SCHEMA_PATH}') from exc
 
 
-def _split_sql_statements(sql_text: str) -> list[str]:
-    statements: list[str] = []
-    buffer: list[str] = []
-    in_single = False
-    in_double = False
-    dollar_tag: str | None = None
-    idx = 0
-    length = len(sql_text)
-    while idx < length:
-        char = sql_text[idx]
-        if dollar_tag:
-            if sql_text.startswith(dollar_tag, idx):
-                buffer.append(dollar_tag)
-                idx += len(dollar_tag)
-                dollar_tag = None
-            else:
-                buffer.append(char)
-                idx += 1
-            continue
-        if in_single:
-            buffer.append(char)
-            if char == "'":
-                if idx + 1 < length and sql_text[idx + 1] == "'":
-                    buffer.append("'")
-                    idx += 2
-                    continue
-                in_single = False
-            idx += 1
-            continue
-        if in_double:
-            buffer.append(char)
-            if char == '"':
-                if idx + 1 < length and sql_text[idx + 1] == '"':
-                    buffer.append('"')
-                    idx += 2
-                    continue
-                in_double = False
-            idx += 1
-            continue
-        if char == "'":
-            in_single = True
-            buffer.append(char)
-            idx += 1
-            continue
-        if char == '"':
-            in_double = True
-            buffer.append(char)
-            idx += 1
-            continue
-        if char == '$':
-            tag_end = idx + 1
-            while tag_end < length and (
-                sql_text[tag_end].isalnum() or sql_text[tag_end] == '_'
-            ):
-                tag_end += 1
-            if tag_end < length and sql_text[tag_end] == '$':
-                dollar_tag = sql_text[idx : tag_end + 1]
-                buffer.append(dollar_tag)
-                idx = tag_end + 1
-                continue
-        if char == ';':
-            statement = ''.join(buffer).strip()
-            if statement:
-                statements.append(statement)
-            buffer = []
-            idx += 1
-            continue
-        buffer.append(char)
-        idx += 1
-    statement = ''.join(buffer).strip()
-    if statement:
-        statements.append(statement)
-    return statements
-
-
 class PostgresStorage(AbstractContextManager):
     def __init__(
         self,
@@ -260,15 +185,9 @@ class PostgresStorage(AbstractContextManager):
     def _init_db(self) -> None:
         with self.conn.cursor() as cur:
             schema_sql = _load_schema_sql()
-            statements = _split_sql_statements(schema_sql)
-            total = len(statements)
-            for idx, statement in enumerate(statements, start=1):
-                first_line = statement.strip().splitlines()[0].strip()
-                preview = first_line[:160]
-                if len(first_line) > 160:
-                    preview = f'{preview}...'
-                _log_db_init(f'sql {idx}/{total}: {preview}')
-                cur.execute(statement)
+            first_line = schema_sql.strip().splitlines()[0].strip()[:160]
+            _log_db_init(f'executing schema from {SCHEMA_PATH.name} ({len(schema_sql)} bytes, starts with: {first_line}...)')
+            cur.execute(schema_sql)
             _log_db_init('update schema version')
             cur.execute(UPSERT_SCHEMA_VERSION, (SCHEMA_VERSION,))
         self.conn.commit()
