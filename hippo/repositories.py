@@ -12,6 +12,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from .models import AccountCredential, AccountGroup, ArticleRecord, LoginSession
+from .utils import build_set_clause
 
 
 @dataclass(frozen=True)
@@ -293,21 +294,18 @@ class AccountRepository:
         return result
 
     def update_account_fields(self, biz: str, **updates: Any) -> None:
-        fields: list[str] = []
-        params: list[Any] = []
-        mapping = {
-            'nickname': 'nickname',
-            'alias': 'alias',
-            'round_head_img': 'round_head_img',
-            'group_id': 'group_id',
-            'is_disabled': 'is_disabled',
-            'sync_mode': 'sync_mode',
-            'sync_recent_days': 'sync_recent_days',
-        }
-        for key, column in mapping.items():
-            if key in updates:
-                fields.append(f"{column} = %s")
-                params.append(updates[key])
+        fields, params = build_set_clause(
+            {
+                'nickname': 'nickname',
+                'alias': 'alias',
+                'round_head_img': 'round_head_img',
+                'group_id': 'group_id',
+                'is_disabled': 'is_disabled',
+                'sync_mode': 'sync_mode',
+                'sync_recent_days': 'sync_recent_days',
+            },
+            updates,
+        )
         if not fields:
             raise ValueError('No fields to update')
         fields.append('updated_at = NOW()')
@@ -329,16 +327,13 @@ class AccountRepository:
             return cur.rowcount
 
     def batch_update_fields(self, biz_list: list[str], **updates: Any) -> int:
-        fields: list[str] = []
-        params: list[Any] = []
-        mapping = {
-            'sync_mode': 'sync_mode',
-            'sync_recent_days': 'sync_recent_days',
-        }
-        for key, column in mapping.items():
-            if key in updates:
-                fields.append(f"{column} = %s")
-                params.append(updates[key])
+        fields, params = build_set_clause(
+            {
+                'sync_mode': 'sync_mode',
+                'sync_recent_days': 'sync_recent_days',
+            },
+            updates,
+        )
         if not fields:
             raise ValueError('No fields to update')
         fields.append('updated_at = NOW()')
@@ -386,17 +381,14 @@ class GroupRepository:
         )
 
     def update_group(self, group_id: int, **updates: Any) -> AccountGroup:
-        fields: list[str] = []
-        params: list[Any] = []
-        mapping = {
-            'name': 'name',
-            'sync_mode': 'sync_mode',
-            'sync_recent_days': 'sync_recent_days',
-        }
-        for key, column in mapping.items():
-            if key in updates:
-                fields.append(f"{column} = %s")
-                params.append(updates[key])
+        fields, params = build_set_clause(
+            {
+                'name': 'name',
+                'sync_mode': 'sync_mode',
+                'sync_recent_days': 'sync_recent_days',
+            },
+            updates,
+        )
         if not fields:
             raise ValueError('No fields to update')
         fields.append('updated_at = NOW()')

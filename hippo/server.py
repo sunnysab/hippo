@@ -385,17 +385,7 @@ class LoginManager:
 
 
 def _list_groups(storage: PostgresStorage) -> list[dict[str, Any]]:
-    return [
-        {
-            'id': g.id,
-            'name': g.name,
-            'account_count': g.account_count,
-            'article_count': g.article_count,
-            'sync_mode': g.sync_mode,
-            'sync_recent_days': g.sync_recent_days,
-        }
-        for g in storage.groups.list_groups()
-    ]
+    return [g.model_dump() for g in storage.groups.list_groups()]
 
 
 def _get_group(storage: PostgresStorage, group_id: int) -> dict[str, Any]:
@@ -403,14 +393,7 @@ def _get_group(storage: PostgresStorage, group_id: int) -> dict[str, Any]:
         group = storage.groups.get_group(group_id)
     except LookupError:
         raise ApiError("Group not found", status=404)
-    return {
-        'id': group.id,
-        'name': group.name,
-        'sync_mode': group.sync_mode,
-        'sync_recent_days': group.sync_recent_days,
-        'article_count': group.article_count,
-        'account_count': group.account_count,
-    }
+    return group.model_dump()
 
 
 def _update_group(storage: PostgresStorage, group_id: int, updates: dict[str, Any]) -> dict[str, Any]:
@@ -422,14 +405,7 @@ def _update_group(storage: PostgresStorage, group_id: int, updates: dict[str, An
         raise ApiError('Group not found', status=404)
     except ValueError as exc:
         raise ApiError(str(exc))
-    return {
-        'id': group.id,
-        'name': group.name,
-        'sync_mode': group.sync_mode,
-        'sync_recent_days': group.sync_recent_days,
-        'article_count': group.article_count,
-        'account_count': group.account_count,
-    }
+    return group.model_dump()
 
 
 def _delete_group(storage: PostgresStorage, group_id: int) -> None:
