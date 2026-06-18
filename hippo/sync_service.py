@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from .config import DEFAULT_PAGE_SIZE, DEFAULT_RECENT_DAYS, DEFAULT_WINDOW_END_HOUR, DEFAULT_WINDOW_START_HOUR
 from .container import build_sync_container
 from .downloader import ArticleDownloader
 from .emailer import get_email_settings, send_email
@@ -67,10 +68,7 @@ ALERT_SENT_KEY = 'sync:alert_sent'
 SYNC_LOGIN_REQUIRED_AT_KEY = 'sync:login_required_at'
 
 _logger = logging.getLogger('hippo.sync')
-_DEFAULT_RECENT_DAYS = 7
-_DEFAULT_PAGE_SIZE = 10
-_DEFAULT_WINDOW_START_HOUR = 6
-_DEFAULT_WINDOW_END_HOUR = 24
+
 _ARTICLE_EXCLUDE_KEYWORD_LIMIT = 20
 SYNC_RUN_LOCK = asyncio.Lock()
 
@@ -86,8 +84,8 @@ def default_sync_settings() -> dict[str, Any]:
     return {
         'enabled': False,
         'interval_minutes': 60,
-        'window_start_hour': _DEFAULT_WINDOW_START_HOUR,
-        'window_end_hour': _DEFAULT_WINDOW_END_HOUR,
+        'window_start_hour': DEFAULT_WINDOW_START_HOUR,
+        'window_end_hour': DEFAULT_WINDOW_END_HOUR,
         'sleep_seconds': 0.05,
         'download_content': True,
         'download_images': True,
@@ -125,7 +123,7 @@ def _normalize_window_start_hour(value: Any) -> int:
     try:
         hour = int(value)
     except TypeError, ValueError:
-        return _DEFAULT_WINDOW_START_HOUR
+        return DEFAULT_WINDOW_START_HOUR
     return min(max(hour, 0), 23)
 
 
@@ -133,7 +131,7 @@ def _normalize_window_end_hour(value: Any) -> int:
     try:
         hour = int(value)
     except TypeError, ValueError:
-        return _DEFAULT_WINDOW_END_HOUR
+        return DEFAULT_WINDOW_END_HOUR
     return min(max(hour, 0), 24)
 
 
@@ -490,7 +488,7 @@ class ArticleSyncService:
             mode = SyncMode.incremental
         recent_days = account.sync_recent_days
         if recent_days is None:
-            recent_days = group_recent_days if group_recent_days is not None else _DEFAULT_RECENT_DAYS
+            recent_days = group_recent_days if group_recent_days is not None else DEFAULT_RECENT_DAYS
         return mode, recent_days
 
     def _build_sync_plan(
@@ -845,7 +843,7 @@ class ArticleSyncService:
 def _build_sync_config(settings: dict[str, Any]) -> SyncConfig:
     return SyncConfig(
         mode=None,
-        page_size=_DEFAULT_PAGE_SIZE,
+        page_size=DEFAULT_PAGE_SIZE,
         sleep_seconds=float(settings.get('sleep_seconds') or 0),
         reset=False,
         recent_days=None,

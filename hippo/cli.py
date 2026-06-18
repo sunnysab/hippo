@@ -21,7 +21,7 @@ import click
 import typer
 from tqdm import tqdm
 
-from .config import DEFAULT_PAGE_SIZE
+from .config import DEFAULT_PAGE_SIZE, DEFAULT_RECENT_DAYS
 from .container import build_downloader_container
 from .controllers.sync import (
     SyncMode,
@@ -734,7 +734,7 @@ def _resolve_recent_since(
     if recent_days is None:
         recent_days = group_recent_days
     if recent_days is None:
-        recent_days = 7
+        recent_days = DEFAULT_RECENT_DAYS
     recent_days = max(int(recent_days), 1)
     now = datetime.now(UTC)
     return int(now.timestamp() - recent_days * 86400)

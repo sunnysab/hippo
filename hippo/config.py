@@ -18,6 +18,10 @@ DEFAULT_USER_AGENT: Final = (
 WECHAT_PROFILE_ENDPOINT: Final = 'https://mp.weixin.qq.com/mp/profile_ext'
 WECHAT_COMMENT_ENDPOINT: Final = 'https://mp.weixin.qq.com/mp/appmsg_comment'
 DEFAULT_PAGE_SIZE: Final = 10
+DEFAULT_GROUP_NAME: Final = 'Default'
+DEFAULT_RECENT_DAYS: Final = 7
+DEFAULT_WINDOW_START_HOUR: Final = 6
+DEFAULT_WINDOW_END_HOUR: Final = 24
 
 
 def _env_int(name: str, default: int | None = None) -> int | None:
@@ -41,8 +45,12 @@ __all__ = [
     'ARTICLE_WORKER_PROXY',
     'ARTICLE_WORKER_URL',
     'CLI_NAME',
+    'DEFAULT_GROUP_NAME',
     'DEFAULT_PAGE_SIZE',
+    'DEFAULT_RECENT_DAYS',
     'DEFAULT_USER_AGENT',
+    'DEFAULT_WINDOW_END_HOUR',
+    'DEFAULT_WINDOW_START_HOUR',
     'WECHAT_COMMENT_ENDPOINT',
     'WECHAT_PROFILE_ENDPOINT',
 ]
