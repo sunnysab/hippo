@@ -3,10 +3,8 @@
 
 from __future__ import annotations
 
-import argparse
 import re
 import sys
-from pathlib import Path
 
 from bs4 import BeautifulSoup
 from markdownify import markdownify
@@ -225,24 +223,3 @@ def normalize_html(raw_html: str, fmt: str = 'html', *, markdown_image_map: dict
             markdown = _swap_markdown_image_urls(markdown, markdown_image_map)
         return _postprocess_markdown(markdown)
     raise ValueError(f'Unsupported format: {fmt}')
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description='Normalize WeChat article HTML file.')
-    parser.add_argument('--input', '-i', required=True, help='Path to the HTML file to process')
-    parser.add_argument(
-        '--format',
-        '-f',
-        default='html',
-        choices=['html', 'text', 'markdown'],
-        help='Output format (default: html)',
-    )
-
-    args = parser.parse_args()
-    raw_html = Path(args.input).read_text(encoding='utf-8')
-    result = normalize_html(raw_html, args.format)
-    print(result)
-
-
-if __name__ == '__main__':
-    main()
