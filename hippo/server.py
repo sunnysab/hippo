@@ -58,8 +58,7 @@ from .article_queries import (
     _get_cached_article_total, _list_articles, _get_article,
     _list_article_images, _list_feed, _get_visible_article_images,
     _filter_blocked_content_blocks, _ensure_image_hash, _fetch_image,
-    _block_image, _binary_response,
-    _split_article_exclude_keywords,
+    _block_image, _split_article_exclude_keywords,
     _parse_date, _tokenize_query,
 )
 from .avatar import (
@@ -214,6 +213,14 @@ def _parse_int(value: str | None) -> int | None:
 
 
 
+
+
+def _binary_response(payload: bytes, content_type: str) -> Response:
+    return Response(
+        content=payload,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=259200"},
+    )
 
 
 def _get_login_info(storage: PostgresStorage) -> dict[str, Any] | None:
