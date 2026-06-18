@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Callable
-from urllib.parse import urlparse
 
 import httpx
 from tqdm import tqdm
@@ -14,6 +13,7 @@ from .file_storage import FileStorageError, S3FileStorage
 from .http import MPClient
 from .image_store import ArticleImageService
 from .storage import PostgresStorage
+from .utils import is_http_url
 
 
 def _build_image_store(storage: PostgresStorage) -> ArticleImageService | None:
@@ -34,14 +34,6 @@ def _normalize_image_url(url: str) -> str:
     if trimmed.endswith('"'):
         trimmed = trimmed.rstrip('"')
     return trimmed
-
-
-def _is_http_url(url: str) -> bool:
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return False
-    return parsed.scheme in ('http', 'https')
 
 
 def _format_http_error(exc: Exception) -> str:
@@ -80,8 +72,6 @@ async def backfill_article_images(
                 if attempt >= retries:
                     raise
                 await asyncio.sleep(min(sleep_base * (2 ** (attempt - 1)), 5.0))
-
-        raise RuntimeError('Download retry loop exited unexpectedly.')
 
     async with MPClient() as client:
         with PostgresStorage(resolved_dsn) as storage:
@@ -146,7 +136,7 @@ async def backfill_article_images(
                 ) -> tuple[tuple, bytes | None, str | None, str | None]:
                     _, _biz, _article_id, referer, orig_url = item
                     normalized = _normalize_image_url(str(orig_url))
-                    if not _is_http_url(normalized):
+                    if not is_http_url(normalized):
                         return item, None, None, f'Invalid URL scheme: {normalized}'
                     async with sem:
                         try:

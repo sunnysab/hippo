@@ -23,6 +23,32 @@ def slugify(value: str, *, max_length: int = 80) -> str:
     return normalized or 'article'
 
 
+def utc_now_dt() -> datetime:
+    return datetime.now(UTC)
+
+
+def to_utc_dt(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def normalize_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+def is_http_url(url: str) -> bool:
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    return parsed.scheme in ('http', 'https')
+
+
 def build_set_clause(
     mapping: dict[str, str],
     updates: dict[str, Any],
@@ -91,9 +117,13 @@ def utc_now_iso() -> str:
 __all__ = [
     'build_set_clause',
     'format_table',
+    'is_http_url',
+    'normalize_value',
     'parse_iso_date_to_timestamp',
     'parse_iso_datetime_to_timestamp',
     'should_skip_by_time',
     'slugify',
+    'to_utc_dt',
+    'utc_now_dt',
     'utc_now_iso',
 ]

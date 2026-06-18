@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime
 from typing import Any
 
 try:
@@ -16,7 +15,7 @@ except Exception:  # pragma: no cover - optional fallback
 from .exceptions import ApiError
 from .image_hashes import ensure_image_hash, fetch_image_bytes
 from .storage import PostgresStorage, fetchall_rows, fetchone_row
-from .utils import parse_iso_date_to_timestamp
+from .utils import normalize_value, parse_iso_date_to_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -159,14 +158,8 @@ def _parse_date(value: str | None, *, end_of_day: bool = False) -> int | None:
         raise ApiError(f'Invalid date: {value}') from exc
 
 
-def _normalize_value(value: Any) -> Any:
-    if isinstance(value, datetime):
-        return value.isoformat()
-    return value
-
-
 def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
-    return {key: _normalize_value(value) for key, value in record.items()}
+    return {key: normalize_value(value) for key, value in record.items()}
 
 
 def _tokenize_query(text: str) -> list[str]:

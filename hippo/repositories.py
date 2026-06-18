@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 import psycopg
@@ -13,7 +13,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from .models import AccountCredential, AccountGroup, ArticleRecord, LoginSession
-from .utils import build_set_clause
+from .utils import build_set_clause, to_utc_dt, utc_now_dt
 
 
 @dataclass(frozen=True)
@@ -21,10 +21,6 @@ class ArticleImageTarget:
     article_pk: int
     image_id: int
     s3_key: str | None
-
-
-def _utc_now_dt() -> datetime:
-    return datetime.now(UTC)
 
 
 def _session_identity(cookies: dict[str, str]) -> str | None:
@@ -90,7 +86,7 @@ class AccountRepository:
         self._group_repo = group_repo
 
     def upsert_account(self, account: AccountCredential) -> AccountCredential:
-        now = _utc_now_dt()
+        now = utc_now_dt()
         with self._conn.cursor() as cur:
             cur.execute(
                 """
@@ -171,7 +167,7 @@ class AccountRepository:
         if self._group_repo is None:
             raise RuntimeError('Group repository not configured.')
         target_name = group_name.strip() if group_name else ''
-        now = _utc_now_dt()
+        now = utc_now_dt()
         with self._conn.cursor() as cur:
             if not target_name:
                 cur.execute(
@@ -193,7 +189,7 @@ class AccountRepository:
             raise LookupError(f'Account {biz} not found')
 
     def update_last_synced(self, biz: str) -> None:
-        now = _utc_now_dt()
+        now = utc_now_dt()
         with self._conn.cursor() as cur:
             cur.execute(
                 'UPDATE accounts SET last_synced_at = %s, updated_at = %s WHERE biz = %s',
@@ -201,7 +197,7 @@ class AccountRepository:
             )
 
     def set_account_disabled(self, biz: str, is_disabled: bool) -> None:
-        now = _utc_now_dt()
+        now = utc_now_dt()
         with self._conn.cursor() as cur:
             cur.execute(
                 'UPDATE accounts SET is_disabled = %s, updated_at = %s WHERE biz = %s',
@@ -416,7 +412,7 @@ class GroupRepository:
         trimmed = name.strip()
         if not trimmed:
             raise ValueError('Group name cannot be empty.')
-        now = _utc_now_dt()
+        now = utc_now_dt()
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
@@ -468,7 +464,7 @@ class LoginSessionRepository:
         self._conn = conn
 
     def save_login_session(self, session: LoginSession, *, set_default: bool = True) -> LoginSession:
-        now = _utc_now_dt()
+        now = utc_now_dt()
         cookie_json = json.dumps(session.cookies, ensure_ascii=False)
         session_identity = _session_identity(session.cookies)
         with self._conn.cursor(row_factory=dict_row) as cur:
@@ -564,9 +560,9 @@ class LoginSessionRepository:
                 parsed = datetime.fromisoformat(updated_at)
             except ValueError:
                 return None
-            return _to_utc_dt(parsed)
+            return to_utc_dt(parsed)
         if isinstance(updated_at, datetime):
-            return _to_utc_dt(updated_at)
+            return to_utc_dt(updated_at)
         return None
 
 
@@ -714,7 +710,7 @@ class ArticleRepository:
         return article_pk, is_inserted
 
     def save_articles(self, articles: Iterable[ArticleRecord]) -> int:
-        now = _utc_now_dt()
+        now = utc_now_dt()
         inserted_count = 0
         with self._conn.cursor() as cur:
             for article in articles:
@@ -763,7 +759,7 @@ class ArticleRepository:
         cover_url: str | None,
         images: list[dict],
     ) -> None:
-        now = _utc_now_dt()
+        now = utc_now_dt()
         normalized_cover: str | None = None
         with self._conn.cursor() as cur:
             if cover_url is not None:
@@ -1006,7 +1002,7 @@ class ImageRepository:
                     updated_at = %s
                 WHERE id = %s
                 """,
-                (hash_algo, content_hash, _utc_now_dt(), image_id),
+                (hash_algo, content_hash, utc_now_dt(), image_id),
             )
             if cur.rowcount == 0:
                 raise LookupError(f'Image {image_id} not found')
@@ -1026,7 +1022,7 @@ class ImageRepository:
                 ON CONFLICT (hash_algo, content_hash) DO UPDATE SET
                     source_image_id = COALESCE(blocked_image_hashes.source_image_id, EXCLUDED.source_image_id)
                 """,
-                (hash_algo, content_hash, source_image_id, _utc_now_dt()),
+                (hash_algo, content_hash, source_image_id, utc_now_dt()),
             )
 
     def has_blocked_hashes(self) -> bool:
@@ -1106,7 +1102,7 @@ class ImageRepository:
                 (
                     content_type,
                     s3_key,
-                    _utc_now_dt(),
+                    utc_now_dt(),
                     article_pk,
                     orig_url,
                 ),
@@ -1140,9 +1136,9 @@ class ImageRepository:
                 WHERE article_pk = %s AND orig_url = %s
                 """,
                 (
-                    _utc_now_dt(),
+                    utc_now_dt(),
                     trimmed,
-                    _utc_now_dt(),
+                    utc_now_dt(),
                     article_pk,
                     orig_url,
                 ),
@@ -1160,12 +1156,6 @@ class ImageRepository:
                 (biz,),
             )
             return [row[0] for row in cur.fetchall()]
-
-
-def _to_utc_dt(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
 
 
 def _row_to_account(row: dict[str, Any]) -> AccountCredential:
