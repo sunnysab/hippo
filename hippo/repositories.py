@@ -668,49 +668,82 @@ class ArticleRepository:
             return int(cover)
         return None
 
+    @staticmethod
+    def _upsert_article_row(
+        cur: psycopg.Cursor,
+        *,
+        biz: str,
+        article_id: str,
+        title: str,
+        item_show_type: int | None,
+        author: str | None,
+        digest: str | None,
+        link: str,
+        source_url: str | None,
+        publish_at: int | None,
+        raw_json: str,
+        now: datetime,
+        return_inserted: bool = False,
+    ) -> tuple[int, bool]:
+        cur.execute(
+            """
+            INSERT INTO articles
+                (biz, article_id, title, item_show_type, author, digest, cover, link, source_url,
+                 publish_at, raw_json, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s)
+            ON CONFLICT (biz, article_id) DO UPDATE SET
+                title=EXCLUDED.title,
+                item_show_type=COALESCE(EXCLUDED.item_show_type, articles.item_show_type),
+                author=EXCLUDED.author,
+                digest=EXCLUDED.digest,
+                link=EXCLUDED.link,
+                source_url=EXCLUDED.source_url,
+                publish_at=EXCLUDED.publish_at,
+                raw_json=EXCLUDED.raw_json,
+                updated_at=EXCLUDED.updated_at
+            RETURNING id""" + (", (xmax = 0) AS inserted" if return_inserted else ""),
+            (
+                biz,
+                article_id,
+                title,
+                item_show_type,
+                author,
+                digest,
+                None,
+                link,
+                source_url,
+                publish_at,
+                raw_json,
+                now,
+                now,
+            ),
+        )
+        row = cur.fetchone()
+        article_pk = int(row[0])
+        is_inserted = bool(row[1]) if return_inserted else False
+        return article_pk, is_inserted
+
     def save_articles(self, articles: Iterable[ArticleRecord]) -> int:
         now = _utc_now_dt()
         inserted_count = 0
         with self._conn.cursor() as cur:
             for article in articles:
-                cur.execute(
-                    """
-                    INSERT INTO articles
-                        (biz, article_id, title, item_show_type, author, digest, cover, link, source_url,
-                         publish_at, raw_json, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s, %s)
-                    ON CONFLICT (biz, article_id) DO UPDATE SET
-                        title=EXCLUDED.title,
-                        item_show_type=COALESCE(EXCLUDED.item_show_type, articles.item_show_type),
-                        author=EXCLUDED.author,
-                        digest=EXCLUDED.digest,
-                        link=EXCLUDED.link,
-                        source_url=EXCLUDED.source_url,
-                        publish_at=EXCLUDED.publish_at,
-                        raw_json=EXCLUDED.raw_json,
-                        updated_at=EXCLUDED.updated_at
-                    RETURNING id, (xmax = 0) AS inserted
-                    """,
-                    (
-                        article.biz,
-                        article.article_id,
-                        article.title,
-                        article.item_show_type,
-                        article.author,
-                        article.digest,
-                        None,
-                        article.link,
-                        article.source_url,
-                        article.publish_at,
-                        json.dumps(article.raw, ensure_ascii=False),
-                        now,
-                        now,
-                    ),
+                article_pk, is_inserted = self._upsert_article_row(
+                    cur,
+                    biz=article.biz,
+                    article_id=article.article_id,
+                    title=article.title,
+                    item_show_type=article.item_show_type,
+                    author=article.author,
+                    digest=article.digest,
+                    link=article.link,
+                    source_url=article.source_url,
+                    publish_at=article.publish_at,
+                    raw_json=json.dumps(article.raw, ensure_ascii=False),
+                    now=now,
+                    return_inserted=True,
                 )
-                row = cur.fetchone()
-                article_pk = int(row[0])
-                is_inserted = bool(row[1])
                 cover_id = self._normalize_cover_id(article.cover)
                 if cover_id is None:
                     cover_id = self._ensure_cover_image(
@@ -773,45 +806,20 @@ class ArticleRepository:
                         },
                         *images,
                     ]
-            cur.execute(
-                """
-                INSERT INTO articles (
-                    biz, article_id, title, item_show_type, author, digest, cover, link, source_url,
-                    publish_at, raw_json, created_at, updated_at
-                )
-                VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s
-                )
-                ON CONFLICT (biz, article_id) DO UPDATE SET
-                    title=EXCLUDED.title,
-                    item_show_type=COALESCE(EXCLUDED.item_show_type, articles.item_show_type),
-                    author=EXCLUDED.author,
-                    digest=EXCLUDED.digest,
-                    link=EXCLUDED.link,
-                    source_url=EXCLUDED.source_url,
-                    publish_at=EXCLUDED.publish_at,
-                    raw_json=EXCLUDED.raw_json,
-                    updated_at=EXCLUDED.updated_at
-                RETURNING id
-                """,
-                (
-                    article.biz,
-                    article.article_id,
-                    title,
-                    item_show_type,
-                    article.author,
-                    article.digest,
-                    None,
-                    article.link,
-                    article.source_url,
-                    article.publish_at,
-                    json.dumps(article.raw, ensure_ascii=False),
-                    now,
-                    now,
-                ),
+            article_pk, _ = self._upsert_article_row(
+                cur,
+                biz=article.biz,
+                article_id=article.article_id,
+                title=title,
+                item_show_type=item_show_type,
+                author=article.author,
+                digest=article.digest,
+                link=article.link,
+                source_url=article.source_url,
+                publish_at=article.publish_at,
+                raw_json=json.dumps(article.raw, ensure_ascii=False),
+                now=now,
             )
-            article_pk = cur.fetchone()[0]
 
             cur.execute('DELETE FROM article_images WHERE article_pk = %s', (article_pk,))
             image_id_map: dict[str, int] = {}
