@@ -10,6 +10,7 @@ from contextlib import AbstractContextManager, suppress
 from pathlib import Path
 from typing import Any
 
+import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
@@ -52,6 +53,21 @@ def _log_db_init(message: str) -> None:
     if not _db_init_log_enabled():
         return
     print(f'[db init] {message}', file=sys.stderr, flush=True)
+
+
+def _extract_error_snippet(sql: str, exc: psycopg.errors.DatabaseError) -> str:
+    position = getattr(exc.diag, 'position', None)
+    if not position:
+        return ''
+    pos = int(position)
+    start = max(sql.rfind('\n', 0, pos), 0)
+    end = sql.find('\n', pos)
+    if end == -1:
+        end = len(sql)
+    line = sql[start:end].strip()
+    if len(line) > 200:
+        line = line[:200] + '...'
+    return f'at position {pos}: "{line}"'
 
 
 def _jieba_warmup_enabled() -> bool:
@@ -173,11 +189,13 @@ class PostgresStorage(AbstractContextManager):
     def _init_db(self) -> None:
         with self.conn.cursor() as cur:
             schema_sql = _load_schema_sql()
-            first_line = schema_sql.strip().splitlines()[0].strip()[:160]
-            _log_db_init(
-                f'executing schema from {SCHEMA_PATH.name} ({len(schema_sql)} bytes, starts with: {first_line}...)'
-            )
-            cur.execute(schema_sql)
+            _log_db_init(f'executing schema from {SCHEMA_PATH.name} ({len(schema_sql)} bytes)')
+            try:
+                cur.execute(schema_sql)
+            except psycopg.errors.DatabaseError as exc:
+                snippet = _extract_error_snippet(schema_sql, exc)
+                _log_db_init(f'schema execution failed{f": {snippet}" if snippet else ""}')
+                raise
             _log_db_init('update schema version')
             cur.execute(UPSERT_SCHEMA_VERSION, (SCHEMA_VERSION,))
         self.conn.commit()
