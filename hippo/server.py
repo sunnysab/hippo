@@ -59,7 +59,7 @@ from .article_queries import (
     _list_article_images, _list_feed, _get_visible_article_images,
     _filter_blocked_content_blocks, _ensure_image_hash, _fetch_image,
     _block_image, _binary_response,
-    _split_article_exclude_keywords, _normalize_api_item_show_type,
+    _split_article_exclude_keywords,
     _parse_date, _tokenize_query,
 )
 from .avatar import (

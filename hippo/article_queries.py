@@ -38,7 +38,7 @@ def _build_item_show_type_where_clause(item_show_type: int) -> tuple[str, list[i
     return 'a.item_show_type = %s', [item_show_type]
 
 
-def _normalize_api_item_show_type(value: Any) -> int | None:
+def _coalesce_item_show_type(value: Any) -> int | None:
     if value is None:
         return 0
     try:
@@ -470,7 +470,7 @@ def _list_articles(
     )
     rows = fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
     for row in rows:
-        row['item_show_type'] = _normalize_api_item_show_type(row.get('item_show_type'))
+        row['item_show_type'] = _coalesce_item_show_type(row.get('item_show_type'))
         row["account_avatar_url"] = f"/api/account/{row['biz']}/avatar"
     has_active_filters = (
         article_id not in (None, '')
@@ -531,7 +531,7 @@ def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
     )
     if not article:
         raise ApiError("Article not found", status=404)
-    article['item_show_type'] = _normalize_api_item_show_type(article.get('item_show_type'))
+    article['item_show_type'] = _coalesce_item_show_type(article.get('item_show_type'))
     article["account_avatar_url"] = f"/api/account/{article['biz']}/avatar"
 
     content_row = fetchone_row(
