@@ -40,6 +40,29 @@ dependencies = [
 [project.scripts]
 hippo = "hippo.cli:app"
 
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "ARG", "RUF"]
+ignore = [
+  "ARG",   # unused-argument (too noisy, often intentional)
+  "B008",  # function-call-in-default-argument (standard FastAPI/Typer pattern)
+  "E402",  # module-import-not-at-top-of-file (jieba fallback imports)
+  "E501",  # line-too-long (handled by formatter)
+  "N818",  # exception name suffix
+  "B904",  # raise-within-try (too noisy for existing code)
+  "RUF001",  # ambiguous-unicode-character-string (false positives for Chinese text)
+  "RUF002",  # ambiguous-unicode-character-docstring (false positives for Chinese text)
+  "RUF003",  # ambiguous-unicode-character-comment (false positives for Chinese text)
+  "RUF006",  # asyncio-dangling-task (known fire-and-forget patterns)
+]
+
+[tool.ruff.format]
+quote-style = "single"
+docstring-code-format = true
+
 [tool.setuptools]
 py-modules = ["__init__"]
 packages = ["hippo", "hippo.controllers"]
