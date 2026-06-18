@@ -30,6 +30,7 @@ try:
 except Exception:  # pragma: no cover - optional fallback
     jieba = None
 
+from .exceptions import ApiError
 from .emailer import get_email_settings, send_email, set_email_settings
 from .image_hashes import IMAGE_HASH_ALGO, ensure_image_hash, fetch_image_bytes
 from .http import MPClient
@@ -80,12 +81,6 @@ _LOG_LEVEL_MAP = {
 _INPROCESS_SYNC_VALUES = {'1', 'true', 'yes', 'on'}
 
 logger = logging.getLogger("hippo.serve")
-
-
-class ApiError(RuntimeError):
-    def __init__(self, message: str, *, status: int = 400) -> None:
-        super().__init__(message)
-        self.status = status
 
 
 def _resolve_log_level() -> tuple[int, str]:

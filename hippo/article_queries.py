@@ -16,6 +16,7 @@ except Exception:  # pragma: no cover - optional fallback
     jieba = None
 
 from .storage import PostgresStorage, fetchall_rows, fetchone_row
+from .exceptions import ApiError
 from .image_hashes import IMAGE_HASH_ALGO, ensure_image_hash, fetch_image_bytes
 from .rss import build_rss_xml, query_rss_items
 from .utils import parse_iso_date_to_timestamp, utc_now_iso
@@ -47,7 +48,6 @@ def _normalize_api_item_show_type(value: Any) -> int | None:
 
 
 def _normalize_item_show_type(value: Any) -> int | None:
-    from .server import ApiError
     if value in (None, ''):
         return None
     try:
@@ -60,7 +60,6 @@ def _normalize_item_show_type(value: Any) -> int | None:
 
 
 def _normalize_sync_mode(value: Any) -> str | None:
-    from .server import ApiError
     if value in (None, ""):
         return None
     mode = str(value).strip().lower()
@@ -72,7 +71,6 @@ def _normalize_sync_mode(value: Any) -> str | None:
 
 
 def _normalize_recent_days(value: Any) -> int | None:
-    from .server import ApiError
     if value in (None, ""):
         return None
     try:
@@ -85,7 +83,6 @@ def _normalize_recent_days(value: Any) -> int | None:
 
 
 def _normalize_article_sort(value: str | None, *, has_query: bool) -> str:
-    from .server import ApiError
     if value in (None, ''):
         return ARTICLE_SORT_RELEVANCE_DESC if has_query else ARTICLE_SORT_PUBLISH_AT_DESC
     sort = value.strip().lower()
@@ -159,7 +156,6 @@ def _build_article_exclude_keywords_where_clause(exclude_keywords: list[str] | N
 
 
 def _parse_date(value: str | None, *, end_of_day: bool = False) -> int | None:
-    from .server import ApiError
     try:
         return parse_iso_date_to_timestamp(value, end_of_day=end_of_day)
     except ValueError as exc:
@@ -518,7 +514,6 @@ def _list_articles(
 
 
 def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
-    from .server import ApiError
     article = fetchone_row(
         storage,
         (
@@ -615,7 +610,6 @@ def _filter_blocked_content_blocks(
 
 
 def _ensure_image_hash(storage: PostgresStorage, image_id: int, *, allow_origin_fetch: bool = True) -> dict[str, Any]:
-    from .server import ApiError
     try:
         with storage.transaction():
             return ensure_image_hash(storage, image_id, allow_origin_fetch=allow_origin_fetch)
@@ -642,7 +636,6 @@ def _block_image(storage: PostgresStorage, image_id: int) -> dict[str, Any]:
 
 
 def _fetch_image(storage: PostgresStorage, image_id: int) -> tuple[bytes, str]:
-    from .server import ApiError
     try:
         return fetch_image_bytes(storage, image_id)
     except LookupError as exc:
