@@ -49,6 +49,7 @@ from .avatar import (
     _get_avatar_row,
     _upsert_avatar_url,
 )
+from .config import DEFAULT_GROUP_NAME
 from .container import build_downloader_container
 from .emailer import get_email_settings, send_email, set_email_settings
 from .exceptions import ApiError
@@ -75,7 +76,6 @@ from .wechat_api import SessionExpiredError, WeChatApiClient
 
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_PORT = 8000
-DEFAULT_GROUP_NAME = 'Default'
 DEFAULT_LOG_LEVEL = 'WARNING'
 _LOG_LEVEL_MAP = {
     'CRITICAL': logging.CRITICAL,
