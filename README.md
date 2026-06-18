@@ -1,424 +1,190 @@
-# Hippo 使用说明
+# Hippo
 
-基于 [Typer](https://typer.tiangolo.com) 的命令行工具，用于管理公众号、同步文章列表、下载文章内容，数据存储使用 PostgreSQL。
+管理微信公众号文章的工具集。提供 CLI 和 Web UI，支持文章同步、下载、全文检索与图片管理。
 
----
-
-## 安装与运行
-
-### 方式 A：虚拟环境 + 本地运行
+## 快速开始
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate          # Windows 使用 .venv\Scripts\activate
-cp .env.example .env
-pip install -r requirements-cli.txt
-python -m hippo --help
-```
-
-### 方式 B：开发模式安装
-
-```bash
+# 安装
 pip install -e .
-hippo --help
-```
 
-### 前端构建
-
-Web UI 现在使用 React 构建产物，启动服务前需要先构建前端：
-
-```bash
-npm --prefix frontend ci
-npm --prefix frontend run build
-```
-
-如果是重新 clone 的环境，先恢复 `.env`：
-
-```bash
+# 配置数据库
 cp .env.example .env
+# 编辑 .env 设置 HIPPO_PG_DSN
+
+# 初始化数据库
+hippo db init
+
+# 登录微信公众号平台
+hippo login
+
+# 搜索并添加公众号
+hippo account search 关键词 --interactive
+
+# 同步文章列表 + 下载正文
+hippo account sync-all
+hippo article sync-all
 ```
 
-另外，`frontend/dist` 不会跟随仓库保存，需要通过前面的前端构建命令重新生成。
-
-### 方式 C：Docker
+## Web UI
 
 ```bash
-# 构建镜像
-docker build -t hippo .
-
-# 运行 CLI
-docker run -it --rm -e HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname" hippo --help
-
-# 登录示例
-docker run -it --rm -e HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname" hippo login
-
-# 同步文章示例
-docker run -it --rm -e HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname" hippo article sync-all
+# 构建前端
+npm --prefix frontend ci && npm --prefix frontend run build
 
 # 启动 Web 服务
-docker run --rm -p 8000:8000 \
-  -e HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname" \
-  hippo
+hippo serve --host 0.0.0.0 --port 8000
 ```
 
-当前 Docker 镜像默认执行 `hippo serve --host 0.0.0.0 --port 8000 --static-dir /app/frontend/dist`。
-
----
-
-## 登录与账号管理
-
-### 登录
+也支持 Docker：
 
 ```bash
-python -m hippo login
+docker build -t hippo .
+docker run -it --rm -e HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname" hippo --help
 ```
 
-扫码后会保存登录会话（token + cookies）。
+## 功能
 
-### 搜索公众号（推荐交互式）
+### 登录与会话
+
+扫码登录微信公众号后台，持久化保存 session（token + cookies），支持多会话管理。
+
+### 公众号管理
+
+- 通过微信接口搜索公众号（支持交互式筛选）
+- 分组管理、批量设置同步参数
+- 头像缓存
+
+### 文章同步
+
+- **列表同步**：从公众号拉取文章元数据（标题、摘要、封面、发布时间等），支持断点续传
+- **内容下载**：下载正文 HTML，转换为 Markdown 和结构化 JSON blocks
+- **图片下载**：下载文章内嵌图片，存入 PostgreSQL 或 S3 对象存储
+- 频率控制自动退避、失败重试、增量跳过
+
+### 全文检索
+
+基于 PostgreSQL `pg_jieba` 扩展实现中文分词全文检索：
+
+- `articles.search_vector` 列（`tsvector`），标题权重 A、摘要/正文权重 B、作者权重 C
+- 正文取前 50000 字符索引
+- 支持关键词搜索、排除关键词过滤、相关度排序
+- 查询入口：`GET /api/article?q=关键词`
+
+### Web API
+
+FastAPI 提供 REST API：
+
+| 端点 | 说明 |
+|---|---|
+| `GET /api/article` | 文章列表（支持分页、搜索、筛选、排序） |
+| `GET /api/article/{id}` | 文章详情（包含正文内容和图片） |
+| `GET /api/group` | 分组管理 |
+| `GET /api/account` | 公众号管理 |
+| `POST /api/login/start` | 扫码登录 |
+| `GET/PATCH /api/settings` | 同步设置 |
+| `POST /api/settings/run` | 手动触发同步 |
+| `GET /api/image/{id}` | 图片获取 |
+| `POST /api/image/{id}/block` | 屏蔽图片 |
+| `GET /api/feed/mixed` | 混合 Feed（支持 RSS） |
+
+### 后台同步
+
+同步逻辑拆分为独立 worker：
 
 ```bash
-python -m hippo account search 关键词 --interactive
+# Web 服务（仅提供 API/UI）
+hippo serve --host 0.0.0.0 --port 8000
+
+# 同步 worker（定时检查并执行同步任务）
+hippo sync-worker
 ```
 
-- 默认每页 10 条
-- 已添加的账号会在昵称后标注“（已添加）”
-- 交互式模式：输入 `1,3-5` 选择添加；输入 `q` 退出
+配合 systemd 部署（附 `hippo.service` / `hippo-sync-worker.service`）。
 
-### 管理已保存账号
+## 数据库
+
+### PostgreSQL 表结构
+
+| 表 | 说明 |
+|---|---|
+| `accounts` | 公众号信息（biz、昵称、分组、同步参数） |
+| `articles` | 文章元数据 + `search_vector` 全文索引 |
+| `article_content` | 正文（clean_html、markdown、JSON blocks） |
+| `article_images` | 图片元数据（S3 key、内容哈希、失败记录） |
+| `blocked_image_hashes` | 用户屏蔽的图片内容哈希 |
+| `account_groups` | 公众号分组 |
+| `sync_jobs` | 同步任务队列 |
+| `login_sessions` | 登录会话 |
+| `meta` | 键值存储（schema 版本、同步进度等） |
+
+### 图片存储
+
+支持 PostgreSQL 和 S3 兼容对象存储。图片下载失败会记录原因，可通过 `hippo article backfill-images` 重试。
+
+## 配置
+
+核心环境变量（参见 `hippo/config.py`）：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `HIPPO_PG_DSN` | — | PostgreSQL 连接串 |
+| `HIPPO_PG_POOL_MIN` | `1` | 连接池最小连接数 |
+| `HIPPO_PG_POOL_MAX` | `8` | 连接池最大连接数 |
+| `HIPPO_PG_JIEBA_WARMUP` | `1` | 是否预热 jieba 分词 |
+| `HIPPO_ARTICLE_WORKER` | — | Cloudflare Worker 中转地址 |
+| `HIPPO_ARTICLE_WORKER_PROXY` | — | Worker 访问代理 |
+| `HIPPO_ARTICLE_MAX_CONNECTIONS` | — | Worker 最大并发连接 |
+| `HIPPO_LOG_LEVEL` | `WARNING` | 日志级别 |
+| `HIPPO_ENABLE_INPROCESS_SYNC` | — | 是否在 Web 进程内执行同步 |
+
+## 开发
 
 ```bash
-python -m hippo account list
-python -m hippo account add        # 手动保存 fakeid
-python -m hippo account remove <biz>
-python -m hippo account set-default <biz>
+# 安装开发依赖
+pip install -e .
+
+# 代码检查
+ruff check hippo/
+ruff format --check hippo/
+
+# 测试
+python -m pytest tests/
 ```
-
----
-
-## 同步文章列表
-
-### 账号同步（文章列表）
-
-```bash
-python -m hippo account sync --biz <fakeid>
-python -m hippo account sync-all
-```
-
-默认按最新 -> 更早 翻页，写入文章列表缓存。
-
-特点：
-- 每 60 次请求强制等待 15 秒
-- 触发频率控制（freq control）后自动等待重试
-- 支持断点续传（按账号保存 offset）
-- 已全量完成过的账号可快速增量（遇到已存在整页直接停止）
-- 进度条展示“已抓取/总数 + 成功/未完成/失败”
-
-### 跳过逻辑
-
-默认会跳过“今日已完成”的账号。可用以下参数控制：
-
-```bash
-python -m hippo account sync-all --force
-python -m hippo account sync-all --skip-time 30
-```
-
-- `--force`：忽略跳过逻辑
-- `--skip-time 30`：30 分钟内同步过的账号跳过
-- 两者不可同时使用
-
-### 断点与完成标记
-
-- 断点进度：保存在 meta 表，key 为 `sync_progress:<biz>`
-- 当页为空时判定“已完成”，写入 `sync_complete:<biz>`（当天有效）
-
-### Web 设置接口说明
-
-- 设置页入口现在显示为“设置”。
-- `GET /api/settings/status`
-  - 返回全局同步状态与最近同步历史。
-  - 默认仅返回最近 `5` 条 `history`（可通过 `limit` 参数调整，范围 `1~50`）。
-- `GET /api/settings/tasks`
-  - 默认返回任务摘要（适合轮询列表页）。
-  - 默认返回最近 `5` 个任务（可通过 `limit` 参数调整）。
-  - 如需完整任务数据（含 `accounts` 与 `report`），可传 `detail=true`，或调用 `GET /api/settings/tasks/{task_id}`。
-- `GET /api/settings` / `PATCH /api/settings`
-  - 设置包含 `window_start_hour` 与 `window_end_hour`（默认 `6` 到 `24`）。
-  - 自动调度只会在该时间段内触发执行。
-  - `article_exclude_keywords` 用于设置文章默认过滤关键词；每行一个，或使用逗号、分号分隔。
-  - Web 进程默认不再执行自动同步；请单独启动 `hippo sync-worker`。
-- `POST /api/settings/test-email`
-  - 使用当前设置或请求体中的 SMTP 参数发送测试邮件。
-- `POST /api/settings/run`
-  - 手动触发同步任务，可选传 `group_id` 或 `biz_list`。
-
-### Web 与同步进程拆分
-
-```bash
-python -m hippo serve --host 0.0.0.0 --port 2000
-python -m hippo sync-worker
-```
-
-- `hippo serve` 默认只提供 UI 与 API，不在进程内执行自动同步。
-- `hippo sync-worker` 负责定时检查同步设置、创建队列任务并实际执行同步。
-- 如需保留旧的单进程行为，可显式传入 `hippo serve --inprocess-sync`。
-- `hippo serve` 现在也支持 Unix socket：
-
-```bash
-# 同时监听 TCP 和 Unix socket
-python -m hippo serve --host 0.0.0.0 --port 2000 --unix-socket /run/hippo/hippo.sock
-
-# 仅监听 Unix socket
-python -m hippo serve --no-tcp --unix-socket /run/hippo/hippo.sock
-```
-
-- `--unix-socket-mode` 用八进制权限表示，默认 `660`。
-- `--unix-socket` 的父目录需要提前存在，例如先由 systemd `RuntimeDirectory=` 或部署脚本创建。
-- 如果 socket 文件已存在且本身就是 socket，启动时会自动清理旧文件；如果该路径被普通文件占用，启动会直接报错。
-
-### systemd 部署
-
-仓库内提供了两个 service 文件：
-
-- `hippo.service`：Web API / UI
-- `hippo-sync-worker.service`：同步队列 worker
-
-默认日志文件：
-
-- Web：`logs/hippo-web.log`
-- Worker：`logs/hippo-sync-worker.log`
-
-两个 service 都会加载仓库根目录的 `.env`：
-
-- `EnvironmentFile=/home/sab/hippo/.env`
-- service 内单独声明的 `HIPPO_LOG_FILE` 会覆盖 `.env` 中同名变量
-
-示例安装步骤：
-
-```bash
-sudo cp hippo.service /etc/systemd/system/
-sudo cp hippo-sync-worker.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now hippo.service
-sudo systemctl enable --now hippo-sync-worker.service
-```
-
-查看状态：
-
-```bash
-sudo systemctl status hippo.service
-sudo systemctl status hippo-sync-worker.service
-```
-
-如果你要让 Web 服务走 Unix socket，可把 `ExecStart` 改成类似这样：
-
-```bash
-ExecStart=/home/sab/hippo/.venv/bin/python -m hippo serve --no-tcp --unix-socket /run/hippo/hippo.sock
-```
-
----
-
-## 下载文章
-
-### 基本用法
-
-```bash
-python -m hippo article sync --biz <fakeid>
-python -m hippo article sync-all
-python -m hippo article download "https://mp.weixin.qq.com/..."
-```
-
-- `article sync` / `sync-all`：基于已同步的文章列表下载正文
-- `article download`：下载单篇文章链接
-
-### Worker 配置
-
-- 文章 HTML 可通过 Cloudflare Worker 抓取，图片仍然直连。
-- `--worker-prefix`：Worker 前缀或模板，支持 `{url}` 占位符，默认读取 `HIPPO_ARTICLE_WORKER`
-- `--worker-proxy`：Worker 请求代理（HTTP/SOCKS5），默认读取 `HIPPO_ARTICLE_WORKER_PROXY`
-- `--workers`：文章下载并发数，默认读取 `HIPPO_ARTICLE_MAX_CONNECTIONS`，别名 `--worker-max-connections`
-
-### 下载行为
-- 文章 HTML 最多重试 5 次，之后跳过该文章
-- 图片下载使用 2 个后台线程，最多重试 3 次
-- 图片下载失败会记录到 `article_images.failed_*`，后续可通过 `article backfill-images` 重试
-- 执行 `sync-all` 时，每个账号会等待当前图片队列完成后再处理下一个账号
-- 如果被 Ctrl+C 中断，队列中尚未完成的图片会被标记为失败，方便后续补偿
-
----
-
-## 数据库存储
-
-### PostgreSQL
-
-设置环境变量：
-
-```bash
-export HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname"
-```
-
-程序将使用 PostgreSQL 进行读写。
-
-**PostgreSQL 时间字段使用 `timestamptz`**（带时区）。
-
-### PostgreSQL 文章内容与图片存储
-
-当设置 `HIPPO_PG_DSN` 时，`article download/sync/sync-all` 会将文章内容与图片写入 PG：
-
-- `articles` 表保存文章元数据（包含封面 URL）
-- `article_content` 表保存正文内容：
-  - `url_token`（文章 URL 中 `/s/<token>`）
-  - `clean_html`（清理后的正文 HTML，图片仍为原始 URL）
-  - `content_markdown`（正文 Markdown，不含封面图与标题）
-  - `content_json`（图文混排的 blocks）
-- `article_images` 表保存图片元数据、远端地址、存储键，以及可选的内容哈希（`sha256`）
-- `blocked_image_hashes` 表保存被用户屏蔽的图片内容哈希，文章预览会自动过滤命中的正文图片
-
-升级包含图片屏蔽功能的版本后，需要重新执行一次数据库初始化以应用新 schema：
-
-```bash
-python -m hippo db init
-```
-
-如需给历史图片批量回填内容哈希，可执行：
-
-```bash
-python -m hippo article backfill-image-hashes
-```
-
-该命令只处理已经写入对象存储的图片，不会回源抓取原图；如果还有未入库图片，先执行：
-
-```bash
-python -m hippo article backfill-images
-```
-
-也可以在初始化 schema 后直接联动执行：
-
-```bash
-python -m hippo db init --backfill-image-hashes
-```
-
-`content_json` 的 block 结构示例：
-
-```json
-[
-  {"type": "heading", "level": 1, "text": "标题"},
-  {"type": "paragraph", "text": "正文段落"},
-  {"type": "image", "kind": "inline", "orig_url": "https://..."},
-  {"type": "link", "text": "https://...", "href": "https://..."}
-]
-```
-
----
-
-## 全文检索（pg_jieba）
-
-系统使用 PostgreSQL 的 `pg_jieba` 扩展实现分词全文检索。首次启用或升级后，需要重新执行：
-
-```bash
-python -m hippo db init
-```
-
-实现细节：
-- 使用 `jiebaqry` 配置生成 `tsvector`，标题权重 A、摘要/正文权重 B、作者权重 C。
-- 为避免超大文档导致 `tsvector` 过大，正文仅取前 50,000 字符参与索引。
-- 查询入口为 HTTP API：`/api/article?q=关键词`。
-  - 多个以空格分隔的关键词按宽松匹配处理：命中任一关键词即可返回，再按相关度排序。
-  - 支持 `sort` 参数：`publish_at_desc`（发布时间新到旧）与 `relevance_desc`（相关度高到低）。
-  - 支持 `exclude_keywords` 参数：使用逗号、分号或换行分隔多个关键词；命中标题、摘要或作者任一字段的文章会被过滤掉。
-  - 未传 `exclude_keywords` 时，会回落到 `/api/settings` 中保存的 `article_exclude_keywords`；显式传空字符串可临时关闭该默认过滤。
-  - 未传 `sort` 时保持兼容：`q` 非空默认 `relevance_desc`，否则默认 `publish_at_desc`。
-
----
-
-## 日志系统
-
-CLI 集成了 Python 标准库 logging，默认仅输出必要信息。
-
-### 启用详细控制台日志
-
-使用 `--verbose` 或 `-v` 选项：
-
-```bash
-hippo --verbose article sync-all
-hippo -v account sync-all
-```
-
-详细模式会将日志输出到终端。
-
----
-
-## 配置与路径
-
-### 环境变量
-
-核心配置：`hippo/config.py`
-
-| 配置项 | 说明 |
-| --- | --- |
-| `HIPPO_PG_DSN` | PostgreSQL DSN |
-| `HIPPO_PG_JIEBA_WARMUP` | 是否在新建 PG 连接时预热 `jiebaqry`（默认 `1`） |
-| `HIPPO_PG_JIEBA_WARMUP_TEXT` | 预热分词使用的文本（默认 `hippo`） |
-| `HIPPO_ARTICLE_WORKER` | 文章 HTML Worker 前缀或模板 |
-| `HIPPO_ARTICLE_WORKER_PROXY` | Worker 访问代理 |
-| `HIPPO_ARTICLE_MAX_CONNECTIONS` | Worker 最大并发连接数 |
-
-## 回填缺失图片（PostgreSQL）
-
-如果 `article_images` 表里已经有记录，但还没有二进制图片内容，可以用下面的命令补齐：
-
-```bash
-python scripts/fill_pg_images.py --pg-dsn "postgresql://user:pass@host:5432/dbname"
-```
-
-也可以直接走 CLI：
-
-```bash
-python -m hippo article backfill-images --pg-dsn "postgresql://user:pass@host:5432/dbname"
-```
-
-常用参数：
-- `--limit 1000`：限制单次处理的图片数量
-- `--workers 8`：控制并发下载数
-- `--retries 3`：控制下载重试次数
-- `--dry-run`：只列出目标，不写入数据
-
-### 文章 HTML 代理（图片仍然直连）
-
-- `HIPPO_ARTICLE_WORKER`：Cloudflare Workers 中转地址，例如 `https://c0c0.sunnysab.workers.dev/?url=` 或 `https://c0c0.sunnysab.workers.dev/?url={url}`
-- `HIPPO_ARTICLE_WORKER_PROXY`：访问 Worker 时使用的可选 HTTP/SOCKS5 代理，例如 `http://192.168.133.201:8080/`
-- `HIPPO_ARTICLE_MAX_CONNECTIONS`：Worker 客户端最大并发连接数，例如 `2`
-- 下载器遇到 `https://mp.weixin.qq.com/s/...` 时，会把编码后的文章 URL 拼到 Worker 地址上请求；图片仍然直接请求原始地址，不经过代理
-
----
 
 ## 目录结构
 
 ```
-.
-├── README.md
-├── requirements-cli.txt
-├── pyproject.toml
-├── hippo/normalize_html.py
-├── scripts/
-└── hippo/
-    ├── cli.py
-    ├── config.py
-    ├── downloader.py
-    ├── http.py
-    ├── models.py
-    └── storage.py
+hippo/
+├── cli.py              # Typer CLI 入口
+├── server.py           # FastAPI Web 服务
+├── storage.py          # PostgreSQL 连接池与存储抽象
+├── repositories.py     # 数据访问层
+├── article_queries.py  # 文章查询与全文搜索
+├── downloader.py       # 文章与图片下载器
+├── wechat_api.py       # 微信公众平台 API 客户端
+├── wechat_parser.py    # 微信 HTML 解析
+├── normalize_html.py   # HTML 清洗
+├── sync_service.py     # 同步调度
+├── sync_worker.py      # 后台同步 worker
+├── container.py        # DI 容器
+├── config.py           # 配置与常量
+├── exceptions.py       # 应用异常
+├── models.py           # Pydantic 数据模型
+├── http.py             # HTTP 客户端（支持 Worker 代理）
+├── image_store.py      # 图片存储服务
+├── image_hashes.py     # 图片内容哈希
+├── file_storage.py     # S3 文件存储
+├── s3.py               # S3 工具
+├── emailer.py          # 邮件通知
+├── avatar.py           # 公众号头像缓存
+├── rss.py              # RSS Feed
+├── utils.py            # 工具函数
+├── controllers/sync.py # 同步控制器
+└── schema/
+    └── postgres.sql    # 数据库建表脚本
+
+frontend/               # React Web UI
+tests/                  # 测试
+scripts/                # 迁移与调试脚本
 ```
-
----
-
-## 常见问题
-
-**Q: 频率控制怎么办？**
-A: 程序检测到 “freq control” 会自动等待重试；每 60 次请求自动等待 15 秒。
-
-**Q: 为什么显示“未完成”？**
-A: 说明这次没有遍历到空页（比如中断、限制页数等）。下次会继续断点。
-
-**Q: 只想增量同步？**
-A: 全量完成过的账号会在同步时遇到整页已存在即停止。
