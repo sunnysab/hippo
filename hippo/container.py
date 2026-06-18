@@ -63,6 +63,7 @@ def build_sync_container(
         downloader=downloader,
     )
 
+
 def build_downloader_container(
     *,
     storage: PostgresStorage,
@@ -102,4 +103,4 @@ def build_downloader_container(
     )
 
 
-__all__ = ["AppContainer", "build_sync_container", "build_downloader_container"]
+__all__ = ['AppContainer', 'build_downloader_container', 'build_sync_container']

@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
-from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import httpx
 
 from .logger import get_logger
-from .wechat_api import WeChatApiClient, parse_appmsg_publish
 from .models import AccountCredential, ArticleRecord
 from .storage import PostgresStorage
 from .sync_types import NullSyncObserver, SyncConfig, SyncObserver, SyncPlan, SyncSummary
+from .wechat_api import WeChatApiClient, parse_appmsg_publish
 
 
 class SyncInterrupted(RuntimeError):
@@ -42,18 +43,18 @@ logger = get_logger(__name__)
 
 
 def extract_publish_total(payload: dict[str, Any]) -> int | None:
-    raw_page = payload.get("publish_page")
+    raw_page = payload.get('publish_page')
     if isinstance(raw_page, str) and raw_page:
         try:
             parsed = json.loads(raw_page)
         except json.JSONDecodeError:
             parsed = {}
-        total = parsed.get("total_count")
+        total = parsed.get('total_count')
         if isinstance(total, int):
             return total
         if isinstance(total, str) and total.isdigit():
             return int(total)
-    total = payload.get("total_count")
+    total = payload.get('total_count')
     if isinstance(total, int):
         return total
     if isinstance(total, str) and total.isdigit():
@@ -62,7 +63,7 @@ def extract_publish_total(payload: dict[str, Any]) -> int | None:
 
 
 def extract_publish_page(payload: dict[str, Any]) -> dict[str, Any]:
-    raw_page = payload.get("publish_page")
+    raw_page = payload.get('publish_page')
     if isinstance(raw_page, str) and raw_page:
         try:
             parsed = json.loads(raw_page)
@@ -89,7 +90,7 @@ def is_login_error(message: str) -> bool:
 
 def is_freq_control(message: str) -> bool:
     lowered = message.lower()
-    hints = ("freq", "frequency", "control", "too fast", "too frequent")
+    hints = ('freq', 'frequency', 'control', 'too fast', 'too frequent')
     return any(hint in lowered for hint in hints)
 
 
@@ -119,7 +120,7 @@ async def sync_account_core(
         saved_offset = storage.meta.get(resume_key)
         if saved_offset and saved_offset.isdigit():
             offset = int(saved_offset)
-            observer.on_log(f"检测到断点进度，继续 {account.nickname} offset={offset}")
+            observer.on_log(f'检测到断点进度，继续 {account.nickname} offset={offset}')
     if offset > 0:
         observer.on_progress(current=offset, total=None, delta=0)
 
@@ -157,9 +158,9 @@ async def sync_account_core(
                     if is_freq_control(message):
                         freq_attempt += 1
                         if freq_attempt > 10:
-                            raise RuntimeError(f"频控重试次数过多 ({freq_attempt})，终止同步") from exc
+                            raise RuntimeError(f'频控重试次数过多 ({freq_attempt})，终止同步') from exc
                         wait_seconds = 15 if freq_attempt == 1 else min(15 + 5 * (freq_attempt - 1), 60)
-                        observer.on_log(f"触发频率控制，等待 {wait_seconds} 秒后重试")
+                        observer.on_log(f'触发频率控制，等待 {wait_seconds} 秒后重试')
                         await asyncio.sleep(wait_seconds)
                         if _get_cancel_event().is_set():
                             raise SyncInterrupted('sync cancelled')
@@ -168,16 +169,16 @@ async def sync_account_core(
                 except (httpx.ReadTimeout, httpx.TimeoutException, httpx.TransportError) as exc:
                     attempt += 1
                     if attempt >= 3:
-                        raise RuntimeError(f"网络请求超时或失败：{exc}") from exc
+                        raise RuntimeError(f'网络请求超时或失败：{exc}') from exc
                     await asyncio.sleep(min(2**attempt, 5))
                     if _get_cancel_event().is_set():
                         raise SyncInterrupted('sync cancelled')
             request_count += 1
             if request_count % 60 == 0:
-                observer.on_log("达到 60 次请求，等待 15 秒")
+                observer.on_log('达到 60 次请求，等待 15 秒')
                 await asyncio.sleep(15)
             publish_page = extract_publish_page(payload)
-            publish_list = publish_page.get("publish_list") or []
+            publish_list = publish_page.get('publish_list') or []
             publish_list_len = len(publish_list)
             total_count = extract_publish_total(payload) or total_count
             if publish_list_len == 0:
@@ -189,11 +190,7 @@ async def sync_account_core(
                 filtered: list[ArticleRecord] = []
                 for record in records:
                     publish_at = record.publish_at
-                    if (
-                        until_timestamp is not None
-                        and publish_at is not None
-                        and publish_at > until_timestamp
-                    ):
+                    if until_timestamp is not None and publish_at is not None and publish_at > until_timestamp:
                         continue
                     if since_timestamp is not None:
                         if publish_at is None or publish_at >= since_timestamp:
@@ -214,17 +211,20 @@ async def sync_account_core(
                         account.biz, [record.article_id for record in records]
                     )
                 except Exception as exc:
-                    try:
+                    with contextlib.suppress(Exception):
                         storage.rollback()
-                    except Exception:
-                        pass
                     logger.warning(
                         'Failed to query existing article IDs (biz=%s): %s',
                         account.biz,
                         exc,
                     )
                     existing_ids = set()
-            if (full_synced_hint or stop_on_existing) and records and existing_ids and len(existing_ids) == len(records):
+            if (
+                (full_synced_hint or stop_on_existing)
+                and records
+                and existing_ids
+                and len(existing_ids) == len(records)
+            ):
                 completed = True
                 break
             saved = 0
@@ -246,14 +246,14 @@ async def sync_account_core(
             current_progress = current_completed
             observer.on_page(
                 {
-                    "records": records,
-                    "existing_ids": existing_ids,
-                    "saved": saved,
-                    "page_count": page_count,
-                    "offset": offset,
-                    "total_count": total_count,
-                    "current": current_completed,
-                    "delta": delta,
+                    'records': records,
+                    'existing_ids': existing_ids,
+                    'saved': saved,
+                    'page_count': page_count,
+                    'offset': offset,
+                    'total_count': total_count,
+                    'current': current_completed,
+                    'delta': delta,
                 }
             )
             observer.on_progress(

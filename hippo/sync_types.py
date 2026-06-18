@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from .models import AccountCredential
 
 
-class SyncMode(str, Enum):
+class SyncMode(StrEnum):
     full = 'full'
     incremental = 'incremental'
     recent = 'recent'
@@ -78,20 +78,15 @@ class SyncReport:
 
 
 class SyncObserver(Protocol):
-    def on_log(self, message: str) -> None:
-        ...
+    def on_log(self, message: str) -> None: ...
 
-    def on_progress(self, *, current: int | None, total: int | None, delta: int | None) -> None:
-        ...
+    def on_progress(self, *, current: int | None, total: int | None, delta: int | None) -> None: ...
 
-    def on_page(self, payload: dict[str, Any]) -> None:
-        ...
+    def on_page(self, payload: dict[str, Any]) -> None: ...
 
-    def on_complete(self, summary: SyncSummary) -> None:
-        ...
+    def on_complete(self, summary: SyncSummary) -> None: ...
 
-    def on_skip(self, reason: str) -> None:
-        ...
+    def on_skip(self, reason: str) -> None: ...
 
 
 class NullSyncObserver(SyncObserver):
@@ -112,26 +107,19 @@ class NullSyncObserver(SyncObserver):
 
 
 class SyncJobObserver(Protocol):
-    def on_lock_acquired(self) -> None:
-        ...
+    def on_lock_acquired(self) -> None: ...
 
-    def on_accounts_loaded(self, accounts: list[AccountCredential]) -> None:
-        ...
+    def on_accounts_loaded(self, accounts: list[AccountCredential]) -> None: ...
 
-    def on_account_start(self, account: AccountCredential) -> None:
-        ...
+    def on_account_start(self, account: AccountCredential) -> None: ...
 
-    def on_account_stage(self, account: AccountCredential, stage: str) -> None:
-        ...
+    def on_account_stage(self, account: AccountCredential, stage: str) -> None: ...
 
-    def on_account_done(self, result: SyncAccountResult, summary: SyncSummary | None) -> None:
-        ...
+    def on_account_done(self, result: SyncAccountResult, summary: SyncSummary | None) -> None: ...
 
-    def on_images_start(self) -> None:
-        ...
+    def on_images_start(self) -> None: ...
 
-    def on_images_done(self) -> None:
-        ...
+    def on_images_done(self) -> None: ...
 
 
 class NullSyncJobObserver:
@@ -158,10 +146,10 @@ class NullSyncJobObserver:
 
 
 __all__ = [
-    'NullSyncObserver',
     'NullSyncJobObserver',
-    'SyncConfig',
+    'NullSyncObserver',
     'SyncAccountResult',
+    'SyncConfig',
     'SyncJobObserver',
     'SyncMode',
     'SyncObserver',

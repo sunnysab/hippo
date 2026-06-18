@@ -9,14 +9,14 @@ from .env import load_env
 
 load_env()
 
-APP_NAME: Final = "hippo"
-CLI_NAME: Final = "hippo"
+APP_NAME: Final = 'hippo'
+CLI_NAME: Final = 'hippo'
 DEFAULT_USER_AGENT: Final = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 WAE/1.0"
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 WAE/1.0'
 )
-WECHAT_PROFILE_ENDPOINT: Final = "https://mp.weixin.qq.com/mp/profile_ext"
-WECHAT_COMMENT_ENDPOINT: Final = "https://mp.weixin.qq.com/mp/appmsg_comment"
+WECHAT_PROFILE_ENDPOINT: Final = 'https://mp.weixin.qq.com/mp/profile_ext'
+WECHAT_COMMENT_ENDPOINT: Final = 'https://mp.weixin.qq.com/mp/appmsg_comment'
 DEFAULT_PAGE_SIZE: Final = 10
 
 
@@ -31,18 +31,18 @@ def _env_int(name: str, default: int | None = None) -> int | None:
     return value if value > 0 else default
 
 
-ARTICLE_WORKER_URL: Final = os.environ.get("HIPPO_ARTICLE_WORKER")
-ARTICLE_WORKER_PROXY: Final = os.environ.get("HIPPO_ARTICLE_WORKER_PROXY")
-ARTICLE_WORKER_MAX_CONNECTIONS: Final = _env_int("HIPPO_ARTICLE_MAX_CONNECTIONS")
+ARTICLE_WORKER_URL: Final = os.environ.get('HIPPO_ARTICLE_WORKER')
+ARTICLE_WORKER_PROXY: Final = os.environ.get('HIPPO_ARTICLE_WORKER_PROXY')
+ARTICLE_WORKER_MAX_CONNECTIONS: Final = _env_int('HIPPO_ARTICLE_MAX_CONNECTIONS')
 
 __all__ = [
-    "APP_NAME",
-    "CLI_NAME",
-    "DEFAULT_USER_AGENT",
-    "WECHAT_PROFILE_ENDPOINT",
-    "WECHAT_COMMENT_ENDPOINT",
-    "DEFAULT_PAGE_SIZE",
-    "ARTICLE_WORKER_URL",
-    "ARTICLE_WORKER_PROXY",
-    "ARTICLE_WORKER_MAX_CONNECTIONS",
+    'APP_NAME',
+    'ARTICLE_WORKER_MAX_CONNECTIONS',
+    'ARTICLE_WORKER_PROXY',
+    'ARTICLE_WORKER_URL',
+    'CLI_NAME',
+    'DEFAULT_PAGE_SIZE',
+    'DEFAULT_USER_AGENT',
+    'WECHAT_COMMENT_ENDPOINT',
+    'WECHAT_PROFILE_ENDPOINT',
 ]

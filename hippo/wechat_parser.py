@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import quickjs
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup
 from markdownify import markdownify
 
 from .logger import get_logger
@@ -249,8 +249,8 @@ def extract_cgi_data(raw_html: str, *, article_url: str | None = None) -> dict[s
 def _set_location(ctx: quickjs.Context, article_url: str) -> None:
     parsed = urlparse(article_url)
     href = json.dumps(article_url)
-    search = json.dumps(parsed.query and f'?{parsed.query}' or '')
-    hash_value = json.dumps(parsed.fragment and f'#{parsed.fragment}' or '')
+    search = json.dumps((parsed.query and f'?{parsed.query}') or '')
+    hash_value = json.dumps((parsed.fragment and f'#{parsed.fragment}') or '')
     protocol = json.dumps(f'{parsed.scheme}:')
     host = json.dumps(parsed.netloc)
     hostname = json.dumps(parsed.hostname or '')
@@ -361,9 +361,7 @@ def _render_text_share_body(cgi_data: dict[str, Any]) -> str:
     text_page_info = cgi_data.get('text_page_info') or {}
     text_content = str(text_page_info.get('content_noencode') or cgi_data.get('content_noencode') or '')
     return (
-        '<section class="wechat-content wechat-content-text">'
-        f'<p>{_format_plain_text_html(text_content)}</p>'
-        '</section>'
+        f'<section class="wechat-content wechat-content-text"><p>{_format_plain_text_html(text_content)}</p></section>'
     )
 
 
@@ -409,11 +407,7 @@ def _render_music_share_body(cgi_data: dict[str, Any]) -> str:
 def _render_audio_share_body(cgi_data: dict[str, Any]) -> str:
     rich_body = _extract_audio_rich_body_html(cgi_data)
     if rich_body:
-        return (
-            '<section class="wechat-content wechat-content-audio-article">'
-            f'{rich_body}'
-            '</section>'
-        )
+        return f'<section class="wechat-content wechat-content-audio-article">{rich_body}</section>'
     payload = _extract_audio_share_payload(cgi_data)
     return _render_media_share_body(
         label=_SHARE_TYPE_LABELS[7],
@@ -572,7 +566,7 @@ def _normalize_int(value: Any) -> int | None:
         return None
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -596,9 +590,7 @@ def _postprocess_markdown(markdown: str) -> str:
             return False
         if text.startswith(('#', '-', '*', '+', '>', '|', '![')):
             return False
-        if re.search(r'\[[^\]]+]\([^)]*\)', text):
-            return False
-        return True
+        return not re.search(r'\[[^\]]+]\([^)]*\)', text)
 
     to_remove: set[int] = set()
     non_empty = [i for i, line in enumerate(cleaned) if line]
@@ -667,7 +659,8 @@ def _extract_music_share_payload(cgi_data: dict[str, Any]) -> dict[str, str]:
         'source': _pick_text(candidate, ('source_name',), ('source',)),
         'cover_url': _pick_url(candidate, ('cover_url',), ('cover',), ('img_url',), ('hd_cover_img',), ('pic_url',)),
         'description': description,
-        'link_text': _pick_text(candidate, ('url',), ('play_url',), ('music_url',), ('link',)) or _pick_text(cgi_data, ('short_link',), ('link',)),
+        'link_text': _pick_text(candidate, ('url',), ('play_url',), ('music_url',), ('link',))
+        or _pick_text(cgi_data, ('short_link',), ('link',)),
     }
 
 
@@ -714,7 +707,8 @@ def _extract_audio_share_payload(cgi_data: dict[str, Any]) -> dict[str, str]:
         ),
         'cover_url': _pick_url(candidate, ('cover_url',), ('cover',), ('img_url',), ('hd_cover_img',), ('pic_url',)),
         'description': description,
-        'link_text': _pick_text(candidate, ('url',), ('play_url',), ('link',)) or _pick_text(cgi_data, ('short_link',), ('link',)),
+        'link_text': _pick_text(candidate, ('url',), ('play_url',), ('link',))
+        or _pick_text(cgi_data, ('short_link',), ('link',)),
     }
 
 
@@ -782,7 +776,9 @@ def _extract_audio_rich_body_html(cgi_data: dict[str, Any]) -> str:
     return ''
 
 
-def _select_best_mapping(candidates: list[dict[str, Any]], *, score_paths: tuple[tuple[str, ...], ...]) -> dict[str, Any]:
+def _select_best_mapping(
+    candidates: list[dict[str, Any]], *, score_paths: tuple[tuple[str, ...], ...]
+) -> dict[str, Any]:
     best_candidate: dict[str, Any] = {}
     best_score = -1
     for candidate in candidates:

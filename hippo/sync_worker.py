@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import socket
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from .models import AccountCredential
 from .storage import PostgresStorage, open_storage
 from .sync_core import request_sync_cancel
-from .sync_jobs import SyncJobState
 from .sync_service import (
     SYNC_STARTED_KEY,
     SyncJobResult,
@@ -229,8 +229,8 @@ def _parse_meta_datetime(value: str | None) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def recover_stale_running_jobs(
@@ -258,7 +258,7 @@ def maybe_enqueue_scheduled_job(storage: PostgresStorage) -> bool:
     interval_seconds = max(int(settings.get('interval_minutes') or 1), 1) * 60
     last_started = _parse_meta_datetime(storage.meta.get(SYNC_STARTED_KEY))
     if last_started is not None:
-        elapsed = (datetime.now(timezone.utc) - last_started).total_seconds()
+        elapsed = (datetime.now(UTC) - last_started).total_seconds()
         if elapsed < interval_seconds:
             return False
     with storage.transaction():
@@ -318,10 +318,8 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
             )
     finally:
         poll_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await poll_task
-        except asyncio.CancelledError:
-            pass
     return True
 
 
@@ -340,5 +338,6 @@ async def run_sync_worker(
         if handled:
             continue
         await asyncio.sleep(max(float(poll_interval), 0.2))
+
 
 __all__ = ['maybe_enqueue_scheduled_job', 'recover_stale_running_jobs', 'run_sync_worker', 'run_worker_once']

@@ -26,4 +26,4 @@ def save_login_session(
     return storage.sessions.get_login_session()
 
 
-__all__ = ["save_login_session"]
+__all__ = ['save_login_session']

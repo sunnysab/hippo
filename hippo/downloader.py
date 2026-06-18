@@ -5,14 +5,14 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+from collections.abc import Awaitable, Callable, Iterable
 from contextlib import AbstractAsyncContextManager
-from typing import Awaitable, Callable, Iterable
 from urllib.parse import parse_qs, urljoin, urlparse
 
-from bs4 import BeautifulSoup
 import httpx
+from bs4 import BeautifulSoup
 
-from .http import MPClient, ArticleContentUnavailableError
+from .http import ArticleContentUnavailableError, MPClient
 from .image_store import ArticleImageStore
 from .logger import get_logger
 from .models import AccountCredential, ArticleRecord, DownloadResult
@@ -34,11 +34,11 @@ def _extract_url_token(url: str) -> str | None:
         parsed = urlparse(url)
     except Exception:
         return None
-    path = parsed.path or ""
-    if "/s/" in path:
-        token = path.split("/s/", 1)[1]
+    path = parsed.path or ''
+    if '/s/' in path:
+        token = path.split('/s/', 1)[1]
         if token:
-            return token.split("?", 1)[0]
+            return token.split('?', 1)[0]
     return None
 
 
@@ -47,48 +47,48 @@ def _is_http_url(url: str) -> bool:
         parsed = urlparse(url)
     except Exception:
         return False
-    return parsed.scheme in ("http", "https")
+    return parsed.scheme in ('http', 'https')
 
 
 def _resolve_asset_url(url: str, *, base: str) -> str | None:
     if not url:
         return None
     lowered = url.strip().lower()
-    if lowered.startswith(("data:", "javascript:", "about:", "file:")):
-        logger.debug("Skipping invalid URL scheme: %s", url[:100])
+    if lowered.startswith(('data:', 'javascript:', 'about:', 'file:')):
+        logger.debug('Skipping invalid URL scheme: %s', url[:100])
         return None
-    
+
     # Handle Sogou proxy URLs: extract the actual WeChat URL from url= parameter
     # Match any sogou.com domain, not just specific subdomains
-    if "sogou.com" in lowered and ("url=" in lowered or "url%3d" in lowered):
+    if 'sogou.com' in lowered and ('url=' in lowered or 'url%3d' in lowered):
         parsed = urlparse(url)
         if parsed.query:
             params = parse_qs(parsed.query)
-            if "url" in params and params["url"]:
-                actual_url = params["url"][0]
+            if params.get('url'):
+                actual_url = params['url'][0]
                 # Accept any URL that looks like a WeChat image
-                if any(domain in actual_url.lower() for domain in ["mmbiz.qpic.cn", "wx.qlogo.cn", "mmbiz.qlogo.cn", "weixin.qq.com"]):
-                    logger.debug("Unwrapped Sogou proxy URL: %s -> %s", url[:100], actual_url[:100])
+                if any(
+                    domain in actual_url.lower()
+                    for domain in ['mmbiz.qpic.cn', 'wx.qlogo.cn', 'mmbiz.qlogo.cn', 'weixin.qq.com']
+                ):
+                    logger.debug('Unwrapped Sogou proxy URL: %s -> %s', url[:100], actual_url[:100])
                     url = actual_url
                 else:
                     # Even if not WeChat, try to use the extracted URL
-                    logger.debug("Extracted URL from Sogou proxy (non-WeChat): %s -> %s", url[:100], actual_url[:100])
+                    logger.debug('Extracted URL from Sogou proxy (non-WeChat): %s -> %s', url[:100], actual_url[:100])
                     url = actual_url
-    
-    if url.startswith("//"):
-        resolved = f"https:{url}"
+
+    if url.startswith('//'):
+        resolved = f'https:{url}'
     else:
         parsed = urlparse(url)
-        if parsed.scheme:
-            resolved = url
-        else:
-            resolved = urljoin(base, url)
+        resolved = url if parsed.scheme else urljoin(base, url)
     parsed_resolved = urlparse(resolved)
-    if parsed_resolved.scheme not in ("http", "https"):
-        logger.debug("Skipping non-HTTP(S) URL: %s", resolved[:100])
+    if parsed_resolved.scheme not in ('http', 'https'):
+        logger.debug('Skipping non-HTTP(S) URL: %s', resolved[:100])
         return None
-    if not parsed_resolved.path or parsed_resolved.path == "/":
-        logger.debug("Skipping URL without valid path: %s", resolved[:100])
+    if not parsed_resolved.path or parsed_resolved.path == '/':
+        logger.debug('Skipping URL without valid path: %s', resolved[:100])
         return None
     return resolved
 
@@ -100,19 +100,19 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
     blocks: list[dict] = []
     body_lines: list[str] = []
     paragraph: list[str] = []
-    image_pattern = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
-    heading_pattern = re.compile(r"^(#{1,6})\s+(.*)$")
-    link_pattern = re.compile(r"^[*-]\s+(https?://\S+)$")
-    linked_image_closing_pattern = re.compile(r"^\]\(([^)]+)\)$")
-    timestamped_link_line_pattern = re.compile(r"^\[\d{1,2}:\d{2}(?::\d{2})?\]\(https?://[^)]+\)\s+\S")
-    code_fence_pattern = re.compile(r"^(```+|~~~+)")
+    image_pattern = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
+    heading_pattern = re.compile(r'^(#{1,6})\s+(.*)$')
+    link_pattern = re.compile(r'^[*-]\s+(https?://\S+)$')
+    linked_image_closing_pattern = re.compile(r'^\]\(([^)]+)\)$')
+    timestamped_link_line_pattern = re.compile(r'^\[\d{1,2}:\d{2}(?::\d{2})?\]\(https?://[^)]+\)\s+\S')
+    code_fence_pattern = re.compile(r'^(```+|~~~+)')
 
     def flush_paragraph() -> None:
         nonlocal paragraph
         if paragraph:
-            text = " ".join(paragraph).strip()
+            text = ' '.join(paragraph).strip()
             if text:
-                blocks.append({"type": "paragraph", "text": text})
+                blocks.append({'type': 'paragraph', 'text': text})
             paragraph = []
 
     index = 0
@@ -121,11 +121,11 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
         stripped = line.strip()
         if not stripped:
             flush_paragraph()
-            if body_lines and body_lines[-1] != "":
-                body_lines.append("")
+            if body_lines and body_lines[-1] != '':
+                body_lines.append('')
             index += 1
             continue
-        if stripped == "[":
+        if stripped == '[':
             image_index = index + 1
             while image_index < len(lines) and not lines[image_index].strip():
                 image_index += 1
@@ -143,13 +143,13 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
                         flush_paragraph()
                         alt, url = image_match.groups()
                         href = closing_match.group(1).strip()
-                        normalized_markdown = f"[![{alt}]({url})]({href})"
+                        normalized_markdown = f'[![{alt}]({url})]({href})'
                         if cover_local is None and not blocks and not body_lines and title is None:
                             cover_local = url
                         else:
-                            block = {"type": "image", "alt": alt, "local_path": url}
+                            block = {'type': 'image', 'alt': alt, 'local_path': url}
                             if href:
-                                block["href"] = href
+                                block['href'] = href
                             blocks.append(block)
                             body_lines.append(normalized_markdown)
                         index = closing_index + 1
@@ -161,8 +161,8 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
             if cover_local is None and not blocks and not body_lines and title is None:
                 cover_local = url
             else:
-                blocks.append({"type": "image", "alt": alt, "local_path": url})
-                body_lines.append(f"![{alt}]({url})")
+                blocks.append({'type': 'image', 'alt': alt, 'local_path': url})
+                body_lines.append(f'![{alt}]({url})')
             index += 1
             continue
         heading_match = heading_pattern.match(stripped)
@@ -173,7 +173,7 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
             if title is None and level == 1:
                 title = text
             else:
-                blocks.append({"type": "heading", "level": level, "text": text})
+                blocks.append({'type': 'heading', 'level': level, 'text': text})
                 body_lines.append(stripped)
             index += 1
             continue
@@ -181,7 +181,7 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
         if link_match:
             flush_paragraph()
             url = link_match.group(1)
-            blocks.append({"type": "link", "text": url, "href": url})
+            blocks.append({'type': 'link', 'text': url, 'href': url})
             body_lines.append(stripped)
             index += 1
             continue
@@ -198,14 +198,14 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
                     break
                 index += 1
             else:
-                logger.warning("Unterminated code fence in markdown, capturing until end")
-            code_text = "\n".join(code_lines)
-            blocks.append({"type": "code", "text": code_text})
+                logger.warning('Unterminated code fence in markdown, capturing until end')
+            code_text = '\n'.join(code_lines)
+            blocks.append({'type': 'code', 'text': code_text})
             body_lines.append(code_text)
             continue
         if timestamped_link_line_pattern.match(stripped):
             flush_paragraph()
-            blocks.append({"type": "paragraph", "text": stripped})
+            blocks.append({'type': 'paragraph', 'text': stripped})
             body_lines.append(stripped)
             index += 1
             continue
@@ -213,7 +213,7 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
         body_lines.append(stripped)
         index += 1
     flush_paragraph()
-    body_markdown = "\n".join(body_lines).strip()
+    body_markdown = '\n'.join(body_lines).strip()
     return title, cover_local, blocks, body_markdown
 
 
@@ -225,18 +225,18 @@ def _attach_image_block_metadata(
 ) -> list[dict]:
     updated_blocks: list[dict] = []
     for block in blocks:
-        if block.get("type") != "image":
+        if block.get('type') != 'image':
             updated_blocks.append(block)
             continue
-        local_path = block.get("local_path")
+        local_path = block.get('local_path')
         orig_url = resolve_url(str(local_path)) if local_path else None
         updated = dict(block)
-        updated.pop("local_path", None)
-        updated["orig_url"] = orig_url
+        updated.pop('local_path', None)
+        updated['orig_url'] = orig_url
         if image_id_by_url and orig_url:
             image_id = image_id_by_url.get(orig_url)
             if image_id is not None:
-                updated["image_id"] = image_id
+                updated['image_id'] = image_id
         updated_blocks.append(updated)
     return updated_blocks
 
@@ -254,17 +254,17 @@ class ArticleFetcher:
         last_exc: Exception | None = None
         for attempt in range(_ARTICLE_MAX_RETRIES):
             try:
-                logger.debug("Fetching article (attempt %d/%d): %s", attempt + 1, _ARTICLE_MAX_RETRIES, url)
+                logger.debug('Fetching article (attempt %d/%d): %s', attempt + 1, _ARTICLE_MAX_RETRIES, url)
                 return await self._client.fetch_article_html(url)
             except ArticleContentUnavailableError:
                 raise
             except Exception as exc:
                 last_exc = exc
-                backoff = min(2 ** attempt, _RETRY_BACKOFF_MAX)
+                backoff = min(2**attempt, _RETRY_BACKOFF_MAX)
                 jitter = backoff * 0.1 * (0.5 + 0.5 * (attempt % 2))
                 wait_time = backoff + jitter
                 logger.warning(
-                    "Fetch failed (attempt %d/%d) for %s: %s - retrying in %.1fs",
+                    'Fetch failed (attempt %d/%d) for %s: %s - retrying in %.1fs',
                     attempt + 1,
                     _ARTICLE_MAX_RETRIES,
                     url,
@@ -273,8 +273,8 @@ class ArticleFetcher:
                 )
                 if attempt < _ARTICLE_MAX_RETRIES - 1:
                     await asyncio.sleep(wait_time)
-        logger.error("Failed to fetch article after %d retries: %s", _ARTICLE_MAX_RETRIES, url)
-        raise RuntimeError(f"下载失败：{last_exc}") from last_exc
+        logger.error('Failed to fetch article after %d retries: %s', _ARTICLE_MAX_RETRIES, url)
+        raise RuntimeError(f'下载失败：{last_exc}') from last_exc
 
     async def download_from_url(
         self,
@@ -284,10 +284,10 @@ class ArticleFetcher:
         title: str | None = None,
     ) -> DownloadResult:
         raw_html = await self.fetch_article_html(url)
-        inferred_title = title or _extract_title(raw_html) or "WeChat Article"
+        inferred_title = title or _extract_title(raw_html) or 'WeChat Article'
         token = _extract_url_token(url)
         stub = ArticleRecord(
-            biz="adhoc",
+            biz='adhoc',
             article_id=token or slugify(inferred_title),
             title=inferred_title,
             item_show_type=None,
@@ -297,7 +297,7 @@ class ArticleFetcher:
             link=url,
             source_url=url,
             publish_at=None,
-            raw={"source": "adhoc"},
+            raw={'source': 'adhoc'},
         )
         return await persist(stub, raw_html)
 
@@ -311,7 +311,7 @@ class ArticleFetcher:
         for attempt in range(_ARTICLE_MAX_RETRIES):
             try:
                 logger.debug(
-                    "Downloading article (attempt %d/%d): %s - %s",
+                    'Downloading article (attempt %d/%d): %s - %s',
                     attempt + 1,
                     _ARTICLE_MAX_RETRIES,
                     article.article_id,
@@ -319,17 +319,17 @@ class ArticleFetcher:
                 )
                 html = await self._client.fetch_article_html(article.link)
                 result = await persist(article, html)
-                logger.info("Successfully downloaded article: %s - %s", article.article_id, article.title)
+                logger.info('Successfully downloaded article: %s - %s', article.article_id, article.title)
                 return result
             except ArticleContentUnavailableError:
                 raise
             except Exception as exc:
                 last_exc = exc
-                backoff = min(2 ** attempt, _RETRY_BACKOFF_MAX)
+                backoff = min(2**attempt, _RETRY_BACKOFF_MAX)
                 jitter = backoff * 0.1 * (0.5 + 0.5 * (attempt % 2))
                 wait_time = backoff + jitter
                 logger.warning(
-                    "Download failed (attempt %d/%d) for %s: %s - retrying in %.1fs",
+                    'Download failed (attempt %d/%d) for %s: %s - retrying in %.1fs',
                     attempt + 1,
                     _ARTICLE_MAX_RETRIES,
                     article.article_id,
@@ -338,8 +338,13 @@ class ArticleFetcher:
                 )
                 if attempt < _ARTICLE_MAX_RETRIES - 1:
                     await asyncio.sleep(wait_time)
-        logger.error("Failed to download article after %d retries: %s - %s", _ARTICLE_MAX_RETRIES, article.article_id, article.title)
-        raise RuntimeError(f"下载失败：{last_exc}") from last_exc
+        logger.error(
+            'Failed to download article after %d retries: %s - %s',
+            _ARTICLE_MAX_RETRIES,
+            article.article_id,
+            article.title,
+        )
+        raise RuntimeError(f'下载失败：{last_exc}') from last_exc
 
 
 # ---------------------------------------------------------------------------
@@ -410,9 +415,9 @@ class ImageDownloadManager:
     ) -> None:
         if self._abort:
             _log_download_error(
-                stage="asset_download",
+                stage='asset_download',
                 article=article,
-                error="aborted",
+                error='aborted',
                 asset_url=orig_url,
                 resolved_url=resolved_url,
                 referer=referer,
@@ -420,9 +425,9 @@ class ImageDownloadManager:
             await self._mark_done()
             return
         if not _is_http_url(str(resolved_url)):
-            reason = f"Invalid URL scheme (non-http): {resolved_url}"
+            reason = f'Invalid URL scheme (non-http): {resolved_url}'
             _log_download_error(
-                stage="asset_download",
+                stage='asset_download',
                 article=article,
                 error=reason,
                 asset_url=orig_url,
@@ -437,9 +442,9 @@ class ImageDownloadManager:
             for attempt in range(1, self._max_retries + 1):
                 if self._abort:
                     _log_download_error(
-                        stage="asset_download",
+                        stage='asset_download',
                         article=article,
-                        error="aborted",
+                        error='aborted',
                         asset_url=orig_url,
                         resolved_url=resolved_url,
                         referer=referer,
@@ -447,9 +452,7 @@ class ImageDownloadManager:
                     await self._mark_done()
                     return
                 try:
-                    data, content_type = await self._client.download_binary_with_type(
-                        resolved_url, referer=referer
-                    )
+                    data, content_type = await self._client.download_binary_with_type(resolved_url, referer=referer)
                     if self._image_store and orig_url:
                         self._image_store.store(
                             biz=article.biz,
@@ -472,7 +475,7 @@ class ImageDownloadManager:
                         is_http_400_or_404 = status in (400, 404)
                     if is_http_400_or_404 or attempt >= self._max_retries:
                         _log_download_error(
-                            stage="asset_download",
+                            stage='asset_download',
                             article=article,
                             error=str(exc),
                             asset_url=orig_url,
@@ -482,7 +485,7 @@ class ImageDownloadManager:
                         self._record_failure(article=article, orig_url=orig_url, reason=str(exc))
                         await self._mark_done()
                         return
-                    await asyncio.sleep(min(2 ** attempt, _RETRY_BACKOFF_MAX))
+                    await asyncio.sleep(min(2**attempt, _RETRY_BACKOFF_MAX))
 
     async def download_images_for_article(
         self,
@@ -520,7 +523,7 @@ class ImageDownloadManager:
     async def wait_for_images(self) -> None:
         return None
 
-    async def wait_for_images_with_progress(self, *, label: str = "下载图片") -> None:
+    async def wait_for_images_with_progress(self, *, label: str = '下载图片') -> None:
         total, done = await self.stats()
         if total == 0 or done >= total:
             return
@@ -531,7 +534,7 @@ class ImageDownloadManager:
         bar = tqdm(
             total=total,
             desc=label,
-            unit="张",
+            unit='张',
             dynamic_ncols=True,
             leave=True,
         )
@@ -589,7 +592,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
             enabled=enable_image_worker,
         )
         logger.info(
-            "ArticleDownloader initialized: article_workers=%d, image_workers=%d",
+            'ArticleDownloader initialized: article_workers=%d, image_workers=%d',
             self._article_workers,
             self._image_mgr._workers,
         )
@@ -609,7 +612,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
     async def wait_for_images(self) -> None:
         return None
 
-    async def wait_for_images_with_progress(self, *, label: str = "下载图片") -> None:
+    async def wait_for_images_with_progress(self, *, label: str = '下载图片') -> None:
         await self._image_mgr.wait_for_images_with_progress(label=label)
 
     async def abort_image_queue(self) -> None:
@@ -626,7 +629,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         skip_if_downloaded: bool = True,
     ) -> tuple[list[DownloadResult], int, int]:
         """Download multiple articles.
-        
+
         Returns:
             tuple of (results, skipped_count, failed_count)
         """
@@ -636,8 +639,8 @@ class ArticleDownloader(AbstractAsyncContextManager):
         pending: list[ArticleRecord] = []
         articles_list = list(articles)
         content_ids: set[str] | None = None
-        if self.storage and os.environ.get("HIPPO_PG_DSN"):
-            get_content_ids = getattr(self.storage, "get_article_content_ids", None)
+        if self.storage and os.environ.get('HIPPO_PG_DSN'):
+            get_content_ids = getattr(self.storage, 'get_article_content_ids', None)
             if callable(get_content_ids):
                 try:
                     article_ids = [article.article_id for article in articles_list]
@@ -680,14 +683,12 @@ class ArticleDownloader(AbstractAsyncContextManager):
                     except Exception as exc:
                         failed += 1
                         _log_download_error(
-                            stage="article_download",
+                            stage='article_download',
                             article=article,
                             error=str(exc),
                         )
                         if progress is not None:
-                            progress.write(
-                                f"下载失败：{article.title} ({article.article_id}) {exc}"
-                            )
+                            progress.write(f'下载失败：{article.title} ({article.article_id}) {exc}')
                             progress.update(1)
                         continue
                     if progress is not None:
@@ -705,14 +706,11 @@ class ArticleDownloader(AbstractAsyncContextManager):
 
         # Map tasks to articles
         active_tasks = {asyncio.create_task(run(article)): article for article in pending}
-        
+
         try:
             while active_tasks:
-                done, _ = await asyncio.wait(
-                    active_tasks.keys(),
-                    return_when=asyncio.FIRST_COMPLETED
-                )
-                
+                done, _ = await asyncio.wait(active_tasks.keys(), return_when=asyncio.FIRST_COMPLETED)
+
                 for task in done:
                     article = active_tasks.pop(task)
                     try:
@@ -720,17 +718,15 @@ class ArticleDownloader(AbstractAsyncContextManager):
                     except Exception as exc:
                         failed += 1
                         _log_download_error(
-                            stage="article_download",
+                            stage='article_download',
                             article=article,
                             error=str(exc),
                         )
                         if progress is not None:
-                            progress.write(
-                                f"下载失败：{article.title} ({article.article_id}) {exc}"
-                            )
+                            progress.write(f'下载失败：{article.title} ({article.article_id}) {exc}')
                     else:
                         results.append(result)
-                    
+
                     if progress is not None:
                         progress.update(1)
 
@@ -753,7 +749,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         record_images_only: bool = False,
         title: str | None = None,
     ) -> DownloadResult:
-        self._ensure_adhoc_account("adhoc")
+        self._ensure_adhoc_account('adhoc')
         return await self._fetcher.download_from_url(
             url,
             persist=lambda article, raw_html: self._persist_article(
@@ -831,7 +827,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         clean_html = parsed_article.clean_html
         asset_count = 0
         url_map: dict[str, str] = {}
-        referer = article.link or "https://mp.weixin.qq.com/"
+        referer = article.link or 'https://mp.weixin.qq.com/'
         if with_images or record_images_only:
             asset_count, url_map = _collect_image_urls(clean_html, referer=referer)
         markdown_content = parsed_article.markdown
@@ -873,7 +869,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         if not callable(save_article_content):
             return
         title, cover_local, blocks, body_markdown = _parse_markdown_blocks(markdown_content)
-        base_url = article.link or "https://mp.weixin.qq.com/"
+        base_url = article.link or 'https://mp.weixin.qq.com/'
         resolved_map = {raw: resolved for raw, resolved in url_map.items() if resolved}
 
         def resolve_url(value: str | None) -> str | None:
@@ -887,16 +883,16 @@ class ArticleDownloader(AbstractAsyncContextManager):
 
         content_markdown = body_markdown
         for raw, resolved in resolved_map.items():
-            content_markdown = content_markdown.replace(f"]({raw})", f"]({resolved})")
+            content_markdown = content_markdown.replace(f']({raw})', f']({resolved})')
 
         cover_url = resolve_url(cover_local) or resolve_url(article.cover)
         images: list[dict] = []
         image_positions: list[tuple[str, str]] = []
         if cover_local:
-            image_positions.append(("cover", cover_local))
+            image_positions.append(('cover', cover_local))
         for block in blocks:
-            if block.get("type") == "image":
-                image_positions.append(("inline", block.get("local_path")))
+            if block.get('type') == 'image':
+                image_positions.append(('inline', block.get('local_path')))
         position = 0
         for kind, local_path in image_positions:
             if not local_path:
@@ -906,11 +902,11 @@ class ArticleDownloader(AbstractAsyncContextManager):
                 continue
             images.append(
                 {
-                    "orig_url": orig_url,
-                    "kind": kind,
-                    "position": position,
-                    "content_type": None,
-                    "data": None,
+                    'orig_url': orig_url,
+                    'kind': kind,
+                    'position': position,
+                    'content_type': None,
+                    'data': None,
                 }
             )
             position += 1
@@ -945,7 +941,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
             )
 
     def _is_downloaded(self, article: ArticleRecord) -> bool:
-        if self.storage and os.environ.get("HIPPO_PG_DSN"):
+        if self.storage and os.environ.get('HIPPO_PG_DSN'):
             repo = getattr(self.storage, 'articles', None)
             has_content = getattr(repo, 'has_article_content', None) if repo else None
             if callable(has_content):
@@ -960,7 +956,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
 
 
 def _collect_image_urls(html: str, *, referer: str) -> tuple[int, dict[str, str]]:
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(html, 'html.parser')
     count = 0
     url_map: dict[str, str] = {}
 
@@ -974,28 +970,28 @@ def _collect_image_urls(html: str, *, referer: str) -> tuple[int, dict[str, str]
         count += 1
         url_map[url] = resolved
 
-    for img in soup.find_all("img"):
-        src = img.get("src") or img.get("data-src")
-        if not src or src.startswith("data:"):
+    for img in soup.find_all('img'):
+        src = img.get('src') or img.get('data-src')
+        if not src or src.startswith('data:'):
             continue
         add_url(src)
 
     def extract_from_style(text: str) -> None:
         for match in _URL_PATTERN.finditer(text):
-            candidate = match.group("url").strip()
-            if not candidate or candidate.startswith("data:"):
+            candidate = match.group('url').strip()
+            if not candidate or candidate.startswith('data:'):
                 continue
             add_url(candidate)
 
     for node in soup.find_all(style=True):
-        style = node.get("style") or ""
-        if "url(" not in style:
+        style = node.get('style') or ''
+        if 'url(' not in style:
             continue
         extract_from_style(style)
 
-    for style_tag in soup.find_all("style"):
+    for style_tag in soup.find_all('style'):
         content = style_tag.string
-        if not content or "url(" not in content:
+        if not content or 'url(' not in content:
             continue
         extract_from_style(content)
 
@@ -1012,32 +1008,32 @@ def _log_download_error(
     referer: str | None = None,
 ) -> None:
     payload = {
-        "stage": stage,
-        "error": error,
-        "article": {
-            "biz": article.biz,
-            "article_id": article.article_id,
-            "title": article.title,
-            "link": article.link,
+        'stage': stage,
+        'error': error,
+        'article': {
+            'biz': article.biz,
+            'article_id': article.article_id,
+            'title': article.title,
+            'link': article.link,
         },
     }
     if asset_url:
-        payload["asset_url"] = asset_url
+        payload['asset_url'] = asset_url
     if resolved_url:
-        payload["resolved_url"] = resolved_url
+        payload['resolved_url'] = resolved_url
     if referer:
-        payload["referer"] = referer
-    logger.warning("Download error: %s", payload)
+        payload['referer'] = referer
+    logger.warning('Download error: %s', payload)
 
 
 def _extract_title(raw_html: str) -> str | None:
-    soup = BeautifulSoup(raw_html, "html.parser")
+    soup = BeautifulSoup(raw_html, 'html.parser')
     if soup.title and soup.title.string:
         return soup.title.string.strip()
-    h1 = soup.find("h1")
+    h1 = soup.find('h1')
     if h1 and h1.get_text(strip=True):
         return h1.get_text(strip=True)
     return None
 
 
-__all__ = ["ArticleDownloader", "ArticleFetcher", "ImageDownloadManager"]
+__all__ = ['ArticleDownloader', 'ArticleFetcher', 'ImageDownloadManager']

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Any, Callable, Optional
+from collections.abc import Callable
 from urllib.parse import urlparse
 
 import httpx
@@ -28,11 +28,11 @@ def _build_image_store(storage: PostgresStorage) -> ArticleImageService | None:
 
 
 def _normalize_image_url(url: str) -> str:
-    trimmed = url.strip().strip("\"'")
-    if " " in trimmed:
-        trimmed = trimmed.split(" ", 1)[0]
-    if trimmed.endswith("\""):
-        trimmed = trimmed.rstrip("\"")
+    trimmed = url.strip().strip('"\'')
+    if ' ' in trimmed:
+        trimmed = trimmed.split(' ', 1)[0]
+    if trimmed.endswith('"'):
+        trimmed = trimmed.rstrip('"')
     return trimmed
 
 
@@ -41,14 +41,14 @@ def _is_http_url(url: str) -> bool:
         parsed = urlparse(url)
     except Exception:
         return False
-    return parsed.scheme in ("http", "https")
+    return parsed.scheme in ('http', 'https')
 
 
 def _format_http_error(exc: Exception) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
-        return f"{exc} status={exc.response.status_code} url={exc.request.url}"
+        return f'{exc} status={exc.response.status_code} url={exc.request.url}'
     if isinstance(exc, httpx.RequestError):
-        return f"{exc} url={exc.request.url}"
+        return f'{exc} url={exc.request.url}'
     return str(exc)
 
 
@@ -63,41 +63,37 @@ async def backfill_article_images(
     dry_run: bool = False,
     log: Callable[[str], None] | None = None,
 ) -> dict[str, int]:
-    resolved_dsn = pg_dsn or os.environ.get("HIPPO_PG_DSN")
+    resolved_dsn = pg_dsn or os.environ.get('HIPPO_PG_DSN')
     if not resolved_dsn:
-        raise RuntimeError("Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.")
+        raise RuntimeError('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
 
     _log = log or (lambda msg: None)
     updated = 0
     skipped = 0
     failed = 0
 
-    async def download_with_retry(
-        client: MPClient, url: str, *, referer: str | None
-    ) -> tuple[bytes, str | None]:
+    async def download_with_retry(client: MPClient, url: str, *, referer: str | None) -> tuple[bytes, str | None]:
         for attempt in range(1, retries + 1):
             try:
-                return await client.download_binary_with_type(
-                    _normalize_image_url(url), referer=referer
-                )
-            except (httpx.HTTPStatusError, httpx.RequestError):
+                return await client.download_binary_with_type(_normalize_image_url(url), referer=referer)
+            except httpx.HTTPStatusError, httpx.RequestError:
                 if attempt >= retries:
                     raise
                 await asyncio.sleep(min(sleep_base * (2 ** (attempt - 1)), 5.0))
 
-        raise RuntimeError("Download retry loop exited unexpectedly.")
+        raise RuntimeError('Download retry loop exited unexpectedly.')
 
     async with MPClient() as client:
         with PostgresStorage(resolved_dsn) as storage:
             image_store = _build_image_store(storage)
             if not image_store:
-                raise RuntimeError("Failed to initialize image store (S3 not configured).")
+                raise RuntimeError('Failed to initialize image store (S3 not configured).')
 
-            failed_clause = "" if retry_failed else " AND i.failed_at IS NULL"
+            failed_clause = '' if retry_failed else ' AND i.failed_at IS NULL'
             count_query = (
-                "SELECT COUNT(*)"
-                " FROM article_images i"
-                " JOIN articles a ON a.id = i.article_pk"
+                'SELECT COUNT(*)'
+                ' FROM article_images i'
+                ' JOIN articles a ON a.id = i.article_pk'
                 f" WHERE (i.s3_key IS NULL OR i.s3_key = '') AND i.orig_url IS NOT NULL{failed_clause}"
             )
             with storage.conn.cursor() as cur:
@@ -108,16 +104,15 @@ async def backfill_article_images(
                 total_count = min(total_count, limit)
 
             base_query = (
-                "SELECT i.id, a.biz, a.article_id, a.link, i.orig_url"
-                " FROM article_images i"
-                " JOIN articles a ON a.id = i.article_pk"
+                'SELECT i.id, a.biz, a.article_id, a.link, i.orig_url'
+                ' FROM article_images i'
+                ' JOIN articles a ON a.id = i.article_pk'
                 f" WHERE (i.s3_key IS NULL OR i.s3_key = '') AND i.orig_url IS NOT NULL{failed_clause}"
             )
-            order_clause = "ORDER BY i.id DESC"
+            order_clause = 'ORDER BY i.id DESC'
 
             if dry_run:
-                progress = tqdm(total=total_count, desc="Backfill images", unit="img",
-                                dynamic_ncols=True, leave=True)
+                progress = tqdm(total=total_count, desc='Backfill images', unit='img', dynamic_ncols=True, leave=True)
                 try:
                     last_id: int | None = None
                     remaining = total_count
@@ -125,15 +120,16 @@ async def backfill_article_images(
                         with storage.conn.cursor() as cur:
                             current_limit = min(100, remaining)
                             if last_id is None:
-                                cur.execute(f"{base_query} {order_clause} LIMIT %s", (current_limit,))
+                                cur.execute(f'{base_query} {order_clause} LIMIT %s', (current_limit,))
                             else:
-                                cur.execute(f"{base_query} AND i.id < %s {order_clause} LIMIT %s",
-                                            (last_id, current_limit))
+                                cur.execute(
+                                    f'{base_query} AND i.id < %s {order_clause} LIMIT %s', (last_id, current_limit)
+                                )
                             rows = cur.fetchall()
                         if not rows:
                             break
                         for _, _, _, _, orig_url in rows:
-                            _log(f"DRY-RUN {orig_url}")
+                            _log(f'DRY-RUN {orig_url}')
                             skipped += 1
                             progress.update(1)
                         remaining -= len(rows)
@@ -148,22 +144,22 @@ async def backfill_article_images(
                 async def process_item(
                     item: tuple,
                 ) -> tuple[tuple, bytes | None, str | None, str | None]:
-                    _, biz, article_id, referer, orig_url = item
+                    _, _biz, _article_id, referer, orig_url = item
                     normalized = _normalize_image_url(str(orig_url))
                     if not _is_http_url(normalized):
-                        return item, None, None, f"Invalid URL scheme: {normalized}"
+                        return item, None, None, f'Invalid URL scheme: {normalized}'
                     async with sem:
                         try:
                             data, content_type = await download_with_retry(
-                                client, normalized,
+                                client,
+                                normalized,
                                 referer=str(referer) if referer else None,
                             )
                             return item, data, content_type, None
                         except Exception as exc:
                             return item, None, None, _format_http_error(exc)
 
-                progress = tqdm(total=total_count, desc="Backfill images", unit="img",
-                                dynamic_ncols=True, leave=True)
+                progress = tqdm(total=total_count, desc='Backfill images', unit='img', dynamic_ncols=True, leave=True)
                 try:
                     last_id = None
                     remaining = total_count
@@ -171,10 +167,11 @@ async def backfill_article_images(
                         with storage.conn.cursor() as cur:
                             current_limit = min(batch_size, remaining)
                             if last_id is None:
-                                cur.execute(f"{base_query} {order_clause} LIMIT %s", (current_limit,))
+                                cur.execute(f'{base_query} {order_clause} LIMIT %s', (current_limit,))
                             else:
-                                cur.execute(f"{base_query} AND i.id < %s {order_clause} LIMIT %s",
-                                            (last_id, current_limit))
+                                cur.execute(
+                                    f'{base_query} AND i.id < %s {order_clause} LIMIT %s', (last_id, current_limit)
+                                )
                             batch = cur.fetchall()
                         if not batch:
                             break
@@ -187,17 +184,22 @@ async def backfill_article_images(
                                 if error:
                                     raise RuntimeError(error)
                                 image_store.store(
-                                    biz=biz, article_id=article_id,
-                                    orig_url=str(orig_url), content_type=content_type, data=data,
+                                    biz=biz,
+                                    article_id=article_id,
+                                    orig_url=str(orig_url),
+                                    content_type=content_type,
+                                    data=data,
                                 )
                                 updated += 1
                             except Exception as exc:
                                 failed += 1
                                 image_store.mark_failed(
-                                    biz=biz, article_id=article_id,
-                                    orig_url=str(orig_url), reason=str(exc),
+                                    biz=biz,
+                                    article_id=article_id,
+                                    orig_url=str(orig_url),
+                                    reason=str(exc),
                                 )
-                                _log(f"FAILED {orig_url}: {_format_http_error(exc)}")
+                                _log(f'FAILED {orig_url}: {_format_http_error(exc)}')
                             finally:
                                 progress.update(1)
                         remaining -= len(batch)
@@ -205,7 +207,7 @@ async def backfill_article_images(
                 finally:
                     progress.close()
 
-    return {"updated": updated, "skipped": skipped, "failed": failed}
+    return {'updated': updated, 'skipped': skipped, 'failed': failed}
 
 
-__all__ = ["backfill_article_images"]
+__all__ = ['backfill_article_images']

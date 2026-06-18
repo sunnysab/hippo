@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
@@ -23,7 +24,7 @@ class ArticleImageTarget:
 
 
 def _utc_now_dt() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _session_identity(cookies: dict[str, str]) -> str | None:
@@ -74,8 +75,7 @@ class MetaRepository:
     def set(self, key: str, value: str) -> None:
         with self._conn.cursor() as cur:
             cur.execute(
-                'INSERT INTO meta(key, value) VALUES (%s, %s) '
-                'ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+                'INSERT INTO meta(key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
                 (key, value),
             )
 
@@ -85,7 +85,7 @@ class MetaRepository:
 
 
 class AccountRepository:
-    def __init__(self, conn: psycopg.Connection, *, group_repo: 'GroupRepository | None' = None) -> None:
+    def __init__(self, conn: psycopg.Connection, *, group_repo: GroupRepository | None = None) -> None:
         self._conn = conn
         self._group_repo = group_repo
 
@@ -121,11 +121,7 @@ class AccountRepository:
         return self.get_account(account.biz, fallback_to_default=False)
 
     def list_accounts(self, *, group: str | None = None) -> list[AccountCredential]:
-        query = (
-            'SELECT a.*, g.name AS group_name '\
-            'FROM accounts a '\
-            'LEFT JOIN account_groups g ON g.id = a.group_id'
-        )
+        query = 'SELECT a.*, g.name AS group_name FROM accounts a LEFT JOIN account_groups g ON g.id = a.group_id'
         params: list = []
         if group:
             query += ' WHERE g.name = %s'
@@ -226,71 +222,73 @@ class AccountRepository:
         where: list[str] = []
         params: list[Any] = []
         if group_id is not None:
-            where.append("a.group_id = %s")
+            where.append('a.group_id = %s')
             params.append(group_id)
         if search_tokens:
             clauses: list[str] = []
             for term in search_tokens:
-                like = f"%{term}%"
-                clause = " OR ".join([
-                    "a.nickname ILIKE %s",
-                    "a.alias ILIKE %s",
-                    "a.biz ILIKE %s",
-                ])
-                clauses.append(f"({clause})")
+                like = f'%{term}%'
+                clause = ' OR '.join(
+                    [
+                        'a.nickname ILIKE %s',
+                        'a.alias ILIKE %s',
+                        'a.biz ILIKE %s',
+                    ]
+                )
+                clauses.append(f'({clause})')
                 params.extend([like, like, like])
-            where.append(" AND ".join(clauses))
-        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+            where.append(' AND '.join(clauses))
+        where_sql = f'WHERE {" AND ".join(where)}' if where else ''
         offset = max(page - 1, 0) * page_size
         query_sql = (
-            "WITH filtered_accounts AS ("
-            " SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,"
-            " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days,"
-            " a.article_count"
-            " FROM accounts a"
-            f" {where_sql}"
-            " ORDER BY a.nickname ASC"
-            " LIMIT %s OFFSET %s"
-            ")"
-            " SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,"
-            " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,"
-            " COALESCE(a.article_count, 0) AS article_count,"
-            " (ai.data IS NOT NULL) AS avatar_ready"
-            " FROM filtered_accounts a"
-            " LEFT JOIN account_groups g ON g.id = a.group_id"
-            " LEFT JOIN avatar_images ai ON ai.biz = a.biz"
-            " ORDER BY a.nickname ASC"
+            'WITH filtered_accounts AS ('
+            ' SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,'
+            ' a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days,'
+            ' a.article_count'
+            ' FROM accounts a'
+            f' {where_sql}'
+            ' ORDER BY a.nickname ASC'
+            ' LIMIT %s OFFSET %s'
+            ')'
+            ' SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,'
+            ' a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,'
+            ' COALESCE(a.article_count, 0) AS article_count,'
+            ' (ai.data IS NOT NULL) AS avatar_ready'
+            ' FROM filtered_accounts a'
+            ' LEFT JOIN account_groups g ON g.id = a.group_id'
+            ' LEFT JOIN avatar_images ai ON ai.biz = a.biz'
+            ' ORDER BY a.nickname ASC'
         )
         with self._conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(query_sql, params + [page_size, offset])
+            cur.execute(query_sql, [*params, page_size, offset])
             rows = [dict(row) for row in cur.fetchall()]
         for row in rows:
-            row["avatar_url"] = f"/api/account/{row['biz']}/avatar"
-        count_sql = f"SELECT COUNT(*) AS total FROM accounts a {where_sql}"
+            row['avatar_url'] = f'/api/account/{row["biz"]}/avatar'
+        count_sql = f'SELECT COUNT(*) AS total FROM accounts a {where_sql}'
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(count_sql, params)
             total_row = cur.fetchone()
-        total = int(total_row["total"]) if total_row else 0
-        return {"accounts": rows, "page": page, "page_size": page_size, "total": total}
+        total = int(total_row['total']) if total_row else 0
+        return {'accounts': rows, 'page': page, 'page_size': page_size, 'total': total}
 
     def get_account_detail(self, biz: str) -> dict[str, Any]:
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                "SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,"
-                " a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,"
-                " COALESCE(a.article_count, 0) AS article_count,"
-                " (ai.data IS NOT NULL) AS avatar_ready"
-                " FROM accounts a"
-                " LEFT JOIN account_groups g ON g.id = a.group_id"
-                " LEFT JOIN avatar_images ai ON ai.biz = a.biz"
-                " WHERE a.biz = %s",
+                'SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,'
+                ' a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,'
+                ' COALESCE(a.article_count, 0) AS article_count,'
+                ' (ai.data IS NOT NULL) AS avatar_ready'
+                ' FROM accounts a'
+                ' LEFT JOIN account_groups g ON g.id = a.group_id'
+                ' LEFT JOIN avatar_images ai ON ai.biz = a.biz'
+                ' WHERE a.biz = %s',
                 (biz,),
             )
             row = cur.fetchone()
         if not row:
             raise LookupError('Account not found')
         result = dict(row)
-        result["avatar_url"] = f"/api/account/{result['biz']}/avatar"
+        result['avatar_url'] = f'/api/account/{result["biz"]}/avatar'
         return result
 
     def update_account_fields(self, biz: str, **updates: Any) -> None:
@@ -312,7 +310,7 @@ class AccountRepository:
         params.append(biz)
         with self._conn.cursor() as cur:
             cur.execute(
-                f"UPDATE accounts SET {', '.join(fields)} WHERE biz = %s",
+                f'UPDATE accounts SET {", ".join(fields)} WHERE biz = %s',
                 params,
             )
             if cur.rowcount == 0:
@@ -321,7 +319,7 @@ class AccountRepository:
     def move_accounts(self, biz_list: list[str], group_id: int) -> int:
         with self._conn.cursor() as cur:
             cur.execute(
-                "UPDATE accounts SET group_id = %s, updated_at = NOW() WHERE biz = ANY(%s)",
+                'UPDATE accounts SET group_id = %s, updated_at = NOW() WHERE biz = ANY(%s)',
                 (group_id, biz_list),
             )
             return cur.rowcount
@@ -340,7 +338,7 @@ class AccountRepository:
         params.append(biz_list)
         with self._conn.cursor() as cur:
             cur.execute(
-                f"UPDATE accounts SET {', '.join(fields)} WHERE biz = ANY(%s)",
+                f'UPDATE accounts SET {", ".join(fields)} WHERE biz = ANY(%s)',
                 params,
             )
             return cur.rowcount
@@ -395,7 +393,7 @@ class GroupRepository:
         params.append(group_id)
         with self._conn.cursor() as cur:
             cur.execute(
-                f"UPDATE account_groups SET {', '.join(fields)} WHERE id = %s",
+                f'UPDATE account_groups SET {", ".join(fields)} WHERE id = %s',
                 params,
             )
             if cur.rowcount == 0:
@@ -407,10 +405,10 @@ class GroupRepository:
             raise ValueError('Default group cannot be deleted')
         with self._conn.cursor() as cur:
             cur.execute(
-                "UPDATE accounts SET group_id = %s WHERE group_id = %s",
+                'UPDATE accounts SET group_id = %s WHERE group_id = %s',
                 (default_group_id, group_id),
             )
-            cur.execute("DELETE FROM account_groups WHERE id = %s", (group_id,))
+            cur.execute('DELETE FROM account_groups WHERE id = %s', (group_id,))
             if cur.rowcount == 0:
                 raise LookupError('Group not found')
 
@@ -504,7 +502,7 @@ class LoginSessionRepository:
                         cookie_json,
                         session.nickname,
                         session.avatar,
-                        True if set_default else False,
+                        bool(set_default),
                         now,
                         match_id,
                     ),
@@ -521,7 +519,7 @@ class LoginSessionRepository:
                         cookie_json,
                         session.nickname,
                         session.avatar,
-                        True if set_default else False,
+                        bool(set_default),
                         now,
                         now,
                     ),
@@ -556,9 +554,7 @@ class LoginSessionRepository:
 
     def get_login_updated_at(self) -> datetime | None:
         with self._conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
-                'SELECT updated_at FROM login_sessions WHERE is_default = TRUE ORDER BY id DESC LIMIT 1'
-            )
+            cur.execute('SELECT updated_at FROM login_sessions WHERE is_default = TRUE ORDER BY id DESC LIMIT 1')
             row = cur.fetchone()
         if not row:
             return None
@@ -694,7 +690,8 @@ class ArticleRepository:
                 publish_at=EXCLUDED.publish_at,
                 raw_json=EXCLUDED.raw_json,
                 updated_at=EXCLUDED.updated_at
-            RETURNING id""" + (", (xmax = 0) AS inserted" if return_inserted else ""),
+            RETURNING id"""
+            + (', (xmax = 0) AS inserted' if return_inserted else ''),
             (
                 biz,
                 article_id,
@@ -746,7 +743,7 @@ class ArticleRepository:
                     )
                 if cover_id is not None:
                     cur.execute(
-                        "UPDATE articles SET cover = %s, updated_at = %s WHERE id = %s",
+                        'UPDATE articles SET cover = %s, updated_at = %s WHERE id = %s',
                         (cover_id, now, article_pk),
                     )
                 if is_inserted:
@@ -783,8 +780,7 @@ class ArticleRepository:
                     normalized_cover = str(cover_url).strip()
             if normalized_cover:
                 has_cover = any(
-                    image.get('kind') == 'cover'
-                    and str(image.get('orig_url') or '') == normalized_cover
+                    image.get('kind') == 'cover' and str(image.get('orig_url') or '') == normalized_cover
                     for image in images
                 )
                 if not has_cover:
@@ -882,12 +878,12 @@ class ArticleRepository:
             )
             if cover_id is not None:
                 cur.execute(
-                    "UPDATE articles SET cover = %s, updated_at = %s WHERE id = %s",
+                    'UPDATE articles SET cover = %s, updated_at = %s WHERE id = %s',
                     (cover_id, now, article_pk),
                 )
             else:
                 cur.execute(
-                    "UPDATE articles SET cover = NULL, updated_at = %s WHERE id = %s",
+                    'UPDATE articles SET cover = NULL, updated_at = %s WHERE id = %s',
                     (now, article_pk),
                 )
 
@@ -1168,8 +1164,8 @@ class ImageRepository:
 
 def _to_utc_dt(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _row_to_account(row: dict[str, Any]) -> AccountCredential:

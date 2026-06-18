@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import html
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import formatdate
-from typing import Any, Iterable
+from typing import Any
 from xml.sax.saxutils import escape
 
-from .storage import PostgresStorage, open_storage
-from .storage import ensure_default_group, fetchall_rows
+from .storage import PostgresStorage, ensure_default_group, fetchall_rows, open_storage
 from .utils import parse_iso_date_to_timestamp
 
-DEFAULT_GROUP_NAME = "Default"
+DEFAULT_GROUP_NAME = 'Default'
 
 
 @dataclass(slots=True)
@@ -30,22 +30,22 @@ def _resolve_group_ids(storage: PostgresStorage, names: Iterable[str]) -> list[i
     cleaned = [name.strip() for name in names if name and name.strip()]
     if not cleaned:
         return []
-    placeholders = ",".join(["%s"] * len(cleaned))
+    placeholders = ','.join(['%s'] * len(cleaned))
     query = (
-        f"SELECT id, name FROM account_groups WHERE name IN ({placeholders})"
+        f'SELECT id, name FROM account_groups WHERE name IN ({placeholders})'
         if cleaned
-        else "SELECT id, name FROM account_groups"
+        else 'SELECT id, name FROM account_groups'
     )
     rows = fetchall_rows(storage, query, cleaned)
-    found = {row["name"]: row["id"] for row in rows}
+    found = {row['name']: row['id'] for row in rows}
     missing = [name for name in cleaned if name not in found]
     if missing:
-        raise ValueError(f"Group not found: {', '.join(missing)}")
+        raise ValueError(f'Group not found: {", ".join(missing)}')
     return [found[name] for name in cleaned]
 
 
 def _text_to_html(text: str) -> str:
-    return escape(text).replace("\n", "<br/>")
+    return escape(text).replace('\n', '<br/>')
 
 
 def _build_image_src(
@@ -54,15 +54,15 @@ def _build_image_src(
     orig_url: str | None,
 ) -> str:
     if image_id and image_base:
-        return f"{image_base.rstrip('/')}/api/image/{image_id}"
+        return f'{image_base.rstrip("/")}/api/image/{image_id}'
     if image_id:
-        return f"/api/image/{image_id}"
-    return orig_url or ""
+        return f'/api/image/{image_id}'
+    return orig_url or ''
 
 
 def _extract_description(raw: Any, image_base: str | None) -> str:
     if not raw:
-        return ""
+        return ''
     blocks = raw
     if isinstance(raw, str):
         try:
@@ -75,9 +75,9 @@ def _extract_description(raw: Any, image_base: str | None) -> str:
     for block in blocks:
         if not isinstance(block, dict):
             continue
-        block_type = block.get("type")
-        if block_type == "code" and block.get("text"):
-            code_text = str(block.get("text"))
+        block_type = block.get('type')
+        if block_type == 'code' and block.get('text'):
+            code_text = str(block.get('text'))
             code_lines = code_text.split('\n')
             if code_lines and code_lines[0].strip().startswith(('```', '~~~')):
                 code_lines = code_lines[1:]
@@ -86,22 +86,20 @@ def _extract_description(raw: Any, image_base: str | None) -> str:
             code_text = '\n'.join(code_lines).strip()
             if code_text:
                 escaped = html.escape(code_text, quote=False)
-                parts.append(f"<pre><code>{escaped}</code></pre>")
-        elif block_type == "paragraph" and block.get("text"):
-            parts.append(f"<p>{_text_to_html(str(block.get('text')))}</p>")
-        elif block_type == "heading" and block.get("text"):
-            level = min(max(int(block.get("level") or 2), 2), 4)
-            parts.append(
-                f"<h{level}>{_text_to_html(str(block.get('text')))}</h{level}>"
-            )
-        elif block_type == "image":
-            src = _build_image_src(image_base, block.get("image_id"), block.get("orig_url"))
+                parts.append(f'<pre><code>{escaped}</code></pre>')
+        elif block_type == 'paragraph' and block.get('text'):
+            parts.append(f'<p>{_text_to_html(str(block.get("text")))}</p>')
+        elif block_type == 'heading' and block.get('text'):
+            level = min(max(int(block.get('level') or 2), 2), 4)
+            parts.append(f'<h{level}>{_text_to_html(str(block.get("text")))}</h{level}>')
+        elif block_type == 'image':
+            src = _build_image_src(image_base, block.get('image_id'), block.get('orig_url'))
             if src:
-                alt = _text_to_html(str(block.get("alt") or ""))
-                parts.append(f"<img src=\"{src}\" alt=\"{alt}\" />")
+                alt = _text_to_html(str(block.get('alt') or ''))
+                parts.append(f'<img src="{src}" alt="{alt}" />')
         if len(parts) >= 8:
             break
-    return "".join(parts)
+    return ''.join(parts)
 
 
 def query_rss_items(
@@ -121,51 +119,49 @@ def query_rss_items(
         params: list[Any] = []
 
         if group_ids:
-            where.append("acc.group_id = ANY(%s)")
+            where.append('acc.group_id = ANY(%s)')
             params.append(group_ids)
 
-        since_ts = parse_iso_date_to_timestamp(since, tz=timezone.utc)
-        until_ts = parse_iso_date_to_timestamp(until, end_of_day=True, tz=timezone.utc)
+        since_ts = parse_iso_date_to_timestamp(since, tz=UTC)
+        until_ts = parse_iso_date_to_timestamp(until, end_of_day=True, tz=UTC)
         if days:
-            now = datetime.now(timezone.utc)
-            since_ts = int((now.timestamp() - days * 86400))
+            now = datetime.now(UTC)
+            since_ts = int(now.timestamp() - days * 86400)
 
         if since_ts is not None:
-            where.append("a.publish_at >= %s")
+            where.append('a.publish_at >= %s')
             params.append(since_ts)
         if until_ts is not None:
-            where.append("a.publish_at <= %s")
+            where.append('a.publish_at <= %s')
             params.append(until_ts)
 
-        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
-        limit_sql = "LIMIT %s"
+        where_sql = f'WHERE {" AND ".join(where)}' if where else ''
+        limit_sql = 'LIMIT %s'
 
         query = (
-            "SELECT a.id, a.title, a.link, a.publish_at, a.digest, c.content_json"
-            " FROM articles a"
-            " JOIN accounts acc ON acc.biz = a.biz"
-            " LEFT JOIN article_content c ON c.article_pk = a.id"
-            f" {where_sql}"
-            " ORDER BY a.publish_at DESC NULLS LAST, a.id DESC"
+            'SELECT a.id, a.title, a.link, a.publish_at, a.digest, c.content_json'
+            ' FROM articles a'
+            ' JOIN accounts acc ON acc.biz = a.biz'
+            ' LEFT JOIN article_content c ON c.article_pk = a.id'
+            f' {where_sql}'
+            ' ORDER BY a.publish_at DESC NULLS LAST, a.id DESC'
         )
         if limit:
-            query = f"{query} {limit_sql}"
+            query = f'{query} {limit_sql}'
             params.append(limit)
 
         rows = fetchall_rows(storage, query, params)
 
     items: list[RssItem] = []
     for row in rows:
-        description = row.get("digest") or _extract_description(
-            row.get("content_json"), image_base_url
-        )
+        description = row.get('digest') or _extract_description(row.get('content_json'), image_base_url)
         items.append(
             RssItem(
-                title=row.get("title") or "",
-                link=row.get("link") or "",
-                guid=str(row.get("id")),
-                pub_date=row.get("publish_at"),
-                description=description or "",
+                title=row.get('title') or '',
+                link=row.get('link') or '',
+                guid=str(row.get('id')),
+                pub_date=row.get('publish_at'),
+                description=description or '',
             )
         )
     return items
@@ -190,7 +186,7 @@ def build_rss_xml(
     ]
     for item in items:
         pub_date = formatdate(item.pub_date, usegmt=True) if item.pub_date else now
-        description = item.description.replace("]]>", "]]]]><![CDATA[>")
+        description = item.description.replace(']]>', ']]]]><![CDATA[>')
         lines.extend(
             [
                 '<item>',
@@ -203,4 +199,4 @@ def build_rss_xml(
             ]
         )
     lines.extend(['</channel>', '</rss>'])
-    return "\n".join(lines)
+    return '\n'.join(lines)

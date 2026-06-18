@@ -5,16 +5,16 @@ from __future__ import annotations
 import json
 import os
 import sys
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager, suppress
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
-from .models import AccountGroup
-
 from .env import load_env
+from .models import AccountGroup
 from .repositories import (
     AccountRepository,
     ArticleRepository,
@@ -55,37 +55,27 @@ def _log_db_init(message: str) -> None:
 
 
 def _jieba_warmup_enabled() -> bool:
-    return (
-        os.environ.get('HIPPO_PG_JIEBA_WARMUP', '1').strip().lower()
-        in _PG_JIEBA_WARMUP_VALUES
-    )
+    return os.environ.get('HIPPO_PG_JIEBA_WARMUP', '1').strip().lower() in _PG_JIEBA_WARMUP_VALUES
 
 
 def _pg_disable_jit_enabled() -> bool:
-    return (
-        os.environ.get('HIPPO_PG_DISABLE_JIT', '1').strip().lower()
-        in _PG_DISABLE_JIT_VALUES
-    )
+    return os.environ.get('HIPPO_PG_DISABLE_JIT', '1').strip().lower() in _PG_DISABLE_JIT_VALUES
 
 
 def _rollback_quietly(conn) -> None:
-    try:
+    with suppress(Exception):
         conn.rollback()
-    except Exception:
-        pass
 
 
 def _warmup_jieba_parser(conn) -> None:
     if not _jieba_warmup_enabled():
         return
-    warmup_text = os.environ.get(
-        'HIPPO_PG_JIEBA_WARMUP_TEXT', _DEFAULT_JIEBA_WARMUP_TEXT
-    ).strip()
+    warmup_text = os.environ.get('HIPPO_PG_JIEBA_WARMUP_TEXT', _DEFAULT_JIEBA_WARMUP_TEXT).strip()
     if not warmup_text:
         warmup_text = _DEFAULT_JIEBA_WARMUP_TEXT
     try:
         with conn.cursor() as cur:
-            cur.execute('SELECT plainto_tsquery(\'jiebaqry\', %s)', (warmup_text,))
+            cur.execute("SELECT plainto_tsquery('jiebaqry', %s)", (warmup_text,))
             cur.fetchone()
     except Exception as exc:
         _log_db_init(f'jieba warmup skipped: {exc}')
@@ -95,12 +85,12 @@ def _warmup_jieba_parser(conn) -> None:
 
 def _get_pool(dsn: str) -> ConnectionPool:
     global _PG_POOL, _PG_POOL_DSN
-    if _PG_POOL is not None and _PG_POOL_DSN == dsn:
+    if _PG_POOL is not None and dsn == _PG_POOL_DSN:
         return _PG_POOL
     if _PG_POOL is not None:
         _PG_POOL.close()
-    min_conn = int(os.environ.get("HIPPO_PG_POOL_MIN", "1") or "1")
-    max_conn = int(os.environ.get("HIPPO_PG_POOL_MAX", "8") or "8")
+    min_conn = int(os.environ.get('HIPPO_PG_POOL_MIN', '1') or '1')
+    max_conn = int(os.environ.get('HIPPO_PG_POOL_MAX', '8') or '8')
     if max_conn < min_conn:
         max_conn = min_conn
     options = ['-c timezone=Asia/Shanghai']
@@ -165,10 +155,8 @@ class PostgresStorage(AbstractContextManager):
 
     def close(self) -> None:
         if self._pool:
-            try:
+            with suppress(Exception):
                 self.conn.rollback()
-            except Exception:
-                pass
             self._pool.putconn(self.conn)
         else:
             self.conn.close()
@@ -179,14 +167,16 @@ class PostgresStorage(AbstractContextManager):
     def rollback(self) -> None:
         self.conn.rollback()
 
-    def transaction(self) -> "StorageTransaction":
+    def transaction(self) -> StorageTransaction:
         return StorageTransaction(self.conn)
 
     def _init_db(self) -> None:
         with self.conn.cursor() as cur:
             schema_sql = _load_schema_sql()
             first_line = schema_sql.strip().splitlines()[0].strip()[:160]
-            _log_db_init(f'executing schema from {SCHEMA_PATH.name} ({len(schema_sql)} bytes, starts with: {first_line}...)')
+            _log_db_init(
+                f'executing schema from {SCHEMA_PATH.name} ({len(schema_sql)} bytes, starts with: {first_line}...)'
+            )
             cur.execute(schema_sql)
             _log_db_init('update schema version')
             cur.execute(UPSERT_SCHEMA_VERSION, (SCHEMA_VERSION,))
@@ -198,20 +188,14 @@ class PostgresStorage(AbstractContextManager):
                 cur.execute("SELECT to_regclass('public.meta')")
                 table_name = cur.fetchone()[0]
                 if not table_name:
-                    raise StorageInitError(
-                        "Database not initialized. Run `python -m hippo db init`."
-                    )
-                cur.execute("SELECT value FROM meta WHERE key = %s", ("schema_version",))
+                    raise StorageInitError('Database not initialized. Run `python -m hippo db init`.')
+                cur.execute('SELECT value FROM meta WHERE key = %s', ('schema_version',))
                 row = cur.fetchone()
                 if not row:
-                    raise StorageInitError(
-                        "Database not initialized. Run `python -m hippo db init`."
-                    )
+                    raise StorageInitError('Database not initialized. Run `python -m hippo db init`.')
                 current_version = row[0]
                 if current_version != SCHEMA_VERSION:
-                    raise StorageInitError(
-                        "Database schema out of date. Run `python -m hippo db init` to migrate."
-                    )
+                    raise StorageInitError('Database schema out of date. Run `python -m hippo db init` to migrate.')
             self.conn.rollback()
         except Exception:
             self.conn.rollback()
@@ -220,9 +204,9 @@ class PostgresStorage(AbstractContextManager):
 
 def open_storage(*, auto_init: bool = False) -> PostgresStorage:
     load_env()
-    dsn = os.environ.get("HIPPO_PG_DSN")
+    dsn = os.environ.get('HIPPO_PG_DSN')
     if not dsn:
-        raise StorageInitError("Missing HIPPO_PG_DSN for PostgreSQL storage.")
+        raise StorageInitError('Missing HIPPO_PG_DSN for PostgreSQL storage.')
     return PostgresStorage(dsn, auto_init=auto_init)
 
 
@@ -230,7 +214,7 @@ class StorageTransaction(AbstractContextManager):
     def __init__(self, conn) -> None:
         self._conn = conn
 
-    def __enter__(self) -> "StorageTransaction":
+    def __enter__(self) -> StorageTransaction:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
