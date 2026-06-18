@@ -226,6 +226,17 @@ def _get_login_info(storage: PostgresStorage) -> dict[str, Any] | None:
     return row
 
 
+def _login_response(
+    snapshot: dict[str, Any],
+    info: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        **snapshot,
+        "qrcode_url": "/api/login/qrcode" if snapshot.get("has_qrcode") else None,
+        "last_login": info,
+    }
+
+
 class LoginManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -1214,12 +1225,7 @@ def login_status(
         dict: 登录状态，消息和上次登录信息。
     """
     info = _get_login_info(storage)
-    snapshot = manager._snapshot()
-    return {
-        **snapshot,
-        "qrcode_url": "/api/login/qrcode" if snapshot.get("has_qrcode") else None,
-        "last_login": info,
-    }
+    return _login_response(manager._snapshot(), info)
 
 
 @router.post("/login/start")
@@ -1235,13 +1241,8 @@ async def login_start(
         dict: 登录状态，包含二维码 URL 是否可用。
     """
     force = bool(body.get('force'))
-    snapshot = await manager.start(force=force)
     info = _get_login_info(storage)
-    return {
-        **snapshot,
-        "qrcode_url": "/api/login/qrcode" if snapshot.get("has_qrcode") else None,
-        "last_login": info,
-    }
+    return _login_response(await manager.start(force=force), info)
 
 
 @router.post("/login/poll")
@@ -1256,13 +1257,8 @@ async def login_poll(
     Returns:
         dict: 更新后的登录状态。
     """
-    snapshot = await manager.poll(storage)
     info = _get_login_info(storage)
-    return {
-        **snapshot,
-        "qrcode_url": "/api/login/qrcode" if snapshot.get("has_qrcode") else None,
-        "last_login": info,
-    }
+    return _login_response(await manager.poll(storage), info)
 
 
 @router.post("/login/finalize")
@@ -1274,13 +1270,8 @@ async def login_finalize(
     完成登录（在二维码被确认后调用）。
     调用微信 bizlogin 接口完成最终登录，获取 token。
     """
-    snapshot = await manager.finalize(storage)
     info = _get_login_info(storage)
-    return {
-        **snapshot,
-        "qrcode_url": "/api/login/qrcode" if snapshot.get("has_qrcode") else None,
-        "last_login": info,
-    }
+    return _login_response(await manager.finalize(storage), info)
 
 
 @router.post("/login/cancel")
@@ -1296,12 +1287,7 @@ def login_cancel(
     """
     manager.cancel()
     info = _get_login_info(storage)
-    snapshot = manager._snapshot()
-    return {
-        **snapshot,
-        "qrcode_url": "/api/login/qrcode" if snapshot.get("has_qrcode") else None,
-        "last_login": info,
-    }
+    return _login_response(manager._snapshot(), info)
 
 
 @router.get("/login/qrcode")
