@@ -19,8 +19,7 @@ class FileStorage(Protocol):
         content_type: str | None,
         payload: bytes,
         key: str | None = None,
-    ) -> str:
-        ...
+    ) -> str: ...
 
 
 class S3FileStorage:
@@ -57,7 +56,7 @@ class S3FileStorage:
             return 0
         deleted = 0
         for i in range(0, len(keys), 1000):
-            batch = keys[i:i + 1000]
+            batch = keys[i : i + 1000]
             objects = [{'Key': key} for key in batch]
             resp = self._client.delete_objects(
                 Bucket=self._config.bucket,

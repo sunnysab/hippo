@@ -8,10 +8,9 @@ import logging
 import threading
 from typing import Any
 
-from .s3 import build_image_key, fetch_object_bytes, get_s3_client, upload_object_bytes
-from .storage import PostgresStorage, open_storage
-from .storage import fetchone_row
 from .http import MPClient
+from .s3 import build_image_key, fetch_object_bytes, get_s3_client, upload_object_bytes
+from .storage import PostgresStorage, fetchone_row, open_storage
 
 IMAGE_HASH_ALGO = 'sha256'
 logger = logging.getLogger('hippo.image_hashes')
@@ -117,13 +116,12 @@ def ensure_image_hash_by_id(
     *,
     allow_origin_fetch: bool = True,
 ) -> dict[str, Any]:
-    with PostgresStorage(pg_dsn) as storage:
-        with storage.transaction():
-            return ensure_image_hash(
-                storage,
-                image_id,
-                allow_origin_fetch=allow_origin_fetch,
-            )
+    with PostgresStorage(pg_dsn) as storage, storage.transaction():
+        return ensure_image_hash(
+            storage,
+            image_id,
+            allow_origin_fetch=allow_origin_fetch,
+        )
 
 
 def _download_image_from_origin(
@@ -159,19 +157,17 @@ def _store_image_to_s3_async(
                 payload=payload,
                 content_type=content_type,
             )
-            with open_storage() as storage:
-                with storage.transaction():
-                    with storage.conn.cursor() as cur:
-                        cur.execute(
-                            """
+            with open_storage() as storage, storage.transaction(), storage.conn.cursor() as cur:
+                cur.execute(
+                    """
                             UPDATE article_images
                             SET s3_key = %s,
                                 content_type = %s,
                                 updated_at = NOW()
                             WHERE id = %s
                             """,
-                            (resolved_key, content_type, image_id),
-                        )
+                    (resolved_key, content_type, image_id),
+                )
         except Exception as exc:
             logger.warning('S3 image store failed (id=%s key=%s): %s', image_id, resolved_key, exc)
 

@@ -5,14 +5,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from .container import build_sync_container
+from .downloader import ArticleDownloader
 from .emailer import get_email_settings, send_email
 from .file_storage import FileStorageError
-from .wechat_api import WeChatApiClient
 from .models import AccountCredential, ArticleRecord
 from .storage import PostgresStorage, open_storage
 from .sync_core import (
@@ -23,6 +24,8 @@ from .sync_core import (
     reset_sync_cancel,
     sync_account_core,
 )
+from .wechat_api import WeChatApiClient
+
 
 # Optional background image backfill after scheduled sync
 async def _run_backfill_images() -> None:
@@ -34,6 +37,11 @@ async def _run_backfill_images() -> None:
         await backfill_article_images()
     except Exception:
         _logger.exception('Background image backfill failed.')
+
+
+import contextlib
+
+from .storage import fetchall_rows, load_meta_json, save_meta_json
 from .sync_types import (
     NullSyncJobObserver,
     NullSyncObserver,
@@ -46,7 +54,6 @@ from .sync_types import (
     SyncReport,
     SyncSummary,
 )
-from .storage import fetchall_rows, load_meta_json, save_meta_json
 from .utils import parse_iso_date_to_timestamp, should_skip_by_time, utc_now_iso
 
 SYNC_STATUS_KEY = 'sync:last_status'
@@ -116,7 +123,7 @@ def _normalize_article_exclude_keywords(value: Any) -> str:
 def _normalize_window_start_hour(value: Any) -> int:
     try:
         hour = int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return _DEFAULT_WINDOW_START_HOUR
     return min(max(hour, 0), 23)
 
@@ -124,7 +131,7 @@ def _normalize_window_start_hour(value: Any) -> int:
 def _normalize_window_end_hour(value: Any) -> int:
     try:
         hour = int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return _DEFAULT_WINDOW_END_HOUR
     return min(max(hour, 0), 24)
 
@@ -291,9 +298,7 @@ def _persist_sync_outcome(
             storage.meta.delete(SYNC_LOGIN_REQUIRED_AT_KEY)
 
     skipped_accounts = sum(
-        1
-        for item in report.details
-        if item.skipped and item.skip_reason in ('disabled', 'recently_synced')
+        1 for item in report.details if item.skipped and item.skip_reason in ('disabled', 'recently_synced')
     )
     failed_accounts = sum(1 for item in report.details if item.failed)
     append_sync_history(
@@ -326,8 +331,8 @@ def _persist_sync_outcome(
 
 def _to_utc_dt(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _parse_iso_datetime(value: str | None) -> datetime | None:
@@ -391,10 +396,8 @@ def _select_missing_content(
         ids = storage.articles.get_article_content_ids(biz, [article.article_id for article in articles])
         return [article for article in articles if article.article_id not in ids]
     except Exception as exc:
-        try:
+        with contextlib.suppress(Exception):
             storage.rollback()
-        except Exception:
-            pass
         _logger.warning('Failed to query article content IDs (biz=%s): %s', biz, exc)
         return articles
 
@@ -402,15 +405,12 @@ def _select_missing_content(
 def _to_utc_timestamp(value: datetime | None) -> int | None:
     if not value:
         return None
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    else:
-        value = value.astimezone(timezone.utc)
+    value = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
     return int(value.timestamp())
 
 
 def _today_str() -> str:
-    return datetime.now(timezone.utc).date().isoformat()
+    return datetime.now(UTC).date().isoformat()
 
 
 class SyncRunError(RuntimeError):
@@ -462,7 +462,7 @@ class ArticleSyncService:
         if config.mode == SyncMode.recent:
             if config.recent_days is None:
                 raise ValueError('--recent-days is required for recent mode.')
-            since = int((datetime.now(timezone.utc) - timedelta(days=config.recent_days)).timestamp())
+            since = int((datetime.now(UTC) - timedelta(days=config.recent_days)).timestamp())
             return since, None
         if config.mode == SyncMode.range:
             if not config.since_date:
@@ -532,7 +532,7 @@ class ArticleSyncService:
                 since_timestamp = shared_since
             else:
                 days = max(int(recent_days or 1), 1)
-                since_timestamp = int((datetime.now(timezone.utc).timestamp() - days * 86400))
+                since_timestamp = int(datetime.now(UTC).timestamp() - days * 86400)
         elif mode == SyncMode.range:
             if config.mode is not None:
                 since_timestamp = shared_since
@@ -1014,10 +1014,8 @@ async def run_sync_job(
             _logger.exception('Failed to persist sync outcome; retrying with a fresh connection.')
             try:
                 with open_storage() as retry_storage:
-                    try:
+                    with contextlib.suppress(Exception):
                         retry_storage.rollback()
-                    except Exception:
-                        pass
                     status = _persist_sync_outcome(
                         retry_storage,
                         started_at=started_at,
@@ -1061,10 +1059,8 @@ class SyncScheduler:
             self._trigger.set()
 
     async def _wait(self, timeout: float) -> None:
-        try:
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._trigger.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            pass
         self._trigger.clear()
 
     async def _loop_sync(self) -> None:

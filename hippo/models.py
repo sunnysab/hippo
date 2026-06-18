@@ -13,7 +13,6 @@ class HippoBaseModel(BaseModel):
 
 
 class AccountCredential(HippoBaseModel):
-
     biz: str
     nickname: str
     alias: str | None = None
@@ -27,7 +26,6 @@ class AccountCredential(HippoBaseModel):
 
 
 class AccountGroup(HippoBaseModel):
-
     id: int
     name: str
     account_count: int = 0
@@ -37,7 +35,6 @@ class AccountGroup(HippoBaseModel):
 
 
 class ArticleRecord(HippoBaseModel):
-
     biz: str
     article_id: str
     title: str
@@ -52,13 +49,11 @@ class ArticleRecord(HippoBaseModel):
 
 
 class DownloadResult(HippoBaseModel):
-
     article: ArticleRecord
     asset_count: int
 
 
 class LoginSession(HippoBaseModel):
-
     token: str
     cookies: dict[str, str]
     nickname: str | None = None
@@ -66,9 +61,9 @@ class LoginSession(HippoBaseModel):
 
 
 __all__ = [
-    "AccountCredential",
-    "AccountGroup",
-    "ArticleRecord",
-    "DownloadResult",
-    "LoginSession",
+    'AccountCredential',
+    'AccountGroup',
+    'ArticleRecord',
+    'DownloadResult',
+    'LoginSession',
 ]

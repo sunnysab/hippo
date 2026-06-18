@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 try:
@@ -13,11 +13,10 @@ try:
 except Exception:  # pragma: no cover - optional fallback
     jieba = None
 
-from .storage import PostgresStorage, fetchall_rows, fetchone_row
 from .exceptions import ApiError
-from .image_hashes import IMAGE_HASH_ALGO, ensure_image_hash, fetch_image_bytes
-from .rss import build_rss_xml, query_rss_items
-from .utils import parse_iso_date_to_timestamp, utc_now_iso
+from .image_hashes import ensure_image_hash, fetch_image_bytes
+from .storage import PostgresStorage, fetchall_rows, fetchone_row
+from .utils import parse_iso_date_to_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +40,7 @@ def _coalesce_item_show_type(value: Any) -> int | None:
         return 0
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -58,7 +57,7 @@ def _normalize_item_show_type(value: Any) -> int | None:
 
 
 def _normalize_sync_mode(value: Any) -> str | None:
-    if value in (None, ""):
+    if value in (None, ''):
         return None
     mode = str(value).strip().lower()
     if not mode:
@@ -69,7 +68,7 @@ def _normalize_sync_mode(value: Any) -> str | None:
 
 
 def _normalize_recent_days(value: Any) -> int | None:
-    if value in (None, ""):
+    if value in (None, ''):
         return None
     try:
         days = int(value)
@@ -143,21 +142,21 @@ def _build_article_exclude_keywords_where_clause(exclude_keywords: list[str] | N
     for keyword in exclude_keywords:
         pattern = f'%{keyword.lower()}%'
         clauses.append(
-            "("
+            '('
             "LOWER(COALESCE(a.title, '')) LIKE %s"
             " OR LOWER(COALESCE(a.digest, '')) LIKE %s"
             " OR LOWER(COALESCE(a.author, '')) LIKE %s"
-            ")"
+            ')'
         )
         params.extend([pattern, pattern, pattern])
-    return f"NOT ({' OR '.join(clauses)})", params
+    return f'NOT ({" OR ".join(clauses)})', params
 
 
 def _parse_date(value: str | None, *, end_of_day: bool = False) -> int | None:
     try:
         return parse_iso_date_to_timestamp(value, end_of_day=end_of_day)
     except ValueError as exc:
-        raise ApiError(f"Invalid date: {value}") from exc
+        raise ApiError(f'Invalid date: {value}') from exc
 
 
 def _normalize_value(value: Any) -> Any:
@@ -184,10 +183,10 @@ def _tokenize_query(text: str) -> list[str]:
             seen.add(token)
             ordered.append(token)
         return ordered[:12]
-    chunks = re.findall(r"[\u4e00-\u9fff]+|[A-Za-z0-9_]+", trimmed)
+    chunks = re.findall(r'[\u4e00-\u9fff]+|[A-Za-z0-9_]+', trimmed)
     tokens: list[str] = []
     for chunk in chunks:
-        if re.fullmatch(r"[\u4e00-\u9fff]+", chunk):
+        if re.fullmatch(r'[\u4e00-\u9fff]+', chunk):
             tokens.extend(list(chunk))
         else:
             tokens.append(chunk)
@@ -237,7 +236,7 @@ def _build_article_where_clause(
         where.append('a.publish_at <= %s')
         params.append(until_ts)
 
-    where_sql = f"WHERE {' AND '.join(where)}" if where else ''
+    where_sql = f'WHERE {" AND ".join(where)}' if where else ''
     return where_sql, params, query_tsquery_sql, query_tsquery_params
 
 
@@ -257,8 +256,8 @@ def _build_article_query(
     article_id: str | None = None,
 ) -> tuple[str, list[Any]]:
     select_params: list[Any] = []
-    rank_select = ""
-    order_sql = "ORDER BY a.publish_at DESC NULLS LAST, a.id DESC"
+    rank_select = ''
+    order_sql = 'ORDER BY a.publish_at DESC NULLS LAST, a.id DESC'
 
     where_sql, params, query_tsquery_sql, query_tsquery_params = _build_article_where_clause(
         group_id=group_id,
@@ -272,37 +271,37 @@ def _build_article_query(
     )
 
     if sort_mode == ARTICLE_SORT_RELEVANCE_DESC and query_tsquery_sql:
-        rank_select = f", ts_rank(a.search_vector, {query_tsquery_sql}) AS rank"
+        rank_select = f', ts_rank(a.search_vector, {query_tsquery_sql}) AS rank'
         select_params.extend(query_tsquery_params)
-        order_sql = "ORDER BY rank DESC, a.publish_at DESC NULLS LAST, a.id DESC"
+        order_sql = 'ORDER BY rank DESC, a.publish_at DESC NULLS LAST, a.id DESC'
 
-    limit_sql = "LIMIT %s OFFSET %s"
+    limit_sql = 'LIMIT %s OFFSET %s'
 
     image_sql = (
-        "LEFT JOIN LATERAL ("
-        "  SELECT id FROM article_images i"
+        'LEFT JOIN LATERAL ('
+        '  SELECT id FROM article_images i'
         "  WHERE i.article_pk = a.id AND i.s3_key IS NOT NULL AND i.s3_key <> ''"
         "  ORDER BY (i.kind = 'cover') DESC, i.position ASC"
-        "  LIMIT 1"
-        ") img ON TRUE"
+        '  LIMIT 1'
+        ') img ON TRUE'
     )
-    image_select = "img.id AS image_id"
+    image_select = 'img.id AS image_id'
 
     query_sql = (
-        "SELECT a.id, a.biz, a.article_id, a.title, a.item_show_type, a.author, a.digest, a.cover, a.link,"
-        " a.source_url, a.publish_at, a.created_at,"
-        " acc.nickname AS account_nickname, acc.alias AS account_alias,"
-        " acc.round_head_img AS account_avatar,"
-        " acc.group_id, g.name AS group_name,"
-        f" {image_select}"
-        f"{rank_select}"
-        " FROM articles a"
-        " JOIN accounts acc ON acc.biz = a.biz"
-        " LEFT JOIN account_groups g ON g.id = acc.group_id"
-        f" {image_sql}"
-        f" {where_sql}"
-        f" {order_sql}"
-        f" {limit_sql}"
+        'SELECT a.id, a.biz, a.article_id, a.title, a.item_show_type, a.author, a.digest, a.cover, a.link,'
+        ' a.source_url, a.publish_at, a.created_at,'
+        ' acc.nickname AS account_nickname, acc.alias AS account_alias,'
+        ' acc.round_head_img AS account_avatar,'
+        ' acc.group_id, g.name AS group_name,'
+        f' {image_select}'
+        f'{rank_select}'
+        ' FROM articles a'
+        ' JOIN accounts acc ON acc.biz = a.biz'
+        ' LEFT JOIN account_groups g ON g.id = acc.group_id'
+        f' {image_sql}'
+        f' {where_sql}'
+        f' {order_sql}'
+        f' {limit_sql}'
     )
     params = select_params + params + [limit, offset]
     return query_sql, params
@@ -332,12 +331,7 @@ def _count_articles(
     )
     row = fetchone_row(
         storage,
-        (
-            'SELECT COUNT(*) AS total'
-            ' FROM articles a'
-            ' JOIN accounts acc ON acc.biz = a.biz'
-            f' {where_sql}'
-        ),
+        (f'SELECT COUNT(*) AS total FROM articles a JOIN accounts acc ON acc.biz = a.biz {where_sql}'),
         params,
         normalize=_normalize_record,
     )
@@ -388,15 +382,12 @@ def _count_article_item_show_type_facets(
         try:
             normalized_type = int(item_show_type)
             normalized_total = int(total)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         if normalized_type not in _ITEM_SHOW_TYPE_VALUES or normalized_total <= 0:
             continue
         facet_counts[normalized_type] = facet_counts.get(normalized_type, 0) + normalized_total
-    facets = [
-        {'item_show_type': item_show_type, 'count': count}
-        for item_show_type, count in facet_counts.items()
-    ]
+    facets = [{'item_show_type': item_show_type, 'count': count} for item_show_type, count in facet_counts.items()]
     facets.sort(key=lambda item: order_map.get(item['item_show_type'], 999))
     return facets
 
@@ -469,7 +460,7 @@ def _list_articles(
     rows = fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
     for row in rows:
         row['item_show_type'] = _coalesce_item_show_type(row.get('item_show_type'))
-        row["account_avatar_url"] = f"/api/account/{row['biz']}/avatar"
+        row['account_avatar_url'] = f'/api/account/{row["biz"]}/avatar'
     has_active_filters = (
         article_id not in (None, '')
         or item_show_type is not None
@@ -515,36 +506,35 @@ def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
     article = fetchone_row(
         storage,
         (
-            "SELECT a.id, a.biz, a.article_id, a.title, a.item_show_type, a.author, a.digest, a.cover, a.link,"
-            " a.source_url, a.publish_at, a.created_at,"
-            " acc.nickname AS account_nickname, acc.alias AS account_alias,"
-            " acc.round_head_img AS account_avatar, acc.group_id, g.name AS group_name"
-            " FROM articles a"
-            " JOIN accounts acc ON acc.biz = a.biz"
-            " LEFT JOIN account_groups g ON g.id = acc.group_id"
-            " WHERE a.id = %s"
+            'SELECT a.id, a.biz, a.article_id, a.title, a.item_show_type, a.author, a.digest, a.cover, a.link,'
+            ' a.source_url, a.publish_at, a.created_at,'
+            ' acc.nickname AS account_nickname, acc.alias AS account_alias,'
+            ' acc.round_head_img AS account_avatar, acc.group_id, g.name AS group_name'
+            ' FROM articles a'
+            ' JOIN accounts acc ON acc.biz = a.biz'
+            ' LEFT JOIN account_groups g ON g.id = acc.group_id'
+            ' WHERE a.id = %s'
         ),
         [article_id],
         normalize=_normalize_record,
     )
     if not article:
-        raise ApiError("Article not found", status=404)
+        raise ApiError('Article not found', status=404)
     article['item_show_type'] = _coalesce_item_show_type(article.get('item_show_type'))
-    article["account_avatar_url"] = f"/api/account/{article['biz']}/avatar"
+    article['account_avatar_url'] = f'/api/account/{article["biz"]}/avatar'
 
     content_row = fetchone_row(
         storage,
-        "SELECT content_json, clean_html, updated_at FROM article_content WHERE article_pk = %s",
+        'SELECT content_json, clean_html, updated_at FROM article_content WHERE article_pk = %s',
         [article_id],
         normalize=_normalize_record,
     )
     content_json = None
-    clean_html = None
     content_updated_at: str | None = None
     decode_failed = False
     if content_row:
-        content_json = content_row.get("content_json")
-        clean_html = content_row.get("clean_html")
+        content_json = content_row.get('content_json')
+        content_row.get('clean_html')
         content_updated_at = content_row.get('updated_at')
         if isinstance(content_json, str):
             try:
@@ -567,11 +557,11 @@ def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
     if isinstance(content_json, list) and blocked_image_ids:
         content_json = _filter_blocked_content_blocks(content_json, blocked_image_ids)
     return {
-        "article": article,
-        "content": content_json,
-        "content_status": content_status,
-        "content_updated_at": content_updated_at,
-        "images": images,
+        'article': article,
+        'content': content_json,
+        'content_status': content_status,
+        'content_updated_at': content_updated_at,
+        'images': images,
     }
 
 
@@ -602,7 +592,8 @@ def _filter_blocked_content_blocks(
     blocked_image_ids: set[int],
 ) -> list[dict[str, Any]]:
     return [
-        block for block in content_blocks
+        block
+        for block in content_blocks
         if not (block.get('type') == 'image' and block.get('image_id') in blocked_image_ids)
     ]
 
@@ -668,5 +659,3 @@ def _list_feed(
         offset=0,
     )
     return fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
-
-

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable, Protocol
+from collections.abc import Callable
+from typing import Protocol
 
 from .file_storage import FileStorage
 from .image_hashes import IMAGE_HASH_ALGO, compute_image_content_hash
@@ -21,8 +22,7 @@ class ArticleImageStore(Protocol):
         orig_url: str,
         content_type: str | None,
         data: bytes,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     def mark_failed(
         self,
@@ -31,8 +31,7 @@ class ArticleImageStore(Protocol):
         article_id: str,
         orig_url: str,
         reason: str,
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 class ArticleImageService:
@@ -103,4 +102,4 @@ class ArticleImageService:
             self._image_repo.mark_article_image_failed(biz, article_id, orig_url, reason)
 
 
-__all__ = ['ArticleImageStore', 'ArticleImageService']
+__all__ = ['ArticleImageService', 'ArticleImageStore']

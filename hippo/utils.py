@@ -4,23 +4,23 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from typing import Any
 
-_slug_pattern = re.compile(r"[^a-z0-9-]+")
+_slug_pattern = re.compile(r'[^a-z0-9-]+')
 
 
 def slugify(value: str, *, max_length: int = 80) -> str:
-    normalized = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+    normalized = unicodedata.normalize('NFKD', value).encode('ascii', 'ignore').decode('ascii')
     normalized = normalized.lower()
-    normalized = normalized.replace(" ", "-")
-    normalized = _slug_pattern.sub("-", normalized)
-    normalized = normalized.strip("-")
+    normalized = normalized.replace(' ', '-')
+    normalized = _slug_pattern.sub('-', normalized)
+    normalized = normalized.strip('-')
     if not normalized:
-        normalized = "article"
+        normalized = 'article'
     if len(normalized) > max_length:
-        normalized = normalized[:max_length].rstrip("-")
-    return normalized or "article"
+        normalized = normalized[:max_length].rstrip('-')
+    return normalized or 'article'
 
 
 def build_set_clause(
@@ -31,7 +31,7 @@ def build_set_clause(
     params: list[Any] = []
     for key, column in mapping.items():
         if key in updates:
-            fields.append(f"{column} = %s")
+            fields.append(f'{column} = %s')
             params.append(updates[key])
     return fields, params
 
@@ -79,16 +79,13 @@ def should_skip_by_time(last_synced_at: datetime | None, skip_minutes: int | Non
     if not last_synced_at:
         return False
     synced_at = last_synced_at
-    if synced_at.tzinfo is None:
-        synced_at = synced_at.replace(tzinfo=timezone.utc)
-    else:
-        synced_at = synced_at.astimezone(timezone.utc)
-    threshold = datetime.now(timezone.utc) - timedelta(minutes=skip_minutes)
+    synced_at = synced_at.replace(tzinfo=UTC) if synced_at.tzinfo is None else synced_at.astimezone(UTC)
+    threshold = datetime.now(UTC) - timedelta(minutes=skip_minutes)
     return synced_at >= threshold
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 __all__ = [

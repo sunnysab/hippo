@@ -7,7 +7,6 @@ import argparse
 import re
 import sys
 from pathlib import Path
-from typing import Dict, Tuple
 
 from bs4 import BeautifulSoup
 from markdownify import markdownify
@@ -48,7 +47,7 @@ STYLE_BLOCK = """
 """
 
 
-def _prepare_dom(raw_html: str) -> Tuple[BeautifulSoup, BeautifulSoup]:
+def _prepare_dom(raw_html: str) -> tuple[BeautifulSoup, BeautifulSoup]:
     soup = BeautifulSoup(raw_html, 'html.parser')
     js_article = soup.find(id='js_article') or soup
 
@@ -78,7 +77,7 @@ def _prepare_dom(raw_html: str) -> Tuple[BeautifulSoup, BeautifulSoup]:
         for img in imgs:
             img.extract()
             a_tag.insert_before(img)
-        
+
         # If link text is empty after removing images, set a default text
         if not a_tag.get_text(strip=True):
             a_tag.string = '链接'
@@ -118,12 +117,12 @@ def _postprocess_markdown(markdown: str) -> str:
     markdown = re.sub(r'(!\[[^\]]*\]\([^)]+\))', r'\n\1\n', markdown)
 
     lines = [line.strip() for line in markdown.splitlines()]
-    
+
     # 2. Filter specific unwanted lines
-    image_pattern = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
+    re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
     empty_image_pattern = re.compile(r'^!\[[^\]]*]\(\s*\)$')
     immersive_tip = '在小说阅读器中沉浸阅读'
-    
+
     cleaned: list[str] = []
     for line in lines:
         if not line:
@@ -143,29 +142,23 @@ def _postprocess_markdown(markdown: str) -> str:
             return False
         if text.startswith(('#', '-', '*', '+', '>', '|', '![')):
             return False
-        if re.search(r'\[[^\]]+]\([^)]*\)', text):
-            return False
-        return True
+        return not re.search(r'\[[^\]]+]\([^)]*\)', text)
 
     to_remove: set[int] = set()
     non_empty = [i for i, line in enumerate(cleaned) if line]
     js_void_lines = [i for i, line in enumerate(cleaned) if js_void_pattern.search(line)]
-    
+
     for idx in js_void_lines:
         to_remove.add(idx)
         # Determine ordinal position among non-empty lines
-        if idx in non_empty:
-            ordinal = non_empty.index(idx) + 1
-        else:
-            # Fallback if somehow idx is not in non_empty (shouldn't happen if pattern matched)
-            ordinal = len(non_empty) + 1
-            
+        ordinal = non_empty.index(idx) + 1 if idx in non_empty else len(non_empty) + 1
+
         if ordinal <= 8:
             # Try to remove the preceding plain text line
             prev_idx = idx - 1
             while prev_idx >= 0 and not cleaned[prev_idx]:
                 prev_idx -= 1
-            
+
             if prev_idx >= 0:
                 if is_plain_text_line(cleaned[prev_idx]):
                     to_remove.add(prev_idx)
@@ -183,7 +176,7 @@ def _postprocess_markdown(markdown: str) -> str:
             if is_plain_text_line(cleaned[candidate]):
                 first_plain_idx = candidate
                 break
-        
+
         if first_plain_idx is not None and first_plain_idx not in to_remove:
             # Check ordinal of the first void line
             first_js_void_ordinal = min(non_empty.index(idx) + 1 for idx in js_void_lines if idx in non_empty)
@@ -193,27 +186,29 @@ def _postprocess_markdown(markdown: str) -> str:
     # 4. Reconstruct and collapse empty lines
     final_lines = [line for i, line in enumerate(cleaned) if i not in to_remove]
     text = '\n'.join(final_lines)
-    
+
     # Collapse 3+ newlines to 2 (one empty line between blocks)
     # Also handle standardizing newlines
     text = re.sub(r'\n{3,}', '\n\n', text)
-    
+
     return text.strip()
 
 
-def _swap_markdown_image_urls(markdown: str, url_map: Dict[str, str]) -> str:
+def _swap_markdown_image_urls(markdown: str, url_map: dict[str, str]) -> str:
     if not url_map:
         return markdown
+
     def replacer(match: re.Match[str]) -> str:
         alt, url = match.group(1), match.group(2)
         local = url_map.get(url)
         if local:
             return f'![{alt}]({local})'
         return match.group(0)
+
     return re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', replacer, markdown)
 
 
-def normalize_html(raw_html: str, fmt: str = 'html', *, markdown_image_map: Dict[str, str] | None = None) -> str:
+def normalize_html(raw_html: str, fmt: str = 'html', *, markdown_image_map: dict[str, str] | None = None) -> str:
     soup, js_article = _prepare_dom(raw_html)
 
     if fmt == 'text':
