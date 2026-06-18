@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from datetime import date, datetime, time, timedelta, timezone
+from typing import Any
 
 _slug_pattern = re.compile(r"[^a-z0-9-]+")
 
@@ -20,6 +21,19 @@ def slugify(value: str, *, max_length: int = 80) -> str:
     if len(normalized) > max_length:
         normalized = normalized[:max_length].rstrip("-")
     return normalized or "article"
+
+
+def build_set_clause(
+    mapping: dict[str, str],
+    updates: dict[str, Any],
+) -> tuple[list[str], list[Any]]:
+    fields: list[str] = []
+    params: list[Any] = []
+    for key, column in mapping.items():
+        if key in updates:
+            fields.append(f"{column} = %s")
+            params.append(updates[key])
+    return fields, params
 
 
 def format_table(headers: list[str], rows: list[list[str]]) -> str:
@@ -78,6 +92,7 @@ def utc_now_iso() -> str:
 
 
 __all__ = [
+    'build_set_clause',
     'format_table',
     'parse_iso_date_to_timestamp',
     'parse_iso_datetime_to_timestamp',
