@@ -201,8 +201,6 @@ def _build_listen_sockets(
         raise
 
 
-
-
 def _parse_int(value: str | None) -> int | None:
     if value is None or value == "":
         return None
@@ -210,9 +208,6 @@ def _parse_int(value: str | None) -> int | None:
         return int(value)
     except (TypeError, ValueError) as exc:
         raise ApiError(f"Invalid integer: {value}") from exc
-
-
-
 
 
 def _binary_response(payload: bytes, content_type: str) -> Response:
@@ -387,10 +382,6 @@ class LoginManager:
             self._updated_at = utc_now_iso()
 
 
-
-
-
-
 def _list_groups(storage: PostgresStorage) -> list[dict[str, Any]]:
     return [g.model_dump() for g in storage.groups.list_groups()]
 
@@ -424,7 +415,6 @@ def _delete_group(storage: PostgresStorage, group_id: int) -> None:
         raise ApiError("Group not found", status=404)
     except ValueError as exc:
         raise ApiError(str(exc), status=400)
-
 
 
 def _list_accounts(
@@ -489,9 +479,6 @@ def _update_account(storage: PostgresStorage, biz: str, payload: dict[str, Any])
     except LookupError:
         raise ApiError("Account not found", status=404)
     return _get_account(storage, biz)
-
-
-
 
 
 def _get_storage() -> Generator[PostgresStorage, None, None]:
