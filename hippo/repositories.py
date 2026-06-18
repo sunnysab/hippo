@@ -31,25 +31,7 @@ def _session_identity(cookies: dict[str, str]) -> str | None:
     return None
 
 
-def _content_payload_is_present(
-    clean_html: Any,
-    content_markdown: Any,
-    content_json: Any,
-) -> bool:
-    if isinstance(clean_html, str) and clean_html.strip():
-        return True
-    if isinstance(content_markdown, str) and content_markdown.strip():
-        return True
-    if content_json is None:
-        return False
-    if isinstance(content_json, str):
-        return content_json.strip() not in {'', '[]', 'null'}
-    if isinstance(content_json, (list, dict)):
-        return bool(content_json)
-    return True
-
-
-_ARTICLE_CONTENT_PRESENT_SQL = """
+ARTICLE_CONTENT_PRESENT_SQL = """
 (
     (c.clean_html IS NOT NULL AND btrim(c.clean_html) <> '')
     OR (c.content_markdown IS NOT NULL AND btrim(c.content_markdown) <> '')
@@ -891,7 +873,7 @@ class ArticleRepository:
                 FROM article_content c
                 JOIN articles a ON a.id = c.article_pk
                 WHERE a.biz = %s AND a.article_id = %s
-                  AND {_ARTICLE_CONTENT_PRESENT_SQL}
+                  AND {ARTICLE_CONTENT_PRESENT_SQL}
                 LIMIT 1
                 """,
                 (biz, article_id),
@@ -909,7 +891,7 @@ class ArticleRepository:
                 FROM article_content c
                 JOIN articles a ON a.id = c.article_pk
                 WHERE a.biz = %s AND a.article_id = ANY(%s)
-                  AND {_ARTICLE_CONTENT_PRESENT_SQL}
+                  AND {ARTICLE_CONTENT_PRESENT_SQL}
                 """,
                 (biz, ids),
             )
@@ -933,7 +915,7 @@ class ArticleRepository:
         params.append(biz)
 
         if exclude_downloaded:
-            query_parts.append(f'AND (c.id IS NULL OR NOT {_ARTICLE_CONTENT_PRESENT_SQL})')
+            query_parts.append(f'AND (c.id IS NULL OR NOT {ARTICLE_CONTENT_PRESENT_SQL})')
 
         if since_timestamp is not None:
             query_parts.append('AND (a.publish_at IS NULL OR a.publish_at >= %s)')

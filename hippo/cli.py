@@ -44,6 +44,7 @@ from .image_store import ArticleImageService
 from .logger import setup_logger
 from .login_service import save_login_session
 from .models import AccountCredential, AccountGroup, LoginSession
+from .repositories import ARTICLE_CONTENT_PRESENT_SQL as _ARTICLE_CONTENT_PRESENT_SQL
 from .rss import build_rss_xml, query_rss_items
 from .server import serve as run_server
 from .storage import PostgresStorage, StorageInitError, open_storage
@@ -53,14 +54,6 @@ from .wechat_api import SessionExpiredError, WeChatApiClient
 
 # Initialize logger on module import
 logger = setup_logger()
-
-_ARTICLE_CONTENT_PRESENT_SQL = """
-(
-    (c.clean_html IS NOT NULL AND btrim(c.clean_html) <> '')
-    OR (c.content_markdown IS NOT NULL AND btrim(c.content_markdown) <> '')
-    OR (c.content_json IS NOT NULL AND c.content_json::text NOT IN ('[]', 'null'))
-)
-"""
 
 _ARTICLE_ITEM_SHOW_TYPE_FROM_RAW_SQL = """
 CASE
