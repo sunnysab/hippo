@@ -8,8 +8,6 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Response
-
 try:
     import jieba
 except Exception:  # pragma: no cover - optional fallback
@@ -672,9 +670,3 @@ def _list_feed(
     return fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
 
 
-def _binary_response(payload: bytes, content_type: str) -> Response:
-    return Response(
-        content=payload,
-        media_type=content_type,
-        headers={"Cache-Control": "public, max-age=259200"},
-    )
