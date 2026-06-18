@@ -121,9 +121,7 @@ class MPClient(AbstractAsyncContextManager):
 
     @property
     def is_closed(self) -> bool:
-        if self.client.is_closed:
-            return True
-        return bool(self.article_client and self.article_client.is_closed)
+        return self.client.is_closed or bool(self.article_client and self.article_client.is_closed)
 
     async def __aenter__(self) -> MPClient:
         return self
@@ -205,7 +203,7 @@ class MPClient(AbstractAsyncContextManager):
 def _is_mp_article(url: str) -> bool:
     try:
         parsed = urlparse(url)
-    except Exception:
+    except TypeError:
         return False
     return parsed.netloc.lower() == 'mp.weixin.qq.com' and '/s/' in parsed.path
 

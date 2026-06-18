@@ -17,7 +17,7 @@ from .image_store import ArticleImageStore
 from .logger import get_logger
 from .models import AccountCredential, ArticleRecord, DownloadResult
 from .storage import PostgresStorage
-from .utils import slugify
+from .utils import is_http_url, slugify
 from .wechat_parser import parse_wechat_article
 
 logger = get_logger(__name__)
@@ -40,14 +40,6 @@ def _extract_url_token(url: str) -> str | None:
         if token:
             return token.split('?', 1)[0]
     return None
-
-
-def _is_http_url(url: str) -> bool:
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return False
-    return parsed.scheme in ('http', 'https')
 
 
 def _resolve_asset_url(url: str, *, base: str) -> str | None:
@@ -424,7 +416,7 @@ class ImageDownloadManager:
             )
             await self._mark_done()
             return
-        if not _is_http_url(str(resolved_url)):
+        if not is_http_url(str(resolved_url)):
             reason = f'Invalid URL scheme (non-http): {resolved_url}'
             _log_download_error(
                 stage='asset_download',

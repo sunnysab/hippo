@@ -24,6 +24,7 @@ from .sync_core import (
     reset_sync_cancel,
     sync_account_core,
 )
+from .utils import to_utc_dt
 from .wechat_api import WeChatApiClient
 
 
@@ -329,12 +330,6 @@ def _persist_sync_outcome(
     return get_sync_status(storage)
 
 
-def _to_utc_dt(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
-
-
 def _parse_iso_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -342,14 +337,14 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
         parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
-    return _to_utc_dt(parsed)
+    return to_utc_dt(parsed)
 
 
 def _get_login_updated_at(storage: PostgresStorage) -> datetime | None:
     updated_at = storage.sessions.get_login_updated_at()
     if not updated_at:
         return None
-    return _to_utc_dt(updated_at)
+    return to_utc_dt(updated_at)
 
 
 def _should_skip_for_login(storage: PostgresStorage) -> bool:

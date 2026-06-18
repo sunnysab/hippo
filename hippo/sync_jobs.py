@@ -4,27 +4,18 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-
-def _utc_now_dt() -> datetime:
-    return datetime.now(UTC)
-
-
-def _normalize_value(value: Any) -> Any:
-    if isinstance(value, datetime):
-        return value.isoformat()
-    return value
+from .utils import normalize_value, utc_now_dt
 
 
 def _normalize_dict(value: dict[str, Any] | None) -> dict[str, Any] | None:
     if value is None:
         return None
-    return {key: _normalize_value(item) for key, item in value.items()}
+    return {key: normalize_value(item) for key, item in value.items()}
 
 
 def _normalize_list(items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -98,9 +89,9 @@ def _row_to_state(row: dict[str, Any] | None) -> SyncJobState | None:
     return SyncJobState(
         task_id=str(row['id']),
         status=str(row['status']),
-        created_at=str(_normalize_value(row['created_at'])),
-        started_at=_normalize_value(row.get('started_at')),
-        finished_at=_normalize_value(row.get('finished_at')),
+        created_at=str(normalize_value(row['created_at'])),
+        started_at=normalize_value(row.get('started_at')),
+        finished_at=normalize_value(row.get('finished_at')),
         error=row.get('error'),
         group_id=row.get('group_id'),
         biz_list=tuple(str(item) for item in biz_list) if isinstance(biz_list, list) else None,
@@ -128,7 +119,7 @@ class SyncJobRepository:
         biz_list: list[str] | None = None,
     ) -> SyncJobState:
         task_id = uuid.uuid4().hex
-        now = _utc_now_dt()
+        now = utc_now_dt()
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
