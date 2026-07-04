@@ -58,7 +58,7 @@ SYNC_RUN_LOCK = asyncio.Lock()
 async def _run_backfill_images() -> None:
     try:
         from .image_backfill import backfill_article_images
-    except Exception:
+    except ImportError:
         return
     try:
         await backfill_article_images()

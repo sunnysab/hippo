@@ -457,7 +457,7 @@ class LoginSessionRepository:
             for row in rows:
                 try:
                     row_cookies = json.loads(row['cookies_json'])
-                except Exception:
+                except (json.JSONDecodeError, KeyError):
                     continue
                 if _session_identity(row_cookies) == session_identity:
                     match_id = row['id']

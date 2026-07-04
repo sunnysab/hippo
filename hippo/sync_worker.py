@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import contextlib
 import os
 import socket
@@ -25,6 +26,8 @@ from .sync_settings import (
 )
 from .sync_tasks import _article_snapshot
 from .sync_types import AccountProgress, SyncAccountResult, SyncObserver, SyncSummary
+
+logger = logging.getLogger(__name__)
 
 
 class _WorkerProgressTracker:
@@ -238,8 +241,8 @@ async def _poll_cancel(task_id: str, poll_interval: float = 1.0) -> None:
                 if storage.sync_jobs.is_cancelling(task_id):
                     request_sync_cancel()
                     return
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Cancel poll failed: %s", exc)
         await asyncio.sleep(poll_interval)
 
 
