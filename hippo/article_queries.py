@@ -89,31 +89,11 @@ def _normalize_article_sort(value: str | None, *, has_query: bool) -> str:
     return sort
 
 
-def _split_article_query_terms(query: str | None) -> list[str]:
-    if not query:
-        return []
-    terms = [part.strip() for part in re.split(r'\s+', query) if part.strip()]
-    if not terms:
-        return []
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for term in terms:
-        if term in seen:
-            continue
-        seen.add(term)
-        deduped.append(term)
-    return deduped
-
-
 def _build_article_search_tsquery(query: str | None) -> tuple[str, list[str]]:
     query_text = query.strip() if query else ''
     if not query_text:
         return '', []
-    terms = _split_article_query_terms(query_text)
-    if len(terms) <= 1:
-        return "plainto_tsquery('jiebaqry', %s)", [query_text]
-    tsquery_sql = ' || '.join(["plainto_tsquery('jiebaqry', %s)"] * len(terms))
-    return f'({tsquery_sql})', terms
+    return "plainto_tsquery('jiebaqry', %s)", [query_text]
 
 
 def _split_article_exclude_keywords(raw: str | None) -> list[str]:
