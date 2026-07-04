@@ -17,7 +17,6 @@ from .storage import PostgresStorage
 from .sync_types import NullSyncObserver, SyncConfig, SyncObserver, SyncPlan, SyncSummary
 from .wechat_api import WeChatApiClient, parse_appmsg_publish
 
-
 _cancel_event: asyncio.Event | None = None
 
 

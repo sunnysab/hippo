@@ -13,10 +13,10 @@ from typing import Any
 from .config import DEFAULT_PAGE_SIZE, DEFAULT_RECENT_DAYS
 from .container import build_sync_container
 from .downloader import ArticleDownloader
+from .exceptions import SyncInterrupted
 from .file_storage import FileStorageError
 from .models import AccountCredential, ArticleRecord
 from .storage import PostgresStorage, fetchall_rows, open_storage
-from .exceptions import SyncInterrupted
 from .sync_core import (
     _get_cancel_event,
     is_freq_control,
@@ -25,10 +25,7 @@ from .sync_core import (
     sync_account_core,
 )
 from .sync_settings import (
-    ALERT_SENT_KEY,
     SYNC_LOGIN_REQUIRED_AT_KEY,
-    _get_window_hours,
-    _is_within_sync_window,
     _persist_sync_outcome,
     _should_skip_for_login,
     _to_utc_timestamp,
@@ -707,9 +704,9 @@ async def run_sync_job(
 
 
 __all__ = [
+    'SYNC_RUN_LOCK',
     'ArticleSyncService',
     'SyncJobResult',
     'SyncRunError',
-    'SYNC_RUN_LOCK',
     'run_sync_job',
 ]

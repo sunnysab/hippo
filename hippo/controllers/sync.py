@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
-from typing import AsyncGenerator
 
 import typer
 from tqdm import tqdm
 
 from ..container import build_sync_container
+from ..exceptions import SyncInterrupted
 from ..models import AccountCredential
 from ..storage import PostgresStorage, open_storage
-from ..exceptions import SyncInterrupted
 from ..sync_service import ArticleSyncService, SyncRunError
 from ..sync_settings import append_sync_history, set_sync_state
 from ..sync_types import (
@@ -177,7 +176,7 @@ async def _sync_error_handler(
     storage: PostgresStorage,
     *,
     started_at: str,
-) -> AsyncGenerator[None, None]:
+) -> AsyncGenerator[None]:
     try:
         yield
     except SyncRunError as exc:

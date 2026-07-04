@@ -25,7 +25,6 @@ from .sync_settings import (
 )
 from .sync_tasks import _article_snapshot
 from .sync_types import AccountProgress, SyncAccountResult, SyncObserver, SyncSummary
-from .utils import utc_now_iso
 
 
 def _normalize_report(result: SyncJobResult) -> dict[str, Any]:
