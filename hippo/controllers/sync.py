@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+from typing import AsyncGenerator
 
 import typer
 from tqdm import tqdm
@@ -12,7 +14,8 @@ from ..container import build_sync_container
 from ..models import AccountCredential
 from ..storage import PostgresStorage, open_storage
 from ..sync_core import SyncInterrupted
-from ..sync_service import ArticleSyncService, SyncRunError, append_sync_history, set_sync_state
+from ..sync_service import ArticleSyncService, SyncRunError
+from ..sync_settings import append_sync_history, set_sync_state
 from ..sync_types import (
     NullSyncJobObserver,
     NullSyncObserver,
@@ -169,6 +172,39 @@ def _handle_login_expired() -> bool:
     return False
 
 
+@asynccontextmanager
+async def _sync_error_handler(
+    storage: PostgresStorage,
+    *,
+    started_at: str,
+) -> AsyncGenerator[None, None]:
+    try:
+        yield
+    except SyncRunError as exc:
+        finished_at = utc_now_iso()
+        status = 'login_required' if exc.login_required else 'failed'
+        _append_cli_sync_history(
+            storage,
+            started_at=started_at,
+            finished_at=finished_at,
+            status=status,
+            saved=0,
+            error=str(exc),
+        )
+        raise typer.Exit(code=1)
+    except SyncInterrupted:
+        finished_at = utc_now_iso()
+        _append_cli_sync_history(
+            storage,
+            started_at=started_at,
+            finished_at=finished_at,
+            status='failed',
+            saved=0,
+            error='Interrupted',
+        )
+        raise typer.Exit(code=130)
+
+
 def _build_sync_config(
     *,
     mode: SyncMode,
@@ -319,7 +355,7 @@ async def sync_account_articles(
     with open_storage() as storage:
         account = storage.accounts.get_account(biz)
         typer.echo(f'开始同步 {account.nickname} 的文章')
-        try:
+        async with _sync_error_handler(storage, started_at=started_at):
             report = await perform_sync(
                 storage=storage,
                 accounts=[account],
@@ -335,29 +371,6 @@ async def sync_account_articles(
                 status='success',
                 saved=report.total_saved,
             )
-        except SyncRunError as exc:
-            finished_at = utc_now_iso()
-            status = 'login_required' if exc.login_required else 'failed'
-            _append_cli_sync_history(
-                storage,
-                started_at=started_at,
-                finished_at=finished_at,
-                status=status,
-                saved=0,
-                error=str(exc),
-            )
-            raise typer.Exit(code=1)
-        except SyncInterrupted:
-            finished_at = utc_now_iso()
-            _append_cli_sync_history(
-                storage,
-                started_at=started_at,
-                finished_at=finished_at,
-                status='failed',
-                saved=0,
-                error='Interrupted',
-            )
-            raise typer.Exit(code=130)
     if report.summary:
         typer.echo(f'同步完成，共新增 {report.total_saved} 条记录')
 
@@ -402,7 +415,7 @@ async def sync_all_accounts(
         typer.echo(header)
 
         started_at = utc_now_iso()
-        try:
+        async with _sync_error_handler(storage, started_at=started_at):
             report = await perform_sync(
                 storage=storage,
                 accounts=accounts,
@@ -418,29 +431,6 @@ async def sync_all_accounts(
                 status='success',
                 saved=report.total_saved,
             )
-        except SyncRunError as exc:
-            finished_at = utc_now_iso()
-            status = 'login_required' if exc.login_required else 'failed'
-            _append_cli_sync_history(
-                storage,
-                started_at=started_at,
-                finished_at=finished_at,
-                status=status,
-                saved=0,
-                error=str(exc),
-            )
-            raise typer.Exit(code=1)
-        except SyncInterrupted:
-            finished_at = utc_now_iso()
-            _append_cli_sync_history(
-                storage,
-                started_at=started_at,
-                finished_at=finished_at,
-                status='failed',
-                saved=0,
-                error='Interrupted',
-            )
-            raise typer.Exit(code=130)
 
     typer.echo(f'全部账号同步完成，共新增 {report.total_saved} 条记录')
 
@@ -491,7 +481,7 @@ async def sync_group_accounts(
         typer.echo(header)
 
         started_at = utc_now_iso()
-        try:
+        async with _sync_error_handler(storage, started_at=started_at):
             report = await perform_sync(
                 storage=storage,
                 accounts=accounts,
@@ -507,29 +497,6 @@ async def sync_group_accounts(
                 status='success',
                 saved=report.total_saved,
             )
-        except SyncRunError as exc:
-            finished_at = utc_now_iso()
-            status = 'login_required' if exc.login_required else 'failed'
-            _append_cli_sync_history(
-                storage,
-                started_at=started_at,
-                finished_at=finished_at,
-                status=status,
-                saved=0,
-                error=str(exc),
-            )
-            raise typer.Exit(code=1)
-        except SyncInterrupted:
-            finished_at = utc_now_iso()
-            _append_cli_sync_history(
-                storage,
-                started_at=started_at,
-                finished_at=finished_at,
-                status='failed',
-                saved=0,
-                error='Interrupted',
-            )
-            raise typer.Exit(code=130)
 
     typer.echo(f'分组 {group} 同步完成，共新增 {report.total_saved} 条记录')
 
