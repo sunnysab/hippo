@@ -173,20 +173,6 @@ class MPClient(AbstractAsyncContextManager):
             logger.error('Failed to fetch article %s: %s', final_url, exc)
             raise
 
-    async def download_binary(self, url: str, *, referer: str | None = None) -> bytes:
-        headers = {}
-        if referer:
-            headers['Referer'] = referer
-        logger.debug('Downloading binary: %s', url)
-        try:
-            resp = await self.client.get(url, headers=headers)
-            resp.raise_for_status()
-            logger.debug('Downloaded %d bytes from %s', len(resp.content), url)
-            return resp.content
-        except Exception as exc:
-            logger.warning('Failed to download %s: %s', url, exc)
-            raise
-
     async def download_binary_with_type(self, url: str, *, referer: str | None = None) -> tuple[bytes, str | None]:
         headers = {}
         if referer:

@@ -1141,36 +1141,14 @@ class ImageRepository:
 
 
 def _row_to_account(row: dict[str, Any]) -> AccountCredential:
-    last_synced_at = row['last_synced_at'] if row['last_synced_at'] else None
-    return AccountCredential(
-        biz=row['biz'],
-        nickname=row['nickname'],
-        alias=row['alias'],
-        round_head_img=row['round_head_img'],
-        is_disabled=bool(row.get('is_disabled', False)),
-        last_synced_at=last_synced_at,
-        sync_mode=row.get('sync_mode'),
-        sync_recent_days=row.get('sync_recent_days'),
-        group_id=row.get('group_id'),
-        group_name=row.get('group_name'),
-    )
+    return AccountCredential.model_validate(row)
 
 
 def _row_to_article(row: dict[str, Any]) -> ArticleRecord:
-    raw = json.loads(row['raw_json'])
-    return ArticleRecord(
-        biz=row['biz'],
-        article_id=row['article_id'],
-        title=row['title'],
-        item_show_type=row.get('item_show_type'),
-        author=row['author'],
-        digest=row['digest'],
-        cover=row['cover'],
-        link=row['link'],
-        source_url=row['source_url'],
-        publish_at=row['publish_at'],
-        raw=raw,
-    )
+    data = dict(row)
+    raw_json = data.pop('raw_json', None)
+    data['raw'] = json.loads(raw_json) if raw_json else {}
+    return ArticleRecord.model_validate(data)
 
 
 __all__ = [

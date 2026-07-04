@@ -321,22 +321,16 @@ class SyncJobQueueTest(unittest.TestCase):
 
         self.assertTrue(handled)
         self.assertEqual(storage.sync_jobs.started, [('job-4', 'worker-1')])
-        self.assertEqual(
-            storage.sync_jobs.finished,
-            [
-                {
-                    'task_id': 'job-4',
-                    'status': 'success',
-                    'error': None,
-                    'result': {
-                        'total_saved': 5,
-                        'downloaded': 3,
-                        'summary': [('Demo', 5)],
-                        'failed_accounts': 0,
-                    },
-                }
-            ],
-        )
+        self.assertEqual(len(storage.sync_jobs.finished), 1)
+        finished = storage.sync_jobs.finished[0]
+        self.assertEqual(finished['task_id'], 'job-4')
+        self.assertEqual(finished['status'], 'success')
+        self.assertIsNone(finished['error'])
+        report = finished['result']
+        self.assertEqual(report['total_saved'], 5)
+        self.assertEqual(report['downloaded'], 3)
+        self.assertEqual(report['summary'], [('Demo', 5)])
+        self.assertEqual(report['failed_accounts'], 0)
 
     def test_sync_job_repository_uses_statement_timestamp_for_running_and_finished(self) -> None:
         from hippo.sync_jobs import SyncJobRepository
