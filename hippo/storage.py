@@ -14,7 +14,6 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
-from .env import load_env
 from .models import AccountGroup
 from .repositories import (
     AccountRepository,
@@ -124,8 +123,7 @@ def _get_pool(dsn: str) -> ConnectionPool:
     return _PG_POOL
 
 
-class StorageInitError(RuntimeError):
-    pass
+from .exceptions import StorageInitError
 
 
 def _load_schema_sql() -> str:
@@ -221,7 +219,6 @@ class PostgresStorage(AbstractContextManager):
 
 
 def open_storage(*, auto_init: bool = False) -> PostgresStorage:
-    load_env()
     dsn = os.environ.get('HIPPO_PG_DSN')
     if not dsn:
         raise StorageInitError('Missing HIPPO_PG_DSN for PostgreSQL storage.')

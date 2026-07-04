@@ -1,13 +1,13 @@
-"""Configuration helpers for the CLI."""
+"""Application configuration."""
 
 from __future__ import annotations
 
 import os
 from typing import Final
 
-from .env import load_env
+from dotenv import load_dotenv
 
-load_env()
+load_dotenv()
 
 APP_NAME: Final = 'hippo'
 CLI_NAME: Final = 'hippo'

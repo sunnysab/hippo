@@ -16,8 +16,8 @@ from .downloader import ArticleDownloader
 from .file_storage import FileStorageError
 from .models import AccountCredential, ArticleRecord
 from .storage import PostgresStorage, fetchall_rows, open_storage
+from .exceptions import SyncInterrupted
 from .sync_core import (
-    SyncInterrupted,
     _get_cancel_event,
     is_freq_control,
     is_login_error,
