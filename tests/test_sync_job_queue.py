@@ -7,7 +7,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from hippo.server import run_sync
-from hippo.sync_service import ArticleSyncService, SyncJobResult, _persist_sync_outcome
+from hippo.sync_service import ArticleSyncService, SyncJobResult
+from hippo.sync_settings import _persist_sync_outcome
 from hippo.sync_types import SyncConfig, SyncMode, SyncReport, SyncSummary
 
 
@@ -172,7 +173,7 @@ class SyncJobQueueTest(unittest.TestCase):
         self.assertTrue(is_login_error('session expired'))
 
     def test_stale_login_required_state_from_invalid_args_is_cleared(self) -> None:
-        from hippo.sync_service import _should_skip_for_login
+        from hippo.sync_settings import _should_skip_for_login
 
         storage = _FakeStorage(
             _FakeSyncJobs(),
@@ -599,7 +600,7 @@ class SyncJobQueueTest(unittest.TestCase):
             failed_accounts=1,
         )
 
-        with patch('hippo.sync_service._send_sync_alert') as mock_alert:
+        with patch('hippo.sync_settings._send_sync_alert') as mock_alert:
             status = _persist_sync_outcome(
                 storage,
                 started_at='2026-04-03T11:30:54.694914+00:00',
@@ -626,7 +627,7 @@ class SyncJobQueueTest(unittest.TestCase):
             current_account={'biz': 'biz-181', 'nickname': '烟台大学'},
         )
 
-        with patch('hippo.sync_service._send_sync_alert') as mock_alert:
+        with patch('hippo.sync_settings._send_sync_alert') as mock_alert:
             status = _persist_sync_outcome(
                 storage,
                 started_at='2026-05-14T03:00:17.444228+00:00',

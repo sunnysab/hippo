@@ -2,7 +2,7 @@ import contextlib
 import unittest
 from unittest.mock import patch
 
-from hippo.sync_service import default_sync_settings, set_sync_settings
+from hippo.sync_settings import default_sync_settings, set_sync_settings
 
 
 class _DummyStorage:
@@ -21,8 +21,8 @@ class SyncSettingsTest(unittest.TestCase):
         storage = _DummyStorage()
 
         with (
-            patch('hippo.sync_service.get_sync_settings', return_value=default_sync_settings()),
-            patch('hippo.sync_service.save_meta_json') as save_meta_json,
+            patch('hippo.sync_settings.get_sync_settings', return_value=default_sync_settings()),
+            patch('hippo.sync_settings.save_meta_json') as save_meta_json,
         ):
             result = set_sync_settings(
                 storage,
