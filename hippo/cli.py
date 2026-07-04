@@ -36,7 +36,6 @@ from .controllers.sync import (
     sync_group_accounts as perform_group_sync,
 )
 from .downloader import _attach_image_block_metadata, _parse_markdown_blocks
-from .env import load_env
 from .file_storage import FileStorageError, S3FileStorage
 from .http import MPClient
 from .image_hashes import ensure_image_hash_by_id
@@ -164,7 +163,6 @@ def _patch_click_for_typer() -> None:
 
 
 def run() -> None:
-    load_env()
     _patch_click_for_typer()
     command = typer.main.get_command(app)
     _fix_click_option_flags(command)

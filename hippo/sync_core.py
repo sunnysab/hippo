@@ -10,15 +10,12 @@ from typing import Any
 
 import httpx
 
+from .exceptions import SyncInterrupted
 from .logger import get_logger
 from .models import AccountCredential, ArticleRecord
 from .storage import PostgresStorage
 from .sync_types import NullSyncObserver, SyncConfig, SyncObserver, SyncPlan, SyncSummary
 from .wechat_api import WeChatApiClient, parse_appmsg_publish
-
-
-class SyncInterrupted(RuntimeError):
-    pass
 
 
 _cancel_event: asyncio.Event | None = None

@@ -10,7 +10,6 @@ from typing import Any
 import boto3
 from botocore.config import Config
 
-from .env import load_env
 
 _DEFAULT_PREFIX = 'mp/image/'
 
@@ -35,7 +34,6 @@ def _normalize_prefix(value: str | None) -> str:
 
 
 def load_s3_config() -> S3Config | None:
-    load_env()
     endpoint = os.environ.get('HIPPO_S3_ENDPOINT')
     bucket = os.environ.get('HIPPO_S3_BUCKET')
     access_key = os.environ.get('HIPPO_S3_ACCESS_KEY')

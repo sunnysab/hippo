@@ -13,7 +13,7 @@ from tqdm import tqdm
 from ..container import build_sync_container
 from ..models import AccountCredential
 from ..storage import PostgresStorage, open_storage
-from ..sync_core import SyncInterrupted
+from ..exceptions import SyncInterrupted
 from ..sync_service import ArticleSyncService, SyncRunError
 from ..sync_settings import append_sync_history, set_sync_state
 from ..sync_types import (
