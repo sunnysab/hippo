@@ -638,7 +638,8 @@ class ArticleDownloader(AbstractAsyncContextManager):
                     article_ids = [article.article_id for article in articles_list]
                     if article_ids:
                         content_ids = set(get_content_ids(articles_list[0].biz, article_ids))
-                except Exception:
+                except Exception as exc:
+                    logger.debug("Failed to query content IDs: %s", exc)
                     content_ids = None
         for article in articles_list:
             if skip_if_downloaded:

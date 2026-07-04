@@ -44,7 +44,7 @@ def is_http_url(url: str) -> bool:
 
     try:
         parsed = urlparse(url)
-    except Exception:
+    except (ValueError, TypeError):
         return False
     return parsed.scheme in ('http', 'https')
 
