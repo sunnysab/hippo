@@ -5,12 +5,17 @@ from __future__ import annotations
 import asyncio
 import threading
 import uuid
-from dataclasses import dataclass, field
 from typing import Any
 
 from .models import AccountCredential, ArticleRecord
 from .sync_service import SYNC_RUN_LOCK, SyncJobResult, run_sync_job
-from .sync_types import SyncAccountResult, SyncObserver, SyncSummary
+from .sync_types import (
+    AccountProgress,
+    SyncAccountResult,
+    SyncObserver,
+    SyncSummary,
+    SyncTaskState,
+)
 from .utils import utc_now_iso
 
 
@@ -24,97 +29,6 @@ def _article_snapshot(record: ArticleRecord | None) -> dict[str, Any] | None:
         'link': record.link,
         'publish_at': record.publish_at,
     }
-
-
-@dataclass
-class AccountProgress:
-    biz: str
-    nickname: str
-    status: str = 'pending'
-    phase: str | None = None
-    saved: int = 0
-    page_count: int = 0
-    article_current: int | None = None
-    article_total: int | None = None
-    last_article: dict[str, Any] | None = None
-    skip_reason: str | None = None
-    error: str | None = None
-    updated_at: str | None = None
-
-    def touch(self) -> None:
-        self.updated_at = utc_now_iso()
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            'biz': self.biz,
-            'nickname': self.nickname,
-            'status': self.status,
-            'phase': self.phase,
-            'saved': self.saved,
-            'page_count': self.page_count,
-            'article_current': self.article_current,
-            'article_total': self.article_total,
-            'last_article': self.last_article,
-            'skip_reason': self.skip_reason,
-            'error': self.error,
-            'updated_at': self.updated_at,
-        }
-
-
-@dataclass
-class SyncTaskState:
-    task_id: str
-    status: str = 'pending'
-    created_at: str = field(default_factory=utc_now_iso)
-    started_at: str | None = None
-    finished_at: str | None = None
-    error: str | None = None
-    group_id: int | None = None
-    biz_list: tuple[str, ...] | None = None
-    phase: str | None = None
-    accounts_total: int = 0
-    accounts_done: int = 0
-    current_account: dict[str, Any] | None = None
-    current_article: dict[str, Any] | None = None
-    last_log: str | None = None
-    report: dict[str, Any] | None = None
-    accounts: dict[str, AccountProgress] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            'task_id': self.task_id,
-            'status': self.status,
-            'created_at': self.created_at,
-            'started_at': self.started_at,
-            'finished_at': self.finished_at,
-            'error': self.error,
-            'group_id': self.group_id,
-            'phase': self.phase,
-            'accounts_total': self.accounts_total,
-            'accounts_done': self.accounts_done,
-            'current_account': self.current_account,
-            'current_article': self.current_article,
-            'last_log': self.last_log,
-            'report': self.report,
-            'accounts': [progress.to_dict() for progress in self.accounts.values()],
-        }
-
-    def to_summary_dict(self) -> dict[str, Any]:
-        return {
-            'task_id': self.task_id,
-            'status': self.status,
-            'created_at': self.created_at,
-            'started_at': self.started_at,
-            'finished_at': self.finished_at,
-            'error': self.error,
-            'group_id': self.group_id,
-            'phase': self.phase,
-            'accounts_total': self.accounts_total,
-            'accounts_done': self.accounts_done,
-            'current_account': self.current_account,
-            'current_article': self.current_article,
-            'last_log': self.last_log,
-        }
 
 
 class SyncTaskObserver(SyncObserver):

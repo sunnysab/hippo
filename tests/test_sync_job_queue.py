@@ -221,9 +221,9 @@ class SyncJobQueueTest(unittest.TestCase):
         self.assertEqual(storage.sync_jobs.created, [])
 
     def test_run_sync_queues_job_and_returns_queued_status(self) -> None:
-        from hippo.sync_jobs import SyncJobState
+        from hippo.sync_types import SyncTaskState
 
-        queued_state = SyncJobState(
+        queued_state = SyncTaskState(
             task_id='job-1',
             status='queued',
             created_at='2026-03-20T04:00:00+00:00',
@@ -239,9 +239,9 @@ class SyncJobQueueTest(unittest.TestCase):
         )
 
     def test_run_sync_normalizes_biz_list_before_queueing(self) -> None:
-        from hippo.sync_jobs import SyncJobState
+        from hippo.sync_types import SyncTaskState
 
-        queued_state = SyncJobState(
+        queued_state = SyncTaskState(
             task_id='job-2',
             status='queued',
             created_at='2026-03-20T04:00:00+00:00',
@@ -264,9 +264,9 @@ class SyncJobQueueTest(unittest.TestCase):
         )
 
     def test_sync_job_state_serializes_like_legacy_task_shape(self) -> None:
-        from hippo.sync_jobs import SyncJobState
+        from hippo.sync_types import SyncTaskState
 
-        state = SyncJobState(
+        state = SyncTaskState(
             task_id='job-3',
             status='running',
             created_at='2026-03-20T04:00:00+00:00',
@@ -300,10 +300,10 @@ class SyncJobQueueTest(unittest.TestCase):
         )
 
     def test_worker_claims_and_finishes_queued_job(self) -> None:
-        from hippo.sync_jobs import SyncJobState
+        from hippo.sync_types import SyncTaskState
         from hippo.sync_worker import run_worker_once
 
-        queued_state = SyncJobState(
+        queued_state = SyncTaskState(
             task_id='job-4',
             status='queued',
             created_at='2026-03-20T04:00:00+00:00',
