@@ -22,7 +22,7 @@ from .sync_service import (
     run_sync_job,
 )
 from .sync_tasks import _article_snapshot
-from .sync_types import SyncAccountResult, SyncObserver, SyncSummary
+from .sync_types import AccountProgress, SyncAccountResult, SyncObserver, SyncSummary
 from .utils import utc_now_iso
 
 
@@ -45,7 +45,7 @@ class _WorkerProgressTracker:
         self._current_account: dict[str, Any] | None = None
         self._current_article: dict[str, Any] | None = None
         self._last_log: str | None = None
-        self._accounts: dict[str, dict[str, Any]] = {}
+        self._accounts: dict[str, AccountProgress] = {}
         self._report: dict[str, Any] | None = None
 
     def _save(self) -> None:
@@ -58,32 +58,19 @@ class _WorkerProgressTracker:
                 current_account=self._current_account,
                 current_article=self._current_article,
                 last_log=self._last_log,
-                accounts=list(self._accounts.values()),
+                accounts=[p.__dict__.copy() for p in self._accounts.values()],
                 report=self._report,
             )
 
-    def _progress_for(self, account: AccountCredential) -> dict[str, Any]:
+    def _progress_for(self, account: AccountCredential) -> AccountProgress:
         progress = self._accounts.get(account.biz)
         if progress is None:
-            progress = {
-                'biz': account.biz,
-                'nickname': account.nickname or account.biz,
-                'status': 'pending',
-                'phase': None,
-                'saved': 0,
-                'page_count': 0,
-                'article_current': None,
-                'article_total': None,
-                'last_article': None,
-                'skip_reason': None,
-                'error': None,
-                'updated_at': None,
-            }
+            progress = AccountProgress(
+                biz=account.biz,
+                nickname=account.nickname or account.biz,
+            )
             self._accounts[account.biz] = progress
         return progress
-
-    def _touch(self, progress: dict[str, Any]) -> None:
-        progress['updated_at'] = utc_now_iso()
 
     def on_lock_acquired(self) -> None:
         self._last_log = None
@@ -103,55 +90,41 @@ class _WorkerProgressTracker:
         self._current_article = None
         self._phase = 'listing'
         progress = self._progress_for(account)
-        progress['status'] = 'running'
-        progress['phase'] = 'listing'
-        progress['error'] = None
-        self._touch(progress)
+        progress.status = 'running'
+        progress.phase = 'listing'
+        progress.error = None
+        progress.touch()
         self._save()
 
     def on_account_stage(self, account: AccountCredential, stage: str) -> None:
         self._phase = stage
         progress = self._progress_for(account)
-        if progress['status'] == 'running':
-            progress['phase'] = stage
-            self._touch(progress)
+        if progress.status == 'running':
+            progress.phase = stage
+            progress.touch()
         self._save()
 
     def on_account_done(self, result: SyncAccountResult, summary: SyncSummary | None) -> None:
-        progress = self._accounts.setdefault(
-            result.biz,
-            {
-                'biz': result.biz,
-                'nickname': result.nickname or result.biz,
-                'status': 'pending',
-                'phase': None,
-                'saved': 0,
-                'page_count': 0,
-                'article_current': None,
-                'article_total': None,
-                'last_article': None,
-                'skip_reason': None,
-                'error': None,
-                'updated_at': None,
-            },
+        progress = self._progress_for(
+            AccountCredential(biz=result.biz, nickname=result.nickname or result.biz)
         )
         if result.skipped:
-            progress['status'] = 'skipped'
-            progress['skip_reason'] = result.skip_reason
-            progress['error'] = None
+            progress.status = 'skipped'
+            progress.skip_reason = result.skip_reason
+            progress.error = None
         elif result.failed:
-            progress['status'] = 'failed'
-            progress['skip_reason'] = None
-            progress['error'] = result.error
+            progress.status = 'failed'
+            progress.skip_reason = None
+            progress.error = result.error
         else:
-            progress['status'] = 'completed' if result.completed else 'stopped'
-            progress['skip_reason'] = None
-            progress['error'] = None
-        progress['phase'] = None
-        progress['saved'] = result.saved
+            progress.status = 'completed' if result.completed else 'stopped'
+            progress.skip_reason = None
+            progress.error = None
+        progress.phase = None
+        progress.saved = result.saved
         if summary:
-            progress['page_count'] = summary.page_count
-        self._touch(progress)
+            progress.page_count = summary.page_count
+        progress.touch()
         self._accounts_done += 1
         if self._current_account and self._current_account.get('biz') == result.biz:
             self._current_account = None
@@ -189,35 +162,35 @@ class _WorkerObserver(SyncObserver):
 
     def on_progress(self, *, current: int | None, total: int | None, delta: int | None) -> None:
         progress = self._tracker._progress_for(self._account)
-        progress['article_current'] = current
-        progress['article_total'] = total
-        self._tracker._touch(progress)
+        progress.article_current = current
+        progress.article_total = total
+        progress.touch()
         self._tracker._save()
 
     def on_page(self, payload: dict[str, Any]) -> None:
         records = payload.get('records') or []
         last_record = records[0] if records else None
         progress = self._tracker._progress_for(self._account)
-        progress['page_count'] = int(payload.get('page_count') or progress['page_count'])
-        progress['saved'] += int(payload.get('saved') or 0)
-        progress['last_article'] = _article_snapshot(last_record)
-        self._tracker._touch(progress)
-        self._tracker._current_article = progress['last_article']
+        progress.page_count = int(payload.get('page_count') or progress.page_count)
+        progress.saved += int(payload.get('saved') or 0)
+        progress.last_article = _article_snapshot(last_record)
+        progress.touch()
+        self._tracker._current_article = progress.last_article
         self._tracker._save()
 
     def on_complete(self, summary: SyncSummary) -> None:
         progress = self._tracker._progress_for(self._account)
-        progress['page_count'] = summary.page_count
-        progress['saved'] = summary.total_saved
-        self._tracker._touch(progress)
+        progress.page_count = summary.page_count
+        progress.saved = summary.total_saved
+        progress.touch()
         self._tracker._save()
 
     def on_skip(self, reason: str) -> None:
         progress = self._tracker._progress_for(self._account)
-        progress['status'] = 'skipped'
-        progress['phase'] = None
-        progress['skip_reason'] = reason
-        self._tracker._touch(progress)
+        progress.status = 'skipped'
+        progress.phase = None
+        progress.skip_reason = reason
+        progress.touch()
         self._tracker._save()
 
 
@@ -304,7 +277,6 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
                 )
             return True
         tracker.set_report(result)
-        # If the job was cancelled, record that instead of the normal status
         with open_storage() as check_storage:
             was_cancelled = check_storage.sync_jobs.is_cancelling(job.task_id)
         final_status = 'cancelled' if was_cancelled else str(result.status.get('status') or 'success')

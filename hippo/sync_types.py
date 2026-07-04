@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -77,6 +77,60 @@ class SyncReport:
     current_account: dict[str, Any] | None = None
 
 
+@dataclass
+class AccountProgress:
+    biz: str
+    nickname: str
+    status: str = 'pending'
+    phase: str | None = None
+    saved: int = 0
+    page_count: int = 0
+    article_current: int | None = None
+    article_total: int | None = None
+    last_article: dict[str, Any] | None = None
+    skip_reason: str | None = None
+    error: str | None = None
+    updated_at: str | None = None
+
+    def touch(self) -> None:
+        from .utils import utc_now_iso
+        self.updated_at = utc_now_iso()
+
+
+@dataclass
+class SyncTaskState:
+    task_id: str
+    status: str = 'pending'
+    created_at: str = ''
+    started_at: str | None = None
+    finished_at: str | None = None
+    error: str | None = None
+    group_id: int | None = None
+    biz_list: tuple[str, ...] | None = None
+    trigger_type: str = 'manual'
+    phase: str | None = None
+    accounts_total: int = 0
+    accounts_done: int = 0
+    current_account: dict[str, Any] | None = None
+    current_article: dict[str, Any] | None = None
+    last_log: str | None = None
+    report: dict[str, Any] | None = None
+    accounts: dict[str, AccountProgress] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        d = asdict(self)
+        d['accounts'] = [p.__dict__.copy() for p in self.accounts.values()]
+        return d
+
+    def to_summary_dict(self) -> dict[str, Any]:
+        d = self.to_dict()
+        d.pop('accounts', None)
+        d.pop('biz_list', None)
+        d.pop('trigger_type', None)
+        d.pop('report', None)
+        return d
+
+
 class SyncObserver(Protocol):
     def on_log(self, message: str) -> None: ...
 
@@ -146,6 +200,7 @@ class NullSyncJobObserver:
 
 
 __all__ = [
+    'AccountProgress',
     'NullSyncJobObserver',
     'NullSyncObserver',
     'SyncAccountResult',
@@ -156,4 +211,5 @@ __all__ = [
     'SyncPlan',
     'SyncReport',
     'SyncSummary',
+    'SyncTaskState',
 ]
