@@ -353,6 +353,7 @@ def _should_skip_for_login(storage: PostgresStorage) -> bool:
         with storage.transaction():
             storage.meta.delete(SYNC_LOGIN_REQUIRED_AT_KEY)
             storage.meta.delete(ALERT_SENT_KEY)
+            storage.meta.delete(SYNC_ERROR_KEY)
             storage.meta.set(SYNC_STATUS_KEY, 'failed')
         return False
     blocked_at = _parse_iso_datetime(storage.meta.get(SYNC_LOGIN_REQUIRED_AT_KEY))
@@ -364,6 +365,7 @@ def _should_skip_for_login(storage: PostgresStorage) -> bool:
     with storage.transaction():
         storage.meta.delete(SYNC_LOGIN_REQUIRED_AT_KEY)
         storage.meta.delete(ALERT_SENT_KEY)
+        storage.meta.set(SYNC_STATUS_KEY, 'idle')
     return False
 
 
