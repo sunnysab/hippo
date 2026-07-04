@@ -13,13 +13,15 @@ from .models import AccountCredential
 from .storage import PostgresStorage, open_storage
 from .sync_core import request_sync_cancel
 from .sync_service import (
-    SYNC_STARTED_KEY,
     SyncJobResult,
+    run_sync_job,
+)
+from .sync_settings import (
+    SYNC_STARTED_KEY,
     _get_window_hours,
     _is_within_sync_window,
     _should_skip_for_login,
     get_sync_settings,
-    run_sync_job,
 )
 from .sync_tasks import _article_snapshot
 from .sync_types import AccountProgress, SyncAccountResult, SyncObserver, SyncSummary

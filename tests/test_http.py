@@ -37,7 +37,7 @@ class BackfillLoggingTest(unittest.TestCase):
                 'hippo.cli._backfill_article_images_async',
                 new=AsyncMock(side_effect=FileNotFoundError(2, 'No such file or directory')),
             ),
-            patch('hippo.sync_service._logger.exception') as logger_exception,
+            patch('hippo.sync_service.logger.exception') as logger_exception,
         ):
             asyncio.run(_run_backfill_images())
 

@@ -59,16 +59,14 @@ from .models import AccountCredential
 from .rss import build_rss_xml, query_rss_items
 from .storage import PostgresStorage, ensure_default_group, fetchone_row, open_storage
 from .sync_core import request_sync_cancel
-from .sync_service import (
-    SyncScheduler,
-)
-from .sync_service import (
+from .sync_scheduler import SyncScheduler
+from .sync_settings import (
     get_sync_settings as load_sync_settings,
 )
-from .sync_service import (
+from .sync_settings import (
     get_sync_status as load_sync_status,
 )
-from .sync_service import (
+from .sync_settings import (
     set_sync_settings as save_sync_settings,
 )
 from .utils import utc_now_iso
