@@ -13,7 +13,7 @@ import httpx
 from .exceptions import SyncInterrupted
 from .logger import get_logger
 from .models import AccountCredential, ArticleRecord
-from .storage import PostgresStorage
+from .storage import PostgresStorage, open_storage
 from .sync_types import NullSyncObserver, SyncConfig, SyncObserver, SyncPlan, SyncSummary
 from .wechat_api import WeChatApiClient, parse_appmsg_publish
 
@@ -279,7 +279,7 @@ async def sync_account_core(
                 completed = True
                 break
 
-            saved, page_count, total_saved = _save_page(storage, records, resume_key, offset + page_size, account, page_count, total_saved)
+            saved, page_count, total_saved = await _save_page(records, resume_key, offset + page_size, account.biz, page_count, total_saved)
             current_completed = min(offset + publish_list_len, total_count) if total_count else offset + publish_list_len
             delta = current_completed - current_progress
             current_progress = current_completed
@@ -310,21 +310,22 @@ def _restore_offset(storage: PostgresStorage, resume_key: str | None, observer: 
     return 0
 
 
-def _save_page(
-    storage: PostgresStorage, records: list[ArticleRecord], resume_key: str | None,
-    next_offset: int, account: AccountCredential, page_count: int, total_saved: int,
+async def _save_page(
+    records: list[ArticleRecord], resume_key: str | None,
+    next_offset: int, biz: str, page_count: int, total_saved: int,
 ) -> tuple[int, int, int]:
-    saved = 0
-    page_count += 1
-    if records or resume_key:
-        with storage.transaction():
-            if records:
-                saved = storage.articles.save_articles(records)
-                storage.accounts.update_last_synced(account.biz)
-                total_saved += saved
-            if resume_key:
-                storage.meta.set(resume_key, str(next_offset))
-    return saved, page_count, total_saved
+    def _do_save() -> int:
+        with open_storage() as ts:
+            saved = 0
+            with ts.transaction():
+                if records:
+                    saved = ts.articles.save_articles(records)
+                    ts.accounts.update_last_synced(biz)
+                if resume_key:
+                    ts.meta.set(resume_key, str(next_offset))
+            return saved
+    saved = await asyncio.to_thread(_do_save)
+    return saved, page_count + 1, total_saved + saved
 
 
 def _emit_progress(
