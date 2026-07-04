@@ -76,6 +76,9 @@ class SyncReport:
     accounts_done: int = 0
     current_account: dict[str, Any] | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
 
 @dataclass
 class AccountProgress:

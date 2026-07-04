@@ -27,15 +27,6 @@ from .sync_tasks import _article_snapshot
 from .sync_types import AccountProgress, SyncAccountResult, SyncObserver, SyncSummary
 
 
-def _normalize_report(result: SyncJobResult) -> dict[str, Any]:
-    return {
-        'total_saved': result.report.total_saved,
-        'downloaded': result.report.downloaded,
-        'summary': result.report.summary,
-        'failed_accounts': result.report.failed_accounts,
-    }
-
-
 class _WorkerProgressTracker:
     def __init__(self, *, storage: PostgresStorage, task_id: str) -> None:
         self._storage = storage
@@ -143,7 +134,7 @@ class _WorkerProgressTracker:
         self._save()
 
     def set_report(self, result: SyncJobResult) -> None:
-        self._report = _normalize_report(result)
+        self._report = result.report.to_dict()
         self._save()
 
 
@@ -287,7 +278,7 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
                 job.task_id,
                 status=final_status,
                 error=final_error,
-                result=_normalize_report(result),
+                result=result.report.to_dict(),
             )
     finally:
         poll_task.cancel()
