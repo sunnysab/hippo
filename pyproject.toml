@@ -37,6 +37,9 @@ dependencies = [
   "quickjs>=1.19.4",
 ]
 
+[project.optional-dependencies]
+dev = ["ruff>=0.15.0"]
+
 [project.scripts]
 hippo = "hippo.cli:app"
 

@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import logging
 import os
-import random
 import socket
 import stat
 import threading
@@ -55,7 +54,6 @@ from .emailer import get_email_settings, send_email, set_email_settings
 from .exceptions import ApiError
 from .http import MPClient
 from .login_manager import LoginManager
-from .login_service import save_login_session
 from .models import AccountCredential
 from .rss import build_rss_xml, query_rss_items
 from .storage import PostgresStorage, ensure_default_group, fetchone_row, open_storage
@@ -70,7 +68,6 @@ from .sync_settings import (
 from .sync_settings import (
     set_sync_settings as save_sync_settings,
 )
-from .utils import utc_now_iso
 from .wechat_api import SessionExpiredError, WeChatApiClient
 
 DEFAULT_HOST = '127.0.0.1'
@@ -243,7 +240,6 @@ def _login_response(
         'qrcode_url': '/api/login/qrcode' if snapshot.get('has_qrcode') else None,
         'last_login': info,
     }
-
 
 
 def _list_groups(storage: PostgresStorage) -> list[dict[str, Any]]:

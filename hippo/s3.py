@@ -10,7 +10,6 @@ from typing import Any
 import boto3
 from botocore.config import Config
 
-
 _DEFAULT_PREFIX = 'mp/image/'
 
 
