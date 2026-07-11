@@ -97,6 +97,7 @@ class AccountProgress:
 
     def touch(self) -> None:
         from .utils import utc_now_iso
+
         self.updated_at = utc_now_iso()
 
 

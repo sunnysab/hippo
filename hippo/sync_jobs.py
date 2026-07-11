@@ -24,7 +24,7 @@ def _row_to_state(row: dict[str, Any] | None) -> SyncTaskState | None:
     biz_list_raw = row.get('biz_list')
     accounts_raw = row.get('accounts') or []
     accounts: dict[str, AccountProgress] = {}
-    for item in (accounts_raw if isinstance(accounts_raw, list) else []):
+    for item in accounts_raw if isinstance(accounts_raw, list) else []:
         if isinstance(item, dict):
             biz = item.get('biz', '')
             accounts[biz] = AccountProgress(

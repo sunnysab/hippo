@@ -6,7 +6,7 @@ import hashlib
 import re
 import unicodedata
 from datetime import UTC, date, datetime, time, timedelta, timezone
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .storage import PostgresStorage
@@ -48,7 +48,7 @@ def is_http_url(url: str) -> bool:
 
     try:
         parsed = urlparse(url)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return False
     return parsed.scheme in ('http', 'https')
 
@@ -149,11 +149,7 @@ def should_skip_by_interval(
     assigned_slot = _account_spread_hash(biz) % sync_interval_days
     today_slot = epoch_days % sync_interval_days
 
-    for offset in (0, 1, -1):
-        if today_slot == (assigned_slot + offset) % sync_interval_days:
-            return False
-
-    return True
+    return all(today_slot != (assigned_slot + offset) % sync_interval_days for offset in (0, 1, -1))
 
 
 def resolve_auto_interval(days_since_last_publish: int | None) -> int:
@@ -189,7 +185,9 @@ def resolve_sync_interval(
     if latest_publish_at is None:
         return 1
 
-    latest = latest_publish_at.replace(tzinfo=UTC) if latest_publish_at.tzinfo is None else latest_publish_at.astimezone(UTC)
+    latest = (
+        latest_publish_at.replace(tzinfo=UTC) if latest_publish_at.tzinfo is None else latest_publish_at.astimezone(UTC)
+    )
     days_since = (datetime.now(UTC) - latest).days
     return resolve_auto_interval(days_since)
 

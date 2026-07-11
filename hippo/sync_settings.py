@@ -70,7 +70,7 @@ def _normalize_article_exclude_keywords(value: Any) -> str:
 def _normalize_window_start_hour(value: Any) -> int:
     try:
         hour = int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return DEFAULT_WINDOW_START_HOUR
     return min(max(hour, 0), 23)
 
@@ -78,7 +78,7 @@ def _normalize_window_start_hour(value: Any) -> int:
 def _normalize_window_end_hour(value: Any) -> int:
     try:
         hour = int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return DEFAULT_WINDOW_END_HOUR
     return min(max(hour, 0), 24)
 

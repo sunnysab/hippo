@@ -218,6 +218,7 @@ def extract_cgi_data(raw_html: str, *, article_url: str | None = None) -> dict[s
     # cgiDataNew at all — skip JS evaluation and fail fast without retry.
     if 'cgiDataNew' not in raw_html:
         from .http import ArticleContentUnavailableError
+
         raise ArticleContentUnavailableError('Article content not available (page does not contain cgiDataNew)')
 
     ctx = quickjs.Context()

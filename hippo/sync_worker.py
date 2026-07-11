@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import contextlib
+import logging
 import os
 import socket
 from datetime import UTC, datetime
@@ -100,9 +100,7 @@ class _WorkerProgressTracker:
         self._save()
 
     def on_account_done(self, result: SyncAccountResult, summary: SyncSummary | None) -> None:
-        progress = self._progress_for(
-            AccountCredential(biz=result.biz, nickname=result.nickname or result.biz)
-        )
+        progress = self._progress_for(AccountCredential(biz=result.biz, nickname=result.nickname or result.biz))
         if result.skipped:
             progress.status = 'skipped'
             progress.skip_reason = result.skip_reason
@@ -242,7 +240,7 @@ async def _poll_cancel(task_id: str, poll_interval: float = 1.0) -> None:
                     request_sync_cancel()
                     return
         except Exception as exc:
-            logger.debug("Cancel poll failed: %s", exc)
+            logger.debug('Cancel poll failed: %s', exc)
         await asyncio.sleep(poll_interval)
 
 

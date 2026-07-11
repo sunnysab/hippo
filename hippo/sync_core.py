@@ -90,21 +90,24 @@ def extract_publish_page(payload: dict[str, Any]) -> dict[str, Any]:
 
 def is_login_error(message: str) -> bool:
     lowered = message.lower()
-    return any(hint in lowered for hint in (
-        'invalid session',
-        'invalid token',
-        'session expired',
-        'session timeout',
-        'token expired',
-        'token timeout',
-        'login expired',
-        'login timeout',
-        'need login',
-        'login required',
-        '请重新登录',
-        '登录过期',
-        '登录失效',
-    ))
+    return any(
+        hint in lowered
+        for hint in (
+            'invalid session',
+            'invalid token',
+            'session expired',
+            'session timeout',
+            'token expired',
+            'token timeout',
+            'login expired',
+            'login timeout',
+            'need login',
+            'login required',
+            '请重新登录',
+            '登录过期',
+            '登录失效',
+        )
+    )
 
 
 def _jittered_sleep(base_seconds: float, *, jitter_ratio: float = 0.3) -> float:
@@ -161,7 +164,11 @@ async def _fetch_with_retry(
                 freq_attempt += 1
                 if freq_attempt > _MAX_FREQ_RETRIES:
                     raise RuntimeError(f'频控重试次数过多 ({freq_attempt})，终止同步') from exc
-                wait = _FREQ_BACKOFF_BASE if freq_attempt == 1 else min(_FREQ_BACKOFF_BASE + _FREQ_BACKOFF_STEP * (freq_attempt - 1), _FREQ_BACKOFF_MAX)
+                wait = (
+                    _FREQ_BACKOFF_BASE
+                    if freq_attempt == 1
+                    else min(_FREQ_BACKOFF_BASE + _FREQ_BACKOFF_STEP * (freq_attempt - 1), _FREQ_BACKOFF_MAX)
+                )
                 observer.on_log(f'触发频率控制，等待 {wait} 秒后重试')
                 await asyncio.sleep(wait)
                 _check_cancel()
@@ -274,8 +281,15 @@ async def sync_account_core(
         _check_cancel()
         try:
             payload, session = await _fetch_with_retry(
-                storage=storage, client=client, session=session, account=account, offset=offset, page_size=page_size,
-                login_flow=login_flow, on_login_required=on_login_required, observer=observer,
+                storage=storage,
+                client=client,
+                session=session,
+                account=account,
+                offset=offset,
+                page_size=page_size,
+                login_flow=login_flow,
+                on_login_required=on_login_required,
+                observer=observer,
             )
             request_count += 1
             if request_count % _BATCH_THROTTLE_REQUESTS == 0:
@@ -290,24 +304,44 @@ async def sync_account_core(
                 break
 
             records = parse_appmsg_publish(account.biz, payload)
-            records, stop_due_to_since = _filter_records_by_time(records, since_timestamp=since_timestamp, until_timestamp=until_timestamp)
+            records, stop_due_to_since = _filter_records_by_time(
+                records, since_timestamp=since_timestamp, until_timestamp=until_timestamp
+            )
             if stop_due_to_since and not records:
                 completed = True
                 break
 
             existing_ids, should_stop = _check_existing_ids(
-                storage, account.biz, records,
-                collect_existing_ids=collect_existing_ids, full_synced_hint=full_synced_hint, stop_on_existing=stop_on_existing,
+                storage,
+                account.biz,
+                records,
+                collect_existing_ids=collect_existing_ids,
+                full_synced_hint=full_synced_hint,
+                stop_on_existing=stop_on_existing,
             )
             if should_stop:
                 completed = True
                 break
 
-            saved, page_count, total_saved = await _save_page(records, resume_key, offset + page_size, account.biz, page_count, total_saved)
-            current_completed = min(offset + publish_list_len, total_count) if total_count else offset + publish_list_len
+            saved, page_count, total_saved = await _save_page(
+                records, resume_key, offset + page_size, account.biz, page_count, total_saved
+            )
+            current_completed = (
+                min(offset + publish_list_len, total_count) if total_count else offset + publish_list_len
+            )
             delta = current_completed - current_progress
             current_progress = current_completed
-            _emit_progress(observer, records, existing_ids, saved, page_count, offset + page_size, total_count, current_completed, delta)
+            _emit_progress(
+                observer,
+                records,
+                existing_ids,
+                saved,
+                page_count,
+                offset + page_size,
+                total_count,
+                current_completed,
+                delta,
+            )
 
             if stop_due_to_since:
                 completed = True
@@ -322,7 +356,9 @@ async def sync_account_core(
     return SyncSummary(total_saved=total_saved, page_count=page_count, completed=completed)
 
 
-def _restore_offset(storage: PostgresStorage, resume_key: str | None, observer: SyncObserver, account: AccountCredential) -> int:
+def _restore_offset(
+    storage: PostgresStorage, resume_key: str | None, observer: SyncObserver, account: AccountCredential
+) -> int:
     if not resume_key:
         return 0
     saved_offset = storage.meta.get(resume_key)
@@ -335,8 +371,12 @@ def _restore_offset(storage: PostgresStorage, resume_key: str | None, observer: 
 
 
 async def _save_page(
-    records: list[ArticleRecord], resume_key: str | None,
-    next_offset: int, biz: str, page_count: int, total_saved: int,
+    records: list[ArticleRecord],
+    resume_key: str | None,
+    next_offset: int,
+    biz: str,
+    page_count: int,
+    total_saved: int,
 ) -> tuple[int, int, int]:
     def _do_save() -> int:
         with open_storage() as ts:
@@ -348,24 +388,46 @@ async def _save_page(
                 if resume_key:
                     ts.meta.set(resume_key, str(next_offset))
             return saved
+
     saved = await asyncio.to_thread(_do_save)
     return saved, page_count + 1, total_saved + saved
 
 
 def _emit_progress(
-    observer: SyncObserver, records: list[ArticleRecord], existing_ids: set[str],
-    saved: int, page_count: int, offset: int, total_count: int | None,
-    current: int, delta: int,
+    observer: SyncObserver,
+    records: list[ArticleRecord],
+    existing_ids: set[str],
+    saved: int,
+    page_count: int,
+    offset: int,
+    total_count: int | None,
+    current: int,
+    delta: int,
 ) -> None:
-    observer.on_page({
-        'records': records, 'existing_ids': existing_ids, 'saved': saved,
-        'page_count': page_count, 'offset': offset, 'total_count': total_count,
-        'current': current, 'delta': delta,
-    })
+    observer.on_page(
+        {
+            'records': records,
+            'existing_ids': existing_ids,
+            'saved': saved,
+            'page_count': page_count,
+            'offset': offset,
+            'total_count': total_count,
+            'current': current,
+            'delta': delta,
+        }
+    )
     observer.on_progress(current=current, total=total_count, delta=max(delta, 0))
 
 
-def _finalize(storage: PostgresStorage, resume_key: str | None, completed: bool, total_count: int | None, observer: SyncObserver, total_saved: int, page_count: int) -> None:
+def _finalize(
+    storage: PostgresStorage,
+    resume_key: str | None,
+    completed: bool,
+    total_count: int | None,
+    observer: SyncObserver,
+    total_saved: int,
+    page_count: int,
+) -> None:
     if resume_key and completed:
         with storage.transaction():
             storage.meta.delete(resume_key)
