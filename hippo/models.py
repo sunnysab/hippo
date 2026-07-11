@@ -21,6 +21,7 @@ class AccountCredential(HippoBaseModel):
     last_synced_at: datetime | None = None
     sync_mode: str | None = None
     sync_recent_days: int | None = None
+    sync_interval_days: int | None = None
     group_id: int | None = None
     group_name: str | None = None
 

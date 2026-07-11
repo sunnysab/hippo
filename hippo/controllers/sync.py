@@ -94,6 +94,8 @@ def _format_skip_reason(reason: str, account: AccountCredential) -> str:
         return f'跳过(近期已同步 {last_synced})'
     if reason == 'freq_control':
         return '跳过(频控)'
+    if reason == 'sync_interval':
+        return '跳过(未到同步周期)'
     return '跳过'
 
 

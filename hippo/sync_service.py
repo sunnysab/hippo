@@ -48,7 +48,13 @@ from .sync_types import (
     SyncReport,
     SyncSummary,
 )
-from .utils import parse_iso_date_to_timestamp, should_skip_by_time, utc_now_iso
+from .utils import (
+    parse_iso_date_to_timestamp,
+    resolve_sync_interval,
+    should_skip_by_interval,
+    should_skip_by_time,
+    utc_now_iso,
+)
 from .wechat_api import WeChatApiClient
 
 logger = logging.getLogger('hippo.sync')
@@ -310,6 +316,22 @@ class ArticleSyncService:
                 error=None,
             )
             return result, [], None
+
+        if not config.force:
+            effective_interval = resolve_sync_interval(self._storage, account)
+            if should_skip_by_interval(account.last_synced_at, effective_interval, account.biz):
+                observer.on_skip('sync_interval')
+                result = SyncAccountResult(
+                    biz=account.biz,
+                    nickname=account.nickname,
+                    saved=0,
+                    completed=False,
+                    skipped=True,
+                    skip_reason='sync_interval',
+                    failed=False,
+                    error=None,
+                )
+                return result, [], None
 
         if not config.force and should_skip_by_time(account.last_synced_at, config.skip_minutes):
             observer.on_skip('recently_synced')

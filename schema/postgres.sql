@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     article_count BIGINT NOT NULL DEFAULT 0,
     sync_mode TEXT,
     sync_recent_days INTEGER,
+    sync_interval_days INTEGER DEFAULT NULL,
     last_synced_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
@@ -33,6 +34,8 @@ CREATE TABLE IF NOT EXISTS accounts (
 
 CREATE INDEX IF NOT EXISTS idx_accounts_group
 ON accounts (group_id);
+
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS sync_interval_days INTEGER DEFAULT NULL;
 
 CREATE TABLE IF NOT EXISTS articles (
     id SERIAL PRIMARY KEY,

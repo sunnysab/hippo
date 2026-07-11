@@ -17,6 +17,7 @@ export function BatchActions() {
   const [targetGroupId, setTargetGroupId] = useState('');
   const [syncMode, setSyncMode] = useState('');
   const [syncDays, setSyncDays] = useState(String(syncDefaults.recent_days));
+  const [syncBatchInterval, setSyncBatchInterval] = useState<number | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const isNarrow = useMediaQuery('(max-width: 720px)');
 
@@ -69,6 +70,7 @@ export function BatchActions() {
     const body: Record<string, unknown> = {
       biz_list: state.selectedAccounts,
       sync_mode: syncMode || null,
+      sync_interval_days: syncBatchInterval,
     };
     if (syncMode === 'recent') {
       const days = parseInt(syncDays || String(syncDefaults.recent_days), 10);
@@ -183,7 +185,24 @@ export function BatchActions() {
           disabled={syncMode !== 'recent'}
           onChange={(event) => setSyncDays(event.target.value)}
         />
+        <select
+          id="batch-sync-interval"
+          value={syncBatchInterval === null ? '' : String(syncBatchInterval)}
+          onChange={(event) => {
+            const val = event.target.value;
+            setSyncBatchInterval(val === '' ? null : Number(val));
+          }}
+        >
+          <option value="">{t('accounts.syncIntervalAuto', 'Auto (detect)')}</option>
+          <option value="1">{t('accounts.syncInterval1', 'Every run')}</option>
+          <option value="3">{t('accounts.syncInterval3', 'Every 3 days')}</option>
+          <option value="7">{t('accounts.syncInterval7', 'Weekly')}</option>
+          <option value="14">{t('accounts.syncInterval14', 'Biweekly')}</option>
+          <option value="30">{t('accounts.syncInterval30', 'Monthly')}</option>
+        </select>
         <button className="btn ghost" id="btn-batch-sync" type="button" onClick={handleBatchSyncSettings}>
+          {t('accounts.batchSyncApply', 'Apply')}
+        </button>>
           {t('accounts.batchSyncApply', 'Apply')}
         </button>
         <div className="batch-divider"></div>

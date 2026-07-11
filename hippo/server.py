@@ -325,6 +325,7 @@ def _update_account(storage: PostgresStorage, biz: str, payload: dict[str, Any])
         'is_disabled': 'is_disabled',
         'sync_mode': 'sync_mode',
         'sync_recent_days': 'sync_recent_days',
+        'sync_interval_days': 'sync_interval_days',
     }
     for key in mapping:
         if key in payload:
@@ -335,6 +336,8 @@ def _update_account(storage: PostgresStorage, biz: str, payload: dict[str, Any])
                 value = _normalize_sync_mode(value)
             if key == 'sync_recent_days':
                 value = _normalize_recent_days(value)
+            if key == 'sync_interval_days':
+                value = max(int(value), 1) if value is not None else None
             updates[key] = value
     if not updates:
         raise ApiError('No fields to update')
@@ -699,6 +702,9 @@ def batch_update_accounts(
         updates['sync_mode'] = _normalize_sync_mode(body.get('sync_mode'))
     if 'sync_recent_days' in body:
         updates['sync_recent_days'] = _normalize_recent_days(body.get('sync_recent_days'))
+    if 'sync_interval_days' in body:
+        value = body['sync_interval_days']
+        updates['sync_interval_days'] = max(int(value), 1) if value is not None else None
     if not updates:
         raise ApiError('No fields to update')
     with storage.transaction():

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
@@ -74,8 +74,8 @@ class AccountRepository:
                 """
                 INSERT INTO accounts (biz, nickname, alias, round_head_img,
                                       group_id, is_disabled, sync_mode, sync_recent_days,
-                                      last_synced_at, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                      sync_interval_days, last_synced_at, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (biz) DO UPDATE SET
                     nickname=EXCLUDED.nickname,
                     alias=EXCLUDED.alias,
@@ -91,6 +91,7 @@ class AccountRepository:
                     account.is_disabled,
                     account.sync_mode,
                     account.sync_recent_days,
+                    account.sync_interval_days,
                     account.last_synced_at,
                     now,
                     now,
@@ -222,7 +223,7 @@ class AccountRepository:
             'WITH filtered_accounts AS ('
             ' SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,'
             ' a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days,'
-            ' a.article_count'
+            ' a.sync_interval_days, a.article_count'
             ' FROM accounts a'
             f' {where_sql}'
             ' ORDER BY a.nickname ASC'
@@ -230,6 +231,7 @@ class AccountRepository:
             ')'
             ' SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,'
             ' a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,'
+            ' a.sync_interval_days,'
             ' COALESCE(a.article_count, 0) AS article_count,'
             ' (ai.data IS NOT NULL) AS avatar_ready'
             ' FROM filtered_accounts a'
@@ -253,7 +255,8 @@ class AccountRepository:
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 'SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,'
-                ' a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,'
+                ' a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days,'
+                ' a.sync_interval_days, g.name AS group_name,'
                 ' COALESCE(a.article_count, 0) AS article_count,'
                 ' (ai.data IS NOT NULL) AS avatar_ready'
                 ' FROM accounts a'
@@ -279,6 +282,7 @@ class AccountRepository:
                 'is_disabled': 'is_disabled',
                 'sync_mode': 'sync_mode',
                 'sync_recent_days': 'sync_recent_days',
+                'sync_interval_days': 'sync_interval_days',
             },
             updates,
         )
@@ -294,6 +298,21 @@ class AccountRepository:
             if cur.rowcount == 0:
                 raise LookupError('Account not found')
 
+    def get_latest_publish_at(self, biz: str) -> datetime | None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                'SELECT publish_at FROM articles WHERE biz = %s AND publish_at IS NOT NULL'
+                ' ORDER BY publish_at DESC LIMIT 1',
+                (biz,),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        ts = row[0]
+        if ts is None:
+            return None
+        return datetime.fromtimestamp(ts, tz=UTC)
+
     def move_accounts(self, biz_list: list[str], group_id: int) -> int:
         with self._conn.cursor() as cur:
             cur.execute(
@@ -307,6 +326,7 @@ class AccountRepository:
             {
                 'sync_mode': 'sync_mode',
                 'sync_recent_days': 'sync_recent_days',
+                'sync_interval_days': 'sync_interval_days',
             },
             updates,
         )

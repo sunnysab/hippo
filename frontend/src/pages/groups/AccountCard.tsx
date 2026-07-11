@@ -20,6 +20,7 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
   const navigate = useNavigate();
   const [syncMode, setSyncMode] = useState(account.sync_mode || '');
   const [syncDays, setSyncDays] = useState(String(account.sync_recent_days ?? syncDefaults.recent_days));
+  const [syncInterval, setSyncInterval] = useState<number | null>(account.sync_interval_days ?? null);
 
   const activeGroup = state.groups.find((g) => g.id === state.selectedGroupId);
   const groupMode = activeGroup?.sync_mode || '';
@@ -51,10 +52,10 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
     }
   };
 
-  const saveSyncSettings = async (nextMode: string, nextDays: string) => {
+  const saveSyncSettings = async (nextMode: string, nextDays: string, nextInterval: number | null = syncInterval) => {
     const parsedDays = parseInt(nextDays || String(baseRecentDays), 10);
     const safeDays = Number.isFinite(parsedDays) && parsedDays > 0 ? parsedDays : baseRecentDays;
-    const body: Record<string, unknown> = { sync_mode: nextMode || null };
+    const body: Record<string, unknown> = { sync_mode: nextMode || null, sync_interval_days: nextInterval };
     if (nextMode === 'recent') {
       body.sync_recent_days = safeDays;
     }
@@ -66,6 +67,7 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
         patch: {
           sync_mode: nextMode || null,
           sync_recent_days: nextMode === 'recent' ? safeDays : null,
+          sync_interval_days: nextInterval,
         },
       });
       showToast(t('accounts.syncSaved', 'Sync strategy updated.'));
@@ -159,6 +161,27 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
             <option value="incremental">{t('sync.modeIncremental', 'Incremental')}</option>
             <option value="recent">{t('sync.modeRecent', 'Recent')}</option>
             <option value="full">{t('sync.modeFull', 'Full')}</option>
+          </select>
+        </div>
+        <div className="account-sync-row">
+          <span className="account-sync-label">{t('accounts.syncInterval', 'Sync interval')}</span>
+          <select
+            className="account-sync-interval"
+            data-biz={account.biz}
+            value={syncInterval === null ? '' : String(syncInterval)}
+            onChange={(event) => {
+              const val = event.target.value;
+              const nextInterval = val === '' ? null : Number(val);
+              setSyncInterval(nextInterval);
+              void saveSyncSettings(syncMode, syncDays, nextInterval);
+            }}
+          >
+            <option value="">{t('accounts.syncIntervalAuto', 'Auto (detect)')}</option>
+            <option value="1">{t('accounts.syncInterval1', 'Every run')}</option>
+            <option value="3">{t('accounts.syncInterval3', 'Every 3 days')}</option>
+            <option value="7">{t('accounts.syncInterval7', 'Weekly')}</option>
+            <option value="14">{t('accounts.syncInterval14', 'Biweekly')}</option>
+            <option value="30">{t('accounts.syncInterval30', 'Monthly')}</option>
           </select>
         </div>
         <div className={`account-sync-row account-sync-if-recent${syncMode === 'recent' ? ' is-visible' : ''}`}>
