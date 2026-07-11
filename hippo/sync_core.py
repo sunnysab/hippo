@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import random
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -24,8 +25,8 @@ _MAX_NETWORK_RETRIES = 3
 _FREQ_BACKOFF_BASE = 15
 _FREQ_BACKOFF_MAX = 60
 _FREQ_BACKOFF_STEP = 5
-_BATCH_THROTTLE_REQUESTS = 60
-_BATCH_THROTTLE_SECONDS = 15
+_BATCH_THROTTLE_REQUESTS = 15
+_BATCH_THROTTLE_SECONDS = 10
 _LOGIN_FLOW_TIMEOUT = 300
 _LOGIN_FLOW_POLL_INTERVAL = 2
 _NETWORK_BACKOFF_MAX = 5
@@ -89,7 +90,30 @@ def extract_publish_page(payload: dict[str, Any]) -> dict[str, Any]:
 
 def is_login_error(message: str) -> bool:
     lowered = message.lower()
-    return any(hint in lowered for hint in ('login', 'invalid token', 'invalid session', 'session', 'expire', 'expired', 'timeout'))
+    return any(hint in lowered for hint in (
+        'invalid session',
+        'invalid token',
+        'session expired',
+        'session timeout',
+        'token expired',
+        'token timeout',
+        'login expired',
+        'login timeout',
+        'need login',
+        'login required',
+        '请重新登录',
+        '登录过期',
+        '登录失效',
+    ))
+
+
+def _jittered_sleep(base_seconds: float, *, jitter_ratio: float = 0.3) -> float:
+    """Sleep for *base_seconds* with ±*jitter_ratio* random variation.
+
+    Returns the actual sleep duration in seconds.
+    """
+    actual = base_seconds * (1.0 + jitter_ratio * (random.random() * 2.0 - 1.0))
+    return max(0.1, actual)
 
 
 def is_freq_control(message: str) -> bool:
@@ -289,7 +313,7 @@ async def sync_account_core(
                 completed = True
                 break
             if sleep_seconds > 0:
-                await asyncio.sleep(sleep_seconds)
+                await asyncio.sleep(_jittered_sleep(sleep_seconds))
             offset += page_size
         except KeyboardInterrupt as exc:
             raise SyncInterrupted() from exc

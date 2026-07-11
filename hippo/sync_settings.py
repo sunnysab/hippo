@@ -34,7 +34,7 @@ def default_sync_settings() -> dict[str, Any]:
         'interval_minutes': 60,
         'window_start_hour': DEFAULT_WINDOW_START_HOUR,
         'window_end_hour': DEFAULT_WINDOW_END_HOUR,
-        'sleep_seconds': 0.05,
+        'sleep_seconds': 3.0,
         'download_content': True,
         'download_images': True,
         'skip_minutes': 30,

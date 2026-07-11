@@ -213,6 +213,13 @@ def parse_wechat_article(
 def extract_cgi_data(raw_html: str, *, article_url: str | None = None) -> dict[str, Any]:
     soup = BeautifulSoup(raw_html, 'html.parser')
     scripts = soup.find_all('script')
+
+    # Non-article pages (captcha, privacy-restricted, etc.) won't contain
+    # cgiDataNew at all — skip JS evaluation and fail fast without retry.
+    if 'cgiDataNew' not in raw_html:
+        from .http import ArticleContentUnavailableError
+        raise ArticleContentUnavailableError('Article content not available (page does not contain cgiDataNew)')
+
     ctx = quickjs.Context()
     ctx.set_time_limit(_JS_EVAL_TIMEOUT_MS)
     ctx.eval(_JS_BOOTSTRAP)
@@ -220,6 +227,9 @@ def extract_cgi_data(raw_html: str, *, article_url: str | None = None) -> dict[s
         _set_location(ctx, article_url)
 
     for script in scripts:
+        # Skip ESM scripts — QuickJS cannot execute type="module"
+        if script.get('type') == 'module':
+            continue
         code = script.string or script.text or ''
         if not code.strip():
             continue

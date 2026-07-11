@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
 import re
 from collections.abc import Awaitable, Callable, Iterable
 from contextlib import AbstractAsyncContextManager
@@ -27,6 +28,8 @@ _ARTICLE_MAX_RETRIES = 5
 _IMAGE_WORKERS = 2
 _IMAGE_MAX_RETRIES = 3
 _RETRY_BACKOFF_MAX = 10  # Maximum backoff time in seconds
+_ARTICLE_DOWNLOAD_DELAY_MIN = 0.5  # Minimum delay between article downloads (seconds)
+_ARTICLE_DOWNLOAD_DELAY_MAX = 2.0  # Maximum delay between article downloads (seconds)
 
 
 def _extract_url_token(url: str) -> str | None:
@@ -669,7 +672,10 @@ class ArticleDownloader(AbstractAsyncContextManager):
 
         if self._article_workers <= 1:
             try:
-                for article in pending:
+                for i, article in enumerate(pending):
+                    if i > 0:
+                        delay = random.uniform(_ARTICLE_DOWNLOAD_DELAY_MIN, _ARTICLE_DOWNLOAD_DELAY_MAX)
+                        await asyncio.sleep(delay)
                     try:
                         result = await download_one(article)
                         results.append(result)
