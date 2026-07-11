@@ -133,13 +133,13 @@ class LoginManager:
                 session.nickname = info.get('nickname') or None
                 session.avatar = info.get('avatar') or None
                 save_login_session(storage, session)
-                # Clear login_required sync block since session is now refreshed
+                # Clear login_required sync state and stale error since session is now refreshed
                 with storage.transaction():
                     storage.meta.delete('sync:login_required_at')
                     storage.meta.delete('sync:alert_sent')
+                    storage.meta.set('sync:last_error', '')
                     if storage.meta.get('sync:last_status') == 'login_required':
                         storage.meta.set('sync:last_status', 'idle')
-                        storage.meta.set('sync:last_error', '')
                 with self._lock:
                     self._status = 'success'
                     self._message = 'Login success'
