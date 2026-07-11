@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -13,6 +14,8 @@ from urllib.parse import parse_qs, urlparse
 
 from .http import MPClient
 from .models import ArticleRecord, LoginSession
+
+logger = logging.getLogger(__name__)
 
 
 class SessionExpiredError(RuntimeError):
@@ -101,9 +104,10 @@ class WeChatApiClient:
         )
         resp.raise_for_status()
         payload_json = resp.json()
+        logger.info('finalize_login response: %s', json.dumps(payload_json, ensure_ascii=False))
         redirect_url = payload_json.get('redirect_url') or ''
         if not redirect_url:
-            raise RuntimeError('Login failed: missing redirect_url')
+            raise RuntimeError(f'Login failed: missing redirect_url, response keys: {list(payload_json.keys())}')
         token = _extract_token(redirect_url)
         if not token:
             raise RuntimeError('Login failed: missing token')

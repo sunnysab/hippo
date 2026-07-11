@@ -94,13 +94,23 @@ export function SettingsPage() {
           dispatch({ type: 'SET_LOGIN_STATUS', payload: payload as unknown as LoginStatus });
           const nextStatus = (payload.status as string) || 'idle';
           if (nextStatus === 'confirmed') {
+            // Stop poll BEFORE calling finalize to prevent concurrent finalize calls
+            if (loginPollTimer.current) clearInterval(loginPollTimer.current);
+            loginPollTimer.current = null;
             try {
               const result = await apiSend('/api/login/finalize', 'POST', {});
               dispatch({ type: 'SET_LOGIN_STATUS', payload: result as unknown as LoginStatus });
-              if (loginPollTimer.current) clearInterval(loginPollTimer.current);
-              loginPollTimer.current = null;
             } catch {
-              /* ignore */
+              // Re-fetch server state so UI reflects the actual status
+              try {
+                const fresh = await apiGet('/api/login');
+                dispatch({ type: 'SET_LOGIN_STATUS', payload: fresh as unknown as LoginStatus });
+              } catch {
+                dispatch({
+                  type: 'SET_LOGIN_STATUS',
+                  payload: { status: 'error', message: 'Login finalization failed', updated_at: new Date().toISOString() } as LoginStatus,
+                });
+              }
             }
           } else if (['success', 'error', 'idle'].includes(nextStatus)) {
             if (loginPollTimer.current) clearInterval(loginPollTimer.current);
