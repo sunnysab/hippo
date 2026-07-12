@@ -1160,6 +1160,57 @@ class ImageRepository:
             return [row[0] for row in cur.fetchall()]
 
 
+class DownloadAttemptRepository:
+    def __init__(self, conn: psycopg.Connection) -> None:
+        self._conn = conn
+
+    def get_attempts_map(self, biz: str, article_ids: Iterable[str]) -> dict[str, int]:
+        ids = [i for i in article_ids if i]
+        if not ids:
+            return {}
+        result: dict[str, int] = {}
+        with self._conn.cursor() as cur:
+            cur.execute(
+                'SELECT article_id, attempts FROM article_download_attempts WHERE biz = %s AND article_id = ANY(%s)',
+                (biz, ids),
+            )
+            for row in cur.fetchall():
+                result[row[0]] = row[1]
+        return result
+
+    def increment_attempt(self, biz: str, article_id: str, error: str | None = None) -> None:
+        now = utc_now_dt()
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO article_download_attempts (biz, article_id, attempts, last_error, last_attempt_at, created_at)
+                VALUES (%s, %s, 1, %s, %s, %s)
+                ON CONFLICT (biz, article_id) DO UPDATE SET
+                    attempts = article_download_attempts.attempts + 1,
+                    last_error = EXCLUDED.last_error,
+                    last_attempt_at = EXCLUDED.last_attempt_at
+                """,
+                (biz, article_id, error, now, now),
+            )
+
+    def get_articles_within_limit(
+        self, biz: str, article_ids: Iterable[str], *, max_attempts: int
+    ) -> set[str]:
+        ids = [i for i in article_ids if i]
+        if not ids:
+            return set()
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT article_id FROM article_download_attempts
+                WHERE biz = %s AND article_id = ANY(%s) AND attempts >= %s
+                """,
+                (biz, ids, max_attempts),
+            )
+            exceeded = {row[0] for row in cur.fetchall()}
+        return set(ids) - exceeded
+
+
 def _row_to_account(row: dict[str, Any]) -> AccountCredential:
     return AccountCredential.model_validate(row)
 
@@ -1175,6 +1226,7 @@ __all__ = [
     'AccountRepository',
     'ArticleImageTarget',
     'ArticleRepository',
+    'DownloadAttemptRepository',
     'GroupRepository',
     'ImageRepository',
     'LoginSessionRepository',
