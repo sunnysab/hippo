@@ -386,3 +386,17 @@ END;
 $$ LANGUAGE plpgsql;
 
 SELECT hippo_rebuild_article_counts();
+
+CREATE TABLE IF NOT EXISTS article_download_attempts (
+    id SERIAL PRIMARY KEY,
+    biz TEXT NOT NULL REFERENCES accounts(biz) ON DELETE CASCADE,
+    article_id TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    last_attempt_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL,
+    UNIQUE (biz, article_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_article_download_attempts_biz_article
+ON article_download_attempts (biz, article_id);
