@@ -18,6 +18,7 @@ from .models import AccountGroup
 from .repositories import (
     AccountRepository,
     ArticleRepository,
+    DownloadAttemptRepository,
     GroupRepository,
     ImageRepository,
     LoginSessionRepository,
@@ -25,7 +26,7 @@ from .repositories import (
 )
 from .sync_jobs import SyncJobRepository
 
-SCHEMA_VERSION = '19'
+SCHEMA_VERSION = '20'
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'schema' / 'postgres.sql'
 
@@ -159,6 +160,7 @@ class PostgresStorage(AbstractContextManager):
         self.sessions = LoginSessionRepository(self.conn)
         self.articles = ArticleRepository(self.conn)
         self.images = ImageRepository(self.conn)
+        self.download_attempts = DownloadAttemptRepository(self.conn)
         self.sync_jobs = SyncJobRepository(self.conn)
 
     def __enter__(self) -> PostgresStorage:
