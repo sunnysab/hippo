@@ -123,18 +123,37 @@ def _select_missing_content(
     biz: str,
     *,
     limit: int | None,
+    max_download_attempts: int | None = None,
 ) -> list[ArticleRecord]:
     if limit is not None and limit <= 0:
         return []
     articles = storage.articles.list_articles(biz, limit=limit)
     try:
         ids = storage.articles.get_article_content_ids(biz, [article.article_id for article in articles])
-        return [article for article in articles if article.article_id not in ids]
+        missing = [article for article in articles if article.article_id not in ids]
     except Exception as exc:
         with contextlib.suppress(Exception):
             storage.rollback()
         logger.warning('Failed to query article content IDs (biz=%s): %s', biz, exc)
-        return articles
+        missing = articles
+
+    if not missing:
+        return []
+
+    if max_download_attempts is not None:
+        missing_ids = [a.article_id for a in missing]
+        within_limit = storage.download_attempts.get_articles_within_limit(
+            biz, missing_ids, max_attempts=max_download_attempts
+        )
+        skipped_count = len(missing) - len(within_limit)
+        if skipped_count > 0:
+            logger.info(
+                'Skipping %d articles for %s (exceeded %d download attempts)',
+                skipped_count, biz, max_download_attempts,
+            )
+        missing = [a for a in missing if a.article_id in within_limit]
+
+    return missing
 
 
 class ArticleSyncService:
@@ -537,6 +556,7 @@ class ArticleSyncService:
                     self._storage,
                     account.biz,
                     limit=config.content_limit,
+                    max_download_attempts=config.max_content_download_attempts or DEFAULT_MAX_CONTENT_DOWNLOAD_ATTEMPTS,
                 )
                 for missing in missing_articles:
                     candidates.setdefault(missing.article_id, missing)
