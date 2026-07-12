@@ -34,6 +34,7 @@ class SyncConfig:
     download_content: bool
     download_images: bool
     content_limit: int | None
+    max_content_download_attempts: int | None = None
 
 
 @dataclass(frozen=True)
