@@ -566,6 +566,7 @@ class ArticleSyncService:
                         with_images=bool(config.download_images),
                         record_images_only=not bool(config.download_images),
                         skip_if_downloaded=True,
+                        max_download_attempts=config.max_content_download_attempts or DEFAULT_MAX_CONTENT_DOWNLOAD_ATTEMPTS,
                     )
                     total_downloaded += len(results)
             job_observer.on_account_done(result, summary)
