@@ -622,6 +622,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         record_images_only: bool = False,
         progress: object | None = None,
         skip_if_downloaded: bool = True,
+        max_download_attempts: int | None = None,
     ) -> tuple[list[DownloadResult], int, int]:
         """Download multiple articles.
 
@@ -663,6 +664,45 @@ class ArticleDownloader(AbstractAsyncContextManager):
         if not pending:
             return results, skipped, failed
 
+        if max_download_attempts is not None and self.storage:
+            download_attempts = getattr(self.storage, 'download_attempts', None)
+            if download_attempts is not None:
+                biz_groups: dict[str, list[ArticleRecord]] = {}
+                for article in pending:
+                    biz_groups.setdefault(article.biz, []).append(article)
+                filtered: list[ArticleRecord] = []
+                for biz, group in biz_groups.items():
+                    group_ids = [a.article_id for a in group]
+                    within_limit = download_attempts.get_articles_within_limit(
+                        biz, group_ids, max_attempts=max_download_attempts
+                    )
+                    blocked_count = len(group) - len(within_limit)
+                    if blocked_count > 0:
+                        logger.info(
+                            'Skipping %d articles for %s in download_many (exceeded %d attempts)',
+                            blocked_count, biz, max_download_attempts,
+                        )
+                        skipped += blocked_count
+                        if progress is not None:
+                            for _ in range(blocked_count):
+                                progress.update(1)
+                    for article in group:
+                        if article.article_id in within_limit:
+                            filtered.append(article)
+                pending = filtered
+
+        if not pending:
+            return results, skipped, failed
+
+        def _record_failure(article: ArticleRecord, error: str) -> None:
+            if self.storage:
+                download_attempts = getattr(self.storage, 'download_attempts', None)
+                if download_attempts is not None:
+                    try:
+                        download_attempts.increment_attempt(article.biz, article.article_id, error)
+                    except Exception as exc:
+                        logger.debug('Failed to record download attempt: %s', exc)
+
         async def download_one(target: ArticleRecord) -> DownloadResult:
             return await self._download_with_retry(
                 target,
@@ -681,6 +721,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                         results.append(result)
                     except Exception as exc:
                         failed += 1
+                        _record_failure(article, str(exc))
                         _log_download_error(
                             stage='article_download',
                             article=article,
@@ -716,6 +757,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                         result = await task
                     except Exception as exc:
                         failed += 1
+                        _record_failure(article, str(exc))
                         _log_download_error(
                             stage='article_download',
                             article=article,
