@@ -134,6 +134,10 @@ class _WorkerProgressTracker:
         self._last_log = None
         self._save()
 
+    def on_log(self, message: str) -> None:
+        self._last_log = message
+        self._save()
+
     def set_report(self, result: SyncJobResult) -> None:
         self._report = result.report.to_dict()
         self._save()
