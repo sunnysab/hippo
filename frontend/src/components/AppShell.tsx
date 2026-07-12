@@ -105,6 +105,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     navigate('/settings/login');
   };
 
+  const handleBannerDismiss = () => {
+    setBannerVisible(false);
+    setBannerText('');
+  };
+
   // Listen for toast events from the API layer
   useEffect(() => {
     return onToast(showToast);
@@ -128,6 +133,14 @@ export function AppShell({ children }: { children: ReactNode }) {
             onClick={handleBannerLogin}
           >
             {t('login.relogin', 'Re-login')}
+          </button>
+          <button
+            className="btn ghost"
+            id="btn-banner-dismiss"
+            type="button"
+            onClick={handleBannerDismiss}
+          >
+            ×
           </button>
         </div>
         <div id="view-root">{children}</div>
