@@ -202,8 +202,6 @@ export function BatchActions() {
         </select>
         <button className="btn ghost" id="btn-batch-sync" type="button" onClick={handleBatchSyncSettings}>
           {t('accounts.batchSyncApply', 'Apply')}
-        </button>>
-          {t('accounts.batchSyncApply', 'Apply')}
         </button>
         <div className="batch-divider"></div>
         <button className="btn ghost" id="btn-batch-group-sync" type="button" onClick={handleBatchGroupSync}>
