@@ -22,6 +22,7 @@ DEFAULT_GROUP_NAME: Final = 'Default'
 DEFAULT_RECENT_DAYS: Final = 7
 DEFAULT_WINDOW_START_HOUR: Final = 6
 DEFAULT_WINDOW_END_HOUR: Final = 24
+DEFAULT_MAX_CONTENT_DOWNLOAD_ATTEMPTS: Final = 3
 
 
 def _env_int(name: str, default: int | None = None) -> int | None:
@@ -47,6 +48,7 @@ __all__ = [
     'CLI_NAME',
     'DEFAULT_GROUP_NAME',
     'DEFAULT_PAGE_SIZE',
+    'DEFAULT_MAX_CONTENT_DOWNLOAD_ATTEMPTS',
     'DEFAULT_RECENT_DAYS',
     'DEFAULT_USER_AGENT',
     'DEFAULT_WINDOW_END_HOUR',

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from .config import DEFAULT_PAGE_SIZE, DEFAULT_RECENT_DAYS
+from .config import DEFAULT_MAX_CONTENT_DOWNLOAD_ATTEMPTS, DEFAULT_PAGE_SIZE, DEFAULT_RECENT_DAYS
 from .container import build_sync_container
 from .downloader import ArticleDownloader
 from .exceptions import SyncInterrupted
@@ -575,6 +575,7 @@ def _build_sync_config(settings: dict[str, Any]) -> SyncConfig:
         download_content=bool(settings.get('download_content')),
         download_images=bool(settings.get('download_images')),
         content_limit=None,
+        max_content_download_attempts=settings.get('max_content_download_attempts'),
     )
 
 
