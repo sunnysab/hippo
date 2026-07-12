@@ -164,6 +164,10 @@ class _SyncTaskJobObserver:
     def on_images_done(self) -> None:
         self._manager._set_task_phase(self._state, None, None)
 
+    def on_log(self, message: str) -> None:
+        with self._manager._lock:
+            self._state.last_log = message
+
 
 class SyncTaskManager:
     def __init__(self, *, max_tasks: int = 50) -> None:

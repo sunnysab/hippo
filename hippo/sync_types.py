@@ -179,6 +179,8 @@ class SyncJobObserver(Protocol):
 
     def on_images_done(self) -> None: ...
 
+    def on_log(self, message: str) -> None: ...
+
 
 class NullSyncJobObserver:
     def on_lock_acquired(self) -> None:
@@ -200,6 +202,9 @@ class NullSyncJobObserver:
         return None
 
     def on_images_done(self) -> None:
+        return None
+
+    def on_log(self, message: str) -> None:
         return None
 
 
