@@ -193,16 +193,16 @@ class AccountRepository:
     def list_accounts_paginated(
         self,
         *,
-        group_id: int | None = None,
+        group_ids: list[int] | None = None,
         search_tokens: list[str] | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, Any]:
         where: list[str] = []
         params: list[Any] = []
-        if group_id is not None:
-            where.append('a.group_id = %s')
-            params.append(group_id)
+        if group_ids is not None:
+            where.append('a.group_id = ANY(%s)')
+            params.append(group_ids)
         if search_tokens:
             clauses: list[str] = []
             for term in search_tokens:
