@@ -14,7 +14,8 @@ GET /api/article
 | `page_size` | int | 否 | 每页条数，默认 `20`，最大 `200` |
 | `q` | str | 否 | 全文搜索关键词（标题+正文+作者），基于 `pg_jieba` 中文分词 |
 | `sort` | str | 否 | 排序方式：`publish_at_desc`（按发布时间）、`relevance_desc`（按相关度，仅 `q` 非空时生效）。默认：有查询时按相关度，否则按发布时间 |
-| `group_id` | int | 否 | 按公众号分组筛选 |
+| `group_id` | int | 否 | 按单个公众号分组 ID 筛选（向后兼容） |
+| `group_ids` | str | 否 | 按多个公众号分组 ID 筛选，逗号分隔（如 `"1,2,3"`）。优先级高于 `group_id` |
 | `biz` | str | 否 | 按公众号 biz 筛选 |
 | `item_show_type` | int | 否 | 按文章版式类型筛选：`0`(图文)、`5`(视频)、`6`(直播)、`7`(专辑)、`8`(话题)、`10`(纯视频)、`11`(图片消息)、`17`(付费) |
 | `article_id` | str | 否 | 按微信原始 article_id 精确匹配 |
@@ -239,6 +240,9 @@ curl 'http://localhost:8000/api/article?q=机器学习'
 
 # 筛选某个分组的纯视频文章
 curl 'http://localhost:8000/api/article?group_id=2&item_show_type=10'
+
+# 筛选多个分组的文章
+curl 'http://localhost:8000/api/article?group_ids=1,2,3'
 
 # 按时间范围筛选
 curl 'http://localhost:8000/api/article?since=2024-01-01&until=2024-06-30'
