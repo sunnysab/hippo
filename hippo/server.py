@@ -56,7 +56,7 @@ from .http import MPClient
 from .login_manager import LoginManager
 from .models import AccountCredential
 from .rss import build_rss_xml, query_rss_items
-from .storage import PostgresStorage, ensure_default_group, fetchone_row, open_storage
+from .storage import PostgresStorage, ensure_default_group, fetchall_rows, fetchone_row, open_storage
 from .sync_core import request_sync_cancel
 from .sync_scheduler import SyncScheduler
 from .sync_settings import (
@@ -280,7 +280,7 @@ def _delete_group(storage: PostgresStorage, group_id: int) -> None:
 def _list_accounts(
     storage: PostgresStorage,
     *,
-    group_id: int | None,
+    group_ids: list[int] | None,
     query: str | None,
     page: int,
     page_size: int,
@@ -291,7 +291,7 @@ def _list_accounts(
         if tokens:
             search_tokens = tokens
     return storage.accounts.list_accounts_paginated(
-        group_id=group_id,
+        group_ids=group_ids,
         search_tokens=search_tokens,
         page=page,
         page_size=page_size,
@@ -355,6 +355,19 @@ def _get_login_manager(request: Request) -> LoginManager:
 
 def _get_sync_scheduler(request: Request) -> SyncScheduler | None:
     return getattr(request.app.state, 'sync_scheduler', None)
+
+
+def _parse_group_ids(group_ids: str | None, group_id: int | None = None) -> list[int] | None:
+    """Parse group_ids from query parameter, with backward-compatible group_id fallback."""
+    if group_ids:
+        try:
+            ids = [int(x.strip()) for x in group_ids.split(',') if x.strip()]
+            return ids or None
+        except ValueError:
+            return None
+    if group_id is not None:
+        return [group_id]
+    return None
 
 
 router = APIRouter(prefix='/api')
@@ -572,6 +585,7 @@ def get_search_avatar(
 @router.get('/account')
 def list_accounts(
     group_id: int | None = None,
+    group_ids: str | None = None,
     q: str | None = None,
     page: int = 1,
     page_size: int = 20,
@@ -581,7 +595,8 @@ def list_accounts(
     列出已保存的公众号，支持筛选。
 
     Args:
-        group_id (int | None): 按分组 ID 筛选。
+        group_id (int | None): 按单个分组 ID 筛选 (向后兼容)。
+        group_ids (str | None): 按多个分组 ID 筛选，逗号分隔 (如 "1,2,3")。
         q (str | None): 按关键词搜索 (昵称、微信号或 biz)。
         page (int): 页码。
         page_size (int): 每页数量。
@@ -591,7 +606,7 @@ def list_accounts(
     """
     payload = _list_accounts(
         storage,
-        group_id=group_id,
+        group_ids=_parse_group_ids(group_ids, group_id),
         query=q or None,
         page=max(page, 1),
         page_size=min(max(page_size, 1), 200),
@@ -831,6 +846,7 @@ def get_account_avatar(
 @router.get('/article')
 def list_articles(
     group_id: int | None = None,
+    group_ids: str | None = None,
     biz: str | None = None,
     item_show_type: int | None = None,
     article_id: str | None = None,
@@ -848,7 +864,8 @@ def list_articles(
     列出文章，支持多种筛选条件。
 
     Args:
-        group_id (int | None): 按分组 ID 筛选。
+        group_id (int | None): 按单个分组 ID 筛选 (向后兼容)。
+        group_ids (str | None): 按多个分组 ID 筛选，逗号分隔 (如 "1,2,3")。
         biz (str | None): 按公众号 biz 筛选。
         article_id (str | None): 按具体文章 ID 筛选 (微信原始 article_id)。
         q (str | None): 搜索文章内容/标题。
@@ -873,7 +890,7 @@ def list_articles(
     normalized_item_show_type = _normalize_item_show_type(item_show_type)
     return _list_articles(
         storage,
-        group_id=group_id,
+        group_ids=_parse_group_ids(group_ids, group_id),
         biz=biz or None,
         item_show_type=normalized_item_show_type,
         query=query_text or None,
@@ -1436,6 +1453,7 @@ async def run_sync(
 def list_feed(
     request: Request,
     group_id: int | None = None,
+    group_ids: str | None = None,
     biz: str | None = None,
     q: str | None = None,
     limit: int = 50,
@@ -1451,7 +1469,8 @@ def list_feed(
 
     Args:
         request (Request): 请求对象。
-        group_id (int | None): 按分组 ID 筛选。
+        group_id (int | None): 按单个分组 ID 筛选 (向后兼容)。
+        group_ids (str | None): 按多个分组 ID 筛选，逗号分隔 (如 "1,2,3")。
         biz (str | None): 按公众号 biz 筛选。
         q (str | None): 搜索关键词。
         limit (int): 返回条目数量 (默认: 50)。
@@ -1469,18 +1488,19 @@ def list_feed(
     if days:
         now = datetime.utcnow()
         since_ts = int(now.timestamp() - days * 86400)
+    parsed_group_ids = _parse_group_ids(group_ids, group_id)
     if output_format == 'rss':
         group_names: list[str] = []
-        if group_id is not None:
-            row = fetchone_row(
+        if parsed_group_ids:
+            rows = fetchall_rows(
                 storage,
-                'SELECT name FROM account_groups WHERE id = %s',
-                [group_id],
+                'SELECT name FROM account_groups WHERE id = ANY(%s)',
+                [parsed_group_ids],
                 normalize=_normalize_record,
             )
-            if not row:
+            group_names = [row.get('name') or '' for row in rows]
+            if not group_names:
                 raise ApiError('Group not found', status=404)
-            group_names = [row.get('name') or '']
         host = request.headers.get('host') or f'{DEFAULT_HOST}:{DEFAULT_PORT}'
         scheme = request.url.scheme or 'http'
         image_base = f'{scheme}://{host}'
@@ -1509,7 +1529,7 @@ def list_feed(
         )
     payload = _list_feed(
         storage,
-        group_id=group_id,
+        group_ids=parsed_group_ids,
         biz=biz or None,
         query=q or None,
         since_ts=since_ts,

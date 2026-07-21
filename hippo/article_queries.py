@@ -168,7 +168,7 @@ def _tokenize_query(text: str) -> list[str]:
 
 def _build_article_where_clause(
     *,
-    group_id: int | None,
+    group_ids: list[int] | None,
     biz: str | None,
     item_show_type: int | None,
     query: str | None,
@@ -185,9 +185,9 @@ def _build_article_where_clause(
     if article_id:
         where.append('a.article_id = %s')
         params.append(article_id)
-    if group_id is not None:
-        where.append('acc.group_id = %s')
-        params.append(group_id)
+    if group_ids is not None:
+        where.append('acc.group_id = ANY(%s)')
+        params.append(group_ids)
     if biz:
         where.append('a.biz = %s')
         params.append(biz)
@@ -216,7 +216,7 @@ def _build_article_where_clause(
 def _build_article_query(
     *,
     storage: PostgresStorage,
-    group_id: int | None,
+    group_ids: list[int] | None,
     biz: str | None,
     item_show_type: int | None,
     query: str | None,
@@ -233,7 +233,7 @@ def _build_article_query(
     order_sql = 'ORDER BY a.publish_at DESC NULLS LAST, a.id DESC'
 
     where_sql, params, query_tsquery_sql, query_tsquery_params = _build_article_where_clause(
-        group_id=group_id,
+        group_ids=group_ids,
         biz=biz,
         item_show_type=item_show_type,
         query=query,
@@ -283,7 +283,7 @@ def _build_article_query(
 def _count_articles(
     *,
     storage: PostgresStorage,
-    group_id: int | None,
+    group_ids: list[int] | None,
     biz: str | None,
     item_show_type: int | None,
     query: str | None,
@@ -293,7 +293,7 @@ def _count_articles(
     article_id: str | None = None,
 ) -> int:
     where_sql, params, _tsquery_sql, _tsquery_params = _build_article_where_clause(
-        group_id=group_id,
+        group_ids=group_ids,
         biz=biz,
         item_show_type=item_show_type,
         query=query,
@@ -314,7 +314,7 @@ def _count_articles(
 def _count_article_item_show_type_facets(
     *,
     storage: PostgresStorage,
-    group_id: int | None,
+    group_ids: list[int] | None,
     biz: str | None,
     query: str | None,
     exclude_keywords: list[str] | None,
@@ -323,7 +323,7 @@ def _count_article_item_show_type_facets(
     article_id: str | None = None,
 ) -> list[dict[str, int]]:
     where_sql, params, _tsquery_sql, _tsquery_params = _build_article_where_clause(
-        group_id=group_id,
+        group_ids=group_ids,
         biz=biz,
         item_show_type=None,
         query=query,
@@ -368,7 +368,7 @@ def _count_article_item_show_type_facets(
 def _get_cached_article_total(
     storage: PostgresStorage,
     *,
-    group_id: int | None,
+    group_ids: list[int] | None,
     biz: str | None,
 ) -> int:
     if biz:
@@ -380,17 +380,17 @@ def _get_cached_article_total(
         )
         if not row:
             return 0
-        if group_id is not None and row.get('group_id') != group_id:
+        if group_ids is not None and row.get('group_id') not in group_ids:
             return 0
         return int(row.get('article_count') or 0)
-    if group_id is not None:
+    if group_ids is not None:
         row = fetchone_row(
             storage,
-            'SELECT article_count FROM account_groups WHERE id = %s',
-            [group_id],
+            'SELECT COALESCE(SUM(article_count), 0) AS total FROM account_groups WHERE id = ANY(%s)',
+            [group_ids],
             normalize=_normalize_record,
         )
-        return int(row.get('article_count') or 0) if row else 0
+        return int(row.get('total') or 0) if row else 0
     row = fetchone_row(
         storage,
         'SELECT COALESCE(SUM(article_count), 0) AS total FROM accounts',
@@ -403,7 +403,7 @@ def _get_cached_article_total(
 def _list_articles(
     storage: PostgresStorage,
     *,
-    group_id: int | None,
+    group_ids: list[int] | None,
     biz: str | None,
     item_show_type: int | None,
     query: str | None,
@@ -418,7 +418,7 @@ def _list_articles(
     offset = max(page - 1, 0) * page_size
     query_sql, params = _build_article_query(
         storage=storage,
-        group_id=group_id,
+        group_ids=group_ids,
         biz=biz,
         item_show_type=item_show_type,
         query=query,
@@ -445,7 +445,7 @@ def _list_articles(
     if has_active_filters:
         total = _count_articles(
             storage=storage,
-            group_id=group_id,
+            group_ids=group_ids,
             biz=biz,
             item_show_type=item_show_type,
             query=query,
@@ -455,10 +455,10 @@ def _list_articles(
             article_id=article_id,
         )
     else:
-        total = _get_cached_article_total(storage, group_id=group_id, biz=biz)
+        total = _get_cached_article_total(storage, group_ids=group_ids, biz=biz)
     item_show_type_facets = _count_article_item_show_type_facets(
         storage=storage,
-        group_id=group_id,
+        group_ids=group_ids,
         biz=biz,
         query=query,
         exclude_keywords=exclude_keywords,
@@ -609,7 +609,7 @@ def _fetch_image(storage: PostgresStorage, image_id: int) -> tuple[bytes, str]:
 def _list_feed(
     storage: PostgresStorage,
     *,
-    group_id: int | None,
+    group_ids: list[int] | None,
     biz: str | None,
     query: str | None,
     since_ts: int | None,
@@ -620,7 +620,7 @@ def _list_feed(
     sort_mode = _normalize_article_sort(None, has_query=bool(query_text))
     query_sql, params = _build_article_query(
         storage=storage,
-        group_id=group_id,
+        group_ids=group_ids,
         biz=biz,
         item_show_type=None,
         query=query_text or None,
