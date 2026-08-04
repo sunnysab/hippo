@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import random
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -75,15 +74,6 @@ def is_login_error(message: str) -> bool:
             '登录失效',
         )
     )
-
-
-def _jittered_sleep(base_seconds: float, *, jitter_ratio: float = 0.3) -> float:
-    """Sleep for *base_seconds* with ±*jitter_ratio* random variation.
-
-    Returns the actual sleep duration in seconds.
-    """
-    actual = base_seconds * (1.0 + jitter_ratio * (random.random() * 2.0 - 1.0))
-    return max(0.1, actual)
 
 
 def is_freq_control(message: str) -> bool:
@@ -315,7 +305,7 @@ async def sync_account_core(
                 completed = True
                 break
             if sleep_seconds > 0:
-                await asyncio.sleep(_jittered_sleep(sleep_seconds))
+                await asyncio.sleep(sleep_seconds)
             offset += page_size
         except KeyboardInterrupt as exc:
             raise SyncInterrupted() from exc

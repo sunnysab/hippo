@@ -7,7 +7,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from .config import DEFAULT_WINDOW_END_HOUR, DEFAULT_WINDOW_START_HOUR
+from .config import DEFAULT_SYNC_REQUEST_INTERVAL, DEFAULT_WINDOW_END_HOUR, DEFAULT_WINDOW_START_HOUR
 from .emailer import get_email_settings, send_email
 from .storage import PostgresStorage, load_meta_json, save_meta_json
 from .sync_core import is_login_error
@@ -34,7 +34,7 @@ def default_sync_settings() -> dict[str, Any]:
         'interval_minutes': 60,
         'window_start_hour': DEFAULT_WINDOW_START_HOUR,
         'window_end_hour': DEFAULT_WINDOW_END_HOUR,
-        'sleep_seconds': 3.0,
+        'sleep_seconds': DEFAULT_SYNC_REQUEST_INTERVAL,
         'download_content': True,
         'download_images': True,
         'skip_minutes': 30,
