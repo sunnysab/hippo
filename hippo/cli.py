@@ -17,7 +17,7 @@ import click
 import typer
 from tqdm import tqdm
 
-from .config import DEFAULT_PAGE_SIZE, DEFAULT_RECENT_DAYS, WEREAD_DUMP_DIR
+from .config import DEFAULT_PAGE_SIZE, DEFAULT_RECENT_DAYS, DEFAULT_SYNC_REQUEST_INTERVAL, WEREAD_DUMP_DIR
 from .container import build_downloader_container
 from .controllers.sync import (
     SyncMode,
@@ -997,7 +997,7 @@ def list_groups() -> None:
 async def sync_group(
     group: str = typer.Argument(..., help='Group name'),
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help='每页抓取数量'),
-    sleep_seconds: float = typer.Option(0.05, min=0, help='翻页间隔秒数（可为小数）'),
+    sleep_seconds: float = typer.Option(DEFAULT_SYNC_REQUEST_INTERVAL, min=0, help='列表请求间隔秒数（可为小数）'),
     reset: bool = typer.Option(False, is_flag=True, help='清除断点后从头同步'),
     mode: SyncMode = typer.Option(SyncMode.full, '--mode', '-m', help='Sync mode: full, incremental, recent, range'),
     recent_days: int | None = typer.Option(
@@ -1168,6 +1168,7 @@ async def sync_account_articles(
         biz=biz,
         pages=pages,
         page_size=page_size,
+        sleep_seconds=DEFAULT_SYNC_REQUEST_INTERVAL,
         mode=mode,
         recent_days=recent_days,
         since_date=since_date,
@@ -1182,7 +1183,7 @@ async def sync_account_articles(
 @coro
 async def sync_all_accounts(
     page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help='每页抓取数量'),
-    sleep_seconds: float = typer.Option(0.05, min=0, help='翻页间隔秒数（可为小数）'),
+    sleep_seconds: float = typer.Option(DEFAULT_SYNC_REQUEST_INTERVAL, min=0, help='列表请求间隔秒数（可为小数）'),
     reset: bool = typer.Option(False, is_flag=True, help='清除断点后从头同步'),
     mode: SyncMode = typer.Option(SyncMode.full, '--mode', '-m', help='Sync mode: full, incremental, recent, range'),
     recent_days: int | None = typer.Option(

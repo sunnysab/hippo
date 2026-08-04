@@ -332,6 +332,7 @@ async def sync_account_articles(
     biz: str | None,
     pages: int,
     page_size: int,
+    sleep_seconds: float,
     mode: SyncMode,
     recent_days: int | None,
     since_date: str | None,
@@ -343,7 +344,7 @@ async def sync_account_articles(
     config = _build_sync_config(
         mode=mode,
         page_size=page_size,
-        sleep_seconds=0,
+        sleep_seconds=sleep_seconds,
         reset=False,
         recent_days=recent_days,
         since_date=since_date,

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import random
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -474,10 +473,8 @@ class ArticleSyncService:
             if _get_cancel_event().is_set():
                 break
             if i > 0:
-                # Cooldown between accounts to avoid triggering anti-crawl detection
-                cooldown = random.uniform(3.0, 8.0)
-                job_observer.on_log(f'账号切换冷却，等待 {cooldown:.1f} 秒')
-                await asyncio.sleep(cooldown)
+                job_observer.on_log(f'列表请求间隔，等待 {config.sleep_seconds:g} 秒')
+                await asyncio.sleep(config.sleep_seconds)
             job_observer.on_account_start(account)
             job_observer.on_account_stage(account, 'listing')
             page_observer = observer_factory(account, bulk) if observer_factory else NullSyncObserver()
