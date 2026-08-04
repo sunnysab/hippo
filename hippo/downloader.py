@@ -569,11 +569,17 @@ class ArticleDownloader(AbstractAsyncContextManager):
         enable_image_worker: bool = True,
     ) -> None:
         self._managed_client = client is None
-        self.client = client or MPClient(
-            article_worker=article_worker,
-            article_worker_proxy=article_worker_proxy,
-            article_max_connections=article_max_connections,
-        )
+        if client is None:
+            client_kwargs: dict[str, object] = {}
+            if article_worker is not None:
+                client_kwargs['article_worker'] = article_worker
+            if article_worker_proxy is not None:
+                client_kwargs['article_worker_proxy'] = article_worker_proxy
+            if article_max_connections is not None:
+                client_kwargs['article_max_connections'] = article_max_connections
+            self.client = MPClient(**client_kwargs)
+        else:
+            self.client = client
         self.storage = storage
         self._article_workers = (
             article_max_connections if article_max_connections and article_max_connections > 0 else 1

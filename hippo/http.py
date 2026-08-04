@@ -15,6 +15,7 @@ from .config import (
     ARTICLE_WORKER_PROXY,
     ARTICLE_WORKER_URL,
     DEFAULT_USER_AGENT,
+    HTTP_PROXY,
 )
 from .logger import get_logger
 
@@ -91,21 +92,26 @@ class MPClient(AbstractAsyncContextManager):
         self,
         *,
         timeout: float = 30.0,
+        proxy: str | None = HTTP_PROXY,
         article_worker: str | None = ARTICLE_WORKER_URL,
         article_worker_proxy: str | None = ARTICLE_WORKER_PROXY,
         article_max_connections: int | None = ARTICLE_WORKER_MAX_CONNECTIONS,
     ) -> None:
-        self.client = self._build_async_client(
-            timeout=timeout,
-            headers=HEADERS,
-            follow_redirects=True,
-        )
+        client_kwargs: dict[str, Any] = {
+            'timeout': timeout,
+            'headers': HEADERS,
+            'follow_redirects': True,
+        }
+        if proxy:
+            client_kwargs['proxy'] = proxy
+        self.client = self._build_async_client(**client_kwargs)
         self.article_worker = article_worker.rstrip('/') if article_worker else None
         self.article_client: httpx.AsyncClient | None = None
+        effective_article_proxy = article_worker_proxy or proxy
         if self.article_worker or article_worker_proxy:
             transport_kwargs: dict[str, Any] = {}
-            if article_worker_proxy:
-                transport_kwargs['proxy'] = article_worker_proxy
+            if effective_article_proxy:
+                transport_kwargs['proxy'] = effective_article_proxy
             if article_max_connections:
                 limits = httpx.Limits(
                     max_connections=article_max_connections,
@@ -122,9 +128,10 @@ class MPClient(AbstractAsyncContextManager):
             )
 
         logger.debug(
-            'MPClient initialized: worker=%s, proxy=%s, max_conn=%s',
+            'MPClient initialized: worker=%s, generic_proxy=%s, article_proxy=%s, max_conn=%s',
             self.article_worker or 'None',
-            article_worker_proxy or 'None',
+            'enabled' if proxy else 'None',
+            'enabled' if effective_article_proxy else 'None',
             article_max_connections or 'None',
         )
 
