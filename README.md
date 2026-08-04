@@ -15,8 +15,8 @@ cp .env.example .env
 # 初始化数据库
 hippo db init
 
-# 登录微信公众号平台
-hippo login
+# 导入微信读书凭据（从微信读书 Android 客户端导出的 WRAccount + device.xml）
+hippo login --dump-dir /path/to/weread_dump
 
 # 搜索并添加公众号
 hippo account search 关键词 --interactive
@@ -47,18 +47,19 @@ docker run -it --rm -e HIPPO_PG_DSN="postgresql://user:pass@host:5432/dbname" hi
 
 ### 登录与会话
 
-扫码登录微信公众号后台，持久化保存 session（token + cookies），支持多会话管理。
+通过微信读书（WeRead）接口拉取公众号文章，凭据从微信读书 Android 客户端导出的 `WRAccount`（SQLite）+ `device.xml` 一次性导入，持久化保存到 Postgres。access token 过期时自动复现 Android 10.2.1 的 native 刷新签名并回写数据库，无需重新扫码。若 refreshToken 也已失效，需在 App 中重新登录并重新导出 dump。
 
 ### 公众号管理
 
-- 通过微信接口搜索公众号（支持交互式筛选）
+- 通过微信读书 `/store/search` 接口搜索公众号（支持交互式筛选）
+- 账号以 MP fakeid（base64）为唯一键，与微信读书 `book_id`（`MP_WXS_…`）双向兼容
 - 分组管理、批量设置同步参数
 - 头像缓存
 
 ### 文章同步
 
-- **列表同步**：从公众号拉取文章元数据（标题、摘要、封面、发布时间等），支持断点续传
-- **内容下载**：下载正文 HTML，转换为 Markdown 和结构化 JSON blocks
+- **列表同步**：经微信读书 `/mp/chapters` 拉取文章元数据（标题、封面、发布时间、原文链接等），支持断点续传
+- **内容下载**：下载正文 HTML（`mp.weixin.qq.com/s/{token}`），转换为 Markdown 和结构化 JSON blocks
 - **图片下载**：下载文章内嵌图片，存入 PostgreSQL 或 S3 对象存储
 - 频率控制自动退避、失败重试、增量跳过
 
@@ -81,7 +82,8 @@ FastAPI 提供 REST API：
 | `GET /api/article/{id}` | 文章详情（包含正文内容和图片） |
 | `GET /api/group` | 分组管理 |
 | `GET /api/account` | 公众号管理 |
-| `POST /api/login/start` | 扫码登录 |
+| `POST /api/login/import` | 导入微信读书凭据 |
+| `POST /api/login/refresh` | 刷新 access token |
 | `GET/PATCH /api/settings` | 同步设置 |
 | `POST /api/settings/run` | 手动触发同步 |
 | `GET /api/image/{id}` | 图片获取 |
@@ -132,6 +134,7 @@ hippo sync-worker
 | `HIPPO_PG_POOL_MIN` | `1` | 连接池最小连接数 |
 | `HIPPO_PG_POOL_MAX` | `8` | 连接池最大连接数 |
 | `HIPPO_PG_JIEBA_WARMUP` | `1` | 是否预热 jieba 分词 |
+| `HIPPO_WEREAD_DUMP_DIR` | - | 微信读书 dump 目录（含 `WRAccount` + `device.xml`），供 `hippo login` 与 `/api/login/import` 默认使用 |
 | `HIPPO_HTTP_PROXY` | — | 所有微信 HTTP 请求使用的代理，例如 `http://192.168.130.202:8888` |
 | `HIPPO_ARTICLE_WORKER` | — | Cloudflare Worker 中转地址 |
 | `HIPPO_ARTICLE_WORKER_PROXY` | — | Worker 专用访问代理，覆盖 `HIPPO_HTTP_PROXY` |
@@ -163,8 +166,9 @@ hippo/
 ├── repositories.py     # 数据访问层
 ├── article_queries.py  # 文章查询与全文搜索
 ├── downloader.py       # 文章与图片下载器
-├── wechat_api.py       # 微信公众平台 API 客户端
+├── wechat_api.py       # 微信读书 API 客户端
 ├── wechat_parser.py    # 微信 HTML 解析
+├── weread_dump.py      # 微信读书凭据导入（WRAccount + device.xml）
 ├── normalize_html.py   # HTML 清洗
 ├── sync_service.py     # 同步调度
 ├── sync_worker.py      # 后台同步 worker
