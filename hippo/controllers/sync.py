@@ -217,6 +217,7 @@ def _build_sync_config(
     until_date: str | None,
     force: bool,
     skip_minutes: int | None,
+    max_pages: int | None = None,
 ) -> SyncConfig:
     return SyncConfig(
         mode=mode,
@@ -231,6 +232,7 @@ def _build_sync_config(
         download_content=False,
         download_images=False,
         content_limit=0,
+        max_pages=max_pages,
     )
 
 
@@ -351,6 +353,7 @@ async def sync_account_articles(
         until_date=until_date,
         force=force,
         skip_minutes=skip_time,
+        max_pages=pages,
     )
     _validate_cli_config(config)
     started_at = utc_now_iso()
