@@ -220,6 +220,7 @@ async def sync_account_core(
     observer = observer or NullSyncObserver()
     page_size = config.page_size
     sleep_seconds = config.sleep_seconds
+    max_pages = config.max_pages
     resume_key = plan.resume_key
     full_synced_hint = plan.full_synced_hint
     since_timestamp = plan.since_timestamp
@@ -304,6 +305,9 @@ async def sync_account_core(
                 completed = True
                 break
             if page_len < page_size:
+                completed = True
+                break
+            if max_pages is not None and page_count >= max_pages:
                 completed = True
                 break
             if sleep_seconds > 0:
