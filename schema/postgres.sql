@@ -240,14 +240,41 @@ ON accounts USING GIN (biz gin_trgm_ops);
 
 CREATE TABLE IF NOT EXISTS login_sessions (
     id SERIAL PRIMARY KEY,
-    token TEXT NOT NULL,
-    cookies_json TEXT NOT NULL,
+    vid TEXT NOT NULL,
+    access_token TEXT NOT NULL,
+    refresh_token TEXT NOT NULL DEFAULT '',
+    device_id TEXT NOT NULL DEFAULT '',
     nickname TEXT,
     avatar TEXT,
     is_default BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
+
+ALTER TABLE login_sessions ADD COLUMN IF NOT EXISTS vid TEXT;
+ALTER TABLE login_sessions ADD COLUMN IF NOT EXISTS access_token TEXT;
+ALTER TABLE login_sessions ADD COLUMN IF NOT EXISTS refresh_token TEXT NOT NULL DEFAULT '';
+ALTER TABLE login_sessions ADD COLUMN IF NOT EXISTS device_id TEXT NOT NULL DEFAULT '';
+
+-- WeRead credentials replaced the former MP token/cookies columns. Drop them
+-- and any obsolete MP-era rows so the table is weread-only on existing installs.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'login_sessions' AND column_name = 'token'
+    ) THEN
+        ALTER TABLE login_sessions DROP COLUMN token;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'login_sessions' AND column_name = 'cookies_json'
+    ) THEN
+        ALTER TABLE login_sessions DROP COLUMN cookies_json;
+    END IF;
+END $$;
+
+DELETE FROM login_sessions WHERE vid IS NULL OR vid = '';
 
 CREATE INDEX IF NOT EXISTS idx_login_sessions_default_id_desc
 ON login_sessions (is_default, id DESC);

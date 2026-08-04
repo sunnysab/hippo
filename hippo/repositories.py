@@ -23,14 +23,6 @@ class ArticleImageTarget:
     s3_key: str | None
 
 
-def _session_identity(cookies: dict[str, str]) -> str | None:
-    for key in ('wxuin', 'uin', 'fakeuin', 'mpuin'):
-        value = cookies.get(key)
-        if value:
-            return f'{key}:{value}'
-    return None
-
-
 ARTICLE_CONTENT_PRESENT_SQL = """
 (
     (c.clean_html IS NOT NULL AND btrim(c.clean_html) <> '')
@@ -467,28 +459,19 @@ class LoginSessionRepository:
 
     def save_login_session(self, session: LoginSession, *, set_default: bool = True) -> LoginSession:
         now = utc_now_dt()
-        cookie_json = json.dumps(session.cookies, ensure_ascii=False)
-        session_identity = _session_identity(session.cookies)
         with self._conn.cursor(row_factory=dict_row) as cur:
-            cur.execute('SELECT id, cookies_json, nickname FROM login_sessions ORDER BY id DESC')
-            rows = cur.fetchall()
-        match_id: int | None = None
-        if session_identity:
-            for row in rows:
-                try:
-                    row_cookies = json.loads(row['cookies_json'])
-                except json.JSONDecodeError, KeyError:
-                    continue
-                if _session_identity(row_cookies) == session_identity:
-                    match_id = row['id']
-                    break
-        with self._conn.cursor(row_factory=dict_row) as cur:
-            if match_id is not None:
+            cur.execute(
+                'SELECT id FROM login_sessions WHERE vid = %s ORDER BY id DESC LIMIT 1',
+                (session.vid,),
+            )
+            row = cur.fetchone()
+            if row is not None:
                 cur.execute(
                     """
                     UPDATE login_sessions
-                    SET token = %s,
-                        cookies_json = %s,
+                    SET access_token = %s,
+                        refresh_token = %s,
+                        device_id = %s,
                         nickname = %s,
                         avatar = %s,
                         is_default = %s,
@@ -496,25 +479,29 @@ class LoginSessionRepository:
                     WHERE id = %s
                     """,
                     (
-                        session.token,
-                        cookie_json,
+                        session.access_token,
+                        session.refresh_token,
+                        session.device_id,
                         session.nickname,
                         session.avatar,
                         bool(set_default),
                         now,
-                        match_id,
+                        row['id'],
                     ),
                 )
             else:
                 cur.execute(
                     """
                     INSERT INTO login_sessions
-                        (token, cookies_json, nickname, avatar, is_default, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        (vid, access_token, refresh_token, device_id,
+                         nickname, avatar, is_default, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        session.token,
-                        cookie_json,
+                        session.vid,
+                        session.access_token,
+                        session.refresh_token,
+                        session.device_id,
                         session.nickname,
                         session.avatar,
                         bool(set_default),
@@ -523,6 +510,20 @@ class LoginSessionRepository:
                     ),
                 )
         return self.get_login_session()
+
+    def update_tokens(self, vid: str, access_token: str, refresh_token: str) -> None:
+        now = utc_now_dt()
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE login_sessions
+                SET access_token = %s,
+                    refresh_token = %s,
+                    updated_at = %s
+                WHERE vid = %s
+                """,
+                (access_token, refresh_token, now, vid),
+            )
 
     def reset_login_session_sequence(self) -> None:
         with self._conn.cursor() as cur:
@@ -540,14 +541,15 @@ class LoginSessionRepository:
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute('SELECT * FROM login_sessions WHERE is_default = TRUE ORDER BY id DESC LIMIT 1')
             row = cur.fetchone()
-        if not row:
-            raise LookupError('No login session found. Run `hippo login` first.')
-        cookies = json.loads(row['cookies_json'])
+        if not row or not row.get('vid'):
+            raise LookupError('No WeRead credential found. Run `hippo login` to import one.')
         return LoginSession(
-            token=row['token'],
-            cookies=cookies,
-            nickname=row['nickname'],
-            avatar=row['avatar'],
+            vid=row['vid'],
+            access_token=row['access_token'],
+            refresh_token=row.get('refresh_token') or '',
+            device_id=row.get('device_id') or '',
+            nickname=row.get('nickname'),
+            avatar=row.get('avatar'),
         )
 
     def get_login_updated_at(self) -> datetime | None:
@@ -1193,9 +1195,7 @@ class DownloadAttemptRepository:
                 (biz, article_id, error, now, now),
             )
 
-    def get_articles_within_limit(
-        self, biz: str, article_ids: Iterable[str], *, max_attempts: int
-    ) -> set[str]:
+    def get_articles_within_limit(self, biz: str, article_ids: Iterable[str], *, max_attempts: int) -> set[str]:
         ids = [i for i in article_ids if i]
         if not ids:
             return set()
