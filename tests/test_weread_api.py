@@ -1,10 +1,12 @@
 import unittest
 
+from hippo.models import ArticleRecord
 from hippo.wechat_api import (
     biz_to_book_id,
     book_id_to_biz,
     build_user_agent,
     native_signature,
+    parse_mp_chapters,
     wechat_article_url,
 )
 
@@ -73,6 +75,43 @@ class BizBookIdConversionTest(unittest.TestCase):
 
     def test_book_id_to_biz_passes_through_non_weread(self) -> None:
         self.assertEqual(book_id_to_biz('gh_abc'), 'gh_abc')
+
+
+class ParseMpChaptersTest(unittest.TestCase):
+    BIZ = 'MzA3NTE5MzQzMA=='  # MP_WXS_3075193430
+
+    def test_parses_review_items_into_records(self) -> None:
+        payload = {
+            'data': [
+                {
+                    'reviewId': 'MP_WXS_3075193430_YTOsfKkLbp5bX5e9t0I7ZA',
+                    'createTime': 1700000000,
+                    'mpInfo': {'title': 'Test Article', 'pic_url': 'https://mmbiz.qpic.cn/cover.jpg'},
+                },
+                {'reviewId': 'MP_WXS_3075193430_notime', 'mpInfo': {'title': 'No Time'}},
+                {'reviewId': 'OTHER_PREFIX'},
+                {},
+            ],
+            'clearAll': 0,
+            'synckey': 'abc',
+        }
+        records = parse_mp_chapters(self.BIZ, payload)
+
+        self.assertEqual(len(records), 2)
+        first: ArticleRecord = records[0]
+        self.assertEqual(first.biz, self.BIZ)
+        self.assertEqual(first.article_id, 'MP_WXS_3075193430_YTOsfKkLbp5bX5e9t0I7ZA')
+        self.assertEqual(first.link, 'https://mp.weixin.qq.com/s/YTOsfKkLbp5bX5e9t0I7ZA')
+        self.assertEqual(first.title, 'Test Article')
+        self.assertEqual(first.publish_at, 1700000000)
+        self.assertEqual(first.cover, 'https://mmbiz.qpic.cn/cover.jpg')
+        self.assertIsNone(first.item_show_type)
+        self.assertIsNone(first.author)
+        self.assertIsNone(records[1].publish_at)
+
+    def test_missing_data_returns_empty(self) -> None:
+        self.assertEqual(parse_mp_chapters(self.BIZ, {}), [])
+        self.assertEqual(parse_mp_chapters(self.BIZ, {'data': 'oops'}), [])
 
 
 if __name__ == '__main__':

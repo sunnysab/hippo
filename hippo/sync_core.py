@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import random
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -16,7 +15,7 @@ from .logger import get_logger
 from .models import AccountCredential, ArticleRecord
 from .storage import PostgresStorage, open_storage
 from .sync_types import NullSyncObserver, SyncConfig, SyncObserver, SyncPlan, SyncSummary
-from .wechat_api import WeChatApiClient, parse_appmsg_publish
+from .wechat_api import WeChatApiClient, parse_mp_chapters
 
 # --- constants ---------------------------------------------------------------
 
@@ -56,38 +55,6 @@ logger = get_logger(__name__)
 # --- payload helpers ---------------------------------------------------------
 
 
-def extract_publish_total(payload: dict[str, Any]) -> int | None:
-    raw_page = payload.get('publish_page')
-    if isinstance(raw_page, str) and raw_page:
-        try:
-            parsed = json.loads(raw_page)
-        except json.JSONDecodeError:
-            parsed = {}
-        total = parsed.get('total_count')
-        if isinstance(total, int):
-            return total
-        if isinstance(total, str) and total.isdigit():
-            return int(total)
-    total = payload.get('total_count')
-    if isinstance(total, int):
-        return total
-    if isinstance(total, str) and total.isdigit():
-        return int(total)
-    return None
-
-
-def extract_publish_page(payload: dict[str, Any]) -> dict[str, Any]:
-    raw_page = payload.get('publish_page')
-    if isinstance(raw_page, str) and raw_page:
-        try:
-            parsed = json.loads(raw_page)
-        except json.JSONDecodeError:
-            return {}
-        if isinstance(parsed, dict):
-            return parsed
-    return {}
-
-
 def is_login_error(message: str) -> bool:
     lowered = message.lower()
     return any(
@@ -121,7 +88,7 @@ def _jittered_sleep(base_seconds: float, *, jitter_ratio: float = 0.3) -> float:
 
 def is_freq_control(message: str) -> bool:
     lowered = message.lower()
-    return any(hint in lowered for hint in ('freq', 'frequency', 'control', 'too fast', 'too frequent', '频控'))
+    return any(hint in lowered for hint in ('freq', 'frequency', 'control', 'too fast', 'too frequent', '频控', '频繁'))
 
 
 # --- fetch with retry --------------------------------------------------------
@@ -147,7 +114,7 @@ async def _fetch_with_retry(
     freq_attempt = 0
     while True:
         try:
-            payload = await client.fetch_appmsg_publish(session, fakeid=account.biz, begin=offset, count=page_size)
+            payload = await client.list_articles(session, biz=account.biz, offset=offset, count=page_size)
             return payload, session
         except RuntimeError as exc:
             message = str(exc)
@@ -296,14 +263,14 @@ async def sync_account_core(
                 observer.on_log(f'达到 {_BATCH_THROTTLE_REQUESTS} 次请求，等待 {_BATCH_THROTTLE_SECONDS} 秒')
                 await asyncio.sleep(_BATCH_THROTTLE_SECONDS)
 
-            publish_page = extract_publish_page(payload)
-            publish_list_len = len(publish_page.get('publish_list') or [])
-            total_count = extract_publish_total(payload) or total_count
-            if publish_list_len == 0:
+            publish_page = payload.get('data') if isinstance(payload, dict) else None
+            items = publish_page if isinstance(publish_page, list) else []
+            page_len = len(items)
+            if page_len == 0:
                 completed = True
                 break
 
-            records = parse_appmsg_publish(account.biz, payload)
+            records = parse_mp_chapters(account.biz, payload)
             records, stop_due_to_since = _filter_records_by_time(
                 records, since_timestamp=since_timestamp, until_timestamp=until_timestamp
             )
@@ -326,9 +293,7 @@ async def sync_account_core(
             saved, page_count, total_saved = await _save_page(
                 records, resume_key, offset + page_size, account.biz, page_count, total_saved
             )
-            current_completed = (
-                min(offset + publish_list_len, total_count) if total_count else offset + publish_list_len
-            )
+            current_completed = offset + page_len
             delta = current_completed - current_progress
             current_progress = current_completed
             _emit_progress(
@@ -344,6 +309,9 @@ async def sync_account_core(
             )
 
             if stop_due_to_since:
+                completed = True
+                break
+            if page_len < page_size:
                 completed = True
                 break
             if sleep_seconds > 0:
