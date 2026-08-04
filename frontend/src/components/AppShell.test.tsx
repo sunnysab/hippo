@@ -26,9 +26,7 @@ describe('AppShell', () => {
       if (path === '/api/login') {
         return {
           status: 'ok',
-          last_login: {
-            updated_at: '2026-05-02T11:59:00.000Z',
-          },
+          updated_at: '2026-05-02T11:59:00.000Z',
         };
       }
 

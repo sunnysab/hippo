@@ -31,7 +31,7 @@ describe('api auth handling', () => {
       { status: 401 },
     )));
 
-    await expect(apiSend('/api/login/start', 'POST', {})).rejects.toMatchObject({
+    await expect(apiSend('/api/login/refresh', 'POST', {})).rejects.toMatchObject({
       code: 'AUTH_REQUIRED',
       message: 'Please login again',
     });
