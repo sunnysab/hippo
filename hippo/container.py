@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from .downloader import ArticleDownloader
 from .file_storage import S3FileStorage
@@ -74,11 +75,14 @@ def build_downloader_container(
     image_workers: int | None = None,
     enable_image_worker: bool = True,
 ) -> AppContainer:
-    client = MPClient(
-        article_worker=article_worker,
-        article_worker_proxy=article_worker_proxy,
-        article_max_connections=article_max_connections,
-    )
+    client_kwargs: dict[str, Any] = {}
+    if article_worker is not None:
+        client_kwargs['article_worker'] = article_worker
+    if article_worker_proxy is not None:
+        client_kwargs['article_worker_proxy'] = article_worker_proxy
+    if article_max_connections is not None:
+        client_kwargs['article_max_connections'] = article_max_connections
+    client = MPClient(**client_kwargs)
     api_client = WeChatApiClient(client)
     image_service: ArticleImageService | None = None
     if enable_images:

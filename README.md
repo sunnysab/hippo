@@ -132,8 +132,9 @@ hippo sync-worker
 | `HIPPO_PG_POOL_MIN` | `1` | 连接池最小连接数 |
 | `HIPPO_PG_POOL_MAX` | `8` | 连接池最大连接数 |
 | `HIPPO_PG_JIEBA_WARMUP` | `1` | 是否预热 jieba 分词 |
+| `HIPPO_HTTP_PROXY` | — | 所有微信 HTTP 请求使用的代理，例如 `http://192.168.130.202:8888` |
 | `HIPPO_ARTICLE_WORKER` | — | Cloudflare Worker 中转地址 |
-| `HIPPO_ARTICLE_WORKER_PROXY` | — | Worker 访问代理 |
+| `HIPPO_ARTICLE_WORKER_PROXY` | — | Worker 专用访问代理，覆盖 `HIPPO_HTTP_PROXY` |
 | `HIPPO_ARTICLE_MAX_CONNECTIONS` | — | Worker 最大并发连接 |
 | `HIPPO_LOG_LEVEL` | `WARNING` | 日志级别 |
 | `HIPPO_ENABLE_INPROCESS_SYNC` | — | 是否在 Web 进程内执行同步 |
