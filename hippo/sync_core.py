@@ -78,7 +78,9 @@ def is_login_error(message: str) -> bool:
 
 def is_freq_control(message: str) -> bool:
     lowered = message.lower()
-    return any(hint in lowered for hint in ('freq', 'frequency', 'control', 'too fast', 'too frequent', '频控', '频繁'))
+    return any(
+        hint in lowered for hint in ('freq', 'frequency', 'control', 'too fast', 'too frequent', '频控', '频繁', '频率')
+    )
 
 
 # --- fetch with retry --------------------------------------------------------

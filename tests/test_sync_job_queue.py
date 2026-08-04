@@ -502,7 +502,7 @@ class SyncJobQueueTest(unittest.TestCase):
         with (
             patch(
                 'hippo.sync_service.sync_account_core',
-                AsyncMock(side_effect=RuntimeError('频控重试次数过多 (2)，终止同步')),
+                AsyncMock(side_effect=RuntimeError('WeRead API error -2014: 请求频率过高')),
             ),
             self.assertRaises(SyncRunError) as ctx,
         ):
@@ -518,7 +518,7 @@ class SyncJobQueueTest(unittest.TestCase):
                 )
             )
 
-        self.assertIn('频控', str(ctx.exception))
+        self.assertIn('请求频率过高', str(ctx.exception))
 
     def test_bulk_sync_login_required_error_carries_partial_report(self) -> None:
         from hippo.sync_service import SyncRunError
