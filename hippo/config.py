@@ -24,6 +24,13 @@ DEFAULT_WINDOW_START_HOUR: Final = 6
 DEFAULT_WINDOW_END_HOUR: Final = 24
 DEFAULT_MAX_CONTENT_DOWNLOAD_ATTEMPTS: Final = 3
 
+WEREAD_BASE_URL: Final = 'https://i.weread.qq.com'
+WEREAD_APP_VERSION: Final = '10.2.1'
+WEREAD_BRAND: Final = 'other'
+WEREAD_SYSTEM_HTTP_AGENT: Final = 'Android WeRead'
+WEREAD_DEFAULT_USER_AGENT: Final = f'WeRead/{WEREAD_APP_VERSION} WRBrand/{WEREAD_BRAND} {WEREAD_SYSTEM_HTTP_AGENT}'
+WEREAD_DUMP_DIR: Final = os.environ.get('HIPPO_WEREAD_DUMP_DIR')
+
 
 def _env_int(name: str, default: int | None = None) -> int | None:
     raw = os.environ.get(name)
@@ -57,4 +64,10 @@ __all__ = [
     'HTTP_PROXY',
     'WECHAT_COMMENT_ENDPOINT',
     'WECHAT_PROFILE_ENDPOINT',
+    'WEREAD_APP_VERSION',
+    'WEREAD_BASE_URL',
+    'WEREAD_BRAND',
+    'WEREAD_DEFAULT_USER_AGENT',
+    'WEREAD_DUMP_DIR',
+    'WEREAD_SYSTEM_HTTP_AGENT',
 ]
