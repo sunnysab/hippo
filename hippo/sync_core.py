@@ -20,7 +20,7 @@ from .wechat_api import WeChatApiClient, parse_appmsg_publish
 
 # --- constants ---------------------------------------------------------------
 
-_MAX_FREQ_RETRIES = 10
+_MAX_FREQ_RETRIES = 1
 _MAX_NETWORK_RETRIES = 3
 _FREQ_BACKOFF_BASE = 15
 _FREQ_BACKOFF_MAX = 60
@@ -121,7 +121,7 @@ def _jittered_sleep(base_seconds: float, *, jitter_ratio: float = 0.3) -> float:
 
 def is_freq_control(message: str) -> bool:
     lowered = message.lower()
-    return any(hint in lowered for hint in ('freq', 'frequency', 'control', 'too fast', 'too frequent'))
+    return any(hint in lowered for hint in ('freq', 'frequency', 'control', 'too fast', 'too frequent', '频控'))
 
 
 # --- fetch with retry --------------------------------------------------------

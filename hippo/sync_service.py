@@ -395,20 +395,8 @@ class ArticleSyncService:
             raise
         except RuntimeError as exc:
             message = str(exc)
-            if is_freq_control(message) and allow_freq_skip:
-                observer.on_skip('freq_control')
-                await asyncio.sleep(15)
-                result = SyncAccountResult(
-                    biz=account.biz,
-                    nickname=account.nickname,
-                    saved=0,
-                    completed=False,
-                    skipped=True,
-                    skip_reason='freq_control',
-                    failed=False,
-                    error=None,
-                )
-                return result, [], None
+            if is_freq_control(message):
+                raise SyncRunError(message) from exc
             if bulk and not is_login_error(message):
                 result = SyncAccountResult(
                     biz=account.biz,
@@ -518,6 +506,7 @@ class ArticleSyncService:
                     saved=0,
                     completed=False,
                     skipped=False,
+                    skip_reason=None,
                     failed=False,
                     error=None,
                 )
