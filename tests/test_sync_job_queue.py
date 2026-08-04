@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from hippo.server import run_sync
-from hippo.sync_service import ArticleSyncService, SyncJobResult
+from hippo.sync_service import ArticleSyncService, SyncJobResult, SyncRunError
 from hippo.sync_settings import _persist_sync_outcome
-from hippo.sync_types import SyncConfig, SyncMode, SyncReport, SyncSummary
+from hippo.sync_types import NullSyncObserver, SyncConfig, SyncMode, SyncReport, SyncSummary
 
 
 class _FakeSyncJobs:
@@ -478,6 +478,47 @@ class SyncJobQueueTest(unittest.TestCase):
         self.assertEqual(len(report.details), 2)
         self.assertTrue(report.details[0].failed)
         self.assertEqual(report.details[0].error, 'invalid args')
+
+    def test_frequency_control_stops_bulk_sync(self) -> None:
+        config = SimpleNamespace(
+            mode=SyncMode.recent,
+            reset=False,
+            recent_days=1,
+            since_date=None,
+            force=True,
+            download_content=False,
+        )
+        account = SimpleNamespace(
+            biz='biz-1',
+            nickname='First',
+            group_id=None,
+            sync_mode=None,
+            sync_recent_days=None,
+            is_disabled=False,
+            last_synced_at=None,
+        )
+        service = ArticleSyncService(storage=SimpleNamespace(), client=SimpleNamespace())
+
+        with (
+            patch(
+                'hippo.sync_service.sync_account_core',
+                AsyncMock(side_effect=RuntimeError('频控重试次数过多 (2)，终止同步')),
+            ),
+            self.assertRaises(SyncRunError) as ctx,
+        ):
+            asyncio.run(
+                service.sync_account(
+                    account=account,
+                    config=config,
+                    bulk=True,
+                    use_resume=False,
+                    shared_since=None,
+                    shared_until=None,
+                    observer=NullSyncObserver(),
+                )
+            )
+
+        self.assertIn('频控', str(ctx.exception))
 
     def test_bulk_sync_login_required_error_carries_partial_report(self) -> None:
         from hippo.sync_service import SyncRunError
