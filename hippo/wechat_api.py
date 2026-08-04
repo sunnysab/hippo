@@ -1,4 +1,4 @@
-"""WeChat business API client built on top of MPClient."""
+"""WeRead (i.weread.qq.com) API client for searching accounts and listing articles."""
 
 from __future__ import annotations
 
@@ -7,20 +7,23 @@ import hashlib
 import html
 import json
 import logging
+import secrets
 import time
-from collections.abc import Iterable
 from dataclasses import dataclass
-from http.cookies import SimpleCookie
-from typing import Any
-from urllib.parse import parse_qs, urlparse
+from typing import TYPE_CHECKING, Any
 
 from .config import (
     WEREAD_APP_VERSION,
+    WEREAD_BASE_URL,
     WEREAD_BRAND,
+    WEREAD_DEFAULT_USER_AGENT,
     WEREAD_SYSTEM_HTTP_AGENT,
 )
 from .http import MPClient
 from .models import ArticleRecord, LoginSession
+
+if TYPE_CHECKING:
+    from .storage import PostgresStorage
 
 logger = logging.getLogger(__name__)
 
@@ -111,187 +114,7 @@ def wechat_article_url(book_id: str, review_id: str) -> str | None:
 
 
 class SessionExpiredError(RuntimeError):
-    pass
-
-
-def _is_session_error_message(message: str) -> bool:
-    lowered = message.lower()
-    hints = ('invalid session', 'invalid token', 'session expired', 'session timeout', 'expired')
-    return any(hint in lowered for hint in hints)
-
-
-def _raise_for_base_resp(payload: dict[str, Any], *, fallback: str) -> None:
-    base_resp = payload.get('base_resp') or {}
-    if base_resp.get('ret') == 0:
-        return
-    err_msg = str(base_resp.get('err_msg') or fallback)
-    if _is_session_error_message(err_msg):
-        raise SessionExpiredError(err_msg)
-    raise RuntimeError(err_msg)
-
-
-@dataclass(slots=True)
-class WeChatApiClient:
-    client: MPClient
-
-    async def start_login_session(self, sid: str) -> str:
-        payload = {
-            'userlang': 'zh_CN',
-            'redirect_url': '',
-            'login_type': 3,
-            'sessionid': sid,
-            'token': '',
-            'lang': 'zh_CN',
-            'f': 'json',
-            'ajax': 1,
-        }
-        resp = await self.client.post(
-            'https://mp.weixin.qq.com/cgi-bin/bizlogin',
-            params={'action': 'startlogin'},
-            data=payload,
-        )
-        resp.raise_for_status()
-        cookies = _parse_set_cookies(resp.headers.get_list('set-cookie'))
-        uuid = cookies.get('uuid')
-        if not uuid:
-            raise RuntimeError('Failed to get login uuid cookie.')
-        return f'uuid={uuid}'
-
-    async def fetch_login_qrcode(self, cookie: str) -> bytes:
-        resp = await self.client.get(
-            'https://mp.weixin.qq.com/cgi-bin/scanloginqrcode',
-            params={'action': 'getqrcode', 'random': int(time.time() * 1000)},
-            headers={'Cookie': cookie},
-        )
-        resp.raise_for_status()
-        return resp.content
-
-    async def check_login_status(self, cookie: str) -> dict[str, Any]:
-        resp = await self.client.get(
-            'https://mp.weixin.qq.com/cgi-bin/scanloginqrcode',
-            params={'action': 'ask', 'token': '', 'lang': 'zh_CN', 'f': 'json', 'ajax': 1},
-            headers={'Cookie': cookie},
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-    async def finalize_login(self, cookie: str) -> LoginSession:
-        payload = {
-            'userlang': 'zh_CN',
-            'redirect_url': '',
-            'cookie_forbidden': 0,
-            'cookie_cleaned': 0,
-            'plugin_used': 0,
-            'login_type': 3,
-            'token': '',
-            'lang': 'zh_CN',
-            'f': 'json',
-            'ajax': 1,
-        }
-        resp = await self.client.post(
-            'https://mp.weixin.qq.com/cgi-bin/bizlogin',
-            params={'action': 'login'},
-            data=payload,
-            headers={'Cookie': cookie},
-        )
-        resp.raise_for_status()
-        payload_json = resp.json()
-        logger.info('finalize_login response: %s', json.dumps(payload_json, ensure_ascii=False))
-        redirect_url = payload_json.get('redirect_url') or ''
-        if not redirect_url:
-            raise RuntimeError(f'Login failed: missing redirect_url, response keys: {list(payload_json.keys())}')
-        token = _extract_token(redirect_url)
-        if not token:
-            raise RuntimeError('Login failed: missing token')
-        cookies = _parse_set_cookies(resp.headers.get_list('set-cookie'))
-        return LoginSession(token=token, cookies=cookies)
-
-    async def fetch_login_info(self, session: LoginSession) -> dict[str, str]:
-        resp = await self.client.get(
-            'https://mp.weixin.qq.com/cgi-bin/home',
-            params={'t': 'home/index', 'token': session.token, 'lang': 'zh_CN'},
-            headers={'Cookie': _cookie_header(session.cookies)},
-        )
-        html = resp.text
-        nickname = _match_value(html, r'wx\.cgiData\.nick_name\s*?=\s*?"(?P<value>[^"]+)"')
-        avatar = _match_value(html, r'wx\.cgiData\.head_img\s*?=\s*?"(?P<value>[^"]+)"')
-        return {'nickname': nickname or '', 'avatar': avatar or ''}
-
-    async def search_biz(
-        self,
-        session: LoginSession,
-        *,
-        keyword: str,
-        begin: int = 0,
-        count: int = 5,
-    ) -> dict[str, Any]:
-        params = {
-            'action': 'search_biz',
-            'begin': begin,
-            'count': count,
-            'query': keyword,
-            'token': session.token,
-            'lang': 'zh_CN',
-            'f': 'json',
-            'ajax': '1',
-        }
-        resp = await self.client.get(
-            'https://mp.weixin.qq.com/cgi-bin/searchbiz',
-            params=params,
-            headers={'Cookie': _cookie_header(session.cookies)},
-        )
-        resp.raise_for_status()
-        payload = resp.json()
-        _raise_for_base_resp(payload, fallback='searchbiz failed')
-        return payload
-
-    async def fetch_appmsg_publish(
-        self,
-        session: LoginSession,
-        *,
-        fakeid: str,
-        begin: int = 0,
-        count: int = 5,
-        keyword: str = '',
-    ) -> dict[str, Any]:
-        is_searching = bool(keyword)
-        params = {
-            'sub': 'search' if is_searching else 'list',
-            'search_field': '7' if is_searching else 'null',
-            'begin': begin,
-            'count': count,
-            'query': keyword,
-            'fakeid': fakeid,
-            'type': '101_1',
-            'free_publish_type': 1,
-            'sub_action': 'list_ex',
-            'token': session.token,
-            'lang': 'zh_CN',
-            'f': 'json',
-            'ajax': 1,
-        }
-        resp = await self.client.get(
-            'https://mp.weixin.qq.com/cgi-bin/appmsgpublish',
-            params=params,
-            headers={'Cookie': _cookie_header(session.cookies)},
-        )
-        resp.raise_for_status()
-        payload = resp.json()
-        _raise_for_base_resp(payload, fallback='appmsgpublish failed')
-        return payload
-
-
-# Parsing helpers -----------------------------------------------------------
-
-
-def _parse_general_msg_list(raw: str) -> list[dict]:
-    if not raw:
-        return []
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError('Failed to parse general_msg_list') from exc
-    return payload.get('list') or []
+    """Raised when the WeRead access token cannot be used or refreshed."""
 
 
 def _normalize_article_url(url: str | None) -> str:
@@ -305,119 +128,230 @@ def _normalize_article_url(url: str | None) -> str:
     return value
 
 
-def _parse_set_cookies(set_cookies: list[str]) -> dict[str, str]:
-    jar: dict[str, str] = {}
-    for item in set_cookies:
-        cookie = SimpleCookie()
-        cookie.load(item)
-        for name, morsel in cookie.items():
-            if morsel.value and morsel.value != 'EXPIRED':
-                jar[name] = morsel.value
-    return jar
-
-
-def _cookie_header(cookies: dict[str, str]) -> str:
-    return '; '.join(f'{k}={v}' for k, v in cookies.items())
-
-
-def _extract_token(redirect_url: str) -> str:
-    parsed = urlparse(redirect_url)
-    qs = parse_qs(parsed.query)
-    return (qs.get('token') or [''])[0]
-
-
-def _match_value(html: str, pattern: str) -> str:
-    import re
-
-    match = re.search(pattern, html)
-    if match and match.groupdict().get('value'):
-        return match.group('value')
-    return ''
-
-
-def _message_to_articles(biz: str, message: dict) -> Iterable[ArticleRecord]:
-    comm_info = message.get('comm_msg_info') or {}
-    ext_info = message.get('app_msg_ext_info') or {}
-    if not ext_info:
-        return []
-
-    records: list[ArticleRecord] = []
-    primary = _build_article(biz, comm_info, ext_info, index=0)
-    if primary:
-        records.append(primary)
-    if ext_info.get('is_multi'):
-        for idx, item in enumerate(ext_info.get('multi_app_msg_item_list') or [], start=1):
-            record = _build_article(biz, comm_info, item, index=idx)
-            if record:
-                records.append(record)
-    return records
-
-
-def _build_article(biz: str, comm: dict, item: dict, *, index: int) -> ArticleRecord | None:
-    link = _normalize_article_url(item.get('content_url'))
-    if not link:
+def _to_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
         return None
-    publish_at = comm.get('datetime')
-    article_id = f'{comm.get("id")}-{index}'
-    raw = {
-        'comm_msg_info': comm,
-        'app_msg_ext_info': item,
-    }
-    return ArticleRecord(
-        biz=biz,
-        article_id=article_id,
-        title=html.unescape(item.get('title') or '(untitled)'),
-        item_show_type=item.get('item_show_type'),
-        author=html.unescape(item.get('author') or '') or None,
-        digest=html.unescape(item.get('digest') or '') or None,
-        cover=_normalize_article_url(item.get('cover')),
-        link=link,
-        source_url=_normalize_article_url(item.get('source_url')),
-        publish_at=publish_at,
-        raw=raw,
-    )
-
-
-def parse_appmsg_publish(fakeid: str, payload: dict[str, Any]) -> list[ArticleRecord]:
-    publish_page = {}
-    raw_page = payload.get('publish_page') or '{}'
+    if isinstance(value, (int, float)):
+        return int(value)
     try:
-        publish_page = json.loads(raw_page)
-    except json.JSONDecodeError:
-        publish_page = {}
-    publish_list = publish_page.get('publish_list') or []
-    records: list[ArticleRecord] = []
-    for item in publish_list:
-        info_raw = item.get('publish_info')
-        if not info_raw:
-            continue
+        return int(str(value))
+    except ValueError, TypeError:
+        return None
+
+
+def _parse_json(resp: Any, path: str) -> dict[str, Any]:
+    try:
+        payload = resp.json()
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f'Invalid JSON response from {path}') from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f'Unexpected response shape from {path}')
+    return payload
+
+
+@dataclass(slots=True)
+class WeChatApiClient:
+    """Client for the WeRead (i.weread.qq.com) public-account API."""
+
+    client: MPClient
+    storage: PostgresStorage | None = None
+    base_url: str = WEREAD_BASE_URL
+    user_agent: str = WEREAD_DEFAULT_USER_AGENT
+    timeout: float = 20.0
+
+    def _headers(self, credential: LoginSession) -> dict[str, str]:
+        return {
+            'Accept': 'application/json',
+            'User-Agent': self.user_agent,
+            'accessToken': credential.access_token,
+            'vid': credential.vid,
+        }
+
+    async def _refresh(self, credential: LoginSession) -> None:
+        if not credential.refresh_token or not credential.device_id:
+            raise SessionExpiredError('WeRead session expired; dump has no refresh credentials to renew it')
+        timestamp = int(time.time() * 1000)
+        random_value = secrets.randbelow(1000)
+        body = {
+            'refreshToken': credential.refresh_token,
+            'deviceId': credential.device_id,
+            'wxToken': 0,
+            'inBackground': 0,
+            'trackId': '',
+            'kickType': 1,
+            'refCgi': '',
+            'timestamp': timestamp,
+            'random': random_value,
+            'signature': native_signature(
+                [credential.device_id, str(timestamp), str(random_value), credential.refresh_token]
+            ),
+            'virtualChannelId': '',
+            'deviceName': 'other',
+        }
+        resp = await self.client.post(
+            f'{self.base_url}/login',
+            json=body,
+            headers={
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'User-Agent': self.user_agent,
+                'accessToken': credential.access_token,
+                'vid': credential.vid,
+            },
+        )
+        payload = _parse_json(resp, '/login refresh')
+        errcode = payload.get('errcode')
+        if errcode not in (None, 0, '0'):
+            message = payload.get('errmsg') or payload.get('errlog') or 'unknown error'
+            raise SessionExpiredError(f'WeRead session expired: refresh failed ({errcode}): {message}')
+        new_access_token = payload.get('accessToken')
+        if not new_access_token:
+            raise SessionExpiredError('WeRead session expired: refresh returned no access token')
+        credential.access_token = str(new_access_token)
+        if payload.get('refreshToken'):
+            credential.refresh_token = str(payload['refreshToken'])
+        if self.storage is not None:
+            try:
+                with self.storage.transaction():
+                    self.storage.sessions.update_tokens(
+                        credential.vid, credential.access_token, credential.refresh_token
+                    )
+            except Exception as exc:
+                logger.warning('Failed to persist refreshed WeRead tokens: %s', exc)
+
+    async def _get(
+        self,
+        credential: LoginSession,
+        path: str,
+        params: dict[str, Any],
+        *,
+        _retry: bool = True,
+    ) -> Any:
+        query = {key: value for key, value in params.items() if value is not None}
+        resp = await self.client.get(
+            f'{self.base_url}{path}',
+            params=query,
+            headers=self._headers(credential),
+        )
+        status = resp.status_code
         try:
-            info = json.loads(info_raw)
-        except json.JSONDecodeError:
-            continue
-        for appmsg in info.get('appmsgex') or []:
-            if appmsg.get('is_deleted'):
+            payload = resp.json()
+        except ValueError, json.JSONDecodeError:
+            payload = None
+        errcode = payload.get('errcode') if isinstance(payload, dict) else None
+        if status == 401 or errcode in (-2012, '-2012'):
+            if _retry:
+                await self._refresh(credential)
+                return await self._get(credential, path, params, _retry=False)
+            raise SessionExpiredError(f'WeRead session expired (HTTP {status})')
+        if isinstance(payload, dict):
+            if errcode not in (None, 0, '0'):
+                message = payload.get('errmsg') or payload.get('errlog') or 'unknown error'
+                raise RuntimeError(f'WeRead API error {errcode}: {message}')
+            return payload
+        if status >= 400:
+            raise RuntimeError(f'HTTP {status} from {path}')
+        raise RuntimeError(f'Unexpected response from {path}')
+
+    async def search_public_accounts(
+        self,
+        credential: LoginSession,
+        *,
+        keyword: str,
+        count: int = 50,
+        start: int = 0,
+    ) -> dict[str, Any]:
+        payload = await self._get(
+            credential,
+            '/store/search',
+            {'keyword': keyword, 'count': count, 'start': start, 'type': 7},
+        )
+        if not isinstance(payload, dict):
+            raise RuntimeError('Unexpected search response shape')
+        accounts: list[dict[str, Any]] = []
+        for item in payload.get('books', []):
+            if not isinstance(item, dict):
                 continue
-            link = _normalize_article_url(appmsg.get('link'))
-            if not link:
+            info = item.get('bookInfo') or {}
+            book_id = str(info.get('bookId') or '')
+            if not book_id.startswith(_WEREAD_BOOK_ID_PREFIX):
                 continue
-            publish_at = appmsg.get('update_time') or appmsg.get('create_time')
-            article_id = f'{appmsg.get("appmsgid")}-{appmsg.get("itemidx")}'
-            records.append(
-                ArticleRecord(
-                    biz=fakeid,
-                    article_id=article_id,
-                    title=html.unescape(appmsg.get('title') or '(untitled)'),
-                    item_show_type=appmsg.get('item_show_type'),
-                    author=html.unescape(appmsg.get('author_name') or '') or None,
-                    digest=html.unescape(appmsg.get('digest') or '') or None,
-                    cover=_normalize_article_url(appmsg.get('cover') or appmsg.get('cover_img')),
-                    link=link,
-                    source_url=None,
-                    publish_at=publish_at,
-                    raw={'appmsgex': appmsg},
-                )
+            accounts.append(
+                {
+                    'fakeid': book_id_to_biz(book_id),
+                    'nickname': info.get('title', '') or '',
+                    'alias': info.get('alias', '') or '',
+                    'round_head_img': _normalize_article_url(info.get('cover')) or '',
+                    'book_id': book_id,
+                    'author': info.get('author', '') or '',
+                    'intro': info.get('intro', '') or '',
+                    'reading_count': item.get('readingCount', 0),
+                }
             )
+        return {
+            'list': accounts,
+            'total': payload.get('totalCount') or len(accounts),
+            'has_more': bool(payload.get('hasMore')),
+        }
+
+    async def list_articles(
+        self,
+        credential: LoginSession,
+        *,
+        biz: str,
+        offset: int = 0,
+        count: int = 20,
+    ) -> dict[str, Any]:
+        book_id = biz_to_book_id(biz)
+        payload = await self._get(
+            credential,
+            '/mp/chapters',
+            {'bookId': book_id, 'count': count, 'offset': offset, 'pf': 'android'},
+        )
+        if not isinstance(payload, dict):
+            raise RuntimeError('Unexpected article response shape')
+        return payload
+
+
+# Parsing helpers -----------------------------------------------------------
+
+
+def parse_mp_chapters(biz: str, payload: dict[str, Any]) -> list[ArticleRecord]:
+    """Convert a WeRead /mp/chapters payload into ArticleRecords.
+
+    *biz* is the canonical MP fakeid; the WeRead book_id is derived from it so
+    the stored article_id (review_id) and biz stay consistent with MP-era data.
+    """
+    book_id = biz_to_book_id(biz)
+    items = payload.get('data')
+    if not isinstance(items, list):
+        items = []
+    records: list[ArticleRecord] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        review_id = str(item.get('reviewId') or '')
+        if not review_id:
+            continue
+        link = wechat_article_url(book_id, review_id)
+        if not link:
+            continue
+        mp_info = item.get('mpInfo') or {}
+        records.append(
+            ArticleRecord(
+                biz=biz,
+                article_id=review_id,
+                title=html.unescape(mp_info.get('title') or '(untitled)'),
+                item_show_type=None,
+                author=None,
+                digest=None,
+                cover=_normalize_article_url(mp_info.get('pic_url')) or None,
+                link=link,
+                source_url=None,
+                publish_at=_to_int(item.get('createTime')),
+                raw={'reviewId': review_id, 'mpInfo': mp_info, 'createTime': item.get('createTime')},
+            )
+        )
     return records
 
 
@@ -428,6 +362,6 @@ __all__ = [
     'book_id_to_biz',
     'build_user_agent',
     'native_signature',
-    'parse_appmsg_publish',
+    'parse_mp_chapters',
     'wechat_article_url',
 ]

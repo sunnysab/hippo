@@ -40,7 +40,7 @@ def build_sync_container(
     enable_images: bool,
 ) -> AppContainer:
     client = MPClient()
-    api_client = WeChatApiClient(client)
+    api_client = WeChatApiClient(client, storage=storage)
     image_service: ArticleImageService | None = None
     if enable_images:
         image_service = ArticleImageService(
@@ -83,7 +83,7 @@ def build_downloader_container(
     if article_max_connections is not None:
         client_kwargs['article_max_connections'] = article_max_connections
     client = MPClient(**client_kwargs)
-    api_client = WeChatApiClient(client)
+    api_client = WeChatApiClient(client, storage=storage)
     image_service: ArticleImageService | None = None
     if enable_images:
         image_service = ArticleImageService(
