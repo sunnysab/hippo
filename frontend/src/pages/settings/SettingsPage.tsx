@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useMemo, useRef, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useSettingsState } from '../../store/settings';
-import { apiGet, apiSend } from '../../api';
+import { apiGet } from '../../api';
 import type { SyncStatus, SyncSettings, SyncTask, LoginStatus } from '../../store/settings';
 import {
   buildSyncSettingsFormState,
@@ -37,7 +37,6 @@ export function SettingsPage() {
   const { state, dispatch } = useSettingsState();
   const lastSyncFingerprint = useRef('');
   const lastTasksFingerprint = useRef('');
-  const loginPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasActiveTask = useCallback(() => {
     const tasks = state.syncTasks || [];
     if (tasks.some((task) => task.status === 'running' || task.status === 'pending')) return true;
@@ -82,56 +81,14 @@ export function SettingsPage() {
     }
   }, [dispatch]);
 
-  const scheduleLoginPoll = useCallback((status: string) => {
-    if (loginPollTimer.current) {
-      clearInterval(loginPollTimer.current);
-      loginPollTimer.current = null;
-    }
-    if (['waiting', 'scanned', 'refresh', 'starting', 'confirmed'].includes(status)) {
-      loginPollTimer.current = setInterval(async () => {
-        try {
-          const payload = await apiSend('/api/login/poll', 'POST', {});
-          dispatch({ type: 'SET_LOGIN_STATUS', payload: payload as unknown as LoginStatus });
-          const nextStatus = (payload.status as string) || 'idle';
-          if (nextStatus === 'confirmed') {
-            // Stop poll BEFORE calling finalize to prevent concurrent finalize calls
-            if (loginPollTimer.current) clearInterval(loginPollTimer.current);
-            loginPollTimer.current = null;
-            try {
-              const result = await apiSend('/api/login/finalize', 'POST', {});
-              dispatch({ type: 'SET_LOGIN_STATUS', payload: result as unknown as LoginStatus });
-            } catch {
-              // Re-fetch server state so UI reflects the actual status
-              try {
-                const fresh = await apiGet('/api/login');
-                dispatch({ type: 'SET_LOGIN_STATUS', payload: fresh as unknown as LoginStatus });
-              } catch {
-                dispatch({
-                  type: 'SET_LOGIN_STATUS',
-                  payload: { status: 'error', message: 'Login finalization failed', updated_at: new Date().toISOString() } as LoginStatus,
-                });
-              }
-            }
-          } else if (['success', 'error', 'idle'].includes(nextStatus)) {
-            if (loginPollTimer.current) clearInterval(loginPollTimer.current);
-            loginPollTimer.current = null;
-          }
-        } catch {
-          /* ignore */
-        }
-      }, 2000);
-    }
-  }, [dispatch]);
-
   const loadLoginStatus = useCallback(async () => {
     try {
       const payload = await apiGet('/api/login');
       dispatch({ type: 'SET_LOGIN_STATUS', payload: payload as unknown as LoginStatus });
-      scheduleLoginPoll((payload.status as string) || 'idle');
     } catch {
       /* ignore */
     }
-  }, [dispatch, scheduleLoginPoll]);
+  }, [dispatch]);
 
   useEffect(() => {
     void loadSyncSettings();
@@ -165,7 +122,6 @@ export function SettingsPage() {
 
     return () => {
       clearSyncTimer();
-      if (loginPollTimer.current) clearInterval(loginPollTimer.current);
     };
   }, [getSyncPollDelay, loadSyncStatus, loadSyncTasks]);
 
