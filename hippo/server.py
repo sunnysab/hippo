@@ -54,7 +54,8 @@ from .emailer import get_email_settings, send_email, set_email_settings
 from .exceptions import ApiError
 from .http import MPClient
 from .login_manager import LoginManager
-from .models import AccountCredential
+from .login_service import import_weread_dump, save_login_session
+from .models import AccountCredential, LoginSession
 from .rss import build_rss_xml, query_rss_items
 from .storage import PostgresStorage, ensure_default_group, fetchall_rows, fetchone_row, open_storage
 from .sync_core import request_sync_cancel
@@ -69,6 +70,7 @@ from .sync_settings import (
     set_sync_settings as save_sync_settings,
 )
 from .wechat_api import SessionExpiredError, WeChatApiClient
+from .weread_dump import WereadDumpError
 
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_PORT = 8000
@@ -221,25 +223,10 @@ def _binary_response(payload: bytes, content_type: str) -> Response:
     )
 
 
-def _get_login_info(storage: PostgresStorage) -> dict[str, Any] | None:
-    row = fetchone_row(
-        storage,
-        'SELECT nickname, avatar, updated_at FROM login_sessions ORDER BY id DESC LIMIT 1',
-        [],
-        normalize=_normalize_record,
-    )
-    return row
-
-
-def _login_response(
-    snapshot: dict[str, Any],
-    info: dict[str, Any] | None,
-) -> dict[str, Any]:
-    return {
-        **snapshot,
-        'qrcode_url': '/api/login/qrcode' if snapshot.get('has_qrcode') else None,
-        'last_login': info,
-    }
+def _login_snapshot(manager: LoginManager, storage: PostgresStorage) -> dict[str, Any]:
+    snapshot = manager.snapshot(storage)
+    snapshot['qrcode_url'] = None
+    return snapshot
 
 
 def _list_groups(storage: PostgresStorage) -> list[dict[str, Any]]:
@@ -513,16 +500,16 @@ async def search_account(
     existing = {account.biz for account in storage.accounts.list_accounts()}
     session = storage.sessions.get_login_session()
     async with MPClient() as client:
-        api_client = WeChatApiClient(client)
+        api_client = WeChatApiClient(client, storage=storage)
         try:
-            payload = await api_client.search_biz(
+            payload = await api_client.search_public_accounts(
                 session,
                 keyword=keyword,
-                begin=offset,
+                start=offset,
                 count=min(max(page_size, 1), 20),
             )
         except SessionExpiredError as exc:
-            raise ApiError('Session expired. Please login again.', status=401) from exc
+            raise ApiError('Session expired. Please re-import the WeRead credential.', status=401) from exc
     records = payload.get('list') or []
     results: list[dict[str, Any]] = []
     for item in records:
@@ -1070,90 +1057,60 @@ def login_status(
     storage: PostgresStorage = Depends(_get_storage),
     manager: LoginManager = Depends(_get_login_manager),
 ) -> dict[str, Any]:
-    """
-    获取当前的登录会话状态。
-
-    Returns:
-        dict: 登录状态，消息和上次登录信息。
-    """
-    info = _get_login_info(storage)
-    return _login_response(manager._snapshot(), info)
+    """获取当前 WeRead 凭据状态。"""
+    return _login_snapshot(manager, storage)
 
 
-@router.post('/login/start')
-async def login_start(
+@router.post('/login/import')
+async def login_import(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
     manager: LoginManager = Depends(_get_login_manager),
 ) -> dict[str, Any]:
+    """导入 WeRead 凭据。
+
+    支持两种方式：
+    - ``dump_dir``：服务器读取 WeRead dump 目录（含 WRAccount + device.xml）。
+    - 直接传 ``vid``/``access_token``/``refresh_token``/``device_id`` 字段。
     """
-    开始新的登录会话（请求二维码）。
+    dump_dir = (body.get('dump_dir') or os.environ.get('HIPPO_WEREAD_DUMP_DIR') or '').strip()
+    if dump_dir:
+        try:
+            import_weread_dump(storage, dump_dir, vid=body.get('vid') or None)
+        except WereadDumpError as exc:
+            raise ApiError(str(exc), status=400) from exc
+    else:
+        for field in ('vid', 'access_token'):
+            if not body.get(field):
+                raise ApiError(f'{field} is required')
+        session = LoginSession(
+            vid=str(body['vid']),
+            access_token=str(body['access_token']),
+            refresh_token=str(body.get('refresh_token') or ''),
+            device_id=str(body.get('device_id') or ''),
+            nickname=body.get('nickname'),
+            avatar=body.get('avatar'),
+        )
+        save_login_session(storage, session)
+    return manager.mark_imported(storage)
 
-    Returns:
-        dict: 登录状态，包含二维码 URL 是否可用。
-    """
-    force = bool(body.get('force'))
-    info = _get_login_info(storage)
-    return _login_response(await manager.start(force=force), info)
 
-
-@router.post('/login/poll')
-async def login_poll(
+@router.post('/login/refresh')
+async def login_refresh(
     storage: PostgresStorage = Depends(_get_storage),
     manager: LoginManager = Depends(_get_login_manager),
 ) -> dict[str, Any]:
-    """
-    轮询登录状态。应在开始登录后重复调用。
-    检查二维码是否已被扫描或确认。
-
-    Returns:
-        dict: 更新后的登录状态。
-    """
-    info = _get_login_info(storage)
-    return _login_response(await manager.poll(storage), info)
+    """强制刷新 WeRead access token。"""
+    return await manager.refresh(storage)
 
 
-@router.post('/login/finalize')
-async def login_finalize(
+@router.post('/login/clear')
+def login_clear(
     storage: PostgresStorage = Depends(_get_storage),
     manager: LoginManager = Depends(_get_login_manager),
 ) -> dict[str, Any]:
-    """
-    完成登录（在二维码被确认后调用）。
-    调用微信 bizlogin 接口完成最终登录，获取 token。
-    """
-    info = _get_login_info(storage)
-    return _login_response(await manager.finalize(storage), info)
-
-
-@router.post('/login/cancel')
-def login_cancel(
-    storage: PostgresStorage = Depends(_get_storage),
-    manager: LoginManager = Depends(_get_login_manager),
-) -> dict[str, Any]:
-    """
-    取消当前的登录尝试。
-
-    Returns:
-        dict: 重置后的登录状态。
-    """
-    manager.cancel()
-    info = _get_login_info(storage)
-    return _login_response(manager._snapshot(), info)
-
-
-@router.get('/login/qrcode')
-def login_qrcode(
-    manager: LoginManager = Depends(_get_login_manager),
-) -> Response:
-    """
-    获取登录二维码图片。
-
-    Returns:
-        Response: 二维码的 PNG 图片。
-    """
-    data = manager.get_qrcode()
-    return Response(content=data, media_type='image/png')
+    """清除已导入的 WeRead 凭据。"""
+    return manager.clear(storage)
 
 
 @router.get('/settings/status')

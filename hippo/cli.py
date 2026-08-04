@@ -3,17 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import concurrent.futures
 import functools
 import inspect
 import json
 import os
-import random
 import threading
-import time
 from datetime import UTC, datetime
-from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +17,7 @@ import click
 import typer
 from tqdm import tqdm
 
-from .config import DEFAULT_PAGE_SIZE, DEFAULT_RECENT_DAYS
+from .config import DEFAULT_PAGE_SIZE, DEFAULT_RECENT_DAYS, WEREAD_DUMP_DIR
 from .container import build_downloader_container
 from .controllers.sync import (
     SyncMode,
@@ -41,7 +37,7 @@ from .http import MPClient
 from .image_hashes import ensure_image_hash_by_id
 from .image_store import ArticleImageService
 from .logger import setup_logger
-from .login_service import save_login_session
+from .login_service import import_weread_dump
 from .models import AccountCredential, AccountGroup, LoginSession
 from .repositories import ARTICLE_CONTENT_PRESENT_SQL as _ARTICLE_CONTENT_PRESENT_SQL
 from .rss import build_rss_xml, query_rss_items
@@ -50,6 +46,7 @@ from .storage import PostgresStorage, StorageInitError, open_storage
 from .sync_worker import run_sync_worker
 from .utils import format_table, parse_iso_datetime_to_timestamp
 from .wechat_api import SessionExpiredError, WeChatApiClient
+from .weread_dump import WereadDumpError
 
 # Initialize logger on module import
 logger = setup_logger()
@@ -874,14 +871,14 @@ async def _search_accounts_async(
         async with MPClient() as client:
             api_client = WeChatApiClient(client)
             try:
-                payload = await api_client.search_biz(
+                payload = await api_client.search_public_accounts(
                     session,
                     keyword=keyword,
-                    begin=offset,
+                    start=offset,
                     count=page_size,
                 )
             except SessionExpiredError:
-                typer.echo('Session expired. Please login again.')
+                typer.echo('WeRead session expired. Please re-import via `hippo login`.')
                 raise typer.Exit(code=2)
         records = payload.get('list') or []
         if not records:
@@ -1023,7 +1020,7 @@ async def sync_group(
         until_date=until_date,
         force=force,
         skip_time=skip_time,
-        login_flow=_run_login_flow,
+        login_flow=None,
     )
 
 
@@ -1177,7 +1174,7 @@ async def sync_account_articles(
         until_date=until_date,
         force=force,
         skip_time=skip_time,
-        login_flow=_run_login_flow,
+        login_flow=None,
     )
 
 
@@ -1206,7 +1203,7 @@ async def sync_all_accounts(
         until_date=until_date,
         force=force,
         skip_time=skip_time,
-        login_flow=_run_login_flow,
+        login_flow=None,
     )
 
 
@@ -1739,12 +1736,26 @@ def export_accounts() -> None:
 
 
 @app.command('login')
-@coro
-async def login(
-    timeout: int = typer.Option(300, min=30, help='扫码等待超时时间（秒）'),
-    poll_interval: int = typer.Option(2, min=1, help='轮询间隔（秒）'),
+def login(
+    dump_dir: str | None = typer.Option(
+        None,
+        '--dump-dir',
+        help='WeRead dump 目录（含 WRAccount + device.xml），默认读 HIPPO_WEREAD_DUMP_DIR',
+    ),
+    vid: str | None = typer.Option(None, help='指定账号 vid，默认选最新非游客账号'),
 ) -> None:
-    await _run_login_flow(timeout=timeout, poll_interval=poll_interval)
+    """Import WeRead credentials from an Android account dump."""
+    resolved = dump_dir or WEREAD_DUMP_DIR
+    if not resolved:
+        typer.echo('请通过 --dump-dir 或环境变量 HIPPO_WEREAD_DUMP_DIR 提供 WeRead dump 目录')
+        raise typer.Exit(code=2)
+    with open_storage() as storage:
+        try:
+            session = import_weread_dump(storage, resolved, vid=vid)
+        except WereadDumpError as exc:
+            typer.echo(f'导入失败：{exc}')
+            raise typer.Exit(code=1) from exc
+    typer.echo(f'已导入 WeRead 凭据：vid {session.vid}')
 
 
 @app.command('serve')
@@ -1840,90 +1851,6 @@ def rss(
         items=items,
     )
     typer.echo(xml)
-
-
-def _render_qr_in_terminal(qr_bytes: bytes) -> bool:
-    try:
-        import qrcode
-        from PIL import Image
-        from pyzbar.pyzbar import decode
-    except Exception:
-        return False
-    try:
-        img = Image.open(BytesIO(qr_bytes))
-    except Exception:
-        return False
-    decoded_objects = decode(img)
-    if not decoded_objects:
-        return False
-    qr_data = decoded_objects[0].data.decode('utf-8', errors='ignore')
-    qr = qrcode.QRCode()
-    qr.add_data(qr_data)
-    qr.make(fit=True)
-    qr.print_ascii(tty=True)
-    return True
-
-
-def _emit_qr_data_url(qr_bytes: bytes) -> None:
-    encoded = base64.b64encode(qr_bytes).decode('ascii')
-    typer.echo('无法在终端渲染二维码，请将以下 data URL 复制到浏览器打开：')
-    typer.echo(f'data:image/png;base64,{encoded}')
-
-
-async def _run_login_flow(*, timeout: int, poll_interval: int) -> None:
-    sid = f'{int(time.time() * 1000)}{random.randint(100, 999)}'
-    typer.echo('正在获取二维码...')
-    async with MPClient(timeout=15.0) as client:
-        api_client = WeChatApiClient(client)
-        with open_storage() as storage:
-            try:
-                uuid_cookie = await api_client.start_login_session(sid)
-            except Exception as exc:
-                typer.echo(f'获取登录会话失败：{exc}')
-                raise typer.Exit(code=1)
-            try:
-                qrcode_bytes = await api_client.fetch_login_qrcode(uuid_cookie)
-            except Exception as exc:
-                typer.echo(f'获取二维码失败：{exc}')
-                raise typer.Exit(code=1)
-            if not _render_qr_in_terminal(qrcode_bytes):
-                _emit_qr_data_url(qrcode_bytes)
-            typer.echo('请使用微信扫码登录')
-            started = time.time()
-            while True:
-                if time.time() - started > timeout:
-                    raise typer.Exit(code=1)
-                resp = await api_client.check_login_status(uuid_cookie)
-                if resp.get('base_resp', {}).get('ret') != 0:
-                    typer.echo('扫码状态获取失败，请重试')
-                    raise typer.Exit(code=1)
-                status = resp.get('status')
-                if status == 0:
-                    await asyncio.sleep(poll_interval)
-                    continue
-                if status == 1:
-                    session = await api_client.finalize_login(uuid_cookie)
-                    info = await api_client.fetch_login_info(session)
-                    session.nickname = info.get('nickname') or None
-                    session.avatar = info.get('avatar') or None
-                    save_login_session(storage, session)
-                    typer.echo(f'登录成功：{session.nickname or "未知账号"}')
-                    return
-                if status in (2, 3):
-                    qrcode_bytes = await api_client.fetch_login_qrcode(uuid_cookie)
-                    if not _render_qr_in_terminal(qrcode_bytes):
-                        _emit_qr_data_url(qrcode_bytes)
-                    typer.echo('二维码已刷新，请重新扫码')
-                    await asyncio.sleep(poll_interval)
-                    continue
-                if status in (4, 6):
-                    typer.echo('扫码成功，等待确认...')
-                    await asyncio.sleep(poll_interval)
-                    continue
-                if status == 5:
-                    typer.echo('该账号尚未绑定邮箱，无法登录')
-                    raise typer.Exit(code=1)
-                await asyncio.sleep(poll_interval)
 
 
 __all__ = ['app']
