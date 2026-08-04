@@ -13,16 +13,7 @@ vi.mock('../../store/settings', () => ({
 
 vi.mock('../../i18n', () => ({
   useI18n: () => ({
-    t: (key: string, fallback?: string) => {
-      const dict: Record<string, string> = {
-        'login.title': '登录',
-        'login.start': '开始登录',
-        'login.refresh': '刷新登录',
-        'login.cancel': '取消',
-        'login.status.waiting': '请使用微信扫码',
-      };
-      return dict[key] || fallback || key;
-    },
+    t: (_key: string, fallback?: string) => fallback || _key,
   }),
 }));
 
@@ -35,82 +26,81 @@ vi.mock('../../utils/events', () => ({
   emitRefresh: () => emitRefreshMock(),
 }));
 
+vi.mock('../../utils/format', () => ({
+  formatRelativeTime: () => 'recently',
+}));
+
+vi.mock('../../utils/sync', () => ({
+  getSyncTone: () => 'neutral',
+}));
+
+const missingStatus = {
+  status: 'missing',
+  message: '',
+  has_credential: false,
+  vid: null,
+  nickname: null,
+  avatar: null,
+  updated_at: null,
+  last_error: null,
+};
+
 describe('LoginPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     settingsStateMock.mockReturnValue({
-      state: {
-        loginStatus: {
-          status: 'idle',
-          message: '',
-          qrcode_url: null,
-          last_login: null,
-        },
-      },
+      state: { loginStatus: missingStatus },
       dispatch: dispatchMock,
     });
   });
 
-  it('emits a refresh after starting login so polling can begin', async () => {
-    apiSendMock.mockResolvedValue({
-      status: 'waiting',
-      message: 'Scan the QR code with WeChat',
-      qrcode_url: '/api/login/qrcode',
-      last_login: null,
-    });
+  it('imports pasted credentials via /api/login/import', async () => {
+    apiSendMock.mockResolvedValue({ status: 'ok', has_credential: true, vid: '200' });
 
     render(<LoginPanel />);
 
-    await fireEvent.click(screen.getByRole('button', { name: '开始登录' }));
+    fireEvent.change(screen.getByLabelText('vid'), { target: { value: '200' } });
+    fireEvent.change(screen.getByLabelText('accessToken'), { target: { value: 'tok' } });
+    fireEvent.change(screen.getByLabelText('refreshToken'), { target: { value: 'rt' } });
+    fireEvent.change(screen.getByLabelText('deviceId'), { target: { value: 'dev' } });
 
-    expect(apiSendMock).toHaveBeenCalledWith('/api/login/start', 'POST', { force: false });
+    await fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+
+    expect(apiSendMock).toHaveBeenCalledWith('/api/login/import', 'POST', {
+      vid: '200',
+      access_token: 'tok',
+      refresh_token: 'rt',
+      device_id: 'dev',
+    });
     expect(dispatchMock).toHaveBeenCalledWith({
       type: 'SET_LOGIN_STATUS',
-      payload: {
-        status: 'waiting',
-        message: 'Scan the QR code with WeChat',
-        qrcode_url: '/api/login/qrcode',
-        last_login: null,
-      },
+      payload: { status: 'ok', has_credential: true, vid: '200' },
     });
     expect(emitRefreshMock).toHaveBeenCalledTimes(1);
   });
 
-  it('uses updated_at to bust the QR code cache when waiting status repeats', () => {
+  it('refreshes the token when a credential is present', async () => {
+    apiSendMock.mockResolvedValue({ status: 'ok', has_credential: true, vid: '200' });
     settingsStateMock.mockReturnValue({
       state: {
         loginStatus: {
-          status: 'waiting',
-          message: 'Scan the QR code with WeChat',
-          updated_at: '2026-05-04T14:21:29.715668+00:00',
-          qrcode_url: '/api/login/qrcode',
-          last_login: null,
+          status: 'ok',
+          message: '',
+          has_credential: true,
+          vid: '200',
+          nickname: 'acc',
+          avatar: null,
+          updated_at: '2026-05-04T00:00:00.000Z',
+          last_error: null,
         },
       },
       dispatch: dispatchMock,
     });
 
-    const view = render(<LoginPanel />);
-    expect(screen.getByAltText('QR').getAttribute('src')).toContain(
-      encodeURIComponent('2026-05-04T14:21:29.715668+00:00'),
-    );
+    render(<LoginPanel />);
 
-    settingsStateMock.mockReturnValue({
-      state: {
-        loginStatus: {
-          status: 'waiting',
-          message: 'Scan the QR code with WeChat',
-          updated_at: '2026-05-04T14:21:31.428912+00:00',
-          qrcode_url: '/api/login/qrcode',
-          last_login: null,
-        },
-      },
-      dispatch: dispatchMock,
-    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh Token' }));
 
-    view.rerender(<LoginPanel />);
-    expect(screen.getByAltText('QR').getAttribute('src')).toContain(
-      encodeURIComponent('2026-05-04T14:21:31.428912+00:00'),
-    );
+    expect(apiSendMock).toHaveBeenCalledWith('/api/login/refresh', 'POST', {});
   });
 });

@@ -58,9 +58,12 @@ export interface SyncTask {
 export interface LoginStatus {
   status: string;
   message: string;
-  updated_at?: string | null;
-  qrcode_url: string | null;
-  last_login: Record<string, unknown> | null;
+  has_credential: boolean;
+  vid: string | null;
+  nickname: string | null;
+  avatar: string | null;
+  updated_at: string | null;
+  last_error: string | null;
 }
 
 interface SettingsState {

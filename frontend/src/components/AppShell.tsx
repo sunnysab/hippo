@@ -25,9 +25,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const refreshChromeMeta = useCallback(async () => {
     try {
       const loginPayload = await apiGet('/api/login');
-      const lastLogin = loginPayload.last_login as Record<string, unknown> | null;
-      if (lastLogin?.updated_at) {
-        const ts = formatRelativeTime(lastLogin.updated_at as string, t);
+      const loginUpdatedAt = loginPayload.updated_at as string | null;
+      if (loginUpdatedAt) {
+        const ts = formatRelativeTime(loginUpdatedAt, t);
         setLastLoginAt(ts ? t('login.lastLoginAt', 'Last login {time}').replace('{time}', ts) : '');
       } else {
         setLastLoginAt('');
@@ -49,14 +49,13 @@ export function AppShell({ children }: { children: ReactNode }) {
         setBannerError(true);
       } else {
         const loginStatus = loginPayload.status as string;
-        if (loginStatus === 'login_required' || loginStatus === 'failed') {
-          if (loginStatus === 'login_required') {
-            setBannerText(t('sync.loginRequired', 'Login required. Please re-login.'));
-            setBannerVisible(true);
-          } else {
-            setBannerText(t('sync.failed', 'Sync failed. Please check login.'));
-            setBannerVisible(true);
-          }
+        if (loginStatus === 'missing') {
+          setBannerText(t('sync.loginRequired', 'Login required. Please re-login.'));
+          setBannerVisible(true);
+          setBannerError(false);
+        } else if (loginStatus === 'error') {
+          setBannerText((loginPayload.last_error as string) || t('sync.failed', 'Sync failed. Please check login.'));
+          setBannerVisible(true);
           setBannerError(false);
         } else {
           setBannerVisible(false);
