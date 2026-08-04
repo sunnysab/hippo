@@ -525,6 +525,10 @@ class LoginSessionRepository:
                 (access_token, refresh_token, now, vid),
             )
 
+    def clear_sessions(self) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute('DELETE FROM login_sessions')
+
     def reset_login_session_sequence(self) -> None:
         with self._conn.cursor() as cur:
             cur.execute(
