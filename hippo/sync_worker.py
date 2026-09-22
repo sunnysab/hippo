@@ -26,6 +26,7 @@ from .sync_settings import (
 )
 from .sync_tasks import _article_snapshot
 from .sync_types import AccountProgress, SyncAccountResult, SyncObserver, SyncSummary
+from .weixin_watch import watch_article_push
 
 logger = logging.getLogger(__name__)
 
@@ -386,6 +387,8 @@ async def run_sync_worker(
     # 不能拖住主循环里「入队新文章 / 执行同步 job」的响应。
     drain_task = asyncio.create_task(_body_drain_loop(drain_interval))
     image_task = asyncio.create_task(_image_backfill_loop())
+    # 实时通道：daemon 推 article_push 时立刻入队（列表轮询仍然是兜底）
+    watch_task = asyncio.create_task(watch_article_push())
     try:
         while True:
             with open_storage() as storage:
@@ -397,7 +400,7 @@ async def run_sync_worker(
                 continue
             await asyncio.sleep(max(float(poll_interval), 0.2))
     finally:
-        for task in (drain_task, image_task):
+        for task in (drain_task, image_task, watch_task):
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
