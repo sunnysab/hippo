@@ -21,7 +21,6 @@ from .sync_settings import (
     SYNC_STARTED_KEY,
     _get_window_hours,
     _is_within_sync_window,
-    _should_skip_for_login,
     get_sync_settings,
 )
 from .sync_tasks import _article_snapshot
@@ -222,8 +221,6 @@ def maybe_enqueue_scheduled_job(storage: PostgresStorage) -> bool:
     if not _is_within_sync_window(now, start_hour=start_hour, end_hour=end_hour):
         return False
     if storage.sync_jobs.has_active_job():
-        return False
-    if _should_skip_for_login(storage):
         return False
     interval_seconds = max(int(settings.get('interval_minutes') or 1), 1) * 60
     last_started = _parse_meta_datetime(storage.meta.get(SYNC_STARTED_KEY))

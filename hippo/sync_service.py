@@ -6,8 +6,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass, replace
 from typing import Any
 
 from .config import DEFAULT_MAX_CONTENT_DOWNLOAD_ATTEMPTS, DEFAULT_PAGE_SIZE, DEFAULT_RECENT_DAYS
@@ -17,20 +16,10 @@ from .exceptions import SyncInterrupted
 from .file_storage import FileStorageError
 from .models import AccountCredential, ArticleRecord
 from .storage import PostgresStorage, fetchall_rows, open_storage
-from .sync_core import (
-    _get_cancel_event,
-    is_freq_control,
-    is_login_error,
-    reset_sync_cancel,
-    sync_account_core,
-)
+from .sync_core import _get_cancel_event, reset_sync_cancel
 from .sync_settings import (
-    SYNC_LOGIN_REQUIRED_AT_KEY,
     _persist_sync_outcome,
-    _should_skip_for_login,
-    _to_utc_timestamp,
     _today_str,
-    append_sync_history,
     get_sync_settings,
     get_sync_status,
     set_sync_state,
@@ -43,7 +32,6 @@ from .sync_types import (
     SyncJobObserver,
     SyncMode,
     SyncObserver,
-    SyncPlan,
     SyncReport,
     SyncSummary,
 )
@@ -54,7 +42,7 @@ from .utils import (
     should_skip_by_time,
     utc_now_iso,
 )
-from .wechat_api import WeChatApiClient
+from .weixin_worker import WeixinArticleSync
 
 logger = logging.getLogger('hippo.sync')
 
@@ -160,32 +148,12 @@ class ArticleSyncService:
         self,
         *,
         storage: PostgresStorage,
-        client: WeChatApiClient,
+        weixin_sync: WeixinArticleSync,
         downloader: ArticleDownloader | None = None,
-        login_flow: Callable[..., Any] | None = None,
-        on_login_required: Callable[[], bool] | None = None,
     ) -> None:
         self._storage = storage
-        self._client = client
+        self._weixin_sync = weixin_sync
         self._downloader = downloader
-        self._login_flow = login_flow
-        self._on_login_required = on_login_required
-
-    def _resolve_shared_window(self, config: SyncConfig) -> tuple[int | None, int | None]:
-        if config.mode == SyncMode.recent:
-            if config.recent_days is None:
-                raise ValueError('--recent-days is required for recent mode.')
-            since = int((datetime.now(UTC) - timedelta(days=config.recent_days)).timestamp())
-            return since, None
-        if config.mode == SyncMode.range:
-            if not config.since_date:
-                raise ValueError('--since is required for range mode.')
-            since = _parse_date(config.since_date)
-            until = _parse_date(config.until_date, end_of_day=True)
-            if until is not None and since is not None and until < since:
-                raise ValueError('--until must be on or after --since.')
-            return since, until
-        return None, None
 
     def _resolve_account_mode(
         self,
@@ -211,65 +179,6 @@ class ArticleSyncService:
             recent_days = group_recent_days if group_recent_days is not None else DEFAULT_RECENT_DAYS
         return mode, recent_days
 
-    def _build_sync_plan(
-        self,
-        *,
-        account: AccountCredential,
-        config: SyncConfig,
-        mode: SyncMode,
-        recent_days: int | None,
-        shared_since: int | None,
-        shared_until: int | None,
-        use_resume: bool,
-        bulk: bool,
-    ) -> SyncPlan:
-        since_timestamp = None
-        until_timestamp = None
-        stop_on_existing = False
-        full_synced_hint = False
-        resume_key = None
-        complete_key = None
-
-        if use_resume and bulk:
-            resume_key = f'sync_progress:{account.biz}'
-            complete_key = f'sync_complete:{account.biz}'
-
-        if mode == SyncMode.full:
-            full_synced_hint = self._storage.meta.get(f'sync_complete:{account.biz}') is not None
-        elif mode == SyncMode.incremental:
-            since_timestamp = _to_utc_timestamp(account.last_synced_at)
-            if since_timestamp is None:
-                stop_on_existing = True
-        elif mode == SyncMode.recent:
-            if config.mode is not None:
-                since_timestamp = shared_since
-            else:
-                days = max(int(recent_days or 1), 1)
-                since_timestamp = int(datetime.now(UTC).timestamp() - days * 86400)
-        elif mode == SyncMode.range:
-            if config.mode is not None:
-                since_timestamp = shared_since
-                until_timestamp = shared_until
-            else:
-                since_timestamp = _parse_date(config.since_date)
-                until_timestamp = _parse_date(config.until_date, end_of_day=True)
-
-        if use_resume and bulk and mode != SyncMode.full:
-            resume_key = None
-            full_synced_hint = False
-
-        if mode in (SyncMode.incremental, SyncMode.recent, SyncMode.range):
-            full_synced_hint = False
-
-        return SyncPlan(
-            since_timestamp=since_timestamp,
-            until_timestamp=until_timestamp,
-            stop_on_existing=stop_on_existing,
-            full_synced_hint=full_synced_hint,
-            resume_key=resume_key if mode == SyncMode.full and use_resume and bulk else None,
-            complete_key=complete_key,
-        )
-
     async def sync_account(
         self,
         *,
@@ -277,13 +186,11 @@ class ArticleSyncService:
         config: SyncConfig,
         bulk: bool,
         use_resume: bool,
-        shared_since: int | None,
-        shared_until: int | None,
         observer: SyncObserver,
         group_defaults: dict[int, dict[str, Any]] | None = None,
         allow_freq_skip: bool = False,
     ) -> tuple[SyncAccountResult, list[ArticleRecord], SyncSummary | None]:
-        mode, recent_days = self._resolve_account_mode(
+        mode, _recent_days = self._resolve_account_mode(
             account=account,
             config=config,
             group_defaults=group_defaults,
@@ -365,38 +272,34 @@ class ArticleSyncService:
             )
             return result, [], None
 
-        plan = self._build_sync_plan(
-            account=account,
-            config=config,
-            mode=mode,
-            recent_days=recent_days,
-            shared_since=shared_since,
-            shared_until=shared_until,
-            use_resume=use_resume,
-            bulk=bulk,
-        )
+        # weixin-rs 数据源：列表阶段只入队（列表接口只有会失效的长链），
+        # 正文由队列 drain 统一抓（拿到永久短链 + 原始 HTML 落 article_document）。
+        source_key = (account.alias or '').strip()
+        if not source_key:
+            observer.on_skip('no_source_key')
+            result = SyncAccountResult(
+                biz=account.biz,
+                nickname=account.nickname,
+                saved=0,
+                completed=False,
+                skipped=True,
+                skip_reason='no_source_key',
+                failed=False,
+                error=None,
+            )
+            return result, [], None
 
-        collector = PageCollector() if config.download_content else None
-        summary: SyncSummary | None = None
         try:
-            summary = await sync_account_core(
-                storage=self._storage,
-                client=self._client,
-                account=account,
-                config=config,
-                plan=plan,
-                login_flow=self._login_flow,
-                on_login_required=self._on_login_required,
-                collect_existing_ids=bool(config.download_content),
-                observer=collector or observer,
+            stats = await self._weixin_sync.sync_account(
+                biz=account.biz,
+                source_key=source_key,
+                pages=config.max_pages or 1,
             )
         except SyncInterrupted:
             raise
-        except RuntimeError as exc:
+        except Exception as exc:
             message = str(exc)
-            if is_freq_control(message):
-                raise SyncRunError(message) from exc
-            if bulk and not is_login_error(message):
+            if bulk:
                 result = SyncAccountResult(
                     biz=account.biz,
                     nickname=account.nickname or account.biz,
@@ -408,27 +311,21 @@ class ArticleSyncService:
                     error=message,
                 )
                 return result, [], None
-            raise SyncRunError(message, login_required=is_login_error(message)) from exc
+            raise SyncRunError(message) from exc
 
-        if summary:
-            with self._storage.transaction():
-                self._storage.accounts.update_last_synced(account.biz)
-
-        if summary.completed and use_resume and bulk and mode == SyncMode.full and plan.complete_key:
-            with self._storage.transaction():
-                self._storage.meta.set(plan.complete_key, _today_str())
-
+        observer.on_log(f'列表 {stats.listed} 篇，新入队 {stats.enqueued} 条')
+        summary = SyncSummary(total_saved=stats.enqueued, page_count=1, completed=True)
         result = SyncAccountResult(
             biz=account.biz,
             nickname=account.nickname or account.biz,
-            saved=summary.total_saved,
-            completed=summary.completed,
+            saved=stats.enqueued,
+            completed=True,
             skipped=False,
             skip_reason=None,
             failed=False,
             error=None,
         )
-        return result, collector.records if collector else [], summary
+        return result, [], summary
 
     async def sync_accounts(
         self,
@@ -443,7 +340,6 @@ class ArticleSyncService:
         observer: SyncJobObserver | None = None,
     ) -> SyncReport:
         job_observer = observer or NullSyncJobObserver()
-        shared_since, shared_until = self._resolve_shared_window(config)
         accounts_total = len(accounts)
         total_saved = 0
         total_downloaded = 0
@@ -484,8 +380,6 @@ class ArticleSyncService:
                     config=config,
                     bulk=bulk,
                     use_resume=use_resume,
-                    shared_since=shared_since,
-                    shared_until=shared_until,
                     observer=page_observer,
                     group_defaults=group_defaults,
                     allow_freq_skip=allow_freq_skip,
@@ -610,30 +504,8 @@ async def run_sync_job(
     started_at = utc_now_iso()
     empty_report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
     with open_storage() as storage:
-        if _should_skip_for_login(storage):
-            status = get_sync_status(storage)
-            error = status.get('last_error') or 'login_required'
-            return SyncJobResult(status=status, report=empty_report, error=error)
         settings = get_sync_settings(storage)
         set_sync_state(storage, status='running', error='', started_at=started_at)
-        try:
-            storage.sessions.get_login_session()
-        except Exception as exc:
-            error = str(exc)
-            finished_at = utc_now_iso()
-            set_sync_state(storage, status='login_required', error=error, finished_at=finished_at)
-            with storage.transaction():
-                storage.meta.set(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
-            append_sync_history(
-                storage,
-                {
-                    'started_at': started_at,
-                    'finished_at': finished_at,
-                    'status': 'login_required',
-                    'error': error,
-                },
-            )
-            return SyncJobResult(status=get_sync_status(storage), report=empty_report, error=error)
 
         error: str | None = None
         report = empty_report
@@ -671,7 +543,7 @@ async def run_sync_job(
                     config = _build_sync_config(settings)
                     service = ArticleSyncService(
                         storage=storage,
-                        client=app.api_client,
+                        weixin_sync=app.weixin_sync,
                         downloader=app.downloader,
                     )
                     try:
@@ -691,6 +563,14 @@ async def run_sync_job(
                     except Exception as exc:
                         error = str(exc)
                         report = empty_report
+                    # 列表入队完，接着把正文抓下来（节流在 daemon 侧）
+                    if error is None and settings.get('download_content'):
+                        job_observer.on_log('正文阶段：处理待抓队列')
+                        drained = await app.weixin_sync.drain(limit=settings.get('content_limit'))
+                        job_observer.on_log(
+                            f'正文落库 {drained.ingested} 篇，失败 {drained.failed} 篇'
+                        )
+                        report = replace(report, downloaded=report.downloaded + drained.ingested)
                     if _get_cancel_event().is_set() and not error:
                         error = 'Cancelled by user'
                     if settings.get('download_images') and app.downloader:

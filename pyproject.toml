@@ -39,6 +39,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["ruff>=0.15.0"]
+# weixin-rs daemon 数据源：SDK 走 WEIXIN_SDK_PATH，这里只补它的 msgpack 依赖
+weixin = ["msgpack>=1.0.0"]
 
 [project.scripts]
 hippo = "hippo.cli:app"
