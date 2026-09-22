@@ -10,7 +10,6 @@ from typing import Any
 from .config import DEFAULT_SYNC_REQUEST_INTERVAL, DEFAULT_WINDOW_END_HOUR, DEFAULT_WINDOW_START_HOUR
 from .emailer import get_email_settings, send_email
 from .storage import PostgresStorage, load_meta_json, save_meta_json
-from .sync_core import is_login_error
 from .sync_types import SyncReport
 from .utils import to_utc_dt
 
@@ -21,7 +20,6 @@ SYNC_FINISHED_KEY = 'sync:last_finished_at'
 SYNC_HISTORY_KEY = 'sync:history'
 SYNC_SETTINGS_KEY = 'sync:settings'
 ALERT_SENT_KEY = 'sync:alert_sent'
-SYNC_LOGIN_REQUIRED_AT_KEY = 'sync:login_required_at'
 
 _ARTICLE_EXCLUDE_KEYWORD_LIMIT = 20
 
@@ -226,23 +224,14 @@ def _persist_sync_outcome(
 ) -> dict[str, Any]:
     if error:
         cancelled = error == 'Cancelled by user'
-        if is_login_error(error):
-            status = 'login_required'
-        elif cancelled:
-            status = 'cancelled'
-        else:
-            status = 'failed'
+        status = 'cancelled' if cancelled else 'failed'
         set_sync_state(storage, status=status, error='' if cancelled else error, finished_at=finished_at)
-        if status == 'login_required':
-            with storage.transaction():
-                storage.meta.set(SYNC_LOGIN_REQUIRED_AT_KEY, finished_at)
     else:
         status = 'success'
         cancelled = False
         set_sync_state(storage, status='success', error='', finished_at=finished_at)
         with storage.transaction():
             storage.meta.delete(ALERT_SENT_KEY)
-            storage.meta.delete(SYNC_LOGIN_REQUIRED_AT_KEY)
 
     skipped_accounts = sum(
         1 for item in report.details if item.skipped and item.skip_reason in ('disabled', 'recently_synced')
@@ -286,38 +275,6 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
     return to_utc_dt(parsed)
 
 
-def _get_login_updated_at(storage: PostgresStorage) -> datetime | None:
-    updated_at = storage.sessions.get_login_updated_at()
-    if not updated_at:
-        return None
-    return to_utc_dt(updated_at)
-
-
-def _should_skip_for_login(storage: PostgresStorage) -> bool:
-    if storage.meta.get(SYNC_STATUS_KEY) != 'login_required':
-        return False
-    last_error = storage.meta.get(SYNC_ERROR_KEY) or ''
-    if last_error and not is_login_error(last_error):
-        with storage.transaction():
-            storage.meta.delete(SYNC_LOGIN_REQUIRED_AT_KEY)
-            storage.meta.delete(ALERT_SENT_KEY)
-            storage.meta.delete(SYNC_ERROR_KEY)
-            storage.meta.set(SYNC_STATUS_KEY, 'failed')
-        return False
-    blocked_at = _parse_iso_datetime(storage.meta.get(SYNC_LOGIN_REQUIRED_AT_KEY))
-    if not blocked_at:
-        return False
-    last_login = _get_login_updated_at(storage)
-    if not last_login or last_login <= blocked_at:
-        return True
-    with storage.transaction():
-        storage.meta.delete(SYNC_LOGIN_REQUIRED_AT_KEY)
-        storage.meta.delete(ALERT_SENT_KEY)
-        storage.meta.delete(SYNC_ERROR_KEY)
-        storage.meta.set(SYNC_STATUS_KEY, 'idle')
-    return False
-
-
 def _to_utc_timestamp(value: datetime | None) -> int | None:
     if not value:
         return None
@@ -334,14 +291,12 @@ __all__ = [
     'SYNC_ERROR_KEY',
     'SYNC_FINISHED_KEY',
     'SYNC_HISTORY_KEY',
-    'SYNC_LOGIN_REQUIRED_AT_KEY',
     'SYNC_SETTINGS_KEY',
     'SYNC_STARTED_KEY',
     'SYNC_STATUS_KEY',
     '_get_window_hours',
     '_is_within_sync_window',
     '_persist_sync_outcome',
-    '_should_skip_for_login',
     '_to_utc_timestamp',
     '_today_str',
     'append_sync_history',

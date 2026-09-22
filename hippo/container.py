@@ -10,19 +10,24 @@ from .file_storage import S3FileStorage
 from .http import MPClient
 from .image_store import ArticleImageService
 from .storage import PostgresStorage
-from .wechat_api import WeChatApiClient
+from .weixin_source import WeixinSource
+from .weixin_worker import WeixinArticleSync
 
 
 @dataclass(slots=True)
 class AppContainer:
     storage: PostgresStorage
     client: MPClient
-    api_client: WeChatApiClient
     image_service: ArticleImageService | None
     downloader: ArticleDownloader | None
+    # weixin-rs 数据源：列表入队 + 正文落库（替代微信读书来源）
+    weixin_source: WeixinSource | None = None
+    weixin_sync: WeixinArticleSync | None = None
 
     async def __aenter__(self) -> AppContainer:
         await self.client.__aenter__()
+        if self.weixin_source:
+            await self.weixin_source.__aenter__()
         if self.downloader:
             await self.downloader.__aenter__()
         return self
@@ -30,6 +35,8 @@ class AppContainer:
     async def __aexit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
         if self.downloader:
             await self.downloader.__aexit__(exc_type, exc, tb)
+        if self.weixin_source:
+            await self.weixin_source.__aexit__(exc_type, exc, tb)
         await self.client.__aexit__(exc_type, exc, tb)
 
 
@@ -40,7 +47,7 @@ def build_sync_container(
     enable_images: bool,
 ) -> AppContainer:
     client = MPClient()
-    api_client = WeChatApiClient(client, storage=storage)
+    weixin_source = WeixinSource()
     image_service: ArticleImageService | None = None
     if enable_images:
         image_service = ArticleImageService(
@@ -48,20 +55,26 @@ def build_sync_container(
             file_storage=S3FileStorage(),
             transaction=storage.transaction,
         )
-    downloader = None
-    if enable_download:
-        downloader = ArticleDownloader(
-            client=client,
-            storage=storage,
-            image_store=image_service,
-            enable_image_worker=enable_images,
-        )
+    # 正文落库必须走 downloader（markdown/blocks/图片链路），所以不论
+    # enable_download 与否都建；它只控制要不要额外跑图片下载 worker。
+    downloader = ArticleDownloader(
+        client=client,
+        storage=storage,
+        image_store=image_service,
+        enable_image_worker=bool(enable_images and enable_download),
+    )
+    weixin_sync = WeixinArticleSync(
+        storage=storage,
+        source=weixin_source,
+        downloader=downloader,
+    )
     return AppContainer(
         storage=storage,
         client=client,
-        api_client=api_client,
         image_service=image_service,
         downloader=downloader,
+        weixin_source=weixin_source,
+        weixin_sync=weixin_sync,
     )
 
 
@@ -83,7 +96,6 @@ def build_downloader_container(
     if article_max_connections is not None:
         client_kwargs['article_max_connections'] = article_max_connections
     client = MPClient(**client_kwargs)
-    api_client = WeChatApiClient(client, storage=storage)
     image_service: ArticleImageService | None = None
     if enable_images:
         image_service = ArticleImageService(
@@ -101,7 +113,6 @@ def build_downloader_container(
     return AppContainer(
         storage=storage,
         client=client,
-        api_client=api_client,
         image_service=image_service,
         downloader=downloader,
     )
