@@ -153,11 +153,14 @@ class WeixinArticleSync:
             publish_at=body.publish_time or payload.get('publish_time'),
             raw={'sn': row['sn'], 'list': payload},
         )
+        # with_images=False：图片只登记进 article_images，由独立的回填循环去抓，
+        # 避免正文（客户端协议）与图片（普通 HTTPS CDN）互相拖累、也没了两条独立的节奏。
         article_pk = await self._downloader.ingest_body(
             article=article,
             html=body.html,
             title=article.title,
             item_show_type=article.item_show_type,
+            with_images=False,
         )
         if article_pk is None:
             raise RuntimeError('articles 写入后没有拿到 id')

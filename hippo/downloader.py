@@ -917,10 +917,10 @@ class ArticleDownloader(AbstractAsyncContextManager):
         """
         referer = referer or article.link or 'https://mp.weixin.qq.com/'
         markdown = _postprocess_markdown(markdownify(html, heading_style='ATX'))
-        asset_count = 0
-        url_map: dict[str, str] = {}
-        if with_images:
-            asset_count, url_map = _collect_image_urls(html, referer=referer)
+        # 图片 URL 始终收集：`article_images`（s3_key 为空）就是图片的持久队列。
+        # `with_images` 只决定要不要顺带塞进内存队列马上抓；正文链路默认不抓，
+        # 交给独立的图片回填循环，两条链路各有各的节奏。
+        asset_count, url_map = _collect_image_urls(html, referer=referer)
         article_pk = self._store_article_pg(
             article=article,
             markdown_content=markdown,
@@ -930,7 +930,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         )
         if with_images and url_map:
             await self._image_mgr.enqueue(article, url_map, referer=referer)
-        logger.debug('ingest_body: %s asset_count=%d', article.link, asset_count)
+        logger.debug('ingest_body: %s images=%d queued=%s', article.link, asset_count, with_images)
         return article_pk
 
     def _store_article_pg(
