@@ -46,6 +46,15 @@ from .weixin_worker import WeixinArticleSync
 
 logger = logging.getLogger('hippo.sync')
 
+# 列表阶段：账号之间的最小间隔。列表接口和 alias 解析都是敏感操作，
+# 2s 那种密度会把 searchcontact 打到限流（2026-09-22 实测：一次全量 alias 校验后
+# 该接口连续几十分钟只回 "无法解析公众号标识"）。
+LIST_ACCOUNT_MIN_INTERVAL = 15.0
+# 连续失败这么多账号就中止本轮：多半是被限流，继续打只会更糟
+MAX_CONSECUTIVE_LIST_FAILURES = 3
+# 一次 sync job 只顺带抓一批正文；持续抓是 worker 里常驻 drain 循环的活
+JOB_BODY_BATCH = 5
+
 SYNC_RUN_LOCK = asyncio.Lock()
 
 
@@ -366,6 +375,7 @@ class ArticleSyncService:
                 current_account=current,
             )
 
+        consecutive_failures = 0
         for i, account in enumerate(accounts):
             if _get_cancel_event().is_set():
                 break
@@ -407,8 +417,15 @@ class ArticleSyncService:
             details.append(result)
             if result.failed:
                 failed_accounts += 1
+                consecutive_failures += 1
                 job_observer.on_account_done(result, summary)
+                if consecutive_failures >= MAX_CONSECUTIVE_LIST_FAILURES:
+                    job_observer.on_log(
+                        f'连续 {consecutive_failures} 个账号失败，中止本轮（可能被限流），留到下一轮'
+                    )
+                    break
                 continue
+            consecutive_failures = 0
             if result.skipped and not bulk:
                 job_observer.on_account_done(result, summary)
                 return SyncReport(
@@ -467,7 +484,8 @@ def _build_sync_config(settings: dict[str, Any]) -> SyncConfig:
     return SyncConfig(
         mode=None,
         page_size=DEFAULT_PAGE_SIZE,
-        sleep_seconds=float(settings.get('sleep_seconds') or 0),
+        # 账号间请求间隔：给个下限，避免历史配置里的 2s 继续把接口打限流
+        sleep_seconds=max(float(settings.get('sleep_seconds') or 0), LIST_ACCOUNT_MIN_INTERVAL),
         reset=False,
         recent_days=None,
         since_date=None,
@@ -567,7 +585,7 @@ async def run_sync_job(
                     # 列表入队完，接着把正文抓下来（节流在 daemon 侧）
                     if error is None and settings.get('download_content'):
                         job_observer.on_log('正文阶段：处理待抓队列')
-                        drained = await app.weixin_sync.drain(limit=settings.get('content_limit'))
+                        drained = await app.weixin_sync.drain(limit=settings.get('content_limit') or JOB_BODY_BATCH)
                         job_observer.on_log(
                             f'正文落库 {drained.ingested} 篇，失败 {drained.failed} 篇'
                         )
