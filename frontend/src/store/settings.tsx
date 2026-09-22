@@ -56,14 +56,14 @@ export interface SyncTask {
 }
 
 export interface LoginStatus {
+  logged_in: boolean;
   status: string;
-  message: string;
-  has_credential: boolean;
-  vid: string | null;
+  need_relogin: boolean;
+  wxid: string | null;
   nickname: string | null;
-  avatar: string | null;
-  updated_at: string | null;
-  last_error: string | null;
+  head_url: string | null;
+  clients_connected: number | null;
+  error: string | null;
 }
 
 interface SettingsState {

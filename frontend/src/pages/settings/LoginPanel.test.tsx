@@ -28,23 +28,30 @@ vi.mock('../../utils/events', () => ({
   emitRefresh: () => emitRefreshMock(),
 }));
 
-vi.mock('../../utils/format', () => ({
-  formatRelativeTime: () => 'recently',
-}));
-
 vi.mock('../../utils/sync', () => ({
   getSyncTone: () => 'neutral',
 }));
 
 const loggedOut = {
+  logged_in: false,
   status: 'logged_out',
-  message: '',
-  has_credential: false,
-  vid: null,
+  need_relogin: false,
+  wxid: null,
   nickname: null,
-  avatar: null,
-  updated_at: null,
-  last_error: null,
+  head_url: null,
+  clients_connected: null,
+  error: null,
+};
+
+const loggedIn = {
+  logged_in: true,
+  status: 'online',
+  need_relogin: false,
+  wxid: 'wxid_tester',
+  nickname: 'tester',
+  head_url: null,
+  clients_connected: 2,
+  error: null,
 };
 
 describe('LoginPanel', () => {
@@ -54,12 +61,22 @@ describe('LoginPanel', () => {
       state: { loginStatus: loggedOut },
       dispatch: dispatchMock,
     });
-    apiGetMock.mockResolvedValue({ status: 'online', has_credential: true, nickname: 'tester' });
+    apiGetMock.mockResolvedValue(loggedIn);
   });
 
   it('renders the daemon login status', () => {
     render(<LoginPanel />);
-    expect(screen.getByText('daemon is not signed in.')).toBeTruthy();
+    expect(screen.getByText('daemon is not signed in')).toBeTruthy();
+    expect(screen.getByText('daemon is not signed in; scan or use auto re-login.')).toBeTruthy();
+  });
+
+  it('renders nickname and client count when signed in', () => {
+    settingsStateMock.mockReturnValue({
+      state: { loginStatus: loggedIn },
+      dispatch: dispatchMock,
+    });
+    render(<LoginPanel />);
+    expect(screen.getByText('tester · 2 clients connected')).toBeTruthy();
   });
 
   it('fetches a QR code via /api/login/qr and renders it', async () => {
@@ -76,14 +93,14 @@ describe('LoginPanel', () => {
     apiSendMock.mockResolvedValue({ ok: true });
     render(<LoginPanel />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Re-login' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Auto re-login' }));
 
-    await screen.findByRole('button', { name: 'Re-login' });
+    await screen.findByRole('button', { name: 'Auto re-login' });
     expect(apiSendMock).toHaveBeenCalledWith('/api/login/auto', 'POST', {});
     expect(apiGetMock).toHaveBeenCalledWith('/api/login');
     expect(dispatchMock).toHaveBeenCalledWith({
       type: 'SET_LOGIN_STATUS',
-      payload: { status: 'online', has_credential: true, nickname: 'tester' },
+      payload: loggedIn,
     });
     expect(emitRefreshMock).toHaveBeenCalled();
   });

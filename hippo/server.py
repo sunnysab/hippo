@@ -1035,7 +1035,7 @@ def refetch_article(
 
 @router.get('/login')
 async def login_status() -> dict[str, Any]:
-    """daemon 登录状态（微信读书凭据已废弃，登录由 weixin-rs daemon 负责）。"""
+    """daemon 登录状态（登录由 weixin-rs daemon 负责，hippo 不再保存凭据）。"""
     try:
         async with WeixinSource(auto_login=False) as source:
             status = await source.status()
@@ -1043,8 +1043,12 @@ async def login_status() -> dict[str, Any]:
         return {
             'logged_in': False,
             'status': 'unreachable',
+            'need_relogin': False,
+            'wxid': None,
+            'nickname': None,
+            'head_url': None,
+            'clients_connected': None,
             'error': str(exc),
-            'updated_at': None,
         }
     logged_in = bool(status.get('logged_in'))
     return {
@@ -1052,16 +1056,10 @@ async def login_status() -> dict[str, Any]:
         'status': status.get('status') or ('online' if logged_in else 'logged_out'),
         'need_relogin': bool(status.get('need_relogin')),
         'wxid': status.get('wxid'),
-        # 兼容前端既有字段名（vid/avatar/has_credential 沿用）
-        'vid': status.get('wxid'),
         'nickname': status.get('nickname'),
-        'avatar': status.get('head_url'),
         'head_url': status.get('head_url'),
-        'has_credential': logged_in,
-        'message': status.get('error') or '',
-        'last_error': status.get('error'),
         'clients_connected': status.get('clients_connected'),
-        'updated_at': None,
+        'error': status.get('error') or '',
     }
 
 

@@ -55,7 +55,7 @@ describe('SyncSettingsPanel', () => {
     });
   });
 
-  it('polls the queued task and surfaces login-required failures immediately', async () => {
+  it('polls the queued task and surfaces failures immediately', async () => {
     apiSendMock.mockResolvedValue({
       status: 'queued',
       task_id: 'task-1',
@@ -67,7 +67,7 @@ describe('SyncSettingsPanel', () => {
       })
       .mockResolvedValueOnce({
         task_id: 'task-1',
-        status: 'login_required',
+        status: 'failed',
         error: 'invalid session',
       });
 
@@ -110,7 +110,7 @@ describe('SyncSettingsPanel', () => {
     });
 
     expect(apiGetMock).toHaveBeenCalledWith('/api/settings/tasks/task-1');
-    expect(showToastMock).toHaveBeenLastCalledWith('登录失效，请重新登录。');
+    expect(showToastMock).toHaveBeenLastCalledWith('invalid session');
     expect(emitRefreshMock).toHaveBeenCalledTimes(1);
   });
 });
