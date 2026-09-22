@@ -6,11 +6,13 @@ import argparse
 import os
 import sys
 import threading
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from queue import Queue
-from datetime import datetime, timezone
-from typing import Iterable
 
 from hippo.env import load_env
+from tqdm import tqdm
+
 from hippo.s3 import (
     build_image_key,
     load_s3_config,
@@ -18,11 +20,10 @@ from hippo.s3 import (
     with_prefix,
 )
 from hippo.storage import PostgresStorage
-from tqdm import tqdm
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _log(message: str) -> None:
@@ -47,10 +48,7 @@ def _iter_images(
         cur.execute(query, params)
         for row in cur:
             image_id, content_type, data = row
-            if isinstance(data, memoryview):
-                payload = data.tobytes()
-            else:
-                payload = bytes(data)
+            payload = data.tobytes() if isinstance(data, memoryview) else bytes(data)
             yield image_id, content_type, payload
 
 
@@ -147,10 +145,7 @@ def main() -> int:
 
     chunk_size = max(1, args.chunk_size)
     workers = max(1, args.workers)
-    if args.queue_size is None:
-        queue_size = chunk_size
-    else:
-        queue_size = max(1, args.queue_size)
+    queue_size = chunk_size if args.queue_size is None else max(1, args.queue_size)
     queue_size = max(workers, queue_size)
     _log(
         'S3 config loaded '

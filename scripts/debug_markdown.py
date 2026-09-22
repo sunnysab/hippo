@@ -10,7 +10,6 @@ from bs4 import BeautifulSoup
 
 from hippo.normalize_html import normalize_html
 
-
 # import sys
 sys.setrecursionlimit(3000)
 

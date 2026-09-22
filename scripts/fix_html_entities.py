@@ -12,7 +12,6 @@ import html
 
 from hippo.storage import open_storage
 
-
 ENTITY_PATTERN = r'&(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);'
 
 SQL_FIND = f"""
