@@ -5,8 +5,6 @@ import { useI18n } from '../../i18n';
 import { apiSend, isAuthError } from '../../api';
 import { useToast } from '../../hooks/useToast';
 import { formatRelativeTime } from '../../utils/format';
-import { syncDefaults } from '../../store/shared';
-import { getSyncModeLabel } from '../../utils/sync';
 import type { Account } from '../../store/shared';
 
 interface AccountCardProps {
@@ -18,19 +16,7 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
   const { t } = useI18n();
   const { showToast } = useToast();
   const navigate = useNavigate();
-  const [syncMode, setSyncMode] = useState(account.sync_mode || '');
-  const [syncDays, setSyncDays] = useState(String(account.sync_recent_days ?? syncDefaults.recent_days));
   const [syncInterval, setSyncInterval] = useState<number | null>(account.sync_interval_days ?? null);
-
-  const activeGroup = state.groups.find((g) => g.id === state.selectedGroupId);
-  const groupMode = activeGroup?.sync_mode || '';
-  const defaultMode = groupMode || syncDefaults.mode;
-  const inheritLabel = groupMode
-    ? t('accounts.syncModeInheritGroup', 'Follow group ({mode})').replace('{mode}', getSyncModeLabel(t, defaultMode))
-    : t('accounts.syncModeInherit', 'Follow global ({mode})').replace('{mode}', getSyncModeLabel(t, defaultMode));
-
-  const groupRecentDays = activeGroup?.sync_recent_days;
-  const baseRecentDays = groupRecentDays ?? syncDefaults.recent_days;
 
   const handleCheck = () => {
     dispatch({ type: 'TOGGLE_SELECTED', biz: account.biz });
@@ -52,24 +38,10 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
     }
   };
 
-  const saveSyncSettings = async (nextMode: string, nextDays: string, nextInterval: number | null = syncInterval) => {
-    const parsedDays = parseInt(nextDays || String(baseRecentDays), 10);
-    const safeDays = Number.isFinite(parsedDays) && parsedDays > 0 ? parsedDays : baseRecentDays;
-    const body: Record<string, unknown> = { sync_mode: nextMode || null, sync_interval_days: nextInterval };
-    if (nextMode === 'recent') {
-      body.sync_recent_days = safeDays;
-    }
+  const saveSyncInterval = async (nextInterval: number | null) => {
     try {
-      await apiSend(`/api/account/${account.biz}`, 'PATCH', body);
-      dispatch({
-        type: 'UPDATE_ACCOUNT',
-        biz: account.biz,
-        patch: {
-          sync_mode: nextMode || null,
-          sync_recent_days: nextMode === 'recent' ? safeDays : null,
-          sync_interval_days: nextInterval,
-        },
-      });
+      await apiSend(`/api/account/${account.biz}`, 'PATCH', { sync_interval_days: nextInterval });
+      dispatch({ type: 'UPDATE_ACCOUNT', biz: account.biz, patch: { sync_interval_days: nextInterval } });
       showToast(t('accounts.syncSaved', 'Sync strategy updated.'));
     } catch (err) {
       if (isAuthError(err)) return;
@@ -143,27 +115,6 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
       </div>
       <div className="account-sync">
         <div className="account-sync-row">
-          <span className="account-sync-label">{t('accounts.syncMode', 'Update strategy')}</span>
-          <select
-            className="account-sync-mode"
-            data-biz={account.biz}
-            value={syncMode}
-            onChange={(event) => {
-              const nextMode = event.target.value;
-              setSyncMode(nextMode);
-              if (nextMode !== 'recent') {
-                setSyncDays(String(account.sync_recent_days ?? baseRecentDays));
-              }
-              void saveSyncSettings(nextMode, syncDays);
-            }}
-          >
-            <option value="">{inheritLabel}</option>
-            <option value="incremental">{t('sync.modeIncremental', 'Incremental')}</option>
-            <option value="recent">{t('sync.modeRecent', 'Recent')}</option>
-            <option value="full">{t('sync.modeFull', 'Full')}</option>
-          </select>
-        </div>
-        <div className="account-sync-row">
           <span className="account-sync-label">{t('accounts.syncInterval', 'Sync interval')}</span>
           <select
             className="account-sync-interval"
@@ -173,7 +124,7 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
               const val = event.target.value;
               const nextInterval = val === '' ? null : Number(val);
               setSyncInterval(nextInterval);
-              void saveSyncSettings(syncMode, syncDays, nextInterval);
+              void saveSyncInterval(nextInterval);
             }}
           >
             <option value="">{t('accounts.syncIntervalAuto', 'Auto (detect)')}</option>
@@ -183,18 +134,6 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
             <option value="14">{t('accounts.syncInterval14', 'Biweekly')}</option>
             <option value="30">{t('accounts.syncInterval30', 'Monthly')}</option>
           </select>
-        </div>
-        <div className={`account-sync-row account-sync-if-recent${syncMode === 'recent' ? ' is-visible' : ''}`}>
-          <span className="account-sync-label">{t('accounts.syncRecentDays', 'Recent days')}</span>
-          <input
-            className="account-sync-days"
-            type="number"
-            min="1"
-            value={syncDays}
-            disabled={syncMode !== 'recent'}
-            onChange={(event) => setSyncDays(event.target.value)}
-            onBlur={() => { void saveSyncSettings(syncMode, syncDays); }}
-          />
         </div>
       </div>
     </div>

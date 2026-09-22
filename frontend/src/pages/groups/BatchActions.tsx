@@ -5,8 +5,6 @@ import { apiSend, isAuthError } from '../../api';
 import { useToast } from '../../hooks/useToast';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { ConfirmModal } from '../../components/ConfirmModal';
-import { syncDefaults } from '../../store/shared';
-import { getSyncModeLabel } from '../../utils/sync';
 import { emitRefresh } from '../../utils/events';
 
 export function BatchActions() {
@@ -15,8 +13,6 @@ export function BatchActions() {
   const { showToast } = useToast();
   const [expanded, setExpanded] = useState(false);
   const [targetGroupId, setTargetGroupId] = useState('');
-  const [syncMode, setSyncMode] = useState('');
-  const [syncDays, setSyncDays] = useState(String(syncDefaults.recent_days));
   const [syncBatchInterval, setSyncBatchInterval] = useState<number | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const isNarrow = useMediaQuery('(max-width: 720px)');
@@ -31,13 +27,6 @@ export function BatchActions() {
       dispatch({ type: 'CLEAR_SELECTED' });
     }
   };
-
-  const activeGroup = state.groups.find((g) => g.id === state.selectedGroupId);
-  const groupMode = activeGroup?.sync_mode || '';
-  const defaultMode = groupMode || syncDefaults.mode;
-  const inheritLabel = groupMode
-    ? t('accounts.syncModeInheritGroup', 'Follow group ({mode})').replace('{mode}', getSyncModeLabel(t, defaultMode))
-    : t('accounts.syncModeInherit', 'Follow global ({mode})').replace('{mode}', getSyncModeLabel(t, defaultMode));
 
   const handleMove = async () => {
     if (!targetGroupId) {
@@ -67,17 +56,11 @@ export function BatchActions() {
       showToast(t('accounts.syncSelectAccounts', 'Select accounts to sync.'));
       return;
     }
-    const body: Record<string, unknown> = {
-      biz_list: state.selectedAccounts,
-      sync_mode: syncMode || null,
-      sync_interval_days: syncBatchInterval,
-    };
-    if (syncMode === 'recent') {
-      const days = parseInt(syncDays || String(syncDefaults.recent_days), 10);
-      body.sync_recent_days = Number.isFinite(days) && days > 0 ? days : syncDefaults.recent_days;
-    }
     try {
-      await apiSend('/api/account/batch', 'POST', body);
+      await apiSend('/api/account/batch', 'POST', {
+        biz_list: state.selectedAccounts,
+        sync_interval_days: syncBatchInterval,
+      });
       showToast(t('accounts.syncSaved', 'Sync strategy updated.'));
       emitRefresh();
     } catch (err) {
@@ -167,24 +150,6 @@ export function BatchActions() {
           {t('accounts.move', 'Move')}
         </button>
         <div className="batch-divider"></div>
-        <select
-          id="batch-sync-mode"
-          value={syncMode}
-          onChange={(event) => setSyncMode(event.target.value)}
-        >
-          <option value="">{inheritLabel}</option>
-          <option value="incremental">{t('sync.modeIncremental', 'Incremental')}</option>
-          <option value="recent">{t('sync.modeRecent', 'Recent')}</option>
-          <option value="full">{t('sync.modeFull', 'Full')}</option>
-        </select>
-        <input
-          type="number"
-          id="batch-sync-days"
-          min="1"
-          value={syncDays}
-          disabled={syncMode !== 'recent'}
-          onChange={(event) => setSyncDays(event.target.value)}
-        />
         <select
           id="batch-sync-interval"
           value={syncBatchInterval === null ? '' : String(syncBatchInterval)}

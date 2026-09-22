@@ -3,7 +3,6 @@ import { useSearchParams } from 'react-router-dom';
 import { useGroupsState, useGroupsActions } from '../../store/groups';
 import { GroupList } from './GroupList';
 import { GroupHeader } from './GroupHeader';
-import { GroupSyncToolbar } from './GroupSyncToolbar';
 import { AccountCardGrid } from './AccountCardGrid';
 import { BatchActions } from './BatchActions';
 import { AccountSearchModal } from './AccountSearchModal';
@@ -164,7 +163,6 @@ export function GroupsPage() {
             onOpenRename={(groupId, name) => setGroupNameDialog({ mode: 'rename', groupId, initialName: name })}
             onOpenDelete={(groupId) => setGroupDeleteDialog({ groupId })}
           />
-          <GroupSyncToolbar />
           <BatchActions />
           <AccountCardGrid query={accountQuery} />
         </div>

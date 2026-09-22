@@ -16,7 +16,7 @@ class SyncSettingsTest(unittest.TestCase):
 
         self.assertIn('article_exclude_keywords', settings)
         self.assertEqual('', settings['article_exclude_keywords'])
-        self.assertEqual(2.0, settings['sleep_seconds'])
+        self.assertEqual(15.0, settings['sleep_seconds'])
 
     def test_set_sync_settings_normalizes_article_exclude_keywords(self) -> None:
         storage = _DummyStorage()

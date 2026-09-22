@@ -18,7 +18,8 @@ DEFAULT_USER_AGENT: Final = (
 WECHAT_PROFILE_ENDPOINT: Final = 'https://mp.weixin.qq.com/mp/profile_ext'
 WECHAT_COMMENT_ENDPOINT: Final = 'https://mp.weixin.qq.com/mp/appmsg_comment'
 DEFAULT_PAGE_SIZE: Final = 10
-DEFAULT_SYNC_REQUEST_INTERVAL: Final = 2.0
+# 列表阶段账号之间的请求间隔：searchcontact / 列表接口的限流底线（代码里还有下限兜底）
+DEFAULT_SYNC_REQUEST_INTERVAL: Final = 15.0
 DEFAULT_GROUP_NAME: Final = 'Default'
 DEFAULT_RECENT_DAYS: Final = 7
 DEFAULT_WINDOW_START_HOUR: Final = 6
