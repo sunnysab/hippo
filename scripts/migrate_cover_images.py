@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from hippo.storage import open_storage
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _is_numeric_cover(value: object) -> bool:
@@ -109,22 +109,21 @@ def migrate(*, batch_size: int, alter_type: bool) -> None:
             if not rows:
                 break
             now = _utc_now()
-            with storage.transaction():
-                with storage.conn.cursor() as cur:
-                    for article_pk, cover_url in rows:
-                        if _is_numeric_cover(cover_url):
-                            continue
-                        cover_id = _ensure_cover_image(
-                            cur,
-                            article_pk=int(article_pk),
-                            cover_url=str(cover_url),
-                            now=now,
-                        )
-                        cur.execute(
-                            "UPDATE articles SET cover = %s, updated_at = %s WHERE id = %s",
-                            (cover_id, now, article_pk),
-                        )
-                        total += 1
+            with storage.transaction(), storage.conn.cursor() as cur:
+                for article_pk, cover_url in rows:
+                    if _is_numeric_cover(cover_url):
+                        continue
+                    cover_id = _ensure_cover_image(
+                        cur,
+                        article_pk=int(article_pk),
+                        cover_url=str(cover_url),
+                        now=now,
+                    )
+                    cur.execute(
+                        "UPDATE articles SET cover = %s, updated_at = %s WHERE id = %s",
+                        (cover_id, now, article_pk),
+                    )
+                    total += 1
             last_id = rows[-1][0]
         if alter_type:
             remaining = []
@@ -159,15 +158,14 @@ def migrate(*, batch_size: int, alter_type: bool) -> None:
                 raise RuntimeError(
                     f"Non-numeric cover still exists. sample_article_ids=[{sample}]"
                 )
-            with storage.transaction():
-                with storage.conn.cursor() as cur:
-                    cur.execute(
-                        """
+            with storage.transaction(), storage.conn.cursor() as cur:
+                cur.execute(
+                    """
                         ALTER TABLE articles
                         ALTER COLUMN cover TYPE INTEGER
                         USING NULLIF(cover, '')::integer
                         """
-                    )
+                )
     print(f"migrated={total}")
 
 

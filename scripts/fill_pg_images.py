@@ -7,21 +7,22 @@ import concurrent.futures
 import os
 import sys
 import time
-from typing import Iterable, Iterator, Optional
+from collections.abc import Iterator
 
 import httpx
-from hippo.http import MPClient
 from hippo.env import load_env
+from tqdm import tqdm
+
 from hippo.file_storage import FileStorageError, S3FileStorage
+from hippo.http import MPClient
 from hippo.image_store import ArticleImageService
 from hippo.storage import PostgresStorage
-from tqdm import tqdm
 
 
 def _iter_missing_images(
     storage: PostgresStorage,
     *,
-    limit: Optional[int],
+    limit: int | None,
 ) -> Iterator[dict]:
     query = """
         SELECT a.biz, a.article_id, a.link, i.orig_url
@@ -50,11 +51,11 @@ def _download_with_retry(
     client: MPClient,
     url: str,
     *,
-    referer: Optional[str],
+    referer: str | None,
     retries: int,
     sleep_base: float,
-) -> tuple[bytes, Optional[str]]:
-    last_exc: Optional[Exception] = None
+) -> tuple[bytes, str | None]:
+    last_exc: Exception | None = None
     for attempt in range(retries):
         try:
             data, content_type = client.download_binary_with_type(url, referer=referer)
@@ -122,7 +123,7 @@ def main() -> int:
                     return 2
                 worker_count = max(1, args.workers)
 
-                def worker(item: dict) -> tuple[dict, bytes, Optional[str]]:
+                def worker(item: dict) -> tuple[dict, bytes, str | None]:
                     data, content_type = _download_with_retry(
                         client,
                         _normalize_image_url(str(item["orig_url"])),
