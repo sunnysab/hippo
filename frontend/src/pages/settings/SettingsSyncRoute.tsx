@@ -1,5 +1,6 @@
 import { ActiveTaskPanel } from './ActiveTaskPanel';
 import { FailureAlertPanel } from './FailureAlertPanel';
+import { QueuePanel } from './QueuePanel';
 import { SyncHistoryPanel } from './SyncHistoryPanel';
 import { SyncSettingsPanel } from './SyncSettingsPanel';
 import { useSettingsRouteContext } from './settingsRouteContext';
@@ -12,6 +13,7 @@ export function SettingsSyncRoute() {
       <SyncSettingsPanel formState={formState} setFormState={setFormState} />
       <FailureAlertPanel formState={formState} setFormState={setFormState} />
       <ActiveTaskPanel />
+      <QueuePanel />
       <SyncHistoryPanel />
     </div>
   );

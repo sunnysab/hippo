@@ -20,6 +20,9 @@ SYNC_FINISHED_KEY = 'sync:last_finished_at'
 SYNC_HISTORY_KEY = 'sync:history'
 SYNC_SETTINGS_KEY = 'sync:settings'
 ALERT_SENT_KEY = 'sync:alert_sent'
+# worker 侧写的运行态：心跳 + 队列水位（web 轮询直接读 meta，不扫大表）
+WORKER_HEARTBEAT_KEY = 'sync:worker_heartbeat_at'
+QUEUE_STATS_KEY = 'sync:queue_stats'
 
 _ARTICLE_EXCLUDE_KEYWORD_LIMIT = 20
 
@@ -288,12 +291,14 @@ def _today_str() -> str:
 
 __all__ = [
     'ALERT_SENT_KEY',
+    'QUEUE_STATS_KEY',
     'SYNC_ERROR_KEY',
     'SYNC_FINISHED_KEY',
     'SYNC_HISTORY_KEY',
     'SYNC_SETTINGS_KEY',
     'SYNC_STARTED_KEY',
     'SYNC_STATUS_KEY',
+    'WORKER_HEARTBEAT_KEY',
     '_get_window_hours',
     '_is_within_sync_window',
     '_persist_sync_outcome',

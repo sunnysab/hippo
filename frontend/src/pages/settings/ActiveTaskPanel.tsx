@@ -50,7 +50,6 @@ export function ActiveTaskPanel() {
 
   const phaseLabel = (phase: string | undefined | null): string => {
     if (phase === 'listing') return t('sync.phase.listing', '抓列表');
-    if (phase === 'content') return t('sync.phase.content', '下正文');
     if (phase === 'images') return t('sync.phase.images', '下图片');
     return '';
   };
@@ -119,9 +118,6 @@ export function ActiveTaskPanel() {
                 return tb - ta;
               }).slice(0, 8).map((account) => {
                 const toneClass = `sync-tone-${getSyncTone(account.status)}`;
-                const articleBadge = account.article_total !== null && account.article_total !== undefined
-                  ? `${account.article_current || 0}/${account.article_total}`
-                  : account.article_current ? `${account.article_current}` : '';
                 return (
                   <div key={account.biz} className={`sync-progress-item ${account.status === 'running' ? 'is-running' : ''} ${toneClass}`}>
                     <div className="sync-progress-copy">
@@ -135,7 +131,6 @@ export function ActiveTaskPanel() {
                         {[phaseLabel(account.phase), formatRelativeTime(account.updated_at, t)].filter(Boolean).join(' · ')}
                       </div>
                     </div>
-                    {articleBadge ? <span className="meta-count">{escapeHtml(articleBadge)}</span> : null}
                   </div>
                 );
               })}

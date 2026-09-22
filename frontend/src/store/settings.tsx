@@ -1,11 +1,29 @@
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from 'react';
 
+export interface QueueFailedItem {
+  biz: string;
+  nickname: string | null;
+  sn: string;
+  attempts: number;
+  retryable: boolean;
+  last_error: string | null;
+  updated_at: string | null;
+}
+
+export interface QueueStats {
+  articles?: { pending: number; processing: number; failed: number; done: number };
+  images?: { pending: number; failed: number };
+  failed_items?: QueueFailedItem[];
+}
+
 export interface SyncStatus {
   status: string;
   last_started_at: string | null;
   last_finished_at: string | null;
   last_error: string | null;
   history: Array<Record<string, unknown>>;
+  queue?: QueueStats;
+  worker_heartbeat_at?: string | null;
 }
 
 export interface SyncSettings {

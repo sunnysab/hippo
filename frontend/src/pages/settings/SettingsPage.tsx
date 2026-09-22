@@ -19,7 +19,12 @@ const buildSyncStatusFingerprint = (payload: Record<string, unknown> | null): st
     finished_at: item?.finished_at || '',
     status: item?.status || '',
   }));
-  return JSON.stringify({ status: payload.status || '', history: compact });
+  return JSON.stringify({
+    status: payload.status || '',
+    history: compact,
+    queue: payload.queue || {},
+    worker_heartbeat_at: payload.worker_heartbeat_at || '',
+  });
 };
 
 const buildSyncTasksFingerprint = (tasks: SyncTask[]): string => {
