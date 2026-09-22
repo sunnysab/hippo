@@ -1,20 +1,22 @@
 import { useState } from 'react';
 import { useSettingsState, type LoginStatus } from '../../store/settings';
 import { useI18n } from '../../i18n';
-import { apiSend, isAuthError } from '../../api';
+import { apiGet, apiSend, isAuthError } from '../../api';
 import { emitRefresh } from '../../utils/events';
 import { formatRelativeTime } from '../../utils/format';
 import { getSyncTone } from '../../utils/sync';
 
-interface ImportForm {
-  vid: string;
-  access_token: string;
-  refresh_token: string;
-  device_id: string;
+interface QrState {
+  png: string;
+  url: string;
 }
 
-const EMPTY_FORM: ImportForm = { vid: '', access_token: '', refresh_token: '', device_id: '' };
-
+/**
+ * 登录面板：登录由 weixin-rs daemon 负责（微信读书凭据已废弃）。
+ *
+ * - 已登录：显示昵称 / wxid；
+ * - 未登录：扫码（`/api/login/qr` + `/api/login/wait`）或用本地 auto_auth_key 免扫重登。
+ */
 export function LoginPanel() {
   const { state, dispatch } = useSettingsState();
   const { t } = useI18n();
@@ -24,66 +26,74 @@ export function LoginPanel() {
   const message = loginStatus?.message || loginStatus?.last_error || '';
   const updatedAt = loginStatus?.updated_at || '';
   const hasCredential = !!loginStatus?.has_credential;
-  const vid = loginStatus?.vid || '';
   const nickname = loginStatus?.nickname || '';
+  const vid = loginStatus?.vid || '';
 
-  const [form, setForm] = useState<ImportForm>(EMPTY_FORM);
+  const [qr, setQr] = useState<QrState | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
-  const send = async (path: string, body: Record<string, unknown>) => {
+  const refreshStatus = async () => {
+    const payload = (await apiGet('/api/login')) as unknown as LoginStatus;
+    dispatch({ type: 'SET_LOGIN_STATUS', payload });
+  };
+
+  const run = async (task: () => Promise<void>) => {
     setBusy(true);
+    setError('');
     try {
-      const payload = await apiSend(path, 'POST', body);
-      dispatch({ type: 'SET_LOGIN_STATUS', payload: payload as unknown as LoginStatus });
-      emitRefresh();
+      await task();
     } catch (err) {
-      if (isAuthError(err)) return;
+      if (!isAuthError(err)) setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
   };
 
-  const importCredential = () => {
-    if (!form.vid.trim() || !form.access_token.trim()) return;
-    void send('/api/login/import', { ...form });
-  };
+  const requestQr = () =>
+    run(async () => {
+      const payload = await apiSend('/api/login/qr', 'POST', {});
+      setQr({
+        png: String(payload.png_base64 || ''),
+        url: String(payload.url || ''),
+      });
+    });
 
-  const refresh = () => {
-    void send('/api/login/refresh', {});
-  };
+  const waitLogin = () =>
+    run(async () => {
+      await apiSend('/api/login/wait', 'POST', {});
+      setQr(null);
+      await refreshStatus();
+      emitRefresh();
+    });
 
-  const clear = () => {
-    void send('/api/login/clear', {});
-  };
+  const autoLogin = () =>
+    run(async () => {
+      await apiSend('/api/login/auto', 'POST', {});
+      await refreshStatus();
+      emitRefresh();
+    });
 
-  const statusLabel = () => {
-    const key = `login.status.${status}`;
-    return t(key, message || status);
-  };
-
+  const statusLabel = () => t(`login.status.${status}`, message || status);
   const metaText = hasCredential
     ? `${nickname || vid}${updatedAt ? ' · ' + formatRelativeTime(updatedAt, t) : ''}`
-    : t('login.missing', 'No credential imported.');
+    : t('login.missing', 'daemon is not signed in.');
 
   return (
     <div className="panel sync-login">
       <div className="panel-header">
         <div>
           <h2>{t('login.title', 'Login')}</h2>
-          <p className="muted">{t('login.subtitle', 'Import your WeRead credentials to enable sync.')}</p>
+          <p className="muted">
+            {t('login.subtitle', 'Sign in the weixin-rs daemon that syncs your Official Accounts.')}
+          </p>
         </div>
         <div className="toolbar">
-          <button className="btn" id="btn-login-refresh" type="button" onClick={refresh} disabled={!hasCredential || busy}>
-            {t('login.refresh', 'Refresh Token')}
+          <button className="btn" id="btn-login-auto" type="button" onClick={autoLogin} disabled={busy}>
+            {t('login.auto', 'Re-login')}
           </button>
-          <button
-            className="btn ghost"
-            id="btn-login-clear"
-            type="button"
-            onClick={clear}
-            disabled={!hasCredential || busy}
-          >
-            {t('login.clear', 'Clear')}
+          <button className="btn ghost" id="btn-login-qr" type="button" onClick={requestQr} disabled={busy}>
+            {t('login.qr', 'Scan QR')}
           </button>
         </div>
       </div>
@@ -95,34 +105,24 @@ export function LoginPanel() {
           {metaText}
         </div>
       </div>
-      <div className="login-import">
-        <p className="muted">{t('login.importHint', 'Paste WeRead credentials exported from the Android app.')}</p>
-        <label>
-          <span>vid</span>
-          <input value={form.vid} onChange={(e) => setForm({ ...form, vid: e.target.value })} autoComplete="off" />
-        </label>
-        <label>
-          <span>accessToken</span>
-          <input value={form.access_token} onChange={(e) => setForm({ ...form, access_token: e.target.value })} autoComplete="off" />
-        </label>
-        <label>
-          <span>refreshToken</span>
-          <input value={form.refresh_token} onChange={(e) => setForm({ ...form, refresh_token: e.target.value })} autoComplete="off" />
-        </label>
-        <label>
-          <span>deviceId</span>
-          <input value={form.device_id} onChange={(e) => setForm({ ...form, device_id: e.target.value })} autoComplete="off" />
-        </label>
-        <button
-          className="btn"
-          id="btn-login-import"
-          type="button"
-          onClick={importCredential}
-          disabled={busy || !form.vid.trim() || !form.access_token.trim()}
-        >
-          {t('login.import', 'Import')}
-        </button>
-      </div>
+      {qr && (
+        <div className="login-import" id="login-qr-box">
+          <p className="muted">{t('login.qrHint', 'Scan with WeChat, then confirm on the phone.')}</p>
+          {qr.png ? (
+            <img id="login-qr-image" src={`data:image/png;base64,${qr.png}`} alt="login qr" />
+          ) : (
+            <p id="login-qr-url">{qr.url}</p>
+          )}
+          <button className="btn" id="btn-login-wait" type="button" onClick={waitLogin} disabled={busy}>
+            {t('login.confirm', 'I have confirmed')}
+          </button>
+        </div>
+      )}
+      {error && (
+        <p className="muted" id="login-error">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
