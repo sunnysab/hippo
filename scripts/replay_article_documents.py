@@ -1,15 +1,25 @@
 #!/usr/bin/env python3
-"""给「有原始 HTML、但没有 markdown」的文章补上派生内容。
+"""从 article_document.raw_html 重放派生内容（markdown + blocks）。
 
-`clean_html` 已从 article_content 拆到 article_document.raw_html；当年那批只写了
-clean_html、没写 content_markdown 的文章（约 5000 篇）在检索里会退化成标题+摘要。
-这里从 raw_html 重新渲染 markdown 与 blocks，只更新派生字段，**不碰**
-article_images（重建 image 行会丢掉已有的 s3_key）。
+原始 HTML 从 article_content 拆出来存进 article_document 就是为了这个：渲染逻辑
+改进、或者某批数据渲染坏了，都能从原文重放，不用重新去微信拉。
+
+三种用法：
+
+* 补缺（默认）：只处理 `content_markdown` 为空的（历史上那批只写了 HTML 的文章）；
+* `--biz` / `--slug`：重放某个号的全部文章，或指定一篇（修一篇坏数据）；
+* `--force`：连已有 markdown 的一起重放（换渲染逻辑后全量刷一遍）。
+
+只更新派生字段（`content_markdown` + `content_json`），**不碰** article_images
+—— 重建 image 行会丢掉已经上传好的 s3_key，图片块按 `orig_url` 重新关联即可。
 
 用法::
 
-    HIPPO_PG_DSN=… python3 scripts/backfill_missing_markdown.py --limit 50   # 小批量
-    HIPPO_PG_DSN=… python3 scripts/backfill_missing_markdown.py              # 全量（可续跑）
+    HIPPO_PG_DSN=… python3 scripts/replay_article_documents.py --limit 50      # 小批量
+    HIPPO_PG_DSN=… python3 scripts/replay_article_documents.py                 # 补完全部缺口
+    HIPPO_PG_DSN=… python3 scripts/replay_article_documents.py --biz MjM5… --slug AbCdEf
+    HIPPO_PG_DSN=… python3 scripts/replay_article_documents.py --force --biz MjM5…
+    HIPPO_PG_DSN=… python3 scripts/replay_article_documents.py --check         # 只校验不写
 """
 
 from __future__ import annotations
@@ -25,13 +35,15 @@ from hippo.downloader import _attach_image_block_metadata, _parse_markdown_block
 from hippo.storage import PostgresStorage
 from hippo.wechat_parser import _postprocess_markdown
 
-CANDIDATE_SQL = """
+BASE_SQL = """
 SELECT c.article_pk, d.raw_html
   FROM article_content c
   JOIN article_document d ON d.article_pk = c.article_pk
- WHERE (c.content_markdown IS NULL OR btrim(c.content_markdown) = '')
-   AND d.raw_html IS NOT NULL
+  JOIN articles a ON a.id = c.article_pk
+ WHERE d.raw_html IS NOT NULL
    AND btrim(d.raw_html) <> ''
+   AND {filters}
+   AND c.article_pk > %s
  ORDER BY c.article_pk
  LIMIT %s
 """
@@ -42,12 +54,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--pg-dsn', default=os.environ.get('HIPPO_PG_DSN'))
     p.add_argument('--batch-size', type=int, default=200)
     p.add_argument('--limit', type=int, default=None, help='本次最多处理多少篇')
+    p.add_argument('--biz', default=None, help='只重放这个账号（accounts.biz）')
+    p.add_argument('--slug', default=None, help='只重放这一篇（文章短链 slug，需配合 --biz）')
+    p.add_argument('--force', action='store_true', help='连已有 markdown 的一起重放')
+    p.add_argument('--check', action='store_true', help='只校验 raw_html 能否渲染出内容，不写库')
     p.add_argument('--dry-run', action='store_true')
     return p.parse_args()
 
 
 def log(message: str) -> None:
-    print(f'[backfill md] {message}', file=sys.stderr, flush=True)
+    print(f'[replay] {message}', file=sys.stderr, flush=True)
 
 
 def main() -> int:
@@ -56,20 +72,35 @@ def main() -> int:
         log('缺少 HIPPO_PG_DSN / --pg-dsn')
         return 2
 
+    filters = []
+    params: list = []
+    if not args.force:
+        filters.append("(c.content_markdown IS NULL OR btrim(c.content_markdown) = '')")
+    if args.biz:
+        filters.append('a.biz = %s')
+        params.append(args.biz)
+    if args.slug:
+        filters.append("a.link LIKE '%%/s/' || %s")
+        params.append(args.slug)
+    where = ' AND '.join(filters) if filters else 'TRUE'
+
     storage = PostgresStorage(args.pg_dsn)
     done = failed = 0
+    cursor = 0
     while args.limit is None or done + failed < args.limit:
         batch = args.batch_size
         if args.limit is not None:
             batch = min(batch, args.limit - done - failed)
         if batch <= 0:
             break
+        query = BASE_SQL.format(filters=where)
         with storage.conn.cursor() as cur:
-            cur.execute(CANDIDATE_SQL, (batch,))
+            cur.execute(query, (*params, cursor, batch))
             rows = cur.fetchall()
         storage.rollback()
         if not rows:
             break
+        cursor = int(rows[-1][0])
 
         article_pks = [int(row[0]) for row in rows]
         with storage.conn.cursor() as cur:
@@ -98,6 +129,14 @@ def main() -> int:
                 log(f'✗ 文章 {article_pk} 渲染失败：{exc}')
                 failed += 1
 
+        if args.check:
+            empty = len(rows) - len(updates)
+            log(f'check：本批 {len(rows)} 篇，可渲染 {len(updates)}，渲染为空 {empty}')
+            done += len(updates)
+            failed += empty
+            if args.limit is not None:
+                break
+            continue
         if args.dry_run:
             log(f'dry-run：本批可更新 {len(updates)} 篇')
             done += len(updates)
