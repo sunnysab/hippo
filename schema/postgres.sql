@@ -92,7 +92,8 @@ BEGIN
     IF TG_OP = 'INSERT' AND NEW.id IS NULL THEN
         content_text := '';
     ELSE
-        SELECT COALESCE(c.content_markdown, c.clean_html, '')
+        -- 只认派生内容：原始 HTML 已搬到 article_document
+        SELECT COALESCE(c.content_markdown, '')
         INTO content_text
         FROM article_content c
         WHERE c.article_pk = NEW.id;
@@ -122,7 +123,7 @@ BEGIN
         title,
         author,
         digest,
-        COALESCE(NEW.content_markdown, NEW.clean_html, '')
+        COALESCE(NEW.content_markdown, '')
     )
     WHERE id = NEW.article_pk;
     RETURN NEW;
@@ -132,7 +133,7 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS trg_article_content_search_vector ON article_content;
 
 CREATE TRIGGER trg_article_content_search_vector
-AFTER INSERT OR UPDATE OF content_markdown, clean_html
+AFTER INSERT OR UPDATE OF content_markdown
 ON article_content
 FOR EACH ROW EXECUTE FUNCTION article_content_search_vector_trigger();
 
@@ -141,7 +142,7 @@ SET search_vector = build_article_search_vector(
     a.title,
     a.author,
     a.digest,
-    COALESCE(c.content_markdown, c.clean_html, '')
+    COALESCE(c.content_markdown, '')
 )
 FROM article_content c
 WHERE c.article_pk = a.id AND a.search_vector IS NULL;
@@ -238,46 +239,6 @@ ON accounts USING GIN (alias gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_accounts_biz_trgm
 ON accounts USING GIN (biz gin_trgm_ops);
 
-CREATE TABLE IF NOT EXISTS login_sessions (
-    id SERIAL PRIMARY KEY,
-    vid TEXT NOT NULL,
-    access_token TEXT NOT NULL,
-    refresh_token TEXT NOT NULL DEFAULT '',
-    device_id TEXT NOT NULL DEFAULT '',
-    nickname TEXT,
-    avatar TEXT,
-    is_default BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
-);
-
-ALTER TABLE login_sessions ADD COLUMN IF NOT EXISTS vid TEXT;
-ALTER TABLE login_sessions ADD COLUMN IF NOT EXISTS access_token TEXT;
-ALTER TABLE login_sessions ADD COLUMN IF NOT EXISTS refresh_token TEXT NOT NULL DEFAULT '';
-ALTER TABLE login_sessions ADD COLUMN IF NOT EXISTS device_id TEXT NOT NULL DEFAULT '';
-
--- WeRead credentials replaced the former MP token/cookies columns. Drop them
--- and any obsolete MP-era rows so the table is weread-only on existing installs.
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'login_sessions' AND column_name = 'token'
-    ) THEN
-        ALTER TABLE login_sessions DROP COLUMN token;
-    END IF;
-    IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'login_sessions' AND column_name = 'cookies_json'
-    ) THEN
-        ALTER TABLE login_sessions DROP COLUMN cookies_json;
-    END IF;
-END $$;
-
-DELETE FROM login_sessions WHERE vid IS NULL OR vid = '';
-
-CREATE INDEX IF NOT EXISTS idx_login_sessions_default_id_desc
-ON login_sessions (is_default, id DESC);
 
 CREATE OR REPLACE FUNCTION hippo_articles_account_count_trigger()
 RETURNS trigger AS $$
@@ -427,3 +388,41 @@ CREATE TABLE IF NOT EXISTS article_download_attempts (
 
 CREATE INDEX IF NOT EXISTS idx_article_download_attempts_biz_article
 ON article_download_attempts (biz, article_id);
+
+-- 原始文档存储：正文原文（content_noencode / 整页网页 HTML）与原始响应 JSON。
+-- 线上正文表 article_content 只保留派生内容（content_markdown + content_json），
+-- 原始数据放这里，解析逻辑出问题时可以从原文重放。
+CREATE TABLE IF NOT EXISTS article_document (
+    article_pk INTEGER PRIMARY KEY REFERENCES articles(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    url_token TEXT,
+    raw_html TEXT,
+    raw_json JSONB,
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_article_document_source
+ON article_document (source);
+
+-- 列表阶段的待抓正文队列：列表只给长链（会失效），所以先入队，
+-- 等详情（short_link）回来后才建 articles 行，避免长链落进 articles.link。
+CREATE TABLE IF NOT EXISTS article_queue (
+    id BIGSERIAL PRIMARY KEY,
+    biz TEXT NOT NULL,
+    sn TEXT NOT NULL,
+    appmsg_id TEXT,
+    long_link TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    retryable BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (biz, sn)
+);
+
+CREATE INDEX IF NOT EXISTS idx_article_queue_state
+ON article_queue (state, id);

@@ -12,8 +12,8 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-from .models import AccountCredential, AccountGroup, ArticleRecord, LoginSession
-from .utils import build_set_clause, to_utc_dt, utc_now_dt
+from .models import AccountCredential, AccountGroup, ArticleRecord
+from .utils import build_set_clause, utc_now_dt
 
 
 @dataclass(frozen=True)
@@ -25,8 +25,7 @@ class ArticleImageTarget:
 
 ARTICLE_CONTENT_PRESENT_SQL = """
 (
-    (c.clean_html IS NOT NULL AND btrim(c.clean_html) <> '')
-    OR (c.content_markdown IS NOT NULL AND btrim(c.content_markdown) <> '')
+    (c.content_markdown IS NOT NULL AND btrim(c.content_markdown) <> '')
     OR (c.content_json IS NOT NULL AND c.content_json::text NOT IN ('[]', 'null'))
 )
 """
@@ -453,127 +452,6 @@ class GroupRepository:
         ]
 
 
-class LoginSessionRepository:
-    def __init__(self, conn: psycopg.Connection) -> None:
-        self._conn = conn
-
-    def save_login_session(self, session: LoginSession, *, set_default: bool = True) -> LoginSession:
-        now = utc_now_dt()
-        with self._conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
-                'SELECT id FROM login_sessions WHERE vid = %s ORDER BY id DESC LIMIT 1',
-                (session.vid,),
-            )
-            row = cur.fetchone()
-            if row is not None:
-                cur.execute(
-                    """
-                    UPDATE login_sessions
-                    SET access_token = %s,
-                        refresh_token = %s,
-                        device_id = %s,
-                        nickname = %s,
-                        avatar = %s,
-                        is_default = %s,
-                        updated_at = %s
-                    WHERE id = %s
-                    """,
-                    (
-                        session.access_token,
-                        session.refresh_token,
-                        session.device_id,
-                        session.nickname,
-                        session.avatar,
-                        bool(set_default),
-                        now,
-                        row['id'],
-                    ),
-                )
-            else:
-                cur.execute(
-                    """
-                    INSERT INTO login_sessions
-                        (vid, access_token, refresh_token, device_id,
-                         nickname, avatar, is_default, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        session.vid,
-                        session.access_token,
-                        session.refresh_token,
-                        session.device_id,
-                        session.nickname,
-                        session.avatar,
-                        bool(set_default),
-                        now,
-                        now,
-                    ),
-                )
-        return self.get_login_session()
-
-    def update_tokens(self, vid: str, access_token: str, refresh_token: str) -> None:
-        now = utc_now_dt()
-        with self._conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE login_sessions
-                SET access_token = %s,
-                    refresh_token = %s,
-                    updated_at = %s
-                WHERE vid = %s
-                """,
-                (access_token, refresh_token, now, vid),
-            )
-
-    def clear_sessions(self) -> None:
-        with self._conn.cursor() as cur:
-            cur.execute('DELETE FROM login_sessions')
-
-    def reset_login_session_sequence(self) -> None:
-        with self._conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT setval(
-                    pg_get_serial_sequence('login_sessions', 'id'),
-                    COALESCE((SELECT MAX(id) FROM login_sessions), 1),
-                    (SELECT COUNT(*) FROM login_sessions) > 0
-                )
-                """
-            )
-
-    def get_login_session(self) -> LoginSession:
-        with self._conn.cursor(row_factory=dict_row) as cur:
-            cur.execute('SELECT * FROM login_sessions WHERE is_default = TRUE ORDER BY id DESC LIMIT 1')
-            row = cur.fetchone()
-        if not row or not row.get('vid'):
-            raise LookupError('No WeRead credential found. Run `hippo login` to import one.')
-        return LoginSession(
-            vid=row['vid'],
-            access_token=row['access_token'],
-            refresh_token=row.get('refresh_token') or '',
-            device_id=row.get('device_id') or '',
-            nickname=row.get('nickname'),
-            avatar=row.get('avatar'),
-        )
-
-    def get_login_updated_at(self) -> datetime | None:
-        with self._conn.cursor(row_factory=dict_row) as cur:
-            cur.execute('SELECT updated_at FROM login_sessions WHERE is_default = TRUE ORDER BY id DESC LIMIT 1')
-            row = cur.fetchone()
-        if not row:
-            return None
-        updated_at = row.get('updated_at')
-        if isinstance(updated_at, str):
-            try:
-                parsed = datetime.fromisoformat(updated_at)
-            except ValueError:
-                return None
-            return to_utc_dt(parsed)
-        if isinstance(updated_at, datetime):
-            return to_utc_dt(updated_at)
-        return None
-
-
 class ArticleRepository:
     def __init__(self, conn: psycopg.Connection) -> None:
         self._conn = conn
@@ -761,12 +639,12 @@ class ArticleRepository:
         url_token: str | None,
         title: str,
         item_show_type: int | None,
-        clean_html: str,
         content_markdown: str,
         content_blocks: list[dict],
         cover_url: str | None,
         images: list[dict],
-    ) -> None:
+    ) -> int:
+        """写入正文（markdown + blocks）；返回 ``articles.id``（写文档表要用）。"""
         now = utc_now_dt()
         normalized_cover: str | None = None
         with self._conn.cursor() as cur:
@@ -861,11 +739,10 @@ class ArticleRepository:
             cur.execute(
                 """
                 INSERT INTO article_content
-                    (article_pk, url_token, clean_html, content_markdown, content_json, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    (article_pk, url_token, content_markdown, content_json, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (article_pk) DO UPDATE SET
                     url_token=EXCLUDED.url_token,
-                    clean_html=EXCLUDED.clean_html,
                     content_markdown=EXCLUDED.content_markdown,
                     content_json=EXCLUDED.content_json,
                     updated_at=EXCLUDED.updated_at
@@ -873,7 +750,6 @@ class ArticleRepository:
                 (
                     article_pk,
                     url_token,
-                    clean_html,
                     content_markdown,
                     Json(updated_blocks),
                     now,
@@ -890,6 +766,7 @@ class ArticleRepository:
                     'UPDATE articles SET cover = NULL, updated_at = %s WHERE id = %s',
                     (now, article_pk),
                 )
+        return article_pk
 
     def has_article_content(self, biz: str, article_id: str) -> bool:
         with self._conn.cursor() as cur:
@@ -1226,13 +1103,164 @@ def _row_to_article(row: dict[str, Any]) -> ArticleRecord:
     return ArticleRecord.model_validate(data)
 
 
+class ArticleDocumentRepository:
+    """`article_document`：原始正文/响应，与线上正文表分开存。"""
+
+    def __init__(self, conn: psycopg.Connection) -> None:
+        self._conn = conn
+
+    def save(
+        self,
+        *,
+        article_pk: int,
+        source: str,
+        url_token: str | None = None,
+        raw_html: str | None = None,
+        raw_json: Any | None = None,
+    ) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO article_document
+                    (article_pk, source, url_token, raw_html, raw_json, fetched_at, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, NOW(), NOW(), NOW())
+                ON CONFLICT (article_pk) DO UPDATE SET
+                    source = EXCLUDED.source,
+                    url_token = COALESCE(EXCLUDED.url_token, article_document.url_token),
+                    raw_html = COALESCE(EXCLUDED.raw_html, article_document.raw_html),
+                    raw_json = COALESCE(EXCLUDED.raw_json, article_document.raw_json),
+                    fetched_at = EXCLUDED.fetched_at,
+                    updated_at = NOW()
+                """,
+                (
+                    article_pk,
+                    source,
+                    url_token,
+                    raw_html,
+                    Json(raw_json) if raw_json is not None else None,
+                ),
+            )
+
+    def get(self, article_pk: int) -> dict[str, Any] | None:
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                'SELECT article_pk, source, url_token, raw_html, raw_json, fetched_at, updated_at '
+                'FROM article_document WHERE article_pk = %s',
+                (article_pk,),
+            )
+            return cur.fetchone()
+
+
+class ArticleQueueRepository:
+    """`article_queue`：列表阶段入队，拿到短链后才建 articles 行。
+
+    列表接口只给长链（``chksm``/``sessionid`` 会失效），所以先用 ``(biz, sn)``
+    在队列表里去重排队，正文阶段拿到 ``short_link`` 再写 ``articles.link``。
+    """
+
+    def __init__(self, conn: psycopg.Connection) -> None:
+        self._conn = conn
+
+    def enqueue_many(self, items: Iterable[dict[str, Any]]) -> int:
+        """入队（已存在的 ``(biz, sn)`` 不重置状态）。返回新增条数。"""
+        rows = [
+            (
+                item['biz'],
+                item['sn'],
+                item.get('appmsg_id'),
+                item['long_link'],
+                Json(item.get('payload') or {}),
+            )
+            for item in items
+        ]
+        if not rows:
+            return 0
+        with self._conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO article_queue (biz, sn, appmsg_id, long_link, payload, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
+                ON CONFLICT (biz, sn) DO NOTHING
+                """,
+                rows,
+            )
+            return cur.rowcount
+
+    def take_pending(self, limit: int, *, biz: str | None = None) -> list[dict[str, Any]]:
+        """原子领取一批：直接标 ``processing`` 并返回（不跨网络请求持锁）。"""
+        query = (
+            "UPDATE article_queue SET state = 'processing', updated_at = NOW() "
+            'WHERE id IN (SELECT id FROM article_queue WHERE state = %s'
+        )
+        params: list[Any] = ['pending']
+        if biz:
+            query += ' AND biz = %s'
+            params.append(biz)
+        query += ' ORDER BY id LIMIT %s) RETURNING id, biz, sn, appmsg_id, long_link, payload, attempts'
+        params.append(limit)
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(query, params)
+            return list(cur.fetchall())
+
+    def requeue_stale(self, older_than_secs: int = 900) -> int:
+        """把卡在 ``processing`` 的（worker 崩溃）退回 ``pending``。"""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE article_queue
+                   SET state = 'pending', updated_at = NOW(),
+                       last_error = COALESCE(last_error, 'worker 中断，已重排')
+                 WHERE state = 'processing'
+                   AND updated_at < NOW() - make_interval(secs => %s)
+                """,
+                (older_than_secs,),
+            )
+            return cur.rowcount
+
+    def mark_done(self, queue_ids: Iterable[int]) -> int:
+        ids = list(queue_ids)
+        if not ids:
+            return 0
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "UPDATE article_queue SET state = 'done', updated_at = NOW() WHERE id = ANY(%s)",
+                (ids,),
+            )
+            return cur.rowcount
+
+    def mark_failed(self, queue_ids: Iterable[int], *, error: str, retryable: bool) -> int:
+        ids = list(queue_ids)
+        if not ids:
+            return 0
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE article_queue
+                   SET attempts = attempts + 1,
+                       last_error = %s,
+                       retryable = %s,
+                       state = CASE WHEN %s THEN 'pending' ELSE 'failed' END,
+                       updated_at = NOW()
+                 WHERE id = ANY(%s)
+                """,
+                (error[:1000], retryable, retryable, ids),
+            )
+            return cur.rowcount
+
+    def stats(self) -> dict[str, int]:
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute('SELECT state, COUNT(*) AS n FROM article_queue GROUP BY state')
+            return {str(row['state']): int(row['n']) for row in cur.fetchall()}
+
+
 __all__ = [
     'AccountRepository',
+    'ArticleDocumentRepository',
     'ArticleImageTarget',
+    'ArticleQueueRepository',
     'ArticleRepository',
     'DownloadAttemptRepository',
     'GroupRepository',
     'ImageRepository',
-    'LoginSessionRepository',
     'MetaRepository',
 ]

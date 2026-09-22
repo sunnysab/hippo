@@ -17,11 +17,12 @@ from psycopg_pool import ConnectionPool
 from .models import AccountGroup
 from .repositories import (
     AccountRepository,
+    ArticleDocumentRepository,
+    ArticleQueueRepository,
     ArticleRepository,
     DownloadAttemptRepository,
     GroupRepository,
     ImageRepository,
-    LoginSessionRepository,
     MetaRepository,
 )
 from .sync_jobs import SyncJobRepository
@@ -157,8 +158,9 @@ class PostgresStorage(AbstractContextManager):
         self.meta = MetaRepository(self.conn)
         self.groups = GroupRepository(self.conn)
         self.accounts = AccountRepository(self.conn, group_repo=self.groups)
-        self.sessions = LoginSessionRepository(self.conn)
         self.articles = ArticleRepository(self.conn)
+        self.documents = ArticleDocumentRepository(self.conn)
+        self.article_queue = ArticleQueueRepository(self.conn)
         self.images = ImageRepository(self.conn)
         self.download_attempts = DownloadAttemptRepository(self.conn)
         self.sync_jobs = SyncJobRepository(self.conn)
