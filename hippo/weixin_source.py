@@ -64,6 +64,8 @@ class FetchedArticle:
     title: str
     author: str
     digest: str
+    user_name: str
+    nick_name: str
     publish_time: int
     html: str
     images: list[str]
@@ -81,6 +83,8 @@ class FetchedArticle:
             title=d.get('title', ''),
             author=d.get('author', ''),
             digest=d.get('digest', ''),
+            user_name=d.get('user_name', ''),
+            nick_name=d.get('nick_name', ''),
             publish_time=int(d.get('publish_time') or 0),
             html=d.get('html', ''),
             images=list(d.get('images') or []),
