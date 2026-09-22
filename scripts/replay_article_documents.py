@@ -43,6 +43,10 @@ SELECT c.article_pk, d.raw_html
  WHERE d.raw_html IS NOT NULL
    AND btrim(d.raw_html) <> ''
    AND {filters}
+   AND NOT EXISTS (
+       SELECT 1 FROM article_download_attempts t
+        WHERE t.biz = a.biz AND t.article_id = a.article_id AND NOT t.retryable
+   )
    AND c.article_pk > %s
  ORDER BY c.article_pk
  LIMIT %s
@@ -60,6 +64,25 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--check', action='store_true', help='只校验 raw_html 能否渲染出内容，不写库')
     p.add_argument('--dry-run', action='store_true')
     return p.parse_args()
+
+
+def mark_skipped(storage: PostgresStorage, article_pk: int, reason: str) -> None:
+    """记一笔不可重试的尝试，好让候选查询下次跳过它（否则会反复取到同一批）。"""
+    with storage.transaction(), storage.conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO article_download_attempts
+                (biz, article_id, attempts, last_error, last_attempt_at, created_at, error_type, retryable)
+            SELECT a.biz, a.article_id, 1, %s, NOW(), NOW(), 'replay_empty', FALSE
+              FROM articles a WHERE a.id = %s
+            ON CONFLICT (biz, article_id) DO UPDATE SET
+                attempts = article_download_attempts.attempts + 1,
+                last_error = EXCLUDED.last_error,
+                last_attempt_at = NOW(),
+                retryable = FALSE
+            """,
+            (reason, article_pk),
+        )
 
 
 def log(message: str) -> None:
@@ -85,7 +108,7 @@ def main() -> int:
     where = ' AND '.join(filters) if filters else 'TRUE'
 
     storage = PostgresStorage(args.pg_dsn)
-    done = failed = 0
+    done = failed = skipped = 0
     cursor = 0
     while args.limit is None or done + failed < args.limit:
         batch = args.batch_size
@@ -152,7 +175,7 @@ def main() -> int:
         log(f'已补 {done} 篇（失败 {failed}）')
 
     storage.close()
-    log(f'完成：补 {done} 篇，失败 {failed} 篇')
+    log(f'完成：补 {done} 篇，跳过 {skipped} 篇（渲染不出文字），失败 {failed} 篇')
     return 0
 
 
