@@ -1,10 +1,14 @@
-"""Sync controller for account article synchronization."""
+"""Sync controller for account article synchronization.
+
+CLI 入口保持同步执行（跑完再退出），但内部语义和 worker 一致：列表阶段只把文章
+放进 ``article_queue``，正文由队列 drain 抓。tqdm 反映的是账号级进度。
+"""
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import Callable
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta
+from dataclasses import replace
 
 import typer
 from tqdm import tqdm
@@ -20,12 +24,14 @@ from ..sync_types import (
     NullSyncObserver,
     SyncAccountResult,
     SyncConfig,
-    SyncMode,
     SyncObserver,
     SyncReport,
     SyncSummary,
 )
 from ..utils import utc_now_iso
+
+# CLI 跑完一轮就退出，所以正文只顺带抓一批；常驻抓取是 worker 里 drain 循环的活
+CLI_BODY_BATCH = 5
 
 
 class _CliSyncJobObserver(NullSyncJobObserver):
@@ -40,39 +46,14 @@ class TqdmSyncObserver(NullSyncObserver):
     def __init__(self, progress: tqdm | None, account: AccountCredential) -> None:
         self._progress = progress
         self._account = account
-        self._saved = 0
 
     def on_log(self, message: str) -> None:
         _pbar_write(self._progress, message)
 
-    def on_progress(self, *, current: int | None, total: int | None, delta: int | None) -> None:
-        return None
-
-    def on_page(self, payload: dict[str, object]) -> None:
-        if self._progress is None:
-            return
-        saved = int(payload.get('saved') or 0)
-        if saved <= 0:
-            return
-        self._saved += saved
-        self._progress.total = self._saved
-        self._progress.n = self._saved
-        self._progress.refresh()
-
-    def on_complete(self, summary: SyncSummary) -> None:
-        if self._progress is None:
-            return
-        self._saved = summary.total_saved
-        if self._saved > 0:
-            self._progress.total = self._saved
-            self._progress.n = self._saved
-            self._progress.refresh()
-
     def on_skip(self, reason: str) -> None:
         if self._progress is None:
             return
-        label = _format_skip_reason(reason, self._account)
-        self._progress.set_postfix_str(label, refresh=True)
+        self._progress.set_postfix_str(_format_skip_reason(reason, self._account), refresh=True)
 
 
 def _enforce_exclusive_flags(force: bool, skip_minutes: int | None) -> None:
@@ -80,48 +61,17 @@ def _enforce_exclusive_flags(force: bool, skip_minutes: int | None) -> None:
         raise typer.BadParameter('--force 与 --skip-time 不能同时使用')
 
 
-def _format_last_synced(last_synced_at: datetime | None) -> str:
-    return last_synced_at.isoformat(timespec='seconds') if last_synced_at else '-'
-
-
 def _format_skip_reason(reason: str, account: AccountCredential) -> str:
     if reason == 'disabled':
         return '跳过(已禁用)'
-    if reason == 'completed_today':
-        return '跳过(今日已完成)'
     if reason == 'recently_synced':
-        last_synced = _format_last_synced(account.last_synced_at)
+        last_synced = account.last_synced_at.isoformat(timespec='seconds') if account.last_synced_at else '-'
         return f'跳过(近期已同步 {last_synced})'
-    if reason == 'freq_control':
-        return '跳过(频控)'
     if reason == 'sync_interval':
         return '跳过(未到同步周期)'
+    if reason == 'no_source_key':
+        return '跳过(没有可用的 gh_/alias)'
     return '跳过'
-
-
-def _parse_sync_date(value: str | None, *, label: str, end_of_day: bool = False) -> int | None:
-    if not value:
-        return None
-    try:
-        parsed = date.fromisoformat(value)
-    except ValueError as exc:
-        raise typer.BadParameter(f'{label} must be YYYY-MM-DD') from exc
-    dt = datetime(parsed.year, parsed.month, parsed.day)
-    if end_of_day:
-        dt = dt + timedelta(days=1) - timedelta(seconds=1)
-    return int(dt.timestamp())
-
-
-def _validate_cli_config(config: SyncConfig) -> None:
-    if config.mode == SyncMode.recent and config.recent_days is None:
-        raise typer.BadParameter('--recent-days is required for --mode recent.')
-    if config.mode == SyncMode.range:
-        if not config.since_date:
-            raise typer.BadParameter('--since is required for --mode range.')
-        since = _parse_sync_date(config.since_date, label='--since')
-        until = _parse_sync_date(config.until_date, label='--until', end_of_day=True)
-        if until is not None and since is not None and until < since:
-            raise typer.BadParameter('--until must be on or after --since.')
 
 
 def _status_label(saved: int, completed: bool) -> str:
@@ -130,6 +80,22 @@ def _status_label(saved: int, completed: bool) -> str:
     if completed:
         return '成功'
     return '未完成'
+
+
+def _build_sync_config(
+    *,
+    sleep_seconds: float,
+    force: bool,
+    skip_minutes: int | None,
+    max_pages: int | None = None,
+) -> SyncConfig:
+    _enforce_exclusive_flags(force, skip_minutes)
+    return SyncConfig(
+        sleep_seconds=max(sleep_seconds, 0.0),
+        force=force,
+        skip_minutes=skip_minutes,
+        max_pages=max_pages,
+    )
 
 
 def _append_cli_sync_history(
@@ -168,72 +134,30 @@ def _pbar_write(progress: tqdm | None, message: str) -> None:
         typer.echo(message)
 
 
-def _handle_login_expired() -> bool:
-    typer.echo('登录状态可能已失效，请先运行 `hippo login` 后重试同步。')
-    return False
-
-
 @asynccontextmanager
-async def _sync_error_handler(
-    storage: PostgresStorage,
-    *,
-    started_at: str,
-) -> AsyncGenerator[None]:
+async def _sync_error_handler(storage: PostgresStorage, *, started_at: str):
     try:
         yield
     except SyncRunError as exc:
-        finished_at = utc_now_iso()
-        status = 'login_required' if exc.login_required else 'failed'
         _append_cli_sync_history(
             storage,
             started_at=started_at,
-            finished_at=finished_at,
-            status=status,
+            finished_at=utc_now_iso(),
+            status='failed',
             saved=0,
             error=str(exc),
         )
         raise typer.Exit(code=1)
     except SyncInterrupted:
-        finished_at = utc_now_iso()
         _append_cli_sync_history(
             storage,
             started_at=started_at,
-            finished_at=finished_at,
+            finished_at=utc_now_iso(),
             status='failed',
             saved=0,
             error='Interrupted',
         )
         raise typer.Exit(code=130)
-
-
-def _build_sync_config(
-    *,
-    mode: SyncMode,
-    page_size: int,
-    sleep_seconds: float,
-    reset: bool,
-    recent_days: int | None,
-    since_date: str | None,
-    until_date: str | None,
-    force: bool,
-    skip_minutes: int | None,
-    max_pages: int | None = None,
-) -> SyncConfig:
-    return SyncConfig(
-        mode=mode,
-        page_size=page_size,
-        sleep_seconds=sleep_seconds,
-        reset=reset,
-        recent_days=recent_days,
-        since_date=since_date,
-        until_date=until_date,
-        force=force,
-        skip_minutes=skip_minutes,
-        download_content=False,
-        download_images=False,
-        content_limit=0,
-        max_pages=max_pages,
-    )
 
 
 async def perform_sync(
@@ -242,9 +166,8 @@ async def perform_sync(
     accounts: list[AccountCredential],
     config: SyncConfig,
     bulk: bool,
-    login_flow: Callable[..., Awaitable[None]] | None,
+    download: bool = True,
 ) -> SyncReport:
-    _enforce_exclusive_flags(config.force, config.skip_minutes)
     progress_map: dict[str, tqdm] = {}
     closed_progress_biz: set[str] = set()
     account_map = {account.biz: account for account in accounts}
@@ -260,50 +183,27 @@ async def perform_sync(
         progress = progress_map.get(biz)
         if progress is None:
             return
-        if failed:
+        if failed or (detail is not None and detail.failed):
             progress.set_postfix_str('失败', refresh=True)
-            progress.close()
-            closed_progress_biz.add(biz)
-            return
-        if detail is None:
-            return
-        skipped = detail.skipped
-        failed = detail.failed
-        skip_reason = detail.skip_reason
-        saved = detail.saved
-        completed = detail.completed
-        if failed:
-            progress.set_postfix_str('失败', refresh=True)
-        elif skipped:
+        elif detail is not None and detail.skipped:
             account = account_map.get(biz)
             if account:
-                progress.set_postfix_str(_format_skip_reason(str(skip_reason or ''), account), refresh=True)
-        else:
-            progress.set_postfix_str(_status_label(saved, completed), refresh=True)
+                progress.set_postfix_str(_format_skip_reason(str(detail.skip_reason or ''), account), refresh=True)
+        elif detail is not None:
+            progress.set_postfix_str(_status_label(detail.saved, detail.completed), refresh=True)
         progress.close()
         closed_progress_biz.add(biz)
 
     def observer_factory(account: AccountCredential, is_bulk: bool) -> SyncObserver:
         desc = f'同步 {account.nickname}' if not is_bulk else f'同步 {account.nickname} ({account.biz})'
-        progress = tqdm(
-            total=None,
-            desc=desc,
-            unit='msg',
-            dynamic_ncols=True,
-            leave=True,
-        )
+        progress = tqdm(total=None, desc=desc, unit='msg', dynamic_ncols=True, leave=True)
         progress_map[account.biz] = progress
         return TqdmSyncObserver(progress, account)
 
     report: SyncReport | None = None
-    container = build_sync_container(storage=storage, enable_download=False, enable_images=False)
+    container = build_sync_container(storage=storage, enable_download=download, enable_images=download)
     async with container as app:
-        service = ArticleSyncService(
-            storage=storage,
-            client=app.api_client,
-            login_flow=login_flow,
-            on_login_required=_handle_login_expired,
-        )
+        service = ArticleSyncService(storage=storage, weixin_sync=app.weixin_sync)
         try:
             cli_observer = _CliSyncJobObserver(
                 on_done=lambda result, _: close_account_progress(biz=result.biz, detail=result),
@@ -312,10 +212,14 @@ async def perform_sync(
                 accounts=accounts,
                 config=config,
                 bulk=bulk,
-                use_resume=bulk,
                 observer_factory=observer_factory,
                 observer=cli_observer,
             )
+            if download:
+                drained = await app.weixin_sync.drain(limit=CLI_BODY_BATCH)
+                report = replace(report, downloaded=report.downloaded + drained.ingested)
+                if app.downloader:
+                    await app.downloader.wait_for_images()
         finally:
             if report:
                 for detail in report.details:
@@ -333,29 +237,17 @@ async def sync_account_articles(
     *,
     biz: str | None,
     pages: int,
-    page_size: int,
     sleep_seconds: float,
-    mode: SyncMode,
-    recent_days: int | None,
-    since_date: str | None,
-    until_date: str | None,
     force: bool,
     skip_time: int | None,
-    login_flow: Callable[..., Awaitable[None]] | None,
+    download: bool = True,
 ) -> None:
     config = _build_sync_config(
-        mode=mode,
-        page_size=page_size,
         sleep_seconds=sleep_seconds,
-        reset=False,
-        recent_days=recent_days,
-        since_date=since_date,
-        until_date=until_date,
         force=force,
         skip_minutes=skip_time,
         max_pages=pages,
     )
-    _validate_cli_config(config)
     started_at = utc_now_iso()
     with open_storage() as storage:
         account = storage.accounts.get_account(biz)
@@ -366,45 +258,26 @@ async def sync_account_articles(
                 accounts=[account],
                 config=config,
                 bulk=False,
-                login_flow=login_flow,
+                download=download,
             )
-            finished_at = utc_now_iso()
             _append_cli_sync_history(
                 storage,
                 started_at=started_at,
-                finished_at=finished_at,
+                finished_at=utc_now_iso(),
                 status='success',
                 saved=report.total_saved,
             )
-    if report.summary:
-        typer.echo(f'同步完成，共新增 {report.total_saved} 条记录')
+    typer.echo(f'同步完成，新入队 {report.total_saved} 篇，正文落库 {report.downloaded} 篇')
 
 
 async def sync_all_accounts(
     *,
-    page_size: int,
     sleep_seconds: float,
-    reset: bool,
-    mode: SyncMode,
-    recent_days: int | None,
-    since_date: str | None,
-    until_date: str | None,
     force: bool,
     skip_time: int | None,
-    login_flow: Callable[..., Awaitable[None]] | None,
+    download: bool = True,
 ) -> None:
-    config = _build_sync_config(
-        mode=mode,
-        page_size=page_size,
-        sleep_seconds=sleep_seconds,
-        reset=reset,
-        recent_days=recent_days,
-        since_date=since_date,
-        until_date=until_date,
-        force=force,
-        skip_minutes=skip_time,
-    )
-    _validate_cli_config(config)
+    config = _build_sync_config(sleep_seconds=sleep_seconds, force=force, skip_minutes=skip_time)
 
     with open_storage() as storage:
         accounts = storage.accounts.list_accounts()
@@ -412,13 +285,7 @@ async def sync_all_accounts(
             typer.echo('尚未保存任何账号，使用 `account add` 添加')
             return
 
-        header = '开始同步全部账号（从最新文章往更早翻页）'
-        if reset:
-            header = '开始同步全部账号（重置断点，从最新文章往更早翻页）'
-        if sleep_seconds > 0:
-            header += f' 每页间隔 {sleep_seconds} 秒'
-        typer.echo(header)
-
+        typer.echo(f'开始同步全部账号（{len(accounts)} 个，列表间隔 {config.sleep_seconds:g} 秒）')
         started_at = utc_now_iso()
         async with _sync_error_handler(storage, started_at=started_at):
             report = await perform_sync(
@@ -426,51 +293,32 @@ async def sync_all_accounts(
                 accounts=accounts,
                 config=config,
                 bulk=True,
-                login_flow=login_flow,
+                download=download,
             )
-            finished_at = utc_now_iso()
             _append_cli_sync_history(
                 storage,
                 started_at=started_at,
-                finished_at=finished_at,
+                finished_at=utc_now_iso(),
                 status='success',
                 saved=report.total_saved,
             )
 
-    typer.echo(f'全部账号同步完成，共新增 {report.total_saved} 条记录')
+    typer.echo(f'全部账号同步完成，新入队 {report.total_saved} 篇，正文落库 {report.downloaded} 篇')
 
 
 async def sync_group_accounts(
     *,
     group: str,
-    page_size: int,
     sleep_seconds: float,
-    reset: bool,
-    mode: SyncMode,
-    recent_days: int | None,
-    since_date: str | None,
-    until_date: str | None,
     force: bool,
     skip_time: int | None,
-    login_flow: Callable[..., Awaitable[None]] | None,
+    download: bool = True,
 ) -> None:
-    config = _build_sync_config(
-        mode=mode,
-        page_size=page_size,
-        sleep_seconds=sleep_seconds,
-        reset=reset,
-        recent_days=recent_days,
-        since_date=since_date,
-        until_date=until_date,
-        force=force,
-        skip_minutes=skip_time,
-    )
-    _validate_cli_config(config)
+    config = _build_sync_config(sleep_seconds=sleep_seconds, force=force, skip_minutes=skip_time)
 
     with open_storage() as storage:
         groups = storage.groups.list_groups()
-        target = next((item for item in groups if item.name == group), None)
-        if not target:
+        if not any(item.name == group for item in groups):
             typer.echo('分组不存在，请先创建分组')
             return
         accounts = storage.accounts.list_accounts(group=group)
@@ -478,13 +326,7 @@ async def sync_group_accounts(
             typer.echo('分组内暂无账号')
             return
 
-        header = f'开始同步分组 {group}（从最新文章往更早翻页）'
-        if reset:
-            header = f'开始同步分组 {group}（重置断点，从最新文章往更早翻页）'
-        if sleep_seconds > 0:
-            header += f' 每页间隔 {sleep_seconds} 秒'
-        typer.echo(header)
-
+        typer.echo(f'开始同步分组 {group}（{len(accounts)} 个，列表间隔 {config.sleep_seconds:g} 秒）')
         started_at = utc_now_iso()
         async with _sync_error_handler(storage, started_at=started_at):
             report = await perform_sync(
@@ -492,18 +334,17 @@ async def sync_group_accounts(
                 accounts=accounts,
                 config=config,
                 bulk=True,
-                login_flow=login_flow,
+                download=download,
             )
-            finished_at = utc_now_iso()
             _append_cli_sync_history(
                 storage,
                 started_at=started_at,
-                finished_at=finished_at,
+                finished_at=utc_now_iso(),
                 status='success',
                 saved=report.total_saved,
             )
 
-    typer.echo(f'分组 {group} 同步完成，共新增 {report.total_saved} 条记录')
+    typer.echo(f'分组 {group} 同步完成，新入队 {report.total_saved} 篇，正文落库 {report.downloaded} 篇')
 
 
-__all__ = ['SyncMode', 'sync_account_articles', 'sync_all_accounts', 'sync_group_accounts']
+__all__ = ['perform_sync', 'sync_account_articles', 'sync_all_accounts', 'sync_group_accounts']

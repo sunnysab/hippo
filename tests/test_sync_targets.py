@@ -79,18 +79,9 @@ class _FakeWeixinSync:
 
 def _config(**overrides) -> SyncConfig:
     base = {
-        'mode': None,
-        'page_size': 10,
         'sleep_seconds': 15.0,
-        'reset': False,
-        'recent_days': None,
-        'since_date': None,
-        'until_date': None,
         'force': True,
         'skip_minutes': None,
-        'download_content': False,
-        'download_images': False,
-        'content_limit': None,
     }
     base.update(overrides)
     return SyncConfig(**base)
@@ -142,12 +133,11 @@ class LastSyncedTest(unittest.TestCase):
             sync_interval_days=None,
         )
 
-        result, _, summary = asyncio.run(
+        result, summary = asyncio.run(
             service.sync_account(
                 account=account,
                 config=_config(),
                 bulk=True,
-                use_resume=True,
                 observer=NullSyncObserver(),
             )
         )
@@ -177,12 +167,11 @@ class LastSyncedTest(unittest.TestCase):
             sync_interval_days=None,
         )
 
-        result, _, summary = asyncio.run(
+        result, summary = asyncio.run(
             service.sync_account(
                 account=account,
                 config=_config(),
                 bulk=True,
-                use_resume=True,
                 observer=NullSyncObserver(),
             )
         )

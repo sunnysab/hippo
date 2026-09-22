@@ -25,7 +25,6 @@ ARTICLE_SORT_RELEVANCE_DESC = 'relevance_desc'
 _ARTICLE_SORT_VALUES = {ARTICLE_SORT_PUBLISH_AT_DESC, ARTICLE_SORT_RELEVANCE_DESC}
 _ITEM_SHOW_TYPE_VALUES = {0, 5, 6, 7, 8, 10, 11, 17}
 _ARTICLE_EXCLUDE_KEYWORD_LIMIT = 20
-_SYNC_MODES = {'incremental', 'recent', 'full', 'range'}
 
 
 def _build_item_show_type_where_clause(item_show_type: int) -> tuple[str, list[int]]:
@@ -53,29 +52,6 @@ def _normalize_item_show_type(value: Any) -> int | None:
     if normalized not in _ITEM_SHOW_TYPE_VALUES:
         raise ApiError('Invalid item_show_type', status=400)
     return normalized
-
-
-def _normalize_sync_mode(value: Any) -> str | None:
-    if value in (None, ''):
-        return None
-    mode = str(value).strip().lower()
-    if not mode:
-        return None
-    if mode not in _SYNC_MODES:
-        raise ApiError('Invalid sync mode', status=400)
-    return mode
-
-
-def _normalize_recent_days(value: Any) -> int | None:
-    if value in (None, ''):
-        return None
-    try:
-        days = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ApiError('Invalid recent days') from exc
-    if days < 1:
-        raise ApiError('Invalid recent days', status=400)
-    return days
 
 
 def _normalize_article_sort(value: str | None, *, has_query: bool) -> str:

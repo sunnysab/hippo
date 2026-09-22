@@ -37,9 +37,7 @@ from .article_queries import (
     _list_feed,
     _normalize_article_sort,
     _normalize_item_show_type,
-    _normalize_recent_days,
     _normalize_record,
-    _normalize_sync_mode,
     _parse_date,
     _split_article_exclude_keywords,
     _tokenize_query,
@@ -298,8 +296,6 @@ def _update_account(storage: PostgresStorage, biz: str, payload: dict[str, Any])
         'round_head_img': 'round_head_img',
         'group_id': 'group_id',
         'is_disabled': 'is_disabled',
-        'sync_mode': 'sync_mode',
-        'sync_recent_days': 'sync_recent_days',
         'sync_interval_days': 'sync_interval_days',
     }
     for key in mapping:
@@ -307,10 +303,6 @@ def _update_account(storage: PostgresStorage, biz: str, payload: dict[str, Any])
             value = payload[key]
             if key == 'is_disabled':
                 value = bool(value)
-            if key == 'sync_mode':
-                value = _normalize_sync_mode(value)
-            if key == 'sync_recent_days':
-                value = _normalize_recent_days(value)
             if key == 'sync_interval_days':
                 value = max(int(value), 1) if value is not None else None
             updates[key] = value
@@ -430,10 +422,6 @@ def update_group(
         if not name:
             raise ApiError('Group name is required')
         updates['name'] = name
-    if 'sync_mode' in body:
-        updates['sync_mode'] = _normalize_sync_mode(body.get('sync_mode'))
-    if 'sync_recent_days' in body:
-        updates['sync_recent_days'] = _normalize_recent_days(body.get('sync_recent_days'))
     return _update_group(storage, group_id, updates)
 
 
@@ -627,8 +615,6 @@ async def create_account(
     if group_id is None:
         default_group = ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
         group_id = default_group.id
-    sync_mode = _normalize_sync_mode(body.get('sync_mode'))
-    sync_recent_days = _normalize_recent_days(body.get('sync_recent_days'))
     with storage.transaction():
         account = storage.accounts.upsert_account(
             AccountCredential(
@@ -638,8 +624,6 @@ async def create_account(
                 gh_id=gh_id,
                 round_head_img=body.get('round_head_img'),
                 group_id=int(group_id) if group_id is not None else None,
-                sync_mode=sync_mode,
-                sync_recent_days=sync_recent_days,
             )
         )
     return _normalize_account_payload(
@@ -697,10 +681,6 @@ def batch_update_accounts(
     if not isinstance(biz_list, list) or not biz_list:
         raise ApiError('biz_list is required')
     updates: dict[str, Any] = {}
-    if 'sync_mode' in body:
-        updates['sync_mode'] = _normalize_sync_mode(body.get('sync_mode'))
-    if 'sync_recent_days' in body:
-        updates['sync_recent_days'] = _normalize_recent_days(body.get('sync_recent_days'))
     if 'sync_interval_days' in body:
         value = body['sync_interval_days']
         updates['sync_interval_days'] = max(int(value), 1) if value is not None else None

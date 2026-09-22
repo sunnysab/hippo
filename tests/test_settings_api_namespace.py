@@ -3,7 +3,6 @@ from pathlib import Path
 
 from hippo.server import router
 
-
 ROOT = Path(__file__).resolve().parent.parent
 SETTINGS_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'settings' / 'SettingsPage.tsx'
 SYNC_SETTINGS_PANEL = ROOT / 'frontend' / 'src' / 'pages' / 'settings' / 'SyncSettingsPanel.tsx'

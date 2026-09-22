@@ -17,11 +17,8 @@ import click
 import typer
 from tqdm import tqdm
 
-from .config import DEFAULT_PAGE_SIZE, DEFAULT_RECENT_DAYS, DEFAULT_SYNC_REQUEST_INTERVAL
+from .config import DEFAULT_RECENT_DAYS, DEFAULT_SYNC_REQUEST_INTERVAL
 from .container import build_downloader_container
-from .controllers.sync import (
-    SyncMode,
-)
 from .controllers.sync import (
     sync_account_articles as perform_account_sync,
 )
@@ -861,31 +858,18 @@ def list_groups() -> None:
 @coro
 async def sync_group(
     group: str = typer.Argument(..., help='Group name'),
-    page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help='每页抓取数量'),
-    sleep_seconds: float = typer.Option(DEFAULT_SYNC_REQUEST_INTERVAL, min=0, help='列表请求间隔秒数（可为小数）'),
-    reset: bool = typer.Option(False, is_flag=True, help='清除断点后从头同步'),
-    mode: SyncMode = typer.Option(SyncMode.full, '--mode', '-m', help='Sync mode: full, incremental, recent, range'),
-    recent_days: int | None = typer.Option(
-        None, '--recent-days', min=1, help='Sync the last N days (requires --mode recent)'
-    ),
-    since_date: str | None = typer.Option(None, '--since', help='Start date (YYYY-MM-DD, for range mode)'),
-    until_date: str | None = typer.Option(None, '--until', help='End date (YYYY-MM-DD, for range mode)'),
+    sleep_seconds: float = typer.Option(DEFAULT_SYNC_REQUEST_INTERVAL, min=0, help='账号之间的列表请求间隔秒数'),
     force: bool = typer.Option(False, is_flag=True, help='忽略跳过条件，强制同步'),
     skip_time: int | None = typer.Option(None, min=1, help='多少分钟内同步过则跳过'),
+    download: bool = typer.Option(True, '--download/--no-download', help='同步后顺带抓一批正文'),
 ) -> None:
     _require_nonempty(group, 'Please provide a group name.')
     await perform_group_sync(
         group=group,
-        page_size=page_size,
         sleep_seconds=sleep_seconds,
-        reset=reset,
-        mode=mode,
-        recent_days=recent_days,
-        since_date=since_date,
-        until_date=until_date,
         force=force,
         skip_time=skip_time,
-        login_flow=None,
+        download=download,
     )
 
 
@@ -974,37 +958,29 @@ def enable_account(
 @accounts_app.command('sync-config')
 def set_account_sync_config(
     account: str = typer.Argument(..., help='Account name, alias, or fakeid'),
-    mode: SyncMode | None = typer.Option(None, '--mode', help='Sync mode: full, incremental, recent, range'),
-    recent_days: int | None = typer.Option(None, '--recent-days', min=1, help='Recent days for recent mode'),
-    clear_recent_days: bool = typer.Option(
-        False, '--clear-recent-days', is_flag=True, help='Clear recent days override'
+    interval_days: int | None = typer.Option(None, '--interval-days', min=1, help='每 N 天同步一次'),
+    clear_interval_days: bool = typer.Option(
+        False, '--clear-interval-days', is_flag=True, help='清空间隔覆盖，改回按发文历史自动推导'
     ),
 ) -> None:
     _require_nonempty(account, 'Please provide an account name or fakeid.')
-    if clear_recent_days and recent_days is not None:
-        raise typer.BadParameter('Cannot use --recent-days with --clear-recent-days.')
+    if clear_interval_days and interval_days is not None:
+        raise typer.BadParameter('Cannot use --interval-days with --clear-interval-days.')
+    if interval_days is None and not clear_interval_days:
+        typer.echo('No sync settings provided.')
+        return
     with open_storage() as storage:
         try:
             target = _resolve_account(storage, account)
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
-        updates: dict[str, Any] = {}
-        if mode is not None:
-            updates['sync_mode'] = mode.value
-        if clear_recent_days:
-            updates['sync_recent_days'] = None
-        elif recent_days is not None:
-            updates['sync_recent_days'] = recent_days
-        if not updates:
-            typer.echo('No sync settings provided.')
-            return
-        if (mode == SyncMode.recent) and updates.get('sync_recent_days') is None and target.sync_recent_days is None:
-            raise typer.BadParameter('recent mode requires --recent-days.')
-        updated = target.model_copy(update=updates)
+        updated = target.model_copy(
+            update={'sync_interval_days': None if clear_interval_days else interval_days}
+        )
         with storage.transaction():
             storage.accounts.upsert_account(updated)
-    typer.echo(f'Account {target.nickname} ({target.biz}) sync settings updated.')
+    typer.echo(f'Account {target.nickname} ({target.biz}) sync interval updated.')
 
 
 # ---------------------------------------------------------------------------
@@ -1013,63 +989,35 @@ def set_account_sync_config(
 @coro
 async def sync_account_articles(
     biz: str | None = typer.Option(None, help='指定账号 fakeid，留空使用默认账号'),
-    pages: int = typer.Option(1, min=1, help='抓取的分页数量，每页默认 10 篇'),
-    page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help='每页抓取数量'),
-    mode: SyncMode = typer.Option(
-        SyncMode.incremental,
-        '--mode',
-        '-m',
-        help='Sync mode: full, incremental, recent, range',
-    ),
-    recent_days: int | None = typer.Option(
-        None, '--recent-days', min=1, help='Sync the last N days (requires --mode recent)'
-    ),
-    since_date: str | None = typer.Option(None, '--since', help='Start date (YYYY-MM-DD, for range mode)'),
-    until_date: str | None = typer.Option(None, '--until', help='End date (YYYY-MM-DD, for range mode)'),
+    pages: int = typer.Option(1, min=1, help='列表抓取的分页数量'),
+    sleep_seconds: float = typer.Option(DEFAULT_SYNC_REQUEST_INTERVAL, min=0, help='账号之间的列表请求间隔秒数'),
     force: bool = typer.Option(False, is_flag=True, help='忽略跳过条件，强制同步'),
     skip_time: int | None = typer.Option(None, min=1, help='多少分钟内同步过则跳过'),
+    download: bool = typer.Option(True, '--download/--no-download', help='同步后顺带抓一批正文'),
 ) -> None:
     await perform_account_sync(
         biz=biz,
         pages=pages,
-        page_size=page_size,
-        sleep_seconds=DEFAULT_SYNC_REQUEST_INTERVAL,
-        mode=mode,
-        recent_days=recent_days,
-        since_date=since_date,
-        until_date=until_date,
+        sleep_seconds=sleep_seconds,
         force=force,
         skip_time=skip_time,
-        login_flow=None,
+        download=download,
     )
 
 
 @accounts_app.command('sync-all')
 @coro
 async def sync_all_accounts(
-    page_size: int = typer.Option(DEFAULT_PAGE_SIZE, min=1, max=20, help='每页抓取数量'),
-    sleep_seconds: float = typer.Option(DEFAULT_SYNC_REQUEST_INTERVAL, min=0, help='列表请求间隔秒数（可为小数）'),
-    reset: bool = typer.Option(False, is_flag=True, help='清除断点后从头同步'),
-    mode: SyncMode = typer.Option(SyncMode.full, '--mode', '-m', help='Sync mode: full, incremental, recent, range'),
-    recent_days: int | None = typer.Option(
-        None, '--recent-days', min=1, help='Sync the last N days (requires --mode recent)'
-    ),
-    since_date: str | None = typer.Option(None, '--since', help='Start date (YYYY-MM-DD, for range mode)'),
-    until_date: str | None = typer.Option(None, '--until', help='End date (YYYY-MM-DD, for range mode)'),
+    sleep_seconds: float = typer.Option(DEFAULT_SYNC_REQUEST_INTERVAL, min=0, help='账号之间的列表请求间隔秒数'),
     force: bool = typer.Option(False, is_flag=True, help='忽略跳过条件，强制同步'),
     skip_time: int | None = typer.Option(None, min=1, help='多少分钟内同步过则跳过'),
+    download: bool = typer.Option(True, '--download/--no-download', help='同步后顺带抓一批正文'),
 ) -> None:
     await perform_all_sync(
-        page_size=page_size,
         sleep_seconds=sleep_seconds,
-        reset=reset,
-        mode=mode,
-        recent_days=recent_days,
-        since_date=since_date,
-        until_date=until_date,
         force=force,
         skip_time=skip_time,
-        login_flow=None,
+        download=download,
     )
 
 

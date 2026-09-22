@@ -2,7 +2,6 @@ import json
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parent.parent
 APP_SHELL = ROOT / 'frontend' / 'src' / 'components' / 'AppShell.tsx'
 TOP_BAR = ROOT / 'frontend' / 'src' / 'components' / 'TopBar.tsx'

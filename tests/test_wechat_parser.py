@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
-import json
 
 from hippo.downloader import _parse_markdown_blocks
 from hippo.wechat_parser import extract_cgi_data, parse_wechat_article
