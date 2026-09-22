@@ -12,6 +12,8 @@ BATCH_ACTIONS = ROOT / 'frontend' / 'src' / 'pages' / 'groups' / 'BatchActions.t
 GROUPS_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'groups' / 'GroupsPage.tsx'
 GROUP_HEADER = ROOT / 'frontend' / 'src' / 'pages' / 'groups' / 'GroupHeader.tsx'
 MEDIA_QUERY_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useMediaQuery.ts'
+ARTICLE_FILTER_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useArticleFilters.ts'
+ARTICLE_READER_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useArticleReader.ts'
 I18N_ZH = ROOT / 'frontend' / 'src' / 'i18n' / 'zh-CN.json'
 
 
@@ -23,27 +25,26 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertIn("else {\n        setLastSyncAt('');", source)
 
     def test_viewport_logic_uses_shared_media_query_hook(self) -> None:
+        # 视口判断收敛到 hooks：页面组件里不再直接碰 window.matchMedia
         hook_source = MEDIA_QUERY_HOOK.read_text(encoding='utf-8')
-        articles_page = ARTICLES_PAGE.read_text(encoding='utf-8')
-        article_filters = ARTICLE_FILTERS.read_text(encoding='utf-8')
-        batch_actions = BATCH_ACTIONS.read_text(encoding='utf-8')
-
         self.assertIn('window.matchMedia', hook_source)
-        self.assertNotIn('window.matchMedia', articles_page)
-        self.assertNotIn('window.matchMedia', article_filters)
-        self.assertNotIn('window.matchMedia', batch_actions)
-        self.assertIn('useMediaQuery', articles_page)
-        self.assertIn('useMediaQuery', article_filters)
-        self.assertIn('useMediaQuery', batch_actions)
+        for page in (ARTICLES_PAGE, ARTICLE_FILTERS, BATCH_ACTIONS):
+            self.assertNotIn('window.matchMedia', page.read_text(encoding='utf-8'))
+        reader_hook = ARTICLE_READER_HOOK.read_text(encoding='utf-8')
+        filters_hook = ARTICLE_FILTER_HOOK.read_text(encoding='utf-8')
+        self.assertIn('useMediaQuery', reader_hook)
+        self.assertIn('useMediaQuery', filters_hook)
 
-    def test_articles_page_limits_zero_delay_timers_to_route_sync(self) -> None:
+    def test_articles_page_defers_data_loading_to_hooks(self) -> None:
+        # 数据加载搬进了 useArticleFilters，页面只负责组合
         source = ARTICLES_PAGE.read_text(encoding='utf-8')
+        filters_hook = ARTICLE_FILTER_HOOK.read_text(encoding='utf-8')
 
         self.assertLessEqual(source.count('window.setTimeout(() => {'), 1)
-        self.assertIn('loadGroupOptions', source)
-        self.assertIn('loadAccountOptions(filters.groupId)', source)
-        self.assertIn('void loadArticles(nextFilters, true);', source)
-        self.assertIn('void resolveArticleTarget();', source)
+        self.assertIn('loadGroupOptions', filters_hook)
+        self.assertIn('loadAccountOptions(filters.groupId)', filters_hook)
+        self.assertIn('void loadArticles(nextFilters, true);', filters_hook)
+        self.assertIn('void resolveArticleTarget();', filters_hook)
 
     def test_i18n_keys_exist_for_reader_controls_and_copy_feedback(self) -> None:
         translations = json.loads(I18N_ZH.read_text(encoding='utf-8'))
