@@ -13,6 +13,11 @@ SDK 位置由 ``WEIXIN_SDK_PATH`` 指定（默认 ``/opt/weixin-rs/sdk/python``�
 
 from __future__ import annotations
 
+# RPC 超时：daemon 重启 / 网络断掉时，没有超时的调用会永久挂住（曾卡死 2.5 小时）。
+LIST_TIMEOUT_SECONDS = 120.0
+# 正文要等 daemon 的按篇闸门（还要休息），所以给得宽
+BODY_TIMEOUT_SECONDS = 900.0
+
 import os
 import sys
 from dataclasses import asdict, dataclass, field
@@ -154,7 +159,9 @@ class WeixinSource:
 
     async def _list_raw(self, source_key: str, pages: int) -> dict[str, Any]:
         """裸 RPC：响应顶层带着解析后的 ``biz``（``gh_…``），SDK 的高层封装会把它丢掉。"""
-        res = await self._bot.call('get_biz_articles', {'biz': source_key, 'pages': pages})
+        res = await self._bot.call(
+            'get_biz_articles', {'biz': source_key, 'pages': pages}, timeout=LIST_TIMEOUT_SECONDS
+        )
         return res if isinstance(res, dict) else {}
 
     async def list_articles(self, source_key: str, biz: str, pages: int = 1) -> ListedArticles:
@@ -188,7 +195,7 @@ class WeixinSource:
 
     async def fetch_bodies(self, urls: list[str]) -> list[FetchedArticle]:
         """批量抓正文（短链优先；daemon 负责节流与降级）。"""
-        bodies = await self._bot.get_article_bodies(list(urls))
+        bodies = await self._bot.get_article_bodies(list(urls), timeout=BODY_TIMEOUT_SECONDS)
         return [FetchedArticle.from_dict(asdict(body)) for body in bodies]
 
     async def search_public_accounts(self, keyword: str, offset: int = 0) -> list[dict[str, Any]]:
