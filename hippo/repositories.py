@@ -63,13 +63,14 @@ class AccountRepository:
         with self._conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO accounts (biz, nickname, alias, round_head_img,
+                INSERT INTO accounts (biz, nickname, alias, gh_id, round_head_img,
                                       group_id, is_disabled, sync_mode, sync_recent_days,
                                       sync_interval_days, last_synced_at, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (biz) DO UPDATE SET
                     nickname=EXCLUDED.nickname,
                     alias=EXCLUDED.alias,
+                    gh_id=COALESCE(EXCLUDED.gh_id, accounts.gh_id),
                     round_head_img=EXCLUDED.round_head_img,
                     updated_at=EXCLUDED.updated_at
                 """,
@@ -77,6 +78,7 @@ class AccountRepository:
                     account.biz,
                     account.nickname,
                     account.alias,
+                    account.gh_id,
                     account.round_head_img,
                     account.group_id,
                     account.is_disabled,
@@ -101,6 +103,15 @@ class AccountRepository:
             cur.execute(query, params)
             rows = cur.fetchall()
         return [_row_to_account(row) for row in rows]
+
+    def set_gh_id(self, biz: str, gh_id: str) -> int:
+        """缓存公众号的 gh_（列表接口只认它；解析一次就够了）。"""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                'UPDATE accounts SET gh_id = %s, updated_at = NOW() WHERE biz = %s',
+                (gh_id, biz),
+            )
+            return cur.rowcount
 
     def get_account(self, biz: str | None = None, *, fallback_to_default: bool = True) -> AccountCredential:
         row = None

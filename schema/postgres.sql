@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     biz TEXT PRIMARY KEY,
     nickname TEXT NOT NULL,
     alias TEXT,
+    gh_id TEXT,
     round_head_img TEXT,
     group_id INTEGER REFERENCES account_groups(id) ON DELETE SET NULL,
     is_disabled BOOLEAN NOT NULL DEFAULT FALSE,
@@ -36,6 +37,7 @@ CREATE INDEX IF NOT EXISTS idx_accounts_group
 ON accounts (group_id);
 
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS sync_interval_days INTEGER DEFAULT NULL;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS gh_id TEXT;
 
 CREATE TABLE IF NOT EXISTS articles (
     id SERIAL PRIMARY KEY,
