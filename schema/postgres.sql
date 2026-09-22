@@ -178,6 +178,7 @@ CREATE TABLE IF NOT EXISTS article_images (
     content_hash TEXT,
     content_type TEXT,
     s3_key TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
     failed_at TIMESTAMPTZ,
     failed_reason TEXT,
     updated_at TIMESTAMPTZ NOT NULL,
