@@ -16,6 +16,7 @@ class AccountCredential(HippoBaseModel):
     biz: str
     nickname: str
     alias: str | None = None
+    gh_id: str | None = None
     round_head_img: str | None = None
     is_disabled: bool = False
     last_synced_at: datetime | None = None
