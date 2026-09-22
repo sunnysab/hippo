@@ -7,25 +7,29 @@ import contextlib
 import logging
 import os
 import socket
+import time
 from datetime import UTC, datetime
 from typing import Any
 
 from .container import build_sync_container
 from .models import AccountCredential
-from .storage import PostgresStorage, open_storage
+from .storage import PostgresStorage, open_storage, save_meta_json
 from .sync_core import request_sync_cancel
 from .sync_service import (
     SyncJobResult,
     run_sync_job,
 )
 from .sync_settings import (
+    QUEUE_STATS_KEY,
     SYNC_STARTED_KEY,
+    WORKER_HEARTBEAT_KEY,
     _get_window_hours,
     _is_within_sync_window,
     get_sync_settings,
 )
 from .sync_tasks import _article_snapshot
 from .sync_types import AccountProgress, SyncAccountResult, SyncObserver, SyncSummary
+from .utils import utc_now_iso
 from .weixin_watch import watch_article_push
 
 logger = logging.getLogger(__name__)
@@ -39,6 +43,31 @@ DRAIN_POLL_SECONDS = 60.0
 IMAGE_BATCH = 30
 IMAGE_WORKERS = 2
 IMAGE_POLL_SECONDS = 120.0
+
+# 心跳/队列水位的进程内写库节流（多个循环都会调）
+_WORKER_STATE_MIN_INTERVAL = 30.0
+_last_worker_state_at = 0.0
+
+
+def publish_worker_state(storage: PostgresStorage) -> None:
+    """把 worker 心跳和队列水位写进 meta。
+
+    web 轮询 ``/api/settings/status`` 时直接读 meta，不用每次去扫 ``article_images``
+    那种百万行的表。主循环（5s）、正文 drain（60s）和图片回填（120s）都会调用，
+    进程内按 ``_WORKER_STATE_MIN_INTERVAL`` 节流，所以长任务期间心跳也不会断。
+    """
+    global _last_worker_state_at
+    now = time.monotonic()
+    if now - _last_worker_state_at < _WORKER_STATE_MIN_INTERVAL:
+        return
+    _last_worker_state_at = now
+    queue_stats = {
+        'articles': storage.article_queue.stats(),
+        'images': storage.images.count_backlog(),
+    }
+    with storage.transaction():
+        storage.meta.set(WORKER_HEARTBEAT_KEY, utc_now_iso())
+        save_meta_json(storage, QUEUE_STATS_KEY, queue_stats)
 
 
 class _WorkerProgressTracker:
@@ -356,6 +385,8 @@ async def _image_backfill_loop(
     """常驻图片队列消费：与正文抓取并行，互不干扰。"""
     while True:
         try:
+            with open_storage() as storage:
+                publish_worker_state(storage)
             await backfill_images_once(batch=batch)
         except asyncio.CancelledError:
             raise
@@ -369,6 +400,7 @@ async def _body_drain_loop(poll_interval: float = DRAIN_POLL_SECONDS) -> None:
     while True:
         try:
             with open_storage() as storage:
+                publish_worker_state(storage)
                 await drain_bodies_once(storage)
         except asyncio.CancelledError:
             raise
@@ -392,6 +424,7 @@ async def run_sync_worker(
     try:
         while True:
             with open_storage() as storage:
+                publish_worker_state(storage)
                 with storage.transaction():
                     recover_stale_running_jobs(storage)
                     maybe_enqueue_scheduled_job(storage)
@@ -410,6 +443,7 @@ __all__ = [
     'backfill_images_once',
     'drain_bodies_once',
     'maybe_enqueue_scheduled_job',
+    'publish_worker_state',
     'recover_stale_running_jobs',
     'run_sync_worker',
     'run_worker_once',

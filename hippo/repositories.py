@@ -1044,6 +1044,20 @@ class ImageRepository:
                 ),
             )
 
+    def count_backlog(self) -> dict[str, int]:
+        """待下载 / 已放弃的图片计数（由 worker 定期写进 meta，避免 web 轮询扫大表）。"""
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE (s3_key IS NULL OR s3_key = '') AND failed_at IS NULL) AS pending,
+                    COUNT(*) FILTER (WHERE (s3_key IS NULL OR s3_key = '') AND failed_at IS NOT NULL) AS failed
+                  FROM article_images
+                """
+            )
+            row = cur.fetchone() or {}
+        return {'pending': int(row.get('pending') or 0), 'failed': int(row.get('failed') or 0)}
+
     def list_s3_keys_for_account(self, biz: str) -> list[str]:
         with self._conn.cursor() as cur:
             cur.execute(
@@ -1271,9 +1285,39 @@ class ArticleQueueRepository:
             return cur.rowcount
 
     def stats(self) -> dict[str, int]:
+        """各状态计数，四个键恒定存在（缺状态补 0）。"""
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute('SELECT state, COUNT(*) AS n FROM article_queue GROUP BY state')
-            return {str(row['state']): int(row['n']) for row in cur.fetchall()}
+            counts = {str(row['state']): int(row['n']) for row in cur.fetchall()}
+        return {state: counts.get(state, 0) for state in ('pending', 'processing', 'failed', 'done')}
+
+    def list_failed(self, limit: int = 5) -> list[dict[str, Any]]:
+        """最近失败的队列项，附带账号昵称，供运维面板展示。"""
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT q.biz, a.nickname, q.sn, q.attempts, q.retryable, q.last_error, q.updated_at
+                  FROM article_queue q
+                  LEFT JOIN accounts a ON a.biz = q.biz
+                 WHERE q.state = 'failed'
+                 ORDER BY q.updated_at DESC
+                 LIMIT %s
+                """,
+                (max(int(limit), 1),),
+            )
+            rows = cur.fetchall()
+        return [
+            {
+                'biz': row['biz'],
+                'nickname': row['nickname'],
+                'sn': row['sn'],
+                'attempts': row['attempts'],
+                'retryable': row['retryable'],
+                'last_error': row['last_error'],
+                'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None,
+            }
+            for row in rows
+        ]
 
 
 __all__ = [

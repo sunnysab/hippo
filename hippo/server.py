@@ -54,9 +54,20 @@ from .emailer import get_email_settings, send_email, set_email_settings
 from .exceptions import ApiError
 from .models import AccountCredential
 from .rss import build_rss_xml, query_rss_items
-from .storage import PostgresStorage, ensure_default_group, fetchall_rows, fetchone_row, open_storage
+from .storage import (
+    PostgresStorage,
+    ensure_default_group,
+    fetchall_rows,
+    fetchone_row,
+    load_meta_json,
+    open_storage,
+)
 from .sync_core import request_sync_cancel
 from .sync_scheduler import SyncScheduler
+from .sync_settings import (
+    QUEUE_STATS_KEY,
+    WORKER_HEARTBEAT_KEY,
+)
 from .sync_settings import (
     get_sync_settings as load_sync_settings,
 )
@@ -1118,6 +1129,11 @@ def sync_status(
     if isinstance(history, list):
         normalized_limit = min(max(int(limit), 1), 50)
         payload['history'] = history[:normalized_limit]
+    # 队列水位由 worker 定期写进 meta（web 轮询不扫 article_images 那种大表）
+    queue = load_meta_json(storage, QUEUE_STATS_KEY, {}) or {}
+    queue['failed_items'] = storage.article_queue.list_failed(limit=5)
+    payload['queue'] = queue
+    payload['worker_heartbeat_at'] = storage.meta.get(WORKER_HEARTBEAT_KEY)
     return payload
 
 
