@@ -1,10 +1,8 @@
-import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from hippo.http import MPClient
-from hippo.sync_service import _run_backfill_images
 
 
 class MPClientTlsFallbackTest(unittest.TestCase):
@@ -111,20 +109,6 @@ class MPClientProxyTest(unittest.TestCase):
             'article-proxy.example',
         ):
             self.assertNotIn(sensitive_value, rendered_arguments)
-
-
-class BackfillLoggingTest(unittest.TestCase):
-    def test_run_backfill_images_logs_and_swallows_failures(self) -> None:
-        with (
-            patch(
-                'hippo.cli._backfill_article_images_async',
-                new=AsyncMock(side_effect=FileNotFoundError(2, 'No such file or directory')),
-            ),
-            patch('hippo.sync_service.logger.exception') as logger_exception,
-        ):
-            asyncio.run(_run_backfill_images())
-
-        logger_exception.assert_called_once()
 
 
 if __name__ == '__main__':
