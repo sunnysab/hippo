@@ -55,6 +55,14 @@ class QueuedArticle:
 
 
 @dataclass(slots=True)
+class ListedArticles:
+    """一次列表调用的结果：待抓队列项 + daemon 顺带解析出的 ``gh_``（可能为空）。"""
+
+    items: list[QueuedArticle]
+    gh_id: str | None = None
+
+
+@dataclass(slots=True)
 class FetchedArticle:
     """正文阶段的文章：``short_link`` / ``slug`` 已确定，正文即 ``html``。"""
 
@@ -144,16 +152,21 @@ class WeixinSource:
         if not status.get('logged_in'):
             raise RuntimeError('daemon 未登录，且 login_auto 未成功（需要人工扫码）')
 
-    async def list_articles(self, source_key: str, biz: str, pages: int = 1) -> list[QueuedArticle]:
-        """按 ``source_key``（微信号 alias 或 gh_）拉列表，返回待抓队列项。
+    async def _list_raw(self, source_key: str, pages: int) -> dict[str, Any]:
+        """裸 RPC：响应顶层带着解析后的 ``biz``（``gh_…``），SDK 的高层封装会把它丢掉。"""
+        res = await self._bot.call('get_biz_articles', {'biz': source_key, 'pages': pages})
+        return res if isinstance(res, dict) else {}
 
-        ``biz`` 是 PG ``accounts.biz``（``Mz…==``），只用于填充队列项——
-        daemon 的列表接口不认这个形状。
+    async def list_articles(self, source_key: str, biz: str, pages: int = 1) -> ListedArticles:
+        """按 ``source_key``（微信号 alias 或 gh_）拉列表。
+
+        ``biz`` 是 PG ``accounts.biz``（``Mz…==``），只用于填充队列项——daemon 的列表接口
+        不认这个形状。
         """
-        articles = await self._bot.get_biz_articles(source_key, pages=pages)
+        res = await self._list_raw(source_key, pages)
         out: list[QueuedArticle] = []
-        for article in articles:
-            long_link = article.canonical_url or article.url
+        for article in res.get('articles') or []:
+            long_link = str(article.get('canonical_url') or article.get('url') or '')
             sn = query_param(long_link, 'sn')
             if not sn:
                 continue
@@ -163,14 +176,15 @@ class WeixinSource:
                     sn=sn,
                     long_link=long_link,
                     payload={
-                        'title': article.title,
-                        'digest': article.digest,
-                        'publish_time': article.publish_time,
-                        'cover_url': article.cover_url,
+                        'title': article.get('title'),
+                        'digest': article.get('digest'),
+                        'publish_time': article.get('publish_time'),
+                        'cover_url': article.get('cover_url'),
                     },
                 )
             )
-        return out
+        gh_id = str(res.get('biz') or '').strip() or None
+        return ListedArticles(items=out, gh_id=gh_id)
 
     async def fetch_bodies(self, urls: list[str]) -> list[FetchedArticle]:
         """批量抓正文（短链优先；daemon 负责节流与降级）。"""
@@ -187,13 +201,13 @@ class WeixinSource:
         ``accounts.biz`` 全库都是 fakeid（``Mz…==``），而 daemon 的搜索只给 gh_，
         所以落库前必须先拿到这个号任意一篇文章的 URL（未关注的号可能拿不到）。
         """
-        articles = await self._bot.get_biz_articles(gh_id, pages=1)
-        for article in articles:
-            for link in (article.canonical_url, article.url):
-                biz = query_param(link, '__biz') if link else None
+        res = await self._list_raw(gh_id, 1)
+        for article in res.get('articles') or []:
+            for link in (article.get('canonical_url'), article.get('url')):
+                biz = query_param(str(link), '__biz') if link else None
                 if biz:
                     return biz
         raise RuntimeError(f'{gh_id} 暂无可用文章，拿不到 __biz（可能需要先关注）')
 
 
-__all__ = ['FetchedArticle', 'QueuedArticle', 'WeixinSource', 'load_bot_class', 'query_param']
+__all__ = ['FetchedArticle', 'ListedArticles', 'QueuedArticle', 'WeixinSource', 'load_bot_class', 'query_param']

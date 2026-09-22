@@ -33,8 +33,12 @@ async def enqueue_pushed_article(storage: PostgresStorage, push: Any) -> bool:
 
     with storage.conn.cursor() as cur:
         cur.execute(
-            'SELECT biz FROM accounts WHERE gh_id = %s AND NOT is_disabled LIMIT 1',
-            (gh_id,),
+            """
+            SELECT biz FROM accounts
+             WHERE NOT is_disabled AND (gh_id = %s OR nickname = %s)
+             LIMIT 1
+            """,
+            (gh_id, getattr(push, 'pub_name', '')),
         )
         row = cur.fetchone()
     storage.rollback()

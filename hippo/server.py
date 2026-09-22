@@ -611,13 +611,16 @@ async def create_account(
     for field in required:
         if not body.get(field):
             raise ApiError(f'{field} is required')
-    biz = str(body['biz'])
+    raw_biz = str(body['biz']).strip()
+    biz = raw_biz
     # 搜索接口只能给 gh_（daemon 的形状），而 accounts.biz 是 fakeid（``Mz…==``），
-    # 所以这里抓一页该号的文章、从 URL 的 __biz 回填。
-    if biz.startswith('gh_'):
+    # 所以这里抓一页该号的文章、从 URL 的 __biz 回填；同时把 gh_ 存下来供后续列表用。
+    gh_id: str | None = None
+    if raw_biz.startswith('gh_'):
+        gh_id = raw_biz
         try:
             async with WeixinSource() as source:
-                biz = await source.resolve_fakeid(biz)
+                biz = await source.resolve_fakeid(gh_id)
         except Exception as exc:
             raise ApiError(f'解析公众号 ID 失败：{exc}', status=502) from exc
     group_id = body.get('group_id')
@@ -632,6 +635,7 @@ async def create_account(
                 biz=biz,
                 nickname=str(body['nickname']),
                 alias=body.get('alias'),
+                gh_id=gh_id,
                 round_head_img=body.get('round_head_img'),
                 group_id=int(group_id) if group_id is not None else None,
                 sync_mode=sync_mode,

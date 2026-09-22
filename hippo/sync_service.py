@@ -313,6 +313,9 @@ class ArticleSyncService:
             raise SyncRunError(message) from exc
 
         observer.on_log(f'列表 {stats.listed} 篇，新入队 {stats.enqueued} 条')
+        # 列表成功即算「这个账号这一轮同步过了」：sync_interval_days / skip_minutes 都读这个字段
+        with self._storage.transaction():
+            self._storage.accounts.update_last_synced(account.biz)
         summary = SyncSummary(total_saved=stats.enqueued, page_count=1, completed=True)
         result = SyncAccountResult(
             biz=account.biz,
