@@ -10,6 +10,7 @@ import socket
 from datetime import UTC, datetime
 from typing import Any
 
+from .container import build_sync_container
 from .models import AccountCredential
 from .storage import PostgresStorage, open_storage
 from .sync_core import request_sync_cancel
@@ -27,6 +28,10 @@ from .sync_tasks import _article_snapshot
 from .sync_types import AccountProgress, SyncAccountResult, SyncObserver, SyncSummary
 
 logger = logging.getLogger(__name__)
+
+# 正文 drain：每轮抓一批（<=daemon 的 [articles].batch_size），节流由 daemon 侧闸门决定
+BODY_BATCH = 5
+DRAIN_POLL_SECONDS = 60.0
 
 
 class _WorkerProgressTracker:
@@ -289,21 +294,74 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
     return True
 
 
+async def drain_bodies_once(storage: PostgresStorage, *, limit: int = BODY_BATCH) -> int:
+    """抓一批待处理正文，返回本次落库篇数。
+
+    列表只负责把文章放进 ``article_queue``；这里才是正文真正的入口，是常驻的
+    （24h 不断），速率由 daemon 的 ``[articles]`` 预算保证。
+    """
+    settings = get_sync_settings(storage)
+    if not settings.get('download_content'):
+        return 0
+    if not storage.article_queue.stats().get('pending'):
+        return 0
+    container = build_sync_container(
+        storage=storage,
+        enable_download=False,
+        enable_images=bool(settings.get('download_images')),
+    )
+    async with container as app:
+        result = await app.weixin_sync.drain(limit=limit)
+        if settings.get('download_images') and app.downloader:
+            with contextlib.suppress(Exception):
+                await app.downloader.wait_for_images()
+    if result.ingested or result.failed:
+        logger.info('正文 drain：落库 %d 篇，失败 %d 篇', result.ingested, result.failed)
+    return result.ingested
+
+
+async def _body_drain_loop(poll_interval: float = DRAIN_POLL_SECONDS) -> None:
+    """常驻正文抓取循环：与列表 job 并行，互不阻塞。"""
+    while True:
+        try:
+            with open_storage() as storage:
+                await drain_bodies_once(storage)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('正文 drain 失败')
+        await asyncio.sleep(max(float(poll_interval), 1.0))
+
 async def run_sync_worker(
     *,
     poll_interval: float = 5.0,
     worker_id: str | None = None,
+    drain_interval: float = DRAIN_POLL_SECONDS,
 ) -> None:
     resolved_worker_id = worker_id or f'{socket.gethostname()}-{os.getpid()}'
-    while True:
-        with open_storage() as storage:
-            with storage.transaction():
-                recover_stale_running_jobs(storage)
-                maybe_enqueue_scheduled_job(storage)
-            handled = await run_worker_once(storage=storage, worker_id=resolved_worker_id)
-        if handled:
-            continue
-        await asyncio.sleep(max(float(poll_interval), 0.2))
+    # 正文抓取跑在独立 task：它经常被 daemon 的节奏闸门挡住几十秒，
+    # 不能拖住主循环里「入队新文章 / 执行同步 job」的响应。
+    drain_task = asyncio.create_task(_body_drain_loop(drain_interval))
+    try:
+        while True:
+            with open_storage() as storage:
+                with storage.transaction():
+                    recover_stale_running_jobs(storage)
+                    maybe_enqueue_scheduled_job(storage)
+                handled = await run_worker_once(storage=storage, worker_id=resolved_worker_id)
+            if handled:
+                continue
+            await asyncio.sleep(max(float(poll_interval), 0.2))
+    finally:
+        drain_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await drain_task
 
 
-__all__ = ['maybe_enqueue_scheduled_job', 'recover_stale_running_jobs', 'run_sync_worker', 'run_worker_once']
+__all__ = [
+    'drain_bodies_once',
+    'maybe_enqueue_scheduled_job',
+    'recover_stale_running_jobs',
+    'run_sync_worker',
+    'run_worker_once',
+]
