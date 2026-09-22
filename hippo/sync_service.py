@@ -274,7 +274,8 @@ class ArticleSyncService:
 
         # weixin-rs 数据源：列表阶段只入队（列表接口只有会失效的长链），
         # 正文由队列 drain 统一抓（拿到永久短链 + 原始 HTML 落 article_document）。
-        source_key = (account.alias or '').strip()
+        # source_key 优先用缓存好的 gh_id：alias 解析要走 searchcontact，那是个会被限流的窄口。
+        source_key = (account.gh_id or account.alias or '').strip()
         if not source_key:
             observer.on_skip('no_source_key')
             result = SyncAccountResult(
