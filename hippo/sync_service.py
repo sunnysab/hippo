@@ -58,17 +58,6 @@ JOB_BODY_BATCH = 5
 SYNC_RUN_LOCK = asyncio.Lock()
 
 
-async def _run_backfill_images() -> None:
-    try:
-        from .image_backfill import backfill_article_images
-    except ImportError:
-        return
-    try:
-        await backfill_article_images()
-    except Exception:
-        logger.exception('Background image backfill failed.')
-
-
 @dataclass(frozen=True)
 class SyncJobResult:
     status: dict[str, Any]
@@ -600,9 +589,6 @@ async def run_sync_job(
             logger.exception('Sync job failed unexpectedly')
             error = str(exc)
             report = empty_report
-
-        if settings.get('download_images'):
-            asyncio.create_task(_run_backfill_images())
 
         try:
             storage.rollback()

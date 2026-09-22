@@ -33,6 +33,12 @@ logger = logging.getLogger(__name__)
 BODY_BATCH = 5
 DRAIN_POLL_SECONDS = 60.0
 
+# 图片回填：独立于正文的队列（article_images 里 s3_key 为空的行）与节奏。
+# 图片走普通 HTTPS CDN，和正文的客户端协议不是同一个风控池，但同样不能无节制抓。
+IMAGE_BATCH = 30
+IMAGE_WORKERS = 2
+IMAGE_POLL_SECONDS = 120.0
+
 
 class _WorkerProgressTracker:
     def __init__(self, *, storage: PostgresStorage, task_id: str) -> None:
@@ -320,6 +326,43 @@ async def drain_bodies_once(storage: PostgresStorage, *, limit: int = BODY_BATCH
     return result.ingested
 
 
+async def backfill_images_once(*, batch: int = IMAGE_BATCH, workers: int = IMAGE_WORKERS) -> int:
+    """抓一批待下载图片，返回本次成功入库的张数。
+
+    正文只负责把图片登记进 ``article_images``；真正下载/上传 S3 在这里，
+    按自己的批量与并发跑（落库语义就是队列：``s3_key IS NULL`` = 待下载）。
+    """
+    from .image_backfill import backfill_article_images
+
+    try:
+        result = await backfill_article_images(limit=batch, workers=workers)
+    except RuntimeError as exc:
+        if 'image store' in str(exc):
+            logger.debug('未配置对象存储，跳过图片回填：%s', exc)
+            return 0
+        raise
+    updated = int(result.get('updated') or 0)
+    failed = int(result.get('failed') or 0)
+    if updated or failed:
+        logger.info('图片回填：入库 %d 张，失败 %d 张', updated, failed)
+    return updated
+
+
+async def _image_backfill_loop(
+    batch: int = IMAGE_BATCH,
+    poll_interval: float = IMAGE_POLL_SECONDS,
+) -> None:
+    """常驻图片队列消费：与正文抓取并行，互不干扰。"""
+    while True:
+        try:
+            await backfill_images_once(batch=batch)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('图片回填失败')
+        await asyncio.sleep(max(float(poll_interval), 5.0))
+
+
 async def _body_drain_loop(poll_interval: float = DRAIN_POLL_SECONDS) -> None:
     """常驻正文抓取循环：与列表 job 并行，互不阻塞。"""
     while True:
@@ -342,6 +385,7 @@ async def run_sync_worker(
     # 正文抓取跑在独立 task：它经常被 daemon 的节奏闸门挡住几十秒，
     # 不能拖住主循环里「入队新文章 / 执行同步 job」的响应。
     drain_task = asyncio.create_task(_body_drain_loop(drain_interval))
+    image_task = asyncio.create_task(_image_backfill_loop())
     try:
         while True:
             with open_storage() as storage:
@@ -353,12 +397,14 @@ async def run_sync_worker(
                 continue
             await asyncio.sleep(max(float(poll_interval), 0.2))
     finally:
-        drain_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await drain_task
+        for task in (drain_task, image_task):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
 __all__ = [
+    'backfill_images_once',
     'drain_bodies_once',
     'maybe_enqueue_scheduled_job',
     'recover_stale_running_jobs',
