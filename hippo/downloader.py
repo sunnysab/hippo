@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
+from markdownify import markdownify
 
 from .http import ArticleContentUnavailableError, MPClient
 from .image_store import ArticleImageStore
@@ -19,7 +20,7 @@ from .logger import get_logger
 from .models import AccountCredential, ArticleRecord, DownloadResult
 from .storage import PostgresStorage
 from .utils import is_http_url, slugify
-from .wechat_parser import parse_wechat_article
+from .wechat_parser import _postprocess_markdown, parse_wechat_article
 
 logger = get_logger(__name__)
 
@@ -871,18 +872,17 @@ class ArticleDownloader(AbstractAsyncContextManager):
             fallback_title=article.title,
         )
         article.item_show_type = parsed_article.item_show_type
-        clean_html = parsed_article.clean_html
+        # 图片清单从正文片段抽（原始整页 HTML 已不再入库，见 article_document）
         asset_count = 0
         url_map: dict[str, str] = {}
         referer = article.link or 'https://mp.weixin.qq.com/'
         if with_images or record_images_only:
-            asset_count, url_map = _collect_image_urls(clean_html, referer=referer)
+            asset_count, url_map = _collect_image_urls(parsed_article.body_html, referer=referer)
         markdown_content = parsed_article.markdown
         pg_error: Exception | None = None
         try:
             self._store_article_pg(
                 article=article,
-                clean_html=clean_html,
                 markdown_content=markdown_content,
                 url_map=url_map,
                 content_title=parsed_article.title,
@@ -899,11 +899,44 @@ class ArticleDownloader(AbstractAsyncContextManager):
 
         return DownloadResult(article=article, asset_count=asset_count)
 
+    async def ingest_body(
+        self,
+        *,
+        article: ArticleRecord,
+        html: str,
+        title: str | None = None,
+        item_show_type: int | None = None,
+        referer: str | None = None,
+        with_images: bool = True,
+    ) -> int | None:
+        """把客户端协议抓到的正文（``content_noencode``）落库并入图片队列。
+
+        与网页抓取（``download_one``）共用同一套 markdown/blocks/图片逻辑，
+        差别只在正文来源：这里已经是干净 HTML，不需要在页面里跑 JS 抽 cgiData。
+        返回 ``articles.id``（写 ``article_document`` 要用）。
+        """
+        referer = referer or article.link or 'https://mp.weixin.qq.com/'
+        markdown = _postprocess_markdown(markdownify(html, heading_style='ATX'))
+        asset_count = 0
+        url_map: dict[str, str] = {}
+        if with_images:
+            asset_count, url_map = _collect_image_urls(html, referer=referer)
+        article_pk = self._store_article_pg(
+            article=article,
+            markdown_content=markdown,
+            url_map=url_map,
+            content_title=title or article.title,
+            item_show_type=item_show_type,
+        )
+        if with_images and url_map:
+            await self._image_mgr.enqueue(article, url_map, referer=referer)
+        logger.debug('ingest_body: %s asset_count=%d', article.link, asset_count)
+        return article_pk
+
     def _store_article_pg(
         self,
         *,
         article: ArticleRecord,
-        clean_html: str,
         markdown_content: str,
         url_map: dict[str, str],
         content_title: str | None = None,
@@ -963,29 +996,28 @@ class ArticleDownloader(AbstractAsyncContextManager):
 
         if hasattr(self.storage, 'transaction'):
             with self.storage.transaction():
-                save_article_content(
+                article_pk = save_article_content(
                     article,
                     url_token=url_token,
                     title=content_title or title or article.title,
                     item_show_type=item_show_type,
-                    clean_html=clean_html,
                     content_markdown=content_markdown,
                     content_blocks=blocks_with_urls,
                     cover_url=cover_url,
                     images=images,
                 )
         else:
-            save_article_content(
+            article_pk = save_article_content(
                 article,
                 url_token=url_token,
                 title=content_title or title or article.title,
                 item_show_type=item_show_type,
-                clean_html=clean_html,
                 content_markdown=content_markdown,
                 content_blocks=blocks_with_urls,
                 cover_url=cover_url,
                 images=images,
             )
+        return article_pk
 
     def _is_downloaded(self, article: ArticleRecord) -> bool:
         if self.storage and os.environ.get('HIPPO_PG_DSN'):
