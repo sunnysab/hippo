@@ -157,7 +157,7 @@ export function SyncSettingsPanel({
               <input
                 type="number"
                 id="sync-sleep"
-                min="0"
+                min="15"
                 step="0.01"
                 value={formState.sleepSeconds}
                 onChange={(event) => setFormState((prev) => ({ ...prev, sleepSeconds: event.target.value }))}
