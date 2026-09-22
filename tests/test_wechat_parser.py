@@ -50,7 +50,7 @@ class WechatParserSamplesTest(unittest.TestCase):
         self.assertEqual(parsed.item_show_type, 8)
         self.assertEqual(title, parsed.title)
         self.assertGreaterEqual(len(image_blocks), 4)
-        self.assertIn('wechat-picture-gallery', parsed.clean_html)
+        self.assertIn('wechat-picture-gallery', parsed.body_html)
 
     def test_parses_text_share_into_text_blocks(self) -> None:
         raw_html = self._read_sample('文本分享/01.html')
@@ -163,8 +163,8 @@ class WechatParserSamplesTest(unittest.TestCase):
 
         self.assertEqual(parsed.item_show_type, 7)
         self.assertEqual(title, '5月6日行业快讯')
-        self.assertNotIn('&lt;a', parsed.clean_html)
-        self.assertIn('class="wx_audio_timepoint_tag"', parsed.clean_html)
+        self.assertNotIn('&lt;a', parsed.body_html)
+        self.assertIn('class="wx_audio_timepoint_tag"', parsed.body_html)
         self.assertIn('00:00', body_markdown)
         self.assertTrue(any(block.get('type') == 'paragraph' and 'IBM在Think 2026' in block.get('text', '') for block in blocks))
 
@@ -190,7 +190,7 @@ class WechatParserSamplesTest(unittest.TestCase):
 
         parsed = parse_wechat_article(raw_html, article_url=_ARTICLE_URL)
 
-        self.assertIn('38:12', parsed.clean_html)
+        self.assertIn('38:12', parsed.body_html)
         self.assertIn('Source: https://mp.weixin.qq.com/s/demo-audio-briefing', parsed.markdown)
 
     def test_parses_short_share_with_cover_and_source(self) -> None:

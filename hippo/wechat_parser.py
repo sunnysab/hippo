@@ -178,7 +178,7 @@ window.Image = Image;
 @dataclass(slots=True)
 class ParsedWechatArticle:
     title: str
-    clean_html: str
+    body_html: str
     markdown: str
     item_show_type: int | None
     cgi_data: dict[str, Any]
@@ -195,15 +195,10 @@ def parse_wechat_article(
     title = _extract_title(cgi_data, fallback_title=fallback_title)
     body_html = _render_body_html(cgi_data, item_show_type=item_show_type, article_url=article_url)
     article_html = _build_article_fragment(title=title, body_html=body_html)
-    clean_html = _build_document(
-        title=title,
-        item_show_type=item_show_type,
-        article_html=article_html,
-    )
     markdown = _postprocess_markdown(markdownify(article_html, heading_style='ATX'))
     return ParsedWechatArticle(
         title=title,
-        clean_html=clean_html,
+        body_html=article_html,
         markdown=markdown,
         item_show_type=item_show_type,
         cgi_data=cgi_data,
@@ -517,47 +512,6 @@ def _build_article_fragment(*, title: str, body_html: str) -> str:
         f'  <h1 class="wechat-article-title">{escaped_title}</h1>\n'
         f'  {body_html}\n'
         '</article>\n'
-    )
-
-
-def _build_document(*, title: str, item_show_type: int | None, article_html: str) -> str:
-    body_class = f'wechat-article item-show-type-{item_show_type}' if item_show_type is not None else 'wechat-article'
-    escaped_title = html.escape(title)
-    return (
-        '<!DOCTYPE html>\n'
-        '<html lang="zh_CN">\n'
-        '<head>\n'
-        '  <meta charset="utf-8">\n'
-        '  <meta http-equiv="X-UA-Compatible" content="IE=edge">\n'
-        '  <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=0,viewport-fit=cover">\n'
-        '  <meta name="referrer" content="no-referrer">\n'
-        f'  <title>{escaped_title}</title>\n'
-        '  <style>\n'
-        '    :root { color-scheme: light; --wechat-bg: #f7f8fa; --wechat-surface: #ffffff; --wechat-surface-muted: #f3f6fb; --wechat-text: #111827; --wechat-text-soft: #526071; --wechat-border: rgba(15, 23, 42, 0.08); --wechat-accent: #1d4ed8; }\n'
-        '    body { margin: 0; font-family: "PingFang SC", "Noto Sans SC", system-ui, sans-serif; background: radial-gradient(circle at top, #ffffff 0%, var(--wechat-bg) 70%); color: var(--wechat-text); }\n'
-        '    .wechat-article-root { max-width: 760px; margin: 0 auto; padding: 40px 20px 72px; }\n'
-        '    .wechat-article-title { margin: 0 0 28px; font-size: clamp(32px, 5vw, 40px); line-height: 1.15; font-weight: 700; letter-spacing: -0.03em; }\n'
-        '    .wechat-content { font-size: 17px; line-height: 1.85; }\n'
-        '    .wechat-content img { max-width: 100%; height: auto; display: block; margin: 20px auto; }\n'
-        '    .wechat-content figure { margin: 24px 0; }\n'
-        '    .wechat-content figcaption { margin-top: 8px; color: var(--wechat-text-soft); font-size: 14px; text-align: center; }\n'
-        '    .wechat-content a { color: var(--wechat-accent); text-decoration: none; }\n'
-        '    .wechat-content pre { white-space: pre-wrap; word-break: break-word; }\n'
-        '    .wechat-share-card { display: grid; gap: 18px; padding: 22px; border: 1px solid var(--wechat-border); border-radius: 24px; background: linear-gradient(180deg, var(--wechat-surface) 0%, var(--wechat-surface-muted) 100%); box-shadow: 0 18px 48px rgba(15, 23, 42, 0.08); }\n'
-        '    .wechat-share-card-cover img { width: 100%; margin: 0; border-radius: 18px; aspect-ratio: 1 / 1; object-fit: cover; }\n'
-        '    .wechat-share-card-kicker { margin: 0 0 8px; font-size: 12px; line-height: 1.2; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--wechat-text-soft); }\n'
-        '    .wechat-share-card-title { margin: 0; font-size: 28px; line-height: 1.2; font-weight: 700; }\n'
-        '    .wechat-share-card-meta { margin: 10px 0 0; color: var(--wechat-text-soft); font-size: 14px; line-height: 1.6; }\n'
-        '    .wechat-share-card-summary, .wechat-share-card-link, .wechat-short-text, .wechat-short-link { margin: 16px 0 0; }\n'
-        '    .wechat-short-cover img { margin: 0 0 16px; border-radius: 24px; }\n'
-        '    .wechat-short-text { padding: 22px; border-radius: 24px; background: var(--wechat-surface); border: 1px solid var(--wechat-border); box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06); }\n'
-        '    @media (min-width: 680px) { .wechat-share-card { grid-template-columns: minmax(0, 220px) minmax(0, 1fr); align-items: center; } }\n'
-        '  </style>\n'
-        '</head>\n'
-        f'<body class="{body_class}">\n'
-        f'  {article_html}'
-        '</body>\n'
-        '</html>\n'
     )
 
 

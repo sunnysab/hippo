@@ -498,7 +498,7 @@ def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
 
     content_row = fetchone_row(
         storage,
-        'SELECT content_json, clean_html, updated_at FROM article_content WHERE article_pk = %s',
+        'SELECT content_json, updated_at FROM article_content WHERE article_pk = %s',
         [article_id],
         normalize=_normalize_record,
     )
@@ -507,7 +507,6 @@ def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
     decode_failed = False
     if content_row:
         content_json = content_row.get('content_json')
-        content_row.get('clean_html')
         content_updated_at = content_row.get('updated_at')
         if isinstance(content_json, str):
             try:
