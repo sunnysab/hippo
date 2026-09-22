@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import time
+
+# 推送/新文章的图片优先：这个窗口内发布的文章，图片每轮先下一批，
+# 历史欠账（老文章）排在后面，避免新文章入库半天还缺图。
+RECENT_WINDOW_SECONDS = 3 * 24 * 3600
+
 import asyncio
 import os
 from collections.abc import Callable
@@ -153,16 +159,27 @@ async def backfill_article_images(
                 try:
                     last_id = None
                     remaining = total_count
+                    recent_cutoff = int(time.time()) - RECENT_WINDOW_SECONDS
                     while remaining > 0:
                         with storage.conn.cursor() as cur:
                             current_limit = min(batch_size, remaining)
-                            if last_id is None:
-                                cur.execute(f'{base_query} {order_clause} LIMIT %s', (current_limit,))
-                            else:
-                                cur.execute(
-                                    f'{base_query} AND i.id < %s {order_clause} LIMIT %s', (last_id, current_limit)
-                                )
+                            # 优先批：最近发布的文章（推送/列表刚入库的），图片马上补齐
+                            cur.execute(
+                                f'{base_query} AND a.publish_at >= %s {order_clause} LIMIT %s',
+                                (recent_cutoff, current_limit),
+                            )
                             batch = cur.fetchall()
+                            if not batch:
+                                if last_id is None:
+                                    cur.execute(f'{base_query} {order_clause} LIMIT %s', (current_limit,))
+                                else:
+                                    cur.execute(
+                                        f'{base_query} AND i.id < %s {order_clause} LIMIT %s',
+                                        (last_id, current_limit),
+                                    )
+                                batch = cur.fetchall()
+                            else:
+                                last_id = batch[-1][0]
                         if not batch:
                             break
 

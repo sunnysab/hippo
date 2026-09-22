@@ -100,6 +100,36 @@ def restore_image_meta(storage: PostgresStorage, article_pk: int, meta: dict[str
 
 MAX_ATTEMPTS = 3
 
+# 推送/列表来的实时任务优先：它们和本脚本抢同一个 daemon 闸门。队列里有活时先让路，
+# 但最多让 YIELD_MAX_SECONDS，免得持续有推送时历史欠账永远排不上。
+YIELD_POLL_SECONDS = 30.0
+YIELD_MAX_SECONDS = 1800.0
+
+
+def live_queue_pending(storage: PostgresStorage) -> int:
+    with storage.conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM article_queue WHERE state IN ('pending', 'processing')"
+        )
+        row = cur.fetchone()
+    storage.rollback()
+    return int(row[0]) if row else 0
+
+
+async def yield_to_live_queue(storage: PostgresStorage, log_fn) -> float:
+    """队列里有实时任务就让路，返回本次让了多少秒。"""
+    waited = 0.0
+    while waited < YIELD_MAX_SECONDS:
+        pending = live_queue_pending(storage)
+        if pending <= 0:
+            return waited
+        if waited == 0.0:
+            log_fn(f'实时队列有 {pending} 篇在等，先让路（最多 {int(YIELD_MAX_SECONDS / 60)} 分钟）')
+        await asyncio.sleep(YIELD_POLL_SECONDS)
+        waited += YIELD_POLL_SECONDS
+    log_fn('让路已超上限，先补一批历史')
+    return waited
+
 
 def record_attempt(storage: PostgresStorage, *, biz: str, article_id: str, error: str, retryable: bool) -> None:
     with storage.transaction(), storage.conn.cursor() as cur:
@@ -181,6 +211,7 @@ async def main() -> int:
                 log(f'本轮 {len(rows)} 篇（已补 {filled}，失败 {failed}）')
 
                 for start in range(0, len(rows), args.batch_size):
+                    await yield_to_live_queue(storage, log)
                     chunk = rows[start : start + args.batch_size]
                     links = [str(row[7]) for row in chunk]
                     try:
