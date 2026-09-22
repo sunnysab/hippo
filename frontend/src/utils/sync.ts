@@ -8,11 +8,12 @@ export const getSyncModeLabel = (t: Translate, mode: string): string => {
 };
 
 export const getSyncTone = (status: string): string => {
-  if (status === 'success' || status === 'completed' || status === 'ok') return 'success';
-  if (status === 'error' || status === 'failed' || status === 'login_required' || status === 'stopped') {
+  if (status === 'success' || status === 'completed' || status === 'ok' || status === 'online') return 'success';
+  if (status === 'error' || status === 'failed' || status === 'stopped') {
     return 'danger';
   }
-  if (status === 'missing') return 'warning';
+  if (status === 'expired' || status === 'unreachable') return 'danger';
+  if (status === 'missing' || status === 'logged_out') return 'warning';
   if (status === 'running' || ['starting', 'waiting', 'scanned', 'refresh'].includes(status)) {
     return 'info';
   }

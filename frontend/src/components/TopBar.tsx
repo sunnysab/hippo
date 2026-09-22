@@ -5,11 +5,11 @@ import { useI18n } from '../i18n';
 interface TopBarProps {
   topbarRef: RefObject<HTMLElement | null>;
   currentTab: string;
-  lastLoginAt: string;
+  daemonStatus: string;
   lastSyncAt: string;
 }
 
-export function TopBar({ topbarRef, currentTab, lastLoginAt, lastSyncAt }: TopBarProps) {
+export function TopBar({ topbarRef, currentTab, daemonStatus, lastSyncAt }: TopBarProps) {
   const { t } = useI18n();
 
   const tabs = [
@@ -42,7 +42,7 @@ export function TopBar({ topbarRef, currentTab, lastLoginAt, lastSyncAt }: TopBa
         ))}
       </nav>
       <div className="top-actions">
-        {lastLoginAt && <div className="top-meta" id="last-login-info">{lastLoginAt}</div>}
+        {daemonStatus && <div className="top-meta" id="daemon-status">{daemonStatus}</div>}
         {lastSyncAt && <div className="top-meta" id="last-sync-info">{lastSyncAt}</div>}
       </div>
     </header>

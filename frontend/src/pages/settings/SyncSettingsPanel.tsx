@@ -37,10 +37,6 @@ export function SyncSettingsPanel({
         continue;
       }
       emitRefresh();
-      if (status === 'login_required') {
-        showToast(t('sync.loginRequired', 'Login required. Please re-login.'));
-        return;
-      }
       if (status === 'success') {
         showToast(t('sync.status.success', 'Success'));
         return;

@@ -17,7 +17,7 @@ class ResizeObserverMock {
 }
 
 describe('AppShell', () => {
-  it('refreshes last login and last sync info every minute', async () => {
+  it('refreshes the daemon status and last sync info every minute', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-02T12:00:00.000Z'));
     vi.stubGlobal('ResizeObserver', ResizeObserverMock);
@@ -25,8 +25,9 @@ describe('AppShell', () => {
     apiGetMock.mockImplementation(async (path: string) => {
       if (path === '/api/login') {
         return {
-          status: 'ok',
-          updated_at: '2026-05-02T11:59:00.000Z',
+          logged_in: true,
+          status: 'online',
+          nickname: 'tester',
         };
       }
 
@@ -55,17 +56,49 @@ describe('AppShell', () => {
       await vi.advanceTimersByTimeAsync(0);
     });
 
-    expect(screen.getByText('上次登录于 1 分钟前')).toBeTruthy();
+    expect(screen.getByText('daemon 在线')).toBeTruthy();
     expect(screen.getByText('上次同步于 2 分钟前')).toBeTruthy();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60000);
     });
 
-    expect(screen.getByText('上次登录于 2 分钟前')).toBeTruthy();
     expect(screen.getByText('上次同步于 3 分钟前')).toBeTruthy();
     expect(apiGetMock).toHaveBeenCalledTimes(4);
 
     vi.useRealTimers();
+  });
+
+  it('shows the login banner when the daemon is not signed in', async () => {
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+
+    apiGetMock.mockImplementation(async (path: string) => {
+      if (path === '/api/login') {
+        return { logged_in: false, status: 'logged_out', error: '' };
+      }
+      if (path === '/api/settings/status') {
+        return { last_finished_at: null, last_error: null };
+      }
+      throw new Error(`unexpected path: ${path}`);
+    });
+
+    render(
+      <MemoryRouter>
+        <I18nProvider>
+          <ToastProvider>
+            <AppShell>
+              <div>content</div>
+            </AppShell>
+          </ToastProvider>
+        </I18nProvider>
+      </MemoryRouter>,
+    );
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(screen.getByText('daemon 未登录')).toBeTruthy();
+    expect(screen.getByText('登录失效，请重新登录。')).toBeTruthy();
   });
 });

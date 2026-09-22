@@ -3,7 +3,6 @@ import { useSettingsState, type LoginStatus } from '../../store/settings';
 import { useI18n } from '../../i18n';
 import { apiGet, apiSend, isAuthError } from '../../api';
 import { emitRefresh } from '../../utils/events';
-import { formatRelativeTime } from '../../utils/format';
 import { getSyncTone } from '../../utils/sync';
 
 interface QrState {
@@ -12,26 +11,26 @@ interface QrState {
 }
 
 /**
- * 登录面板：登录由 weixin-rs daemon 负责（微信读书凭据已废弃）。
+ * 登录面板：登录完全由 weixin-rs daemon 负责，这里只读状态 + 触发扫码 / 免扫重登。
  *
- * - 已登录：显示昵称 / wxid；
- * - 未登录：扫码（`/api/login/qr` + `/api/login/wait`）或用本地 auto_auth_key 免扫重登。
+ * daemon 的 `get_status` 有三态：`online` / `logged_out` / `expired`（带 need_relogin）；
+ * hippo 自己再加一态 `unreachable`（daemon 进程没起来）。
  */
 export function LoginPanel() {
   const { state, dispatch } = useSettingsState();
   const { t } = useI18n();
 
   const loginStatus = state.loginStatus;
-  const status = loginStatus?.status || 'missing';
-  const message = loginStatus?.message || loginStatus?.last_error || '';
-  const updatedAt = loginStatus?.updated_at || '';
-  const hasCredential = !!loginStatus?.has_credential;
+  const status = loginStatus?.status || 'unknown';
+  const loggedIn = Boolean(loginStatus?.logged_in);
+  const error = loginStatus?.error || '';
   const nickname = loginStatus?.nickname || '';
-  const vid = loginStatus?.vid || '';
+  const wxid = loginStatus?.wxid || '';
+  const clients = loginStatus?.clients_connected;
 
   const [qr, setQr] = useState<QrState | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const [runError, setRunError] = useState('');
 
   const refreshStatus = async () => {
     const payload = (await apiGet('/api/login')) as unknown as LoginStatus;
@@ -40,11 +39,11 @@ export function LoginPanel() {
 
   const run = async (task: () => Promise<void>) => {
     setBusy(true);
-    setError('');
+    setRunError('');
     try {
       await task();
     } catch (err) {
-      if (!isAuthError(err)) setError(err instanceof Error ? err.message : String(err));
+      if (!isAuthError(err)) setRunError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -74,10 +73,24 @@ export function LoginPanel() {
       emitRefresh();
     });
 
-  const statusLabel = () => t(`login.status.${status}`, message || status);
-  const metaText = hasCredential
-    ? `${nickname || vid}${updatedAt ? ' · ' + formatRelativeTime(updatedAt, t) : ''}`
-    : t('login.missing', 'daemon is not signed in.');
+  const statusLabel = () => {
+    if (status === 'online') return t('login.status.online', 'daemon online');
+    if (status === 'logged_out') return t('login.status.loggedOut', 'daemon is not signed in');
+    if (status === 'expired') return t('login.status.expired', 'daemon session expired');
+    if (status === 'unreachable') return t('login.status.unreachable', 'daemon is unreachable');
+    return t('login.status.unknown', status);
+  };
+
+  const metaText = loggedIn
+    ? [
+        nickname || wxid,
+        typeof clients === 'number'
+          ? t('login.clients', '{n} clients connected').replace('{n}', String(clients))
+          : '',
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : t('login.missing', 'daemon is not signed in; scan or use auto re-login.');
 
   return (
     <div className="panel sync-login">
@@ -85,12 +98,12 @@ export function LoginPanel() {
         <div>
           <h2>{t('login.title', 'Login')}</h2>
           <p className="muted">
-            {t('login.subtitle', 'Sign in the weixin-rs daemon that syncs your Official Accounts.')}
+            {t('login.subtitle', 'The weixin-rs daemon owns the session; check or renew it here.')}
           </p>
         </div>
         <div className="toolbar">
           <button className="btn" id="btn-login-auto" type="button" onClick={autoLogin} disabled={busy}>
-            {t('login.auto', 'Re-login')}
+            {t('login.auto', 'Auto re-login')}
           </button>
           <button className="btn ghost" id="btn-login-qr" type="button" onClick={requestQr} disabled={busy}>
             {t('login.qr', 'Scan QR')}
@@ -118,9 +131,9 @@ export function LoginPanel() {
           </button>
         </div>
       )}
-      {error && (
+      {(runError || error) && (
         <p className="muted" id="login-error">
-          {error}
+          {runError || error}
         </p>
       )}
     </div>

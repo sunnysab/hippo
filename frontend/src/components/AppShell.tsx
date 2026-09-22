@@ -14,7 +14,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { showToast } = useToast();
   const appRef = useRef<HTMLDivElement>(null);
   const topbarRef = useRef<HTMLElement>(null);
-  const [lastLoginAt, setLastLoginAt] = useState('');
+  const [daemonStatus, setDaemonStatus] = useState('');
   const [lastSyncAt, setLastSyncAt] = useState('');
   const [bannerVisible, setBannerVisible] = useState(false);
   const [bannerText, setBannerText] = useState('');
@@ -25,12 +25,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   const refreshChromeMeta = useCallback(async () => {
     try {
       const loginPayload = await apiGet('/api/login');
-      const loginUpdatedAt = loginPayload.updated_at as string | null;
-      if (loginUpdatedAt) {
-        const ts = formatRelativeTime(loginUpdatedAt, t);
-        setLastLoginAt(ts ? t('login.lastLoginAt', 'Last login {time}').replace('{time}', ts) : '');
+      const loggedIn = Boolean(loginPayload.logged_in);
+      const loginStatus = String(loginPayload.status || '');
+      if (loggedIn) {
+        setDaemonStatus(t('login.daemon.online', 'daemon online'));
+      } else if (loginStatus === 'unreachable') {
+        setDaemonStatus(t('login.daemon.unreachable', 'daemon unreachable'));
       } else {
-        setLastLoginAt('');
+        setDaemonStatus(t('login.daemon.offline', 'daemon not signed in'));
       }
 
       const syncPayload = await apiGet('/api/settings/status');
@@ -47,20 +49,15 @@ export function AppShell({ children }: { children: ReactNode }) {
         setBannerText(lastError);
         setBannerVisible(true);
         setBannerError(true);
+      } else if (!loggedIn) {
+        setBannerText(
+          (loginPayload.error as string) || t('sync.loginRequired', 'daemon is not signed in. Please re-login.'),
+        );
+        setBannerVisible(true);
+        setBannerError(loginStatus === 'unreachable');
       } else {
-        const loginStatus = loginPayload.status as string;
-        if (loginStatus === 'missing') {
-          setBannerText(t('sync.loginRequired', 'Login required. Please re-login.'));
-          setBannerVisible(true);
-          setBannerError(false);
-        } else if (loginStatus === 'error') {
-          setBannerText((loginPayload.last_error as string) || t('sync.failed', 'Sync failed. Please check login.'));
-          setBannerVisible(true);
-          setBannerError(false);
-        } else {
-          setBannerVisible(false);
-          setBannerError(false);
-        }
+        setBannerVisible(false);
+        setBannerError(false);
       }
     } catch {
       /* ignore errors during meta refresh */
@@ -119,7 +116,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <TopBar
         topbarRef={topbarRef}
         currentTab={currentTab}
-        lastLoginAt={lastLoginAt}
+        daemonStatus={daemonStatus}
         lastSyncAt={lastSyncAt}
       />
       <main className="content">
