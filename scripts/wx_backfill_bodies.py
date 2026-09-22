@@ -98,6 +98,9 @@ def restore_image_meta(storage: PostgresStorage, article_pk: int, meta: dict[str
     storage.commit()
 
 
+MAX_ATTEMPTS = 3
+
+
 def record_attempt(storage: PostgresStorage, *, biz: str, article_id: str, error: str, retryable: bool) -> None:
     with storage.transaction(), storage.conn.cursor() as cur:
         cur.execute(
@@ -141,8 +144,10 @@ async def main() -> int:
 
     storage = PostgresStorage(args.pg_dsn)
     retry_clause = '' if args.retry_failed else (
+        # 只跳过"确定不可恢复"和"已经重试到上限"的：网络抖动这类可恢复失败还能再试
         'AND NOT EXISTS (SELECT 1 FROM article_download_attempts t '
-        'WHERE t.biz = a.biz AND t.article_id = a.article_id)'
+        'WHERE t.biz = a.biz AND t.article_id = a.article_id '
+        f'AND (NOT t.retryable OR t.attempts >= {MAX_ATTEMPTS}))'
     )
     image_service = None
     try:

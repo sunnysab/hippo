@@ -1010,6 +1010,7 @@ class ImageRepository:
         article_id: str,
         orig_url: str,
         reason: str,
+        max_attempts: int = 3,
     ) -> None:
         trimmed = reason.strip()
         if len(trimmed) > 5000:
@@ -1026,14 +1027,17 @@ class ImageRepository:
             cur.execute(
                 """
                 UPDATE article_images
-                SET failed_at = %s,
+                SET attempts = attempts + 1,
                     failed_reason = %s,
-                    updated_at = %s
+                    updated_at = %s,
+                    -- attempts 到上限才写 failed_at（= 放弃重试）；没到就留在候选集里等下一轮
+                    failed_at = CASE WHEN attempts + 1 >= %s THEN %s ELSE NULL END
                 WHERE article_pk = %s AND orig_url = %s
                 """,
                 (
-                    utc_now_dt(),
                     trimmed,
+                    utc_now_dt(),
+                    max_attempts,
                     utc_now_dt(),
                     article_pk,
                     orig_url,
@@ -1239,7 +1243,14 @@ class ArticleQueueRepository:
             )
             return cur.rowcount
 
-    def mark_failed(self, queue_ids: Iterable[int], *, error: str, retryable: bool) -> int:
+    def mark_failed(
+        self,
+        queue_ids: Iterable[int],
+        *,
+        error: str,
+        retryable: bool,
+        max_attempts: int = 3,
+    ) -> int:
         ids = list(queue_ids)
         if not ids:
             return 0
@@ -1250,11 +1261,12 @@ class ArticleQueueRepository:
                    SET attempts = attempts + 1,
                        last_error = %s,
                        retryable = %s,
-                       state = CASE WHEN %s THEN 'pending' ELSE 'failed' END,
+                       -- 可恢复的回到 pending，但重试到上限就转 failed（不再无限重取）
+                       state = CASE WHEN %s AND attempts + 1 < %s THEN 'pending' ELSE 'failed' END,
                        updated_at = NOW()
                  WHERE id = ANY(%s)
                 """,
-                (error[:1000], retryable, retryable, ids),
+                (error[:1000], retryable, retryable, max_attempts, ids),
             )
             return cur.rowcount
 
