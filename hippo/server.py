@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import logging
 import os
@@ -15,6 +16,7 @@ from collections.abc import Generator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -52,10 +54,7 @@ from .config import DEFAULT_GROUP_NAME
 from .container import build_downloader_container
 from .emailer import get_email_settings, send_email, set_email_settings
 from .exceptions import ApiError
-from .http import MPClient
-from .login_manager import LoginManager
-from .login_service import import_weread_dump, save_login_session
-from .models import AccountCredential, LoginSession
+from .models import AccountCredential
 from .rss import build_rss_xml, query_rss_items
 from .storage import PostgresStorage, ensure_default_group, fetchall_rows, fetchone_row, open_storage
 from .sync_core import request_sync_cancel
@@ -69,8 +68,7 @@ from .sync_settings import (
 from .sync_settings import (
     set_sync_settings as save_sync_settings,
 )
-from .wechat_api import SessionExpiredError, WeChatApiClient
-from .weread_dump import WereadDumpError
+from .weixin_source import WeixinSource
 
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_PORT = 8000
@@ -223,12 +221,6 @@ def _binary_response(payload: bytes, content_type: str) -> Response:
     )
 
 
-def _login_snapshot(manager: LoginManager, storage: PostgresStorage) -> dict[str, Any]:
-    snapshot = manager.snapshot(storage)
-    snapshot['qrcode_url'] = None
-    return snapshot
-
-
 def _list_groups(storage: PostgresStorage) -> list[dict[str, Any]]:
     return [g.model_dump() for g in storage.groups.list_groups()]
 
@@ -334,10 +326,6 @@ def _update_account(storage: PostgresStorage, biz: str, payload: dict[str, Any])
 def _get_storage() -> Generator[PostgresStorage]:
     with open_storage() as storage:
         yield storage
-
-
-def _get_login_manager(request: Request) -> LoginManager:
-    return request.app.state.login_manager
 
 
 def _get_sync_scheduler(request: Request) -> SyncScheduler | None:
@@ -478,63 +466,63 @@ async def search_account(
     begin: int | None = None,
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
-    """
-    通过微信接口搜索公众号。需要有效的登录会话。
+    """搜索公众号（数据源：weixin-rs daemon 的 H5 搜索）。
+
+    返回的 ``biz`` 是 ``gh_…``：daemon 只认这个形状，真正的 fakeid
+    （``accounts.biz``，``Mz…==``）由 ``POST /account`` 抓一篇文章回填。
 
     Args:
-        q (str): 搜索关键词（公众号名称或 ID）。
-        page (int): 页码 (默认: 1)。
-        page_size (int): 每页结果数量 (默认: 10, 最大: 20)。
-        begin (int | None): 可选的偏移量。
+        q (str): 搜索关键词（公众号名称或微信号）。
+        page (int): 页码（默认 1）。
+        page_size (int): 每页数量（默认 10，最多 20）。
+        begin (int | None): 可选的偏移量，优先于 page。
 
     Returns:
-        dict: 包含公众号详情的搜索结果。
-
-    Raises:
-        ApiError: 如果关键词为空或会话过期。
+        dict: ``{results, page, page_size, total}``，字段与旧实现保持一致。
     """
     keyword = (q or '').strip()
     if not keyword:
         raise ApiError('q is required')
-    offset = begin if begin is not None else (max(page, 1) - 1) * page_size
-    existing = {account.biz for account in storage.accounts.list_accounts()}
-    session = storage.sessions.get_login_session()
-    async with MPClient() as client:
-        api_client = WeChatApiClient(client, storage=storage)
-        try:
-            payload = await api_client.search_public_accounts(
-                session,
-                keyword=keyword,
-                start=offset,
-                count=min(max(page_size, 1), 20),
-            )
-        except SessionExpiredError as exc:
-            raise ApiError('Session expired. Please re-import the WeRead credential.', status=401) from exc
-    records = payload.get('list') or []
+    limit = min(max(page_size, 1), 20)
+    offset = begin if begin is not None else (max(page, 1) - 1) * limit
+    try:
+        async with WeixinSource() as source:
+            items = await source.search_public_accounts(keyword, offset)
+    except Exception as exc:
+        raise ApiError(f'搜索公众号失败：{exc}', status=502) from exc
+
+    accounts = storage.accounts.list_accounts()
+    by_alias = {account.alias.lower(): account for account in accounts if account.alias}
+    by_nickname = {account.nickname: account for account in accounts}
+
     results: list[dict[str, Any]] = []
-    for item in records:
-        biz = (item.get('fakeid') or '').strip()
-        if not biz:
+    for item in items[:limit]:
+        gh_id = str(item.get('userName') or '').strip()
+        if not gh_id:
             continue
-        avatar_url = (item.get('round_head_img') or item.get('headimg') or '').strip()
-        if avatar_url:
-            _upsert_avatar_url(storage, biz, avatar_url)
-        is_added = biz in existing
+        nickname = str(item.get('nickName') or '').strip()
+        alias = str(item.get('alias') or '').strip()
+        avatar_url = str(item.get('roundHeadImg') or item.get('headImg') or '').strip()
+        known = by_alias.get(alias.lower()) if alias else None
+        if known is None and nickname:
+            known = by_nickname.get(nickname)
+        if avatar_url and known is not None:
+            _upsert_avatar_url(storage, known.biz, avatar_url)
         results.append(
             {
-                'biz': biz,
-                'nickname': item.get('nickname') or '',
-                'alias': item.get('alias') or '',
+                'biz': gh_id,
+                'nickname': nickname,
+                'alias': alias,
                 'round_head_img': avatar_url,
-                'is_added': is_added,
-                'avatar_url': (f'/api/account/{biz}/avatar' if is_added else f'/api/account/search/{biz}/avatar'),
+                'is_added': known is not None,
+                'avatar_url': f'/api/account/search/{quote(gh_id, safe="")}/avatar',
             }
         )
     return {
         'results': results,
         'page': max(page, 1),
-        'page_size': min(max(page_size, 1), 20),
-        'total': payload.get('total') or len(results),
+        'page_size': limit,
+        'total': len(results),
     }
 
 
@@ -603,7 +591,7 @@ def list_accounts(
 
 
 @router.post('/account', status_code=status.HTTP_201_CREATED)
-def create_account(
+async def create_account(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(_get_storage),
 ) -> dict[str, Any]:
@@ -623,6 +611,15 @@ def create_account(
     for field in required:
         if not body.get(field):
             raise ApiError(f'{field} is required')
+    biz = str(body['biz'])
+    # 搜索接口只能给 gh_（daemon 的形状），而 accounts.biz 是 fakeid（``Mz…==``），
+    # 所以这里抓一页该号的文章、从 URL 的 __biz 回填。
+    if biz.startswith('gh_'):
+        try:
+            async with WeixinSource() as source:
+                biz = await source.resolve_fakeid(biz)
+        except Exception as exc:
+            raise ApiError(f'解析公众号 ID 失败：{exc}', status=502) from exc
     group_id = body.get('group_id')
     if group_id is None:
         default_group = ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
@@ -632,7 +629,7 @@ def create_account(
     with storage.transaction():
         account = storage.accounts.upsert_account(
             AccountCredential(
-                biz=str(body['biz']),
+                biz=biz,
                 nickname=str(body['nickname']),
                 alias=body.get('alias'),
                 round_head_img=body.get('round_head_img'),
@@ -1053,64 +1050,74 @@ def refetch_article(
 
 
 @router.get('/login')
-def login_status(
-    storage: PostgresStorage = Depends(_get_storage),
-    manager: LoginManager = Depends(_get_login_manager),
-) -> dict[str, Any]:
-    """获取当前 WeRead 凭据状态。"""
-    return _login_snapshot(manager, storage)
+async def login_status() -> dict[str, Any]:
+    """daemon 登录状态（微信读书凭据已废弃，登录由 weixin-rs daemon 负责）。"""
+    try:
+        async with WeixinSource(auto_login=False) as source:
+            status = await source.status()
+    except Exception as exc:
+        return {
+            'logged_in': False,
+            'status': 'unreachable',
+            'error': str(exc),
+            'updated_at': None,
+        }
+    logged_in = bool(status.get('logged_in'))
+    return {
+        'logged_in': logged_in,
+        'status': status.get('status') or ('online' if logged_in else 'logged_out'),
+        'need_relogin': bool(status.get('need_relogin')),
+        'wxid': status.get('wxid'),
+        # 兼容前端既有字段名（vid/avatar/has_credential 沿用）
+        'vid': status.get('wxid'),
+        'nickname': status.get('nickname'),
+        'avatar': status.get('head_url'),
+        'head_url': status.get('head_url'),
+        'has_credential': logged_in,
+        'message': status.get('error') or '',
+        'last_error': status.get('error'),
+        'clients_connected': status.get('clients_connected'),
+        'updated_at': None,
+    }
 
 
-@router.post('/login/import')
-async def login_import(
-    body: dict[str, Any] = Body(default={}),
-    storage: PostgresStorage = Depends(_get_storage),
-    manager: LoginManager = Depends(_get_login_manager),
-) -> dict[str, Any]:
-    """导入 WeRead 凭据。
-
-    支持两种方式：
-    - ``dump_dir``：服务器读取 WeRead dump 目录（含 WRAccount + device.xml）。
-    - 直接传 ``vid``/``access_token``/``refresh_token``/``device_id`` 字段。
-    """
-    dump_dir = (body.get('dump_dir') or os.environ.get('HIPPO_WEREAD_DUMP_DIR') or '').strip()
-    if dump_dir:
-        try:
-            import_weread_dump(storage, dump_dir, vid=body.get('vid') or None)
-        except WereadDumpError as exc:
-            raise ApiError(str(exc), status=400) from exc
-    else:
-        for field in ('vid', 'access_token'):
-            if not body.get(field):
-                raise ApiError(f'{field} is required')
-        session = LoginSession(
-            vid=str(body['vid']),
-            access_token=str(body['access_token']),
-            refresh_token=str(body.get('refresh_token') or ''),
-            device_id=str(body.get('device_id') or ''),
-            nickname=body.get('nickname'),
-            avatar=body.get('avatar'),
-        )
-        save_login_session(storage, session)
-    return manager.mark_imported(storage)
+@router.post('/login/auto')
+async def login_auto() -> dict[str, Any]:
+    """用 daemon 本地的 auto_auth_key 免扫重登。"""
+    try:
+        async with WeixinSource(auto_login=False) as source:
+            result = await source.login_auto_now()
+    except Exception as exc:
+        raise ApiError(f'免扫重登失败：{exc}', status=502) from exc
+    return {'ok': True, 'result': result}
 
 
-@router.post('/login/refresh')
-async def login_refresh(
-    storage: PostgresStorage = Depends(_get_storage),
-    manager: LoginManager = Depends(_get_login_manager),
-) -> dict[str, Any]:
-    """强制刷新 WeRead access token。"""
-    return await manager.refresh(storage)
+@router.post('/login/qr')
+async def login_qr() -> dict[str, Any]:
+    """索取扫码登录二维码（前端渲染 ``png_base64`` 或 ``url``）。"""
+    try:
+        async with WeixinSource(auto_login=False) as source:
+            qr = await source.start_qr_login()
+    except Exception as exc:
+        raise ApiError(f'获取二维码失败：{exc}', status=502) from exc
+    png = getattr(qr, 'png', b'') or b''
+    return {
+        'uuid': getattr(qr, 'uuid', ''),
+        'url': getattr(qr, 'url', ''),
+        'png_base64': base64.b64encode(png).decode('ascii') if png else '',
+        'expires_in': int(getattr(qr, 'expires_in', 0) or 0),
+    }
 
 
-@router.post('/login/clear')
-def login_clear(
-    storage: PostgresStorage = Depends(_get_storage),
-    manager: LoginManager = Depends(_get_login_manager),
-) -> dict[str, Any]:
-    """清除已导入的 WeRead 凭据。"""
-    return manager.clear(storage)
+@router.post('/login/wait')
+async def login_wait() -> dict[str, Any]:
+    """等扫码确认（daemon 侧轮询，最长约 5 分钟）。"""
+    try:
+        async with WeixinSource(auto_login=False) as source:
+            result = await source.wait_login()
+    except Exception as exc:
+        raise ApiError(f'登录等待失败：{exc}', status=502) from exc
+    return {'ok': True, 'result': result}
 
 
 @router.get('/settings/status')
@@ -1512,7 +1519,6 @@ def create_app(
         with open_storage() as storage:
             ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
             _ensure_avatar_images_table(storage)
-        app.state.login_manager = LoginManager()
         should_enable_sync = _inprocess_sync_enabled() if enable_inprocess_sync is None else enable_inprocess_sync
         if should_enable_sync:
             app.state.sync_scheduler = SyncScheduler()

@@ -54,19 +54,9 @@ class DownloadResult(HippoBaseModel):
     asset_count: int
 
 
-class LoginSession(HippoBaseModel):
-    vid: str
-    access_token: str
-    refresh_token: str = ''
-    device_id: str = ''
-    nickname: str | None = None
-    avatar: str | None = None
-
-
 __all__ = [
     'AccountCredential',
     'AccountGroup',
     'ArticleRecord',
     'DownloadResult',
-    'LoginSession',
 ]
