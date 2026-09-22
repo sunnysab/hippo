@@ -17,7 +17,7 @@ import click
 import typer
 from tqdm import tqdm
 
-from .config import DEFAULT_PAGE_SIZE, DEFAULT_RECENT_DAYS, DEFAULT_SYNC_REQUEST_INTERVAL, WEREAD_DUMP_DIR
+from .config import DEFAULT_PAGE_SIZE, DEFAULT_RECENT_DAYS, DEFAULT_SYNC_REQUEST_INTERVAL
 from .container import build_downloader_container
 from .controllers.sync import (
     SyncMode,
@@ -33,20 +33,16 @@ from .controllers.sync import (
 )
 from .downloader import _attach_image_block_metadata, _parse_markdown_blocks
 from .file_storage import FileStorageError, S3FileStorage
-from .http import MPClient
 from .image_hashes import ensure_image_hash_by_id
 from .image_store import ArticleImageService
 from .logger import setup_logger
-from .login_service import import_weread_dump
-from .models import AccountCredential, AccountGroup, LoginSession
+from .models import AccountCredential, AccountGroup
 from .repositories import ARTICLE_CONTENT_PRESENT_SQL as _ARTICLE_CONTENT_PRESENT_SQL
 from .rss import build_rss_xml, query_rss_items
 from .server import serve as run_server
 from .storage import PostgresStorage, StorageInitError, open_storage
 from .sync_worker import run_sync_worker
 from .utils import format_table, parse_iso_datetime_to_timestamp
-from .wechat_api import SessionExpiredError, WeChatApiClient
-from .weread_dump import WereadDumpError
 
 # Initialize logger on module import
 logger = setup_logger()
@@ -806,137 +802,6 @@ def _resolve_account(storage: PostgresStorage, name: str | None) -> AccountCrede
         names = ', '.join(acc.nickname or acc.biz for acc in matches)
         raise LookupError(f'匹配到多个账号：{names}')
     raise LookupError(f'未找到账号：{target}')
-
-
-def _get_login_session(storage: PostgresStorage) -> LoginSession:
-    try:
-        return storage.sessions.get_login_session()
-    except LookupError as exc:
-        typer.echo(str(exc))
-        raise typer.Exit(code=1)
-
-
-# ---------------------------------------------------------------------------
-# Account commands
-@accounts_app.command('add')
-def add_account(
-    biz: str = typer.Option(..., prompt='fakeid', help='公众号 fakeid（searchbiz 返回）'),
-    nickname: str = typer.Option(..., prompt='昵称', help='公众号昵称'),
-    alias: str | None = typer.Option(None, prompt=False, help='可选别名'),
-    round_head_img: str | None = typer.Option(None, help='头像 URL，可选'),
-) -> None:
-    target_biz = biz.strip()
-    credential = AccountCredential(
-        biz=target_biz,
-        nickname=nickname.strip(),
-        alias=(alias.strip() if alias else None),
-        round_head_img=(round_head_img.strip() if round_head_img else None),
-    )
-    with open_storage() as storage, storage.transaction():
-        stored = storage.accounts.upsert_account(credential)
-    typer.echo(f'账号 {stored.nickname} ({stored.biz}) 已保存')
-
-
-@accounts_app.command('search')
-@coro
-async def search_accounts(
-    keyword: str = typer.Argument(..., help='搜索关键词'),
-    page: int = typer.Option(1, min=1, help='分页页码，从 1 开始'),
-    begin: int | None = typer.Option(None, min=0, help='起始偏移，优先于分页'),
-    interactive: bool = typer.Option(False, is_flag=True, help='交互式选择并添加账号'),
-) -> None:
-    await _search_accounts_async(
-        keyword=keyword,
-        page=page,
-        begin=begin,
-        interactive=interactive,
-    )
-
-
-async def _search_accounts_async(
-    *,
-    keyword: str,
-    page: int,
-    begin: int | None,
-    interactive: bool,
-) -> None:
-    _require_nonempty(keyword, '请提供搜索关键词。')
-    with open_storage() as storage:
-        session = _get_login_session(storage)
-        existing_biz = {account.biz for account in storage.accounts.list_accounts()}
-    page_size = 10
-    current_page = page
-    while True:
-        offset = begin if begin is not None else (current_page - 1) * page_size
-        async with MPClient() as client:
-            api_client = WeChatApiClient(client)
-            try:
-                payload = await api_client.search_public_accounts(
-                    session,
-                    keyword=keyword,
-                    start=offset,
-                    count=page_size,
-                )
-            except SessionExpiredError:
-                typer.echo('WeRead session expired. Please re-import via `hippo login`.')
-                raise typer.Exit(code=2)
-        records = payload.get('list') or []
-        if not records:
-            typer.echo('未找到匹配的公众号')
-            return
-        headers = ['序号', '昵称', 'fakeid', '别名']
-        rows: list[list[str]] = []
-        for idx, item in enumerate(records, start=1):
-            fakeid = item.get('fakeid', '-')
-            nickname = item.get('nickname', '-')
-            if fakeid in existing_biz:
-                nickname = f'{nickname}（已添加）'
-            rows.append(
-                [
-                    str(idx),
-                    nickname,
-                    fakeid,
-                    item.get('alias', '-'),
-                ]
-            )
-        table_text = format_table(headers, rows)
-        if table_text:
-            typer.echo(table_text)
-
-        if not interactive:
-            return
-
-        raw = typer.prompt(
-            '选择要添加的序号(如 1,3-5，回车跳过，q 退出)',
-            default='',
-            show_default=False,
-        ).strip()
-        if raw.lower() == 'q':
-            return
-        if raw:
-            try:
-                indices = _parse_selection_indices(raw, len(records))
-            except typer.BadParameter as exc:
-                typer.echo(str(exc))
-                continue
-            with open_storage() as storage:
-                saved = []
-                with storage.transaction():
-                    for idx in indices:
-                        item = records[idx]
-                        fakeid_value = (item.get('fakeid') or '').strip()
-                        credential = AccountCredential(
-                            biz=fakeid_value,
-                            nickname=(item.get('nickname') or '').strip() or '未知公众号',
-                            alias=(item.get('alias') or '').strip() or None,
-                            round_head_img=(item.get('round_head_img') or '').strip() or None,
-                        )
-                        stored = storage.accounts.upsert_account(credential)
-                        saved.append(f'{stored.nickname} ({stored.biz})')
-            typer.echo(f'已保存 {len(saved)} 个账号')
-        if begin is not None:
-            begin += page_size
-        current_page += 1
 
 
 @accounts_app.command('list')
@@ -1734,29 +1599,6 @@ def export_accounts() -> None:
         for account in accounts
     ]
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
-
-
-@app.command('login')
-def login(
-    dump_dir: str | None = typer.Option(
-        None,
-        '--dump-dir',
-        help='WeRead dump 目录（含 WRAccount + device.xml），默认读 HIPPO_WEREAD_DUMP_DIR',
-    ),
-    vid: str | None = typer.Option(None, help='指定账号 vid，默认选最新非游客账号'),
-) -> None:
-    """Import WeRead credentials from an Android account dump."""
-    resolved = dump_dir or WEREAD_DUMP_DIR
-    if not resolved:
-        typer.echo('请通过 --dump-dir 或环境变量 HIPPO_WEREAD_DUMP_DIR 提供 WeRead dump 目录')
-        raise typer.Exit(code=2)
-    with open_storage() as storage:
-        try:
-            session = import_weread_dump(storage, resolved, vid=vid)
-        except WereadDumpError as exc:
-            typer.echo(f'导入失败：{exc}')
-            raise typer.Exit(code=1) from exc
-    typer.echo(f'已导入 WeRead 凭据：vid {session.vid}')
 
 
 @app.command('serve')
