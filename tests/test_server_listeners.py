@@ -7,8 +7,7 @@ from unittest.mock import patch
 
 import typer
 
-from hippo import cli
-from hippo import server
+from hippo import cli, server
 
 
 @unittest.skipUnless(hasattr(socket, 'AF_UNIX'), 'AF_UNIX is not available on this platform')
@@ -49,9 +48,11 @@ class ServerListenerTest(unittest.TestCase):
                 return None
 
             try:
-                with patch.object(server, '_remove_stale_unix_socket', noop_remove):
-                    with self.assertRaisesRegex(RuntimeError, 'Failed to bind Unix socket'):
-                        server._create_unix_listen_socket(uds_path, 0o660)
+                with (
+                    patch.object(server, '_remove_stale_unix_socket', noop_remove),
+                    self.assertRaisesRegex(RuntimeError, 'Failed to bind Unix socket'),
+                ):
+                    server._create_unix_listen_socket(uds_path, 0o660)
                 self.assertTrue(uds_path.exists())
             finally:
                 active.close()

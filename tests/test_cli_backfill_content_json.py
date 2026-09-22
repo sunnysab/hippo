@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import unittest
+from typing import ClassVar
 from unittest.mock import patch
 
 from hippo.cli import backfill_content_json
 
 
 class _FakeCursor:
-    def __init__(self, conn: '_FakeConn') -> None:
+    def __init__(self, conn: _FakeConn) -> None:
         self._conn = conn
         self._result: list[tuple] = []
         self._sql: str = ''
 
-    def __enter__(self) -> '_FakeCursor':
+    def __enter__(self) -> _FakeCursor:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
@@ -86,7 +87,7 @@ class _FakeConn:
         self.rollback_count = 0
         self.executed_updates: list[tuple] = []
 
-    def cursor(self) -> '_FakeCursor':
+    def cursor(self) -> _FakeCursor:
         return _FakeCursor(self)
 
     def rollback(self) -> None:
@@ -110,7 +111,7 @@ class _FakeConn:
 
 
 class _FakeTransaction:
-    def __enter__(self) -> '_FakeTransaction':
+    def __enter__(self) -> _FakeTransaction:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
@@ -118,7 +119,7 @@ class _FakeTransaction:
 
 
 class _FakeStorage:
-    instances: list['_FakeStorage'] = []
+    instances: ClassVar[list[_FakeStorage]] = []
 
     def __init__(self, dsn: str, *, auto_init: bool = False) -> None:
         self.dsn = dsn
@@ -126,7 +127,7 @@ class _FakeStorage:
         self.conn = _FakeConn()
         _FakeStorage.instances.append(self)
 
-    def __enter__(self) -> '_FakeStorage':
+    def __enter__(self) -> _FakeStorage:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]

@@ -3,49 +3,24 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from .models import AccountCredential
 
 
-class SyncMode(StrEnum):
-    full = 'full'
-    incremental = 'incremental'
-    recent = 'recent'
-    range = 'range'
-
-    def __str__(self) -> str:  # pragma: no cover - click displays value
-        return self.value
-
-
 @dataclass(frozen=True)
 class SyncConfig:
-    mode: SyncMode | None
-    page_size: int
+    """一轮同步的运行参数。
+
+    ``mode`` / ``recent_days`` / ``since`` / ``until`` 这些字段随微信读书数据源一起删掉了：
+    weixin-rs 的列表接口只按页取，没有时间过滤，留字段只会让 CLI/UI 看起来能选。
+    """
+
     sleep_seconds: float
-    reset: bool
-    recent_days: int | None
-    since_date: str | None
-    until_date: str | None
     force: bool
     skip_minutes: int | None
-    download_content: bool
-    download_images: bool
-    content_limit: int | None
-    max_content_download_attempts: int | None = None
     max_pages: int | None = None
-
-
-@dataclass(frozen=True)
-class SyncPlan:
-    since_timestamp: int | None
-    until_timestamp: int | None
-    stop_on_existing: bool
-    full_synced_hint: bool
-    resume_key: str | None
-    complete_key: str | None
 
 
 @dataclass(frozen=True)
@@ -217,9 +192,7 @@ __all__ = [
     'SyncAccountResult',
     'SyncConfig',
     'SyncJobObserver',
-    'SyncMode',
     'SyncObserver',
-    'SyncPlan',
     'SyncReport',
     'SyncSummary',
     'SyncTaskState',

@@ -4,12 +4,12 @@ import asyncio
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from hippo.server import run_sync
-from hippo.sync_service import ArticleSyncService, SyncJobResult, SyncRunError
+from hippo.sync_service import SyncJobResult
 from hippo.sync_settings import _persist_sync_outcome
-from hippo.sync_types import NullSyncObserver, SyncConfig, SyncMode, SyncReport, SyncSummary
+from hippo.sync_types import SyncReport
 
 
 class _FakeSyncJobs:
