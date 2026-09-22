@@ -64,11 +64,11 @@ async def main() -> int:
                 failed.append((nickname, '', 'alias 为空'))
                 continue
             try:
-                items = await source.list_articles(alias.strip(), biz, pages=1)
+                listed = await source.list_articles(alias.strip(), biz, pages=1)
             except Exception as exc:
                 failed.append((nickname, alias, str(exc)[:120]))
                 continue
-            if items:
+            if listed.items:
                 ok += 1
             else:
                 failed.append((nickname, alias, '列表返回 0 篇'))

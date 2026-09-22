@@ -120,13 +120,18 @@ async def main() -> int:
                 if not alias:
                     continue
                 try:
-                    items = await source.list_articles(alias, biz, pages=1)
+                    listed = await source.list_articles(alias, biz, pages=1)
                 except Exception as exc:
                     log(f'✗ {nickname}（{alias}）：{exc}')
                     failed += 1
                     continue
-                if items:
-                    log(f'~ {nickname}（{alias}）列表可用，但 gh_ 仍需单独解析')
+                if listed.gh_id:
+                    with storage.transaction():
+                        storage.accounts.set_gh_id(biz, listed.gh_id)
+                    filled += 1
+                    log(f'+ {nickname}（{alias}）→ {listed.gh_id}（列表 {len(listed.items)} 篇）')
+                elif listed.items:
+                    log(f'~ {nickname}（{alias}）列表可用，但没给 gh_')
                 await asyncio.sleep(20)
 
     storage.close()

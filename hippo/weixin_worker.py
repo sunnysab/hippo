@@ -62,8 +62,8 @@ class WeixinArticleSync:
     async def sync_account(self, *, biz: str, source_key: str, pages: int = 1) -> SyncStats:
         """拉一个账号的列表并入队（``source_key`` 是微信号 alias 或 gh_）。"""
         stats = SyncStats()
-        items = await self._source.list_articles(source_key, biz, pages=pages)
-        stats.listed = len(items)
+        listed = await self._source.list_articles(source_key, biz, pages=pages)
+        stats.listed = len(listed.items)
         stats.enqueued = self._storage.article_queue.enqueue_many(
             {
                 'biz': item.biz,
@@ -72,8 +72,11 @@ class WeixinArticleSync:
                 'long_link': item.long_link,
                 'payload': item.payload,
             }
-            for item in items
+            for item in listed.items
         )
+        # 列表响应顺带带回了 daemon 解析出的 gh_：缓存下来，下次解析就不必再走 searchcontact
+        if listed.gh_id:
+            self._storage.accounts.set_gh_id(biz, listed.gh_id)
         self._storage.commit()
         logger.info('列表 %s：%d 篇，新入队 %d', source_key, stats.listed, stats.enqueued)
         return stats

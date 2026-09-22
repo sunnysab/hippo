@@ -28,8 +28,9 @@ def parse_args() -> argparse.Namespace:
 async def main() -> int:
     args = parse_args()
     async with WeixinSource() as source:
-        items = await source.list_articles(args.key, args.biz, pages=args.pages)
-        print(f'列表：{len(items)} 篇')
+        listed = await source.list_articles(args.key, args.biz, pages=args.pages)
+        items = listed.items
+        print(f'列表：{len(items)} 篇（gh_id={listed.gh_id or "-"}）')
         for item in items[:5]:
             print(f'  sn={item.sn} | {str(item.payload.get("title", ""))[:28]} | {item.long_link[:64]}')
         if not items or args.bodies <= 0:
