@@ -504,11 +504,26 @@ def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
     images, blocked_image_ids = _get_visible_article_images(storage, article_id)
     if isinstance(content_json, list) and blocked_image_ids:
         content_json = _filter_blocked_content_blocks(content_json, blocked_image_ids)
+
+    fetch_diagnostic = None
+    if content_status != 'ok':
+        fetch_diagnostic = fetchone_row(
+            storage,
+            """
+            SELECT last_error, error_type, retryable, attempts, last_attempt_at
+              FROM article_download_attempts
+             WHERE biz = %s AND article_id = %s
+            """,
+            [article['biz'], article['article_id']],
+            normalize=_normalize_record,
+        )
     return {
         'article': article,
         'content': content_json,
         'content_status': content_status,
         'content_updated_at': content_updated_at,
+        # Keep our diagnostic verbatim; it does not assert why WeChat omitted content.
+        'content_fetch_diagnostic': fetch_diagnostic,
         'images': images,
     }
 

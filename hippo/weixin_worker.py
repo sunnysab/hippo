@@ -25,9 +25,6 @@ logger = logging.getLogger(__name__)
 
 DOCUMENT_SOURCE = 'api_6771'
 
-# 命中这些特征算可重试（网络/握手/token/服务端 retcode），其余按不可重试处理
-_RETRYABLE_MARKERS = ('timeout', '超时', 'retcode', '0-RTT', '握手', 'H5 Session', 'connection')
-
 
 @dataclass(slots=True)
 class SyncStats:
@@ -110,9 +107,14 @@ class WeixinArticleSync:
             return
         by_url = {body.url: body for body in bodies}
         for row in batch:
-            body = by_url.get(str(row['long_link']))
-            if body is None:
-                self._fail([row], RuntimeError('响应里没有这一篇'))
+            url = str(row['long_link'])
+            body = by_url.get(url)
+            if body is None or not body.html:
+                diagnostic = self._source.body_error_for(url)
+                self._fail(
+                    [row],
+                    RuntimeError(diagnostic or f'daemon response omitted body for {url}'),
+                )
                 stats.failed += 1
                 continue
             try:
@@ -128,7 +130,10 @@ class WeixinArticleSync:
 
     def _fail(self, rows: list[dict[str, Any]], exc: Exception) -> None:
         message = str(exc)
-        retryable = any(marker in message for marker in _RETRYABLE_MARKERS)
+        # We do not infer upstream permanence from our own parser/error text.
+        # Retry is bounded by article_queue.mark_failed (three attempts), while the
+        # original daemon diagnostic remains recorded for inspection.
+        retryable = True
         self._storage.article_queue.mark_failed(
             [int(row['id']) for row in rows], error=message, retryable=retryable
         )

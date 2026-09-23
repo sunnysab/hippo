@@ -20,7 +20,7 @@ BODY_TIMEOUT_SECONDS = 900.0
 
 import os
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -118,6 +118,7 @@ class WeixinSource:
         self.port = int(port or os.environ.get('WEIXIN_DAEMON_PORT', '9099'))
         self._auto_login = auto_login
         self._bot: Any = None
+        self._body_errors: dict[str, str] = {}
 
     async def __aenter__(self) -> WeixinSource:
         bot_class = load_bot_class()
@@ -194,9 +195,24 @@ class WeixinSource:
         return ListedArticles(items=out, gh_id=gh_id)
 
     async def fetch_bodies(self, urls: list[str]) -> list[FetchedArticle]:
-        """批量抓正文（短链优先；daemon 负责节流与降级）。"""
-        bodies = await self._bot.get_article_bodies(list(urls), timeout=BODY_TIMEOUT_SECONDS)
-        return [FetchedArticle.from_dict(asdict(body)) for body in bodies]
+        """批量抓正文（短链优先；daemon 负责节流与降级），保留每 URL 的 daemon 诊断。"""
+        self._body_errors = {}
+        res = await self._bot.call(
+            'get_article_bodies',
+            {'urls': list(urls)},
+            timeout=BODY_TIMEOUT_SECONDS,
+        )
+        if not isinstance(res, dict):
+            return []
+        for error in res.get('errors') or []:
+            message = str(error.get('error') or 'daemon returned an unspecified body error')
+            for url in error.get('urls') or []:
+                self._body_errors[str(url)] = message
+        return [FetchedArticle.from_dict(body) for body in res.get('articles') or []]
+
+    def body_error_for(self, url: str) -> str | None:
+        """返回 daemon 对这条 URL 的原始诊断文本；不从错误串推断微信侧原因。"""
+        return self._body_errors.get(url)
 
     async def search_public_accounts(self, keyword: str, offset: int = 0) -> list[dict[str, Any]]:
         """搜公众号（daemon `search_biz`）：返回 H5 搜索结果里的 ``gh_`` 对象列表。"""
