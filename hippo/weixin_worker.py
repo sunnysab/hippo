@@ -19,7 +19,7 @@ from typing import Any
 from .downloader import ArticleDownloader
 from .models import ArticleRecord
 from .storage import PostgresStorage
-from .weixin_source import FetchedArticle, WeixinSource
+from .weixin_source import FetchedArticle, SessionExpiredError, WeixinSource, classify_daemon_error
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +98,17 @@ class WeixinArticleSync:
         return stats
 
     async def _process_batch(self, batch: list[dict[str, Any]], stats: SyncStats) -> None:
+        try:
+            await self._process_batch_inner(batch, stats)
+        except SessionExpiredError:
+            # 会话失效是基础设施故障：整批回 pending 且不计 attempts，交给上层等重新登录。
+            self._storage.article_queue.requeue(
+                [int(row['id']) for row in batch], error='daemon session expired'
+            )
+            self._storage.commit()
+            raise
+
+    async def _process_batch_inner(self, batch: list[dict[str, Any]], stats: SyncStats) -> None:
         urls = [str(row['long_link']) for row in batch]
         try:
             bodies = await self._source.fetch_bodies(urls)
@@ -130,6 +141,9 @@ class WeixinArticleSync:
 
     def _fail(self, rows: list[dict[str, Any]], exc: Exception) -> None:
         message = str(exc)
+        if classify_daemon_error(message) == 'session':
+            # 不写 attempts、不写 failed：让 _process_batch 整批回 pending
+            raise SessionExpiredError(message)
         # We do not infer upstream permanence from our own parser/error text.
         # Retry is bounded by article_queue.mark_failed (three attempts), while the
         # original daemon diagnostic remains recorded for inspection.

@@ -1284,6 +1284,25 @@ class ArticleQueueRepository:
             )
             return cur.rowcount
 
+    def requeue(self, queue_ids: Iterable[int], *, error: str) -> int:
+        """会话失效这类基础设施故障：回 `pending` 且**不计 attempts**（不算文章的账）。
+
+        只动 `processing` 的行：同批已 done / failed 的不被拉回来。
+        """
+        ids = list(queue_ids)
+        if not ids:
+            return 0
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE article_queue
+                   SET state = 'pending', last_error = %s, retryable = TRUE, updated_at = NOW()
+                 WHERE id = ANY(%s) AND state = 'processing'
+                """,
+                (error[:1000], ids),
+            )
+            return cur.rowcount
+
     def stats(self) -> dict[str, int]:
         """各状态计数，四个键恒定存在（缺状态补 0）。"""
         with self._conn.cursor(row_factory=dict_row) as cur:

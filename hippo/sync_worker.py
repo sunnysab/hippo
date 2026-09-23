@@ -30,6 +30,7 @@ from .sync_settings import (
 from .sync_tasks import _article_snapshot
 from .sync_types import AccountProgress, SyncAccountResult, SyncObserver, SyncSummary
 from .utils import utc_now_iso
+from .weixin_source import SessionExpiredError, WeixinSource
 from .weixin_watch import watch_article_push
 
 logger = logging.getLogger(__name__)
@@ -395,6 +396,18 @@ async def _image_backfill_loop(
         await asyncio.sleep(max(float(poll_interval), 5.0))
 
 
+async def wait_for_daemon_login(poll: float = 30.0) -> None:
+    """轮询 daemon `get_status`（过期态也可查），登录回来才返回。"""
+    while True:
+        try:
+            async with WeixinSource(auto_login=False) as source:
+                if (await source.status()).get('logged_in'):
+                    return
+        except Exception:
+            pass
+        await asyncio.sleep(poll)
+
+
 async def _body_drain_loop(poll_interval: float = DRAIN_POLL_SECONDS) -> None:
     """常驻正文抓取循环：与列表 job 并行，互不阻塞。"""
     while True:
@@ -404,6 +417,11 @@ async def _body_drain_loop(poll_interval: float = DRAIN_POLL_SECONDS) -> None:
                 await drain_bodies_once(storage)
         except asyncio.CancelledError:
             raise
+        except SessionExpiredError as exc:
+            # 会话失效不是文章的失败（已整批回 pending、不计 attempts）：暂停等重新登录
+            logger.warning('daemon 会话失效，正文抓取暂停，等重新登录：%s', exc)
+            await wait_for_daemon_login()
+            continue
         except Exception:
             logger.exception('正文 drain 失败')
         await asyncio.sleep(max(float(poll_interval), 1.0))

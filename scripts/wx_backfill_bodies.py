@@ -31,7 +31,7 @@ from hippo.http import MPClient
 from hippo.image_store import ArticleImageService
 from hippo.models import ArticleRecord
 from hippo.storage import PostgresStorage
-from hippo.weixin_source import WeixinSource
+from hippo.weixin_source import WeixinSource, classify_daemon_error
 
 # 每轮从库里取多少篇候选（一轮内再按 --batch-size 分批请求）
 FETCH_WINDOW = 200
@@ -223,6 +223,11 @@ async def main() -> int:
                     try:
                         bodies = await source.fetch_bodies(links)
                     except Exception as exc:
+                        if classify_daemon_error(str(exc)) == 'session':
+                            # 会话失效不算文章的账：不记 attempts，干净退出（可续跑），
+                            # 重新登录后重跑本脚本即可。
+                            log(f'daemon 会话失效，本次到此为止（不计 attempts）：{exc}')
+                            return 3
                         log(f'批次失败：{exc}')
                         for row in chunk:
                             record_attempt(
