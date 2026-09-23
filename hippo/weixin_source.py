@@ -26,6 +26,29 @@ from urllib.parse import parse_qs, urlparse
 
 DEFAULT_SDK_PATH = '/opt/weixin-rs/sdk/python'
 
+# 会话类错误（daemon 侧 -13/未登录）：不是文章的错，不计 attempts、整体暂停等重新登录。
+# 普通 CGI 的 -13 是会话死；心跳/NewSync 的 -13 由 daemon 的定性阶梯先救，救不回来才到这。
+SESSION_MARKERS = ('session expired', '需要重新登录', '需要先登录', '未登录', 'login_qr_start', '[401]')
+NETWORK_MARKERS = ('timeout', 'timed out', '超时', '0-RTT', '握手', 'connection', 'Not connected')
+
+
+class SessionExpiredError(RuntimeError):
+    """daemon 会话失效：调用方应暂停等待登录，不要把它记成文章失败。"""
+
+
+def classify_daemon_error(message: str) -> str:
+    """daemon 错误文本 → 'session' | 'network' | 'upstream'。
+
+    只有 'session' 改变行为（不计 attempts、暂停等登录）；
+    其余两类都按可重试计数（到上限为止），区分保留给错误归档。
+    """
+    text = message or ''
+    if any(marker in text for marker in SESSION_MARKERS):
+        return 'session'
+    if any(marker in text for marker in NETWORK_MARKERS):
+        return 'network'
+    return 'upstream'
+
 
 def load_bot_class() -> Any:
     """导入 weixin-rs 的 ``WeChatBot``；路径不对时给出可执行的报错。"""
@@ -233,4 +256,13 @@ class WeixinSource:
         raise RuntimeError(f'{gh_id} 暂无可用文章，拿不到 __biz（可能需要先关注）')
 
 
-__all__ = ['FetchedArticle', 'ListedArticles', 'QueuedArticle', 'WeixinSource', 'load_bot_class', 'query_param']
+__all__ = [
+    'FetchedArticle',
+    'ListedArticles',
+    'QueuedArticle',
+    'SessionExpiredError',
+    'WeixinSource',
+    'classify_daemon_error',
+    'load_bot_class',
+    'query_param',
+]
