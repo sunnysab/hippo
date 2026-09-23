@@ -384,6 +384,8 @@ CREATE TABLE IF NOT EXISTS article_download_attempts (
     article_id TEXT NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
+    error_type TEXT,
+    retryable BOOLEAN NOT NULL DEFAULT TRUE,
     last_attempt_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL,
     UNIQUE (biz, article_id)
@@ -391,6 +393,10 @@ CREATE TABLE IF NOT EXISTS article_download_attempts (
 
 CREATE INDEX IF NOT EXISTS idx_article_download_attempts_biz_article
 ON article_download_attempts (biz, article_id);
+
+ALTER TABLE article_download_attempts
+    ADD COLUMN IF NOT EXISTS error_type TEXT,
+    ADD COLUMN IF NOT EXISTS retryable BOOLEAN NOT NULL DEFAULT TRUE;
 
 -- 原始文档存储：正文原文（content_noencode / 整页网页 HTML）与原始响应 JSON。
 -- 线上正文表 article_content 只保留派生内容（content_markdown + content_json），

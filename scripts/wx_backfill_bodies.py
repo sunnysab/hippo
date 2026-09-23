@@ -23,6 +23,7 @@ import asyncio
 import json
 import os
 import sys
+from urllib.parse import urlparse
 
 from hippo.downloader import ArticleDownloader
 from hippo.file_storage import FileStorageError, S3FileStorage
@@ -41,7 +42,7 @@ SELECT a.id, a.biz, a.article_id, a.title, a.item_show_type, a.author, a.digest,
   FROM articles a
   LEFT JOIN article_content c ON c.article_pk = a.id
  WHERE c.article_pk IS NULL
-   AND a.link LIKE '%%/s/%%'
+   AND (a.link LIKE '%%/s/%%' OR a.link LIKE '%%/s?__biz=%%')
    {retry_clause}
  ORDER BY a.publish_at DESC NULLS LAST, a.id DESC
  LIMIT %s
@@ -65,6 +66,11 @@ def parse_args() -> argparse.Namespace:
 
 def log(message: str) -> None:
     print(f'[backfill bodies] {message}', file=sys.stderr, flush=True)
+
+
+def is_short_article_link(url: str) -> bool:
+    path = urlparse(url).path
+    return path.startswith('/s/') and bool(path.removeprefix('/s/'))
 
 
 def load_image_meta(storage: PostgresStorage, article_pk: int) -> dict[str, tuple]:
@@ -230,16 +236,30 @@ async def main() -> int:
                         record, pk = to_record(row)
                         body = by_url.get(str(row[7]))
                         if body is None or not body.html:
+                            # A missing body is an observed daemon result, not proof of a
+                            # permanent upstream condition. Keep the daemon's diagnostic verbatim.
+                            diagnostic = source.body_error_for(str(row[7]))
                             record_attempt(
-                                storage, biz=record.biz, article_id=record.article_id,
-                                error='详情里没有正文', retryable=False,
+                                storage,
+                                biz=record.biz,
+                                article_id=record.article_id,
+                                error=diagnostic or f'daemon response omitted body for {row[7]}',
+                                retryable=True,
                             )
                             failed += 1
                             continue
                         meta = load_image_meta(storage, pk)
                         try:
+                            body_link = record.link
+                            if (
+                                not is_short_article_link(record.link)
+                                and body.short_link
+                                and is_short_article_link(body.short_link)
+                            ):
+                                body_link = body.short_link
+                            article_to_store = record.model_copy(update={'link': body_link})
                             await downloader.ingest_body(
-                                article=record,
+                                article=article_to_store,
                                 html=body.html,
                                 title=body.title or record.title,
                                 item_show_type=body.item_show_type,
