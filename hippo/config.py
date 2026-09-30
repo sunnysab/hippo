@@ -66,3 +66,10 @@ __all__ = [
     'WECHAT_COMMENT_ENDPOINT',
     'WECHAT_PROFILE_ENDPOINT',
 ]
+
+
+#: SignOz front-end base URL. When set, the admin log page deep-links into it.
+SIGNOZ_URL = os.environ.get('HIPPO_SIGNOZ_URL', '').rstrip('/')
+
+#: How many trailing lines the fallback log tail returns.
+LOG_TAIL_LINES = int(os.environ.get('HIPPO_LOG_TAIL_LINES', '500'))

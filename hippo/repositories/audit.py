@@ -7,6 +7,7 @@ admin console shows.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import psycopg
@@ -45,8 +46,10 @@ class AuditRepository:
         offset: int = 0,
         action: str | None = None,
         user_id: int | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        where, params = self._filters(action, user_id)
+        where, params = self._filters(action, user_id, since, until)
         params.extend([max(limit, 1), max(offset, 0)])
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
@@ -69,15 +72,34 @@ class AuditRepository:
             result.append(record)
         return result
 
-    async def count(self, *, action: str | None = None, user_id: int | None = None) -> int:
-        where, params = self._filters(action, user_id)
+    async def count(
+        self,
+        *,
+        action: str | None = None,
+        user_id: int | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> int:
+        where, params = self._filters(action, user_id, since, until)
         async with self._conn.cursor() as cur:
             await cur.execute(f'SELECT count(*) FROM audit_log a {where}', params)
             row = await cur.fetchone()
         return int(row[0]) if row else 0
 
+    async def actions(self) -> list[str]:
+        """Distinct actions, for building the filter dropdown."""
+        async with self._conn.cursor() as cur:
+            await cur.execute('SELECT DISTINCT action FROM audit_log ORDER BY action')
+            rows = await cur.fetchall()
+        return [row[0] for row in rows]
+
     @staticmethod
-    def _filters(action: str | None, user_id: int | None) -> tuple[str, list[Any]]:
+    def _filters(
+        action: str | None,
+        user_id: int | None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> tuple[str, list[Any]]:
         clauses: list[str] = []
         params: list[Any] = []
         if action:
@@ -86,5 +108,11 @@ class AuditRepository:
         if user_id is not None:
             clauses.append('a.user_id = %s')
             params.append(user_id)
+        if since is not None:
+            clauses.append('a.created_at >= %s')
+            params.append(since)
+        if until is not None:
+            clauses.append('a.created_at <= %s')
+            params.append(until)
         where = f'WHERE {" AND ".join(clauses)}' if clauses else ''
         return where, params
