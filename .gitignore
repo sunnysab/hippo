@@ -18,8 +18,12 @@ dist/
 .opencode/
 AGENTS.md
 CLAUDE.md
+docs/superpowers/
 mpcli.txt
 deploy.sh
 
 logs/
 .worktrees/
+
+# Local deploy runbook (contains connection details) and agent scratch plans
+DEPLOY.md
