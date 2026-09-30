@@ -29,6 +29,7 @@ router = APIRouter(dependencies=[Depends(current_user)])
 async def sync_status(
     limit: int = 5,
     storage: PostgresStorage = Depends(get_storage),
+    _: User = Depends(current_user),
 ) -> dict[str, Any]:
     """
     获取后台同步任务的状态。
@@ -54,6 +55,7 @@ async def list_sync_tasks(
     limit: int = 5,
     detail: bool = False,
     storage: PostgresStorage = Depends(get_storage),
+    _: User = Depends(require_admin),
 ) -> dict[str, Any]:
     """
     获取同步任务列表。
@@ -69,6 +71,7 @@ async def list_sync_tasks(
 async def get_sync_task(
     task_id: str,
     storage: PostgresStorage = Depends(get_storage),
+    _: User = Depends(require_admin),
 ) -> dict[str, Any]:
     """
     获取指定同步任务的进度与状态。
@@ -83,6 +86,7 @@ async def get_sync_task(
 async def cancel_sync_task(
     task_id: str,
     storage: PostgresStorage = Depends(get_storage),
+    _: User = Depends(require_admin),
 ) -> dict[str, Any]:
     """Cancel a running or queued sync task."""
     async with storage.transaction():
@@ -95,7 +99,10 @@ async def cancel_sync_task(
 
 
 @router.get('/settings')
-async def get_sync_settings(storage: PostgresStorage = Depends(get_storage)) -> dict[str, Any]:
+async def get_sync_settings(
+    storage: PostgresStorage = Depends(get_storage),
+    _: User = Depends(require_admin),
+) -> dict[str, Any]:
     """
     获取当前的同步配置设置。
 
@@ -212,6 +219,7 @@ async def update_preferences(
 async def send_sync_test_email(
     body: dict[str, Any] = Body(default={}),
     storage: PostgresStorage = Depends(get_storage),
+    _: User = Depends(require_admin),
 ) -> dict[str, Any]:
     """
     发送测试邮件，使用当前或传入的 SMTP 配置。
@@ -323,8 +331,8 @@ async def run_sync(
             raise ApiError('Invalid group_id') from exc
         row = await fetchone_row(
             storage,
-            'SELECT id FROM account_groups WHERE id = %s',
-            [group_id],
+            'SELECT id FROM account_groups WHERE id = %s AND user_id = %s',
+            [group_id, user.id],
             normalize=_normalize_record,
         )
         if not row:

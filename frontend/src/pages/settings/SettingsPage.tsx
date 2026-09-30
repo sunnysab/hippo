@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useMemo, useRef, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useSettingsState } from '../../store/settings';
+import { useAuth } from '../../hooks/useAuth';
 import { apiGet } from '../../api';
 import type { SyncStatus, SyncSettings, SyncTask, LoginStatus } from '../../store/settings';
 import {
@@ -40,6 +41,7 @@ const buildSyncTasksFingerprint = (tasks: SyncTask[]): string => {
 
 export function SettingsPage() {
   const { state, dispatch } = useSettingsState();
+  const { isAdmin } = useAuth();
   const lastSyncFingerprint = useRef('');
   const lastTasksFingerprint = useRef('');
   const hasActiveTask = useCallback(() => {
@@ -64,6 +66,7 @@ export function SettingsPage() {
   }, [dispatch]);
 
   const loadSyncTasks = useCallback(async () => {
+    if (!isAdmin) return;
     try {
       const payload = await apiGet('/api/settings/tasks?limit=5&detail=true');
       const tasks = (payload.tasks || []) as SyncTask[];
@@ -75,16 +78,17 @@ export function SettingsPage() {
     } catch {
       /* ignore */
     }
-  }, [dispatch]);
+  }, [dispatch, isAdmin]);
 
   const loadSyncSettings = useCallback(async () => {
+    if (!isAdmin) return;
     try {
       const payload = await apiGet('/api/settings');
       dispatch({ type: 'SET_SYNC_SETTINGS', payload: payload as unknown as SyncSettings });
     } catch {
       /* ignore */
     }
-  }, [dispatch]);
+  }, [dispatch, isAdmin]);
 
   const loadLoginStatus = useCallback(async () => {
     try {
@@ -128,7 +132,7 @@ export function SettingsPage() {
     return () => {
       clearSyncTimer();
     };
-  }, [getSyncPollDelay, loadSyncStatus, loadSyncTasks]);
+  }, [getSyncPollDelay, isAdmin, loadSyncStatus, loadSyncTasks]);
 
   useEffect(() => {
     const handler = () => {
@@ -163,27 +167,36 @@ interface SettingsPageContentProps {
 
 function SettingsPageContent({ initialFormState }: SettingsPageContentProps) {
   const { t } = useI18n();
+  const { isAdmin } = useAuth();
   const [formState, setFormState] = useState<SyncSettingsFormState>(initialFormState);
 
   const navItems = [
-    {
-      key: 'sync',
-      path: '/settings/sync',
-      title: t('settings.navSync', 'Sync'),
-      summary: t('settings.navSyncSummary', 'Manage schedules, progress, and alerts.'),
-    },
+    ...(isAdmin
+      ? [
+          {
+            key: 'sync',
+            path: '/settings/sync',
+            title: t('settings.navSync', 'Sync'),
+            summary: t('settings.navSyncSummary', 'Manage schedules, progress, and alerts.'),
+          },
+        ]
+      : []),
     {
       key: 'filter',
       path: '/settings/filter',
       title: t('settings.navFilter', 'Filter'),
       summary: t('settings.navFilterSummary', 'Manage article filters and reading preferences.'),
     },
-    {
-      key: 'email',
-      path: '/settings/email',
-      title: t('settings.navEmail', 'Email'),
-      summary: t('settings.navEmailSummary', 'Configure SMTP and test delivery.'),
-    },
+    ...(isAdmin
+      ? [
+          {
+            key: 'email',
+            path: '/settings/email',
+            title: t('settings.navEmail', 'Email'),
+            summary: t('settings.navEmailSummary', 'Configure SMTP and test delivery.'),
+          },
+        ]
+      : []),
     {
       key: 'login',
       path: '/settings/login',
