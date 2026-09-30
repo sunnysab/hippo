@@ -20,6 +20,7 @@ from .exceptions import StorageInitError
 from .models import AccountGroup
 from .repositories import (
     AccountRepository,
+    AnnotationRepository,
     ArticleDocumentRepository,
     ArticleQueueRepository,
     ArticleRepository,
@@ -236,6 +237,7 @@ class PostgresStorage(AbstractAsyncContextManager):
         self.subscriptions = SubscriptionRepository(self.conn)
         self.audit = AuditRepository(self.conn)
         self.llm = LlmProviderRepository(self.conn)
+        self.annotations = AnnotationRepository(self.conn)
 
     async def close(self) -> None:
         if self.conn is None:
