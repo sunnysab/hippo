@@ -143,6 +143,7 @@ async def list_article_images(
 async def get_image(
     image_id: int,
     storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
 ) -> Response:
     """
     通过 ID 获取图片内容。
@@ -154,7 +155,7 @@ async def get_image(
     Returns:
         Response: 图片二进制数据。
     """
-    payload, content_type = await _fetch_image(storage, image_id)
+    payload, content_type = await _fetch_image(storage, user.id, image_id)
     return binary_response(payload, content_type)
 
 
@@ -162,6 +163,7 @@ async def get_image(
 async def block_image(
     image_id: int,
     storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
 ) -> dict[str, Any]:
     """
     Block an image globally by its binary content hash.
@@ -172,7 +174,7 @@ async def block_image(
     Returns:
         dict: Blocking result and resolved hash.
     """
-    return await _block_image(storage, image_id)
+    return await _block_image(storage, user.id, image_id)
 
 
 def _cleanup_refetch_tasks() -> None:
