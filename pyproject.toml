@@ -44,6 +44,7 @@ dependencies = [
   "opentelemetry-instrumentation-httpx>=0.66b0",
   "opentelemetry-instrumentation-logging>=0.66b0",
   "bcrypt>=5.0.0",
+  "openai>=3.22.1",
 ]
 
 [project.optional-dependencies]
