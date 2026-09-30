@@ -6,6 +6,7 @@ import { useReaderSettings } from '../../hooks/useReaderSettings';
 import { ArticleHeader } from './ArticleHeader';
 import { ArticleContent } from './ArticleContent';
 import { HighlightToolbar } from './HighlightToolbar';
+import { ReadingSidebar } from './ReadingSidebar';
 import { useHighlights } from './useHighlights';
 import { EmptyState } from '../../components/EmptyState';
 import { useToast } from '../../hooks/useToast';
@@ -26,6 +27,7 @@ export function ArticlePreview({ previewRef }: ArticlePreviewProps) {
     y: number;
   } | null>(null);
   const [isBlockingImage, setIsBlockingImage] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
   const readerRef = useRef<HTMLDivElement>(null);
 
   const payload = state.currentArticlePayload;
@@ -66,7 +68,11 @@ export function ArticlePreview({ previewRef }: ArticlePreviewProps) {
   };
 
   return (
-    <div className={`article-preview-body${payload ? '' : ' is-empty'}`} id="article-preview" ref={previewRef}>
+    <div
+      className={`article-preview-body${payload ? '' : ' is-empty'}${aiOpen && payload ? ' with-ai' : ''}`}
+      id="article-preview"
+      ref={previewRef}
+    >
       {!payload ? (
         <div className="reader">
           <EmptyState message={t('articles.empty', 'Select an article to preview.')} />
@@ -96,7 +102,14 @@ export function ArticlePreview({ previewRef }: ArticlePreviewProps) {
         </div>
       )}
       {payload ? (
-        <HighlightToolbar containerRef={readerRef} onCreate={create} />
+        <>
+          <HighlightToolbar containerRef={readerRef} onCreate={create} />
+          <ReadingSidebar
+            articleId={state.selectedArticleId ?? null}
+            open={aiOpen}
+            onToggle={() => setAiOpen((value) => !value)}
+          />
+        </>
       ) : null}
       <ContextMenu
         id="article-image-context-menu"

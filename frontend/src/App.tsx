@@ -23,6 +23,7 @@ import { AdminLayout } from './pages/admin/AdminLayout';
 import { AdminLlmPage } from './pages/admin/AdminLlmPage';
 import { AdminSitePage } from './pages/admin/AdminSitePage';
 import { AdminLogPage } from './pages/admin/AdminLogPage';
+import { ChatPage } from './pages/chat/ChatPage';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { status } = useAuth();
@@ -73,6 +74,7 @@ function AppRoutes() {
                 <Routes>
                   <Route path="/groups" element={<GroupsPage />} />
                   <Route path="/articles" element={<ArticlesPage />} />
+                  <Route path="/chat" element={<ChatPage />} />
                   <Route path="/settings" element={<SettingsPage />}>
                     <Route index element={<Navigate to="sync" replace />} />
                     <Route path="login" element={<SettingsLoginRoute />} />

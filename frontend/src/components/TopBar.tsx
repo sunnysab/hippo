@@ -24,6 +24,7 @@ export function TopBar({ topbarRef, currentTab, daemonStatus, lastSyncAt }: TopB
   const tabs = [
     { key: 'groups', label: t('nav.groups', 'Groups'), path: '/groups' },
     { key: 'articles', label: t('nav.articles', 'Articles'), path: '/articles' },
+    { key: 'chat', label: t('nav.chat', '对话'), path: '/chat' },
     { key: 'settings', label: t('nav.sync', 'Settings'), path: '/settings/sync' },
     ...(isAdmin ? [{ key: 'admin', label: t('nav.admin', '管理'), path: '/admin' }] : []),
   ];
