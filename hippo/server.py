@@ -25,6 +25,7 @@ from .api.routers import (
     feed,
     llm,
     registration,
+    report,
     settings,
 )
 from .avatar import _ensure_avatar_images_table
@@ -220,6 +221,7 @@ def create_app(
         article,
         annotation,
         chat,
+        report,
         settings,
         feed,
         daemon,

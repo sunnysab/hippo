@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ site_name }} 日报 · {{ report_date }}</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f5f5f5;font-family:system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;color:#111">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5">
+      <tr>
+        <td align="center" style="padding:24px 12px">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;background:#ffffff;border:1px solid #e5e5e5;border-radius:2px">
+            <tr>
+              <td style="padding:20px 24px;border-bottom:1px solid #e5e5e5">
+                <div style="font-size:13px;color:#6b6b6b;margin-bottom:6px">{{ site_name }}</div>
+                <div style="font-size:18px;font-weight:600">{{ report_date }} 日报</div>
+                <div style="font-size:13px;color:#6b6b6b;margin-top:6px">
+                  {{ username }} · 共 {{ total }} 篇 · 时区 {{ timezone }}
+                </div>
+              </td>
+            </tr>
+            {% if total == 0 %}
+            <tr>
+              <td style="padding:24px;font-size:14px;color:#6b6b6b">
+                这一天没有新文章。
+              </td>
+            </tr>
+            {% endif %}
+            {% for group in groups %}
+            <tr>
+              <td style="padding:16px 24px 4px">
+                <div style="font-size:13px;font-weight:600;color:#111">{{ group.name }}</div>
+              </td>
+            </tr>
+            {% for article in group.articles %}
+            <tr>
+              <td style="padding:8px 24px;border-bottom:1px solid #f0f0f0">
+                <a href="{{ article.link }}" style="font-size:15px;color:#111;text-decoration:none;font-weight:500">
+                  {{ article.title }}
+                </a>
+                <div style="font-size:12px;color:#6b6b6b;margin-top:4px">
+                  {{ article.nickname or article.biz }}{% if article.display_time %} · {{ article.display_time }}{% endif %}
+                </div>
+                {% if article.digest %}
+                <div style="font-size:13px;color:#4a4a4a;margin-top:6px;line-height:1.5">
+                  {{ article.digest }}
+                </div>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+            {% endfor %}
+            <tr>
+              <td style="padding:16px 24px 20px;font-size:12px;color:#8a8a8a">
+                由 {{ site_name }} 生成{% if base_url %} · <a href="{{ base_url }}" style="color:#6b6b6b">{{ base_url }}</a>{% endif %}
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
