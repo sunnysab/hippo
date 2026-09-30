@@ -776,3 +776,67 @@
     overflow: visible;
   }
 }
+
+/* ---- Highlights -------------------------------------------------------- */
+
+mark.hippo-highlight {
+  padding: 0;
+  background: rgba(255, 214, 0, 0.35);
+  color: inherit;
+}
+
+mark.hippo-highlight:hover {
+  background: rgba(255, 214, 0, 0.55);
+  cursor: pointer;
+}
+
+.highlight-toolbar {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  transform: translate(-50%, calc(-100% - 8px));
+}
+
+.highlight-toolbar .btn {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.stale-highlights {
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.stale-highlights-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.stale-highlights-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stale-highlight {
+  padding: 6px 8px;
+  border-left: 2px solid var(--border);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.stale-quote {
+  font-style: italic;
+}

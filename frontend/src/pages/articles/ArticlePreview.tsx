@@ -1,10 +1,12 @@
-import { useState, type RefObject } from 'react';
+import { useState, useRef, type RefObject } from 'react';
 import { ContextMenu } from '../../components/ContextMenu';
 import { useArticlesState } from '../../store/articles';
 import { useI18n } from '../../i18n';
 import { useReaderSettings } from '../../hooks/useReaderSettings';
 import { ArticleHeader } from './ArticleHeader';
 import { ArticleContent } from './ArticleContent';
+import { HighlightToolbar } from './HighlightToolbar';
+import { useHighlights } from './useHighlights';
 import { EmptyState } from '../../components/EmptyState';
 import { useToast } from '../../hooks/useToast';
 import { apiGet, apiSend, isAuthError } from '../../api';
@@ -24,8 +26,17 @@ export function ArticlePreview({ previewRef }: ArticlePreviewProps) {
     y: number;
   } | null>(null);
   const [isBlockingImage, setIsBlockingImage] = useState(false);
+  const readerRef = useRef<HTMLDivElement>(null);
 
   const payload = state.currentArticlePayload;
+  // The content key changes whenever the loaded article does, which is when the
+  // rendered nodes are replaced and the marks must be rebuilt.
+  const contentKey = String(state.selectedArticleId ?? '');
+  const { stale, create } = useHighlights({
+    articleId: state.selectedArticleId ?? null,
+    containerRef: readerRef,
+    contentKey,
+  });
 
   const handleBlockImage = async (imageId: number) => {
     const container = previewRef.current;
@@ -61,15 +72,32 @@ export function ArticlePreview({ previewRef }: ArticlePreviewProps) {
           <EmptyState message={t('articles.empty', 'Select an article to preview.')} />
         </div>
       ) : (
-        <div className="reader">
+        <div className="reader" ref={readerRef}>
           <ArticleHeader article={payload.article} />
           <ArticleContent
             payload={payload}
             hideSmall={config.hideSmall}
             onImageContextMenu={setImageContextMenu}
           />
+          {stale.length > 0 ? (
+            <section className="stale-highlights">
+              <h3 className="stale-highlights-title">
+                {t('articles.staleHighlights', '以下划线已无法定位（原文可能已变更）')}
+              </h3>
+              <ul className="stale-highlights-list">
+                {stale.map((item) => (
+                  <li key={item.id} className="stale-highlight">
+                    <span className="stale-quote">{item.quote}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
         </div>
       )}
+      {payload ? (
+        <HighlightToolbar containerRef={readerRef} onCreate={create} />
+      ) : null}
       <ContextMenu
         id="article-image-context-menu"
         isOpen={Boolean(imageContextMenu)}
