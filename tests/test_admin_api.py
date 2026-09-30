@@ -91,6 +91,44 @@ class AdminGuardTest(unittest.IsolatedAsyncioTestCase):
             )
         storage.users.set_password.assert_not_awaited()
 
+    async def test_audit_time_range_is_strict_about_bad_input(self) -> None:
+        with self.assertRaises(ApiError):
+            admin_api._parse_time('not-a-timestamp')
+
+    async def test_audit_time_range_accepts_iso8601(self) -> None:
+        parsed = admin_api._parse_time('2026-01-02T03:04:05Z')
+        self.assertEqual(2026, parsed.year)
+        self.assertIsNotNone(parsed.tzinfo)
+
+    async def test_audit_filters_are_forwarded_to_the_repository(self) -> None:
+        storage = _storage()
+        storage.audit.list = AsyncMock(return_value=[])
+        storage.audit.count = AsyncMock(return_value=0)
+
+        await admin_api.list_audit(
+            action='auth.login',
+            user_id='7',
+            since='2026-01-01T00:00:00Z',
+            until=None,
+            page=2,
+            page_size=10,
+            _=_user(1),
+            storage=storage,
+        )
+
+        kwargs = storage.audit.list.await_args.kwargs
+        self.assertEqual('auth.login', kwargs['action'])
+        self.assertEqual(7, kwargs['user_id'])
+        self.assertEqual(10, kwargs['offset'])
+
+    async def test_log_tail_reports_when_no_file_is_configured(self) -> None:
+        with patch.dict('os.environ', {}, clear=False):
+            import os
+
+            os.environ.pop('HIPPO_LOG_FILE', None)
+            payload = await admin_api.tail_log(lines=10, _=_user(1))
+        self.assertFalse(payload['available'])
+
     async def test_toggling_registration_is_audited(self) -> None:
         storage = _storage()
         storage.site = None

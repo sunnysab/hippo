@@ -8,10 +8,14 @@ ones an incident review will look for.
 from __future__ import annotations
 
 import asyncio
+import os
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Request, status
+from fastapi import APIRouter, Body, Depends, Query, Request, status
 
+from ...config import LOG_TAIL_LINES, SIGNOZ_URL
 from ...exceptions import ApiError
 from ...models import User
 from ...security import hash_password
@@ -234,3 +238,122 @@ async def update_site_settings(
             ip=client_ip(request),
         )
     return settings
+
+
+#: Default audit page size. Bounded above so one request cannot scan the table.
+_AUDIT_PAGE_SIZE = 50
+_MAX_AUDIT_PAGE_SIZE = 200
+
+
+def _parse_time(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+    except ValueError as exc:
+        raise ApiError(f'Invalid timestamp: {raw}', status=400) from exc
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+@router.get('/admin/audit')
+async def list_audit(
+    action: str | None = None,
+    user_id: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=_AUDIT_PAGE_SIZE, ge=1, le=_MAX_AUDIT_PAGE_SIZE),
+    _: User = Depends(require_admin),
+    storage: PostgresStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Filtered, paginated audit trail."""
+    filters = {
+        'action': action or None,
+        'user_id': _target_id(user_id) if user_id else None,
+        'since': _parse_time(since),
+        'until': _parse_time(until),
+    }
+    total = await storage.audit.count(**filters)
+    items = await storage.audit.list(
+        limit=page_size,
+        offset=(page - 1) * page_size,
+        **filters,
+    )
+    return {
+        'items': items,
+        'page': page,
+        'page_size': page_size,
+        'total': total,
+        'pages': max((total + page_size - 1) // page_size, 1),
+    }
+
+
+@router.get('/admin/audit/action')
+async def list_audit_actions(
+    _: User = Depends(require_admin),
+    storage: PostgresStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Distinct actions present in the trail, for the filter dropdown."""
+    return {'items': await storage.audit.actions()}
+
+
+@router.get('/admin/log/tail')
+async def tail_log(
+    lines: int = Query(default=LOG_TAIL_LINES, ge=1, le=5000),
+    _: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Last N lines of the rotating file log.
+
+    SignOz is the primary place to read logs; this is the fallback for when it
+    is unreachable and someone needs to see what just happened.
+    """
+    path = _log_file_path()
+    if path is None:
+        return {'available': False, 'reason': '未配置文件日志（HIPPO_LOG_FILE）', 'lines': []}
+    if not path.exists():
+        return {'available': False, 'reason': f'日志文件不存在: {path}', 'lines': []}
+
+    # ponytail: read the tail by seeking backwards; fine for the rotation sizes
+    # here, swap for a streaming reader if log files ever grow to hundreds of MB.
+    with path.open('rb') as handle:
+        handle.seek(0, 2)
+        size = handle.tell()
+        block = min(size, lines * 512)
+        handle.seek(max(size - block, 0))
+        content = handle.read().decode('utf-8', errors='replace')
+    captured = content.splitlines()[-lines:]
+    return {
+        'available': True,
+        'path': str(path),
+        'size': size,
+        'lines': captured,
+    }
+
+
+@router.get('/admin/log/link')
+async def signoz_link(
+    minutes: int = Query(default=60, ge=1, le=1440),
+    _: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Deep link into SignOz for the last ``minutes``.
+
+    The window is padded a little so the entry that prompted the investigation
+    is inside it once the browser lands.
+    """
+    if not SIGNOZ_URL:
+        return {'available': False, 'reason': '未配置 HIPPO_SIGNOZ_URL'}
+    until = datetime.now(UTC)
+    since = until - timedelta(minutes=minutes)
+    start_ms = int(since.timestamp() * 1000)
+    end_ms = int(until.timestamp() * 1000)
+    url = (
+        f'{SIGNOZ_URL}/logs?'
+        f'&startTime={start_ms}&endTime={end_ms}'
+        f'&service.name=hippo'
+    )
+    return {'available': True, 'url': url, 'since': since.isoformat(), 'until': until.isoformat()}
+
+
+def _log_file_path() -> Path | None:
+    raw = os.environ.get('HIPPO_LOG_FILE')
+    return Path(raw) if raw else None
