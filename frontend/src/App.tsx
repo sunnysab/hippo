@@ -22,6 +22,7 @@ import { AdminPage } from './pages/admin/AdminPage';
 import { AdminLayout } from './pages/admin/AdminLayout';
 import { AdminLlmPage } from './pages/admin/AdminLlmPage';
 import { AdminSitePage } from './pages/admin/AdminSitePage';
+import { AdminLogPage } from './pages/admin/AdminLogPage';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { status } = useAuth();
@@ -90,6 +91,7 @@ function AppRoutes() {
                     <Route index element={<AdminPage />} />
                     <Route path="llm" element={<AdminLlmPage />} />
                     <Route path="site" element={<AdminSitePage />} />
+                    <Route path="log" element={<AdminLogPage />} />
                   </Route>
                   <Route path="*" element={<Navigate to="/groups" replace />} />
                 </Routes>

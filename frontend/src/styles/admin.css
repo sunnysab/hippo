@@ -132,3 +132,39 @@
   margin: 8px 0 0;
   font-size: 12px;
 }
+
+.admin-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.admin-filters .auth-field {
+  min-width: 200px;
+}
+
+.admin-nowrap {
+  white-space: nowrap;
+}
+
+/* Details are long JSON blobs; keep one row from stretching the table. */
+.admin-detail {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-tail {
+  max-height: 420px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
