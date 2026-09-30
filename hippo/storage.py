@@ -18,6 +18,7 @@ from psycopg_pool import AsyncConnectionPool
 
 from .exceptions import StorageInitError
 from .models import AccountGroup
+from .report import ReportRepository
 from .repositories import (
     AccountRepository,
     AnnotationRepository,
@@ -240,6 +241,7 @@ class PostgresStorage(AbstractAsyncContextManager):
         self.llm = LlmProviderRepository(self.conn)
         self.annotations = AnnotationRepository(self.conn)
         self.chat = ChatRepository(self.conn)
+        self.reports = ReportRepository(self.conn)
 
     async def close(self) -> None:
         if self.conn is None:
