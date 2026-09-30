@@ -438,5 +438,7 @@
   "admin.log.ip": "IP",
   "admin.log.prev": "上一页",
   "admin.log.next": "下一页",
-  "admin.log.pageOf": "第 {page} / {pages} 页，共 {total} 条"
+  "admin.log.pageOf": "第 {page} / {pages} 页，共 {total} 条",
+  "articles.highlight": "划线",
+  "articles.staleHighlights": "以下划线已无法定位（原文可能已变更）"
 }
