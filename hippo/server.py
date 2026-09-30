@@ -33,6 +33,7 @@ from .config import DEFAULT_HOST, DEFAULT_PORT
 from .logger import configure_logging
 from .observability.logging import shutdown_logging
 from .observability.otel import init_telemetry, instrument_app
+from .report_scheduler import ReportScheduler
 from .storage import open_storage
 from .sync_scheduler import SyncScheduler
 
@@ -191,15 +192,23 @@ def create_app(
         should_enable_sync = _inprocess_sync_enabled() if enable_inprocess_sync is None else enable_inprocess_sync
         if should_enable_sync:
             app.state.sync_scheduler = SyncScheduler()
-            app.state.sync_scheduler.start()
+            # Both start() methods are coroutines; calling one without awaiting
+            # leaves the scheduler created but never running.
+            await app.state.sync_scheduler.start()
+            app.state.report_scheduler = ReportScheduler()
+            await app.state.report_scheduler.start()
         else:
             app.state.sync_scheduler = None
+            app.state.report_scheduler = None
         try:
             yield
         finally:
             scheduler = getattr(app.state, 'sync_scheduler', None)
             if scheduler:
                 await scheduler.stop()
+            report_scheduler = getattr(app.state, 'report_scheduler', None)
+            if report_scheduler:
+                await report_scheduler.stop()
             if telemetry is not None:
                 telemetry.shutdown()
             shutdown_logging()

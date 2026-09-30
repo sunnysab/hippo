@@ -6,7 +6,10 @@ the e-mail and the preview agree.
 
 import unittest
 from datetime import UTC, date, datetime
+from types import SimpleNamespace
+from unittest.mock import patch
 
+from hippo.report.delivery import CHANNEL_EMAIL, deliver_once
 from hippo.report.query import day_bounds, local_date, parse_date, resolve_timezone
 from hippo.report.render import build_context, group_articles, render_html
 
@@ -150,3 +153,84 @@ class RenderTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DeliveryIdempotencyTest(unittest.IsolatedAsyncioTestCase):
+    """The ledger, not the scheduler, is what prevents a duplicate send."""
+
+    async def test_the_second_claim_for_the_same_day_is_refused(self) -> None:
+        from hippo.report.delivery import deliver_once
+
+        class _Reports:
+            def __init__(self) -> None:
+                self.claims: set[tuple] = set()
+
+            async def record_delivery(self, user_id, report_date, channel, status, error=None):
+                key = (user_id, report_date, channel)
+                if key in self.claims:
+                    return False
+                self.claims.add(key)
+                return True
+
+        reports = _Reports()
+        storage = SimpleNamespace(reports=reports, transaction=lambda: _NullTransaction())
+
+        async def fake_email_settings(_):
+            return {}  # no SMTP configured -> skipped, but the claim is taken
+
+        with patch('hippo.emailer.get_email_settings', fake_email_settings):
+            first = await deliver_once(
+                storage,
+                user_id=1,
+                report_date=date(2026, 3, 1),
+                recipients=['a@example.com'],
+                subject='s',
+                html='<p>h</p>',
+                text='t',
+            )
+            second = await deliver_once(
+                storage,
+                user_id=1,
+                report_date=date(2026, 3, 1),
+                recipients=['a@example.com'],
+                subject='s',
+                html='<p>h</p>',
+                text='t',
+            )
+
+        self.assertFalse(first['sent'])
+        self.assertEqual('smtp_not_configured', first['reason'])
+        self.assertEqual('already_delivered', second['reason'])
+        self.assertIn((1, date(2026, 3, 1), CHANNEL_EMAIL), reports.claims)
+
+    async def test_a_different_day_is_not_blocked(self) -> None:
+        class _Reports:
+            async def record_delivery(self, *args, **kwargs):
+                return True
+
+        storage = SimpleNamespace(reports=_Reports(), transaction=lambda: _NullTransaction())
+
+        async def fake_email_settings(_):
+            return {}
+
+        with patch('hippo.emailer.get_email_settings', fake_email_settings):
+            result = await deliver_once(
+                storage,
+                user_id=1,
+                report_date=date(2026, 3, 2),
+                recipients=['a@example.com'],
+                subject='s',
+                html='h',
+                text='t',
+            )
+        self.assertFalse(result['sent'])
+        self.assertEqual('smtp_not_configured', result['reason'])
+
+
+class _NullTransaction:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
