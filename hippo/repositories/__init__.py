@@ -7,6 +7,7 @@ Split by aggregate so each module stays small; the historical flat import path
 from __future__ import annotations
 
 from .account import AccountRepository, GroupRepository
+from .annotation import AnnotationRepository
 from .article import (
     ARTICLE_CONTENT_PRESENT_SQL,
     ArticleDocumentRepository,
@@ -26,6 +27,7 @@ from .user import UserRepository
 __all__ = [
     'ARTICLE_CONTENT_PRESENT_SQL',
     'AccountRepository',
+    'AnnotationRepository',
     'ArticleDocumentRepository',
     'ArticleImageTarget',
     'ArticleQueueRepository',

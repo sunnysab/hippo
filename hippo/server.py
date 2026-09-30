@@ -14,7 +14,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .api.errors import install_exception_handlers
-from .api.routers import account, admin, article, auth, daemon, feed, llm, registration, settings
+from .api.routers import (
+    account,
+    admin,
+    annotation,
+    article,
+    auth,
+    daemon,
+    feed,
+    llm,
+    registration,
+    settings,
+)
 from .avatar import _ensure_avatar_images_table
 from .config import DEFAULT_HOST, DEFAULT_PORT
 from .logger import configure_logging
@@ -201,7 +212,18 @@ def create_app(
 
     install_exception_handlers(app)
     instrument_app(app)
-    for module in (auth, registration, account, article, settings, feed, daemon, admin, llm):
+    for module in (
+        auth,
+        registration,
+        account,
+        article,
+        annotation,
+        settings,
+        feed,
+        daemon,
+        admin,
+        llm,
+    ):
         app.include_router(module.router, prefix='/api')
     app.mount('/', StaticFiles(directory=static_path, html=True), name='static')
     return app
