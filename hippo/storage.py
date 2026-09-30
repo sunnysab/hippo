@@ -25,6 +25,7 @@ from .repositories import (
     ArticleQueueRepository,
     ArticleRepository,
     AuditRepository,
+    ChatRepository,
     DownloadAttemptRepository,
     GroupRepository,
     ImageRepository,
@@ -238,6 +239,7 @@ class PostgresStorage(AbstractAsyncContextManager):
         self.audit = AuditRepository(self.conn)
         self.llm = LlmProviderRepository(self.conn)
         self.annotations = AnnotationRepository(self.conn)
+        self.chat = ChatRepository(self.conn)
 
     async def close(self) -> None:
         if self.conn is None:
