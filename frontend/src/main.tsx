@@ -7,6 +7,7 @@ import './styles/groups.css';
 import './styles/articles.css';
 import './styles/settings.css';
 import './styles/admin.css';
+import './styles/report.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

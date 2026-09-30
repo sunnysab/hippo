@@ -465,5 +465,22 @@
   "chat.placeholder": "输入消息…",
   "chat.thinking": "正在生成…",
   "chat.deleteTitle": "删除对话",
-  "chat.deleteConfirm": "删除后消息不可恢复，确定继续？"
+  "chat.deleteConfirm": "删除后消息不可恢复，确定继续？",
+  "nav.report": "日报",
+  "report.date": "日期",
+  "report.groups": "分组",
+  "report.summary": "共 {n} 篇 · 时区 {tz}",
+  "report.sendNow": "立即发送",
+  "report.none": "这一天没有新文章",
+  "report.openInApp": "在 Hippo 中打开",
+  "report.original": "原文",
+  "report.saved": "日报设置已保存",
+  "report.sent": "已发送",
+  "report.notSent": "未发送：{reason}",
+  "report.settingTitle": "日报设置",
+  "report.enabled": "启用日报邮件",
+  "report.sendHour": "发送时间（{tz} 的整点）",
+  "report.recipients": "收件人（逗号分隔）",
+  "report.includeRead": "包含已读文章",
+  "report.scope": "默认包含的分组（留空为全部）"
 }
