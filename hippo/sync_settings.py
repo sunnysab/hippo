@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import logging
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .config import DEFAULT_SYNC_REQUEST_INTERVAL, DEFAULT_WINDOW_END_HOUR, DEFAULT_WINDOW_START_HOUR
 from .emailer import get_email_settings, send_email
+from .logger import get_logger
 from .storage import PostgresStorage, load_meta_json, save_meta_json
 from .sync_types import SyncReport
 from .utils import to_utc_dt
@@ -26,7 +26,7 @@ QUEUE_STATS_KEY = 'sync:queue_stats'
 
 _ARTICLE_EXCLUDE_KEYWORD_LIMIT = 20
 
-_logger = logging.getLogger('hippo.sync')
+_logger = get_logger(__name__)
 
 
 def default_sync_settings() -> dict[str, Any]:
@@ -112,8 +112,8 @@ def _seconds_until_window_start(now: datetime, *, start_hour: int, end_hour: int
     return max((target - now).total_seconds(), 1.0)
 
 
-def get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
-    settings = load_meta_json(storage, SYNC_SETTINGS_KEY, default_sync_settings())
+async def get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
+    settings = await load_meta_json(storage, SYNC_SETTINGS_KEY, default_sync_settings())
     defaults = default_sync_settings()
     merged = {**defaults, **(settings or {})}
     start_hour, end_hour = _get_window_hours(merged)
@@ -125,29 +125,29 @@ def get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
     return merged
 
 
-def set_sync_settings(storage: PostgresStorage, updates: dict[str, Any]) -> dict[str, Any]:
-    current = get_sync_settings(storage)
+async def set_sync_settings(storage: PostgresStorage, updates: dict[str, Any]) -> dict[str, Any]:
+    current = await get_sync_settings(storage)
     current.update(updates)
     if 'article_exclude_keywords' in current:
         current['article_exclude_keywords'] = _normalize_article_exclude_keywords(
             current.get('article_exclude_keywords'),
         )
-    with storage.transaction():
-        save_meta_json(storage, SYNC_SETTINGS_KEY, current)
+    async with storage.transaction():
+        await save_meta_json(storage, SYNC_SETTINGS_KEY, current)
     return current
 
 
-def append_sync_history(storage: PostgresStorage, entry: dict[str, Any]) -> None:
-    history = load_meta_json(storage, SYNC_HISTORY_KEY, [])
+async def append_sync_history(storage: PostgresStorage, entry: dict[str, Any]) -> None:
+    history = await load_meta_json(storage, SYNC_HISTORY_KEY, [])
     if not isinstance(history, list):
         history = []
     history.insert(0, entry)
     history = history[:50]
-    with storage.transaction():
-        save_meta_json(storage, SYNC_HISTORY_KEY, history)
+    async with storage.transaction():
+        await save_meta_json(storage, SYNC_HISTORY_KEY, history)
 
 
-def _send_sync_alert(
+async def _send_sync_alert(
     storage: PostgresStorage,
     *,
     status: str,
@@ -156,9 +156,9 @@ def _send_sync_alert(
     finished_at: str,
     report: SyncReport | None = None,
 ) -> None:
-    if not error or storage.meta.get(ALERT_SENT_KEY):
+    if not error or await storage.meta.get(ALERT_SENT_KEY):
         return
-    sync_settings = get_sync_settings(storage)
+    sync_settings = await get_sync_settings(storage)
     if not sync_settings.get('alert_enabled') or not sync_settings.get('alert_email'):
         return
     subject = 'Hippo sync failed'
@@ -180,25 +180,25 @@ def _send_sync_alert(
             lines.append(f'Current account: {current_nickname or current_biz}')
     body = '\n'.join(lines)
     try:
-        email_settings = get_email_settings(storage)
+        email_settings = await get_email_settings(storage)
         send_email(email_settings, to_email=str(sync_settings.get('alert_email')), subject=subject, body=body)
-        with storage.transaction():
-            storage.meta.set(ALERT_SENT_KEY, '1')
+        async with storage.transaction():
+            await storage.meta.set(ALERT_SENT_KEY, '1')
     except Exception as exc:
         _logger.warning('Failed to send alert email: %s', exc)
 
 
-def get_sync_status(storage: PostgresStorage) -> dict[str, Any]:
+async def get_sync_status(storage: PostgresStorage) -> dict[str, Any]:
     return {
-        'status': storage.meta.get(SYNC_STATUS_KEY) or 'idle',
-        'last_started_at': storage.meta.get(SYNC_STARTED_KEY),
-        'last_finished_at': storage.meta.get(SYNC_FINISHED_KEY),
-        'last_error': storage.meta.get(SYNC_ERROR_KEY),
-        'history': load_meta_json(storage, SYNC_HISTORY_KEY, []),
+        'status': await storage.meta.get(SYNC_STATUS_KEY) or 'idle',
+        'last_started_at': await storage.meta.get(SYNC_STARTED_KEY),
+        'last_finished_at': await storage.meta.get(SYNC_FINISHED_KEY),
+        'last_error': await storage.meta.get(SYNC_ERROR_KEY),
+        'history': await load_meta_json(storage, SYNC_HISTORY_KEY, []),
     }
 
 
-def set_sync_state(
+async def set_sync_state(
     storage: PostgresStorage,
     *,
     status: str | None = None,
@@ -206,18 +206,18 @@ def set_sync_state(
     started_at: str | None = None,
     finished_at: str | None = None,
 ) -> None:
-    with storage.transaction():
+    async with storage.transaction():
         if status is not None:
-            storage.meta.set(SYNC_STATUS_KEY, status)
+            await storage.meta.set(SYNC_STATUS_KEY, status)
         if error is not None:
-            storage.meta.set(SYNC_ERROR_KEY, error)
+            await storage.meta.set(SYNC_ERROR_KEY, error)
         if started_at is not None:
-            storage.meta.set(SYNC_STARTED_KEY, started_at)
+            await storage.meta.set(SYNC_STARTED_KEY, started_at)
         if finished_at is not None:
-            storage.meta.set(SYNC_FINISHED_KEY, finished_at)
+            await storage.meta.set(SYNC_FINISHED_KEY, finished_at)
 
 
-def _persist_sync_outcome(
+async def _persist_sync_outcome(
     storage: PostgresStorage,
     *,
     started_at: str,
@@ -228,19 +228,19 @@ def _persist_sync_outcome(
     if error:
         cancelled = error == 'Cancelled by user'
         status = 'cancelled' if cancelled else 'failed'
-        set_sync_state(storage, status=status, error='' if cancelled else error, finished_at=finished_at)
+        await set_sync_state(storage, status=status, error='' if cancelled else error, finished_at=finished_at)
     else:
         status = 'success'
         cancelled = False
-        set_sync_state(storage, status='success', error='', finished_at=finished_at)
-        with storage.transaction():
-            storage.meta.delete(ALERT_SENT_KEY)
+        await set_sync_state(storage, status='success', error='', finished_at=finished_at)
+        async with storage.transaction():
+            await storage.meta.delete(ALERT_SENT_KEY)
 
     skipped_accounts = sum(
         1 for item in report.details if item.skipped and item.skip_reason in ('disabled', 'recently_synced')
     )
     failed_accounts = sum(1 for item in report.details if item.failed)
-    append_sync_history(
+    await append_sync_history(
         storage,
         {
             'started_at': started_at,
@@ -257,7 +257,7 @@ def _persist_sync_outcome(
         },
     )
     if not cancelled:
-        _send_sync_alert(
+        await _send_sync_alert(
             storage,
             status=status,
             error=error or '',
@@ -265,7 +265,7 @@ def _persist_sync_outcome(
             finished_at=finished_at,
             report=report,
         )
-    return get_sync_status(storage)
+    return await get_sync_status(storage)
 
 
 def _parse_iso_datetime(value: str | None) -> datetime | None:

@@ -1,6 +1,6 @@
 import contextlib
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from hippo.sync_settings import default_sync_settings, set_sync_settings
 
@@ -10,7 +10,7 @@ class _DummyStorage:
         return contextlib.nullcontext()
 
 
-class SyncSettingsTest(unittest.TestCase):
+class SyncSettingsTest(unittest.IsolatedAsyncioTestCase):
     def test_default_sync_settings_include_article_exclude_keywords(self) -> None:
         settings = default_sync_settings()
 
@@ -18,14 +18,17 @@ class SyncSettingsTest(unittest.TestCase):
         self.assertEqual('', settings['article_exclude_keywords'])
         self.assertEqual(15.0, settings['sleep_seconds'])
 
-    def test_set_sync_settings_normalizes_article_exclude_keywords(self) -> None:
+    async def test_set_sync_settings_normalizes_article_exclude_keywords(self) -> None:
         storage = _DummyStorage()
 
         with (
-            patch('hippo.sync_settings.get_sync_settings', return_value=default_sync_settings()),
-            patch('hippo.sync_settings.save_meta_json') as save_meta_json,
+            patch(
+                'hippo.sync_settings.get_sync_settings',
+                new=AsyncMock(return_value=default_sync_settings()),
+            ),
+            patch('hippo.sync_settings.save_meta_json', new=AsyncMock()) as save_meta_json,
         ):
-            result = set_sync_settings(
+            result = await set_sync_settings(
                 storage,
                 {'article_exclude_keywords': ' Promo ; Ad \npromo\n\n'},
             )

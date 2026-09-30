@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
@@ -12,6 +11,7 @@ from typing import Any
 from .container import build_sync_container
 from .exceptions import SyncInterrupted
 from .file_storage import FileStorageError
+from .logger import get_logger
 from .models import AccountCredential
 from .storage import PostgresStorage, open_storage
 from .sync_core import _get_cancel_event, reset_sync_cancel
@@ -39,7 +39,7 @@ from .utils import (
 )
 from .weixin_worker import WeixinArticleSync
 
-logger = logging.getLogger('hippo.sync')
+logger = get_logger(__name__)
 
 # 列表阶段：账号之间的最小间隔。列表接口和 alias 解析都是敏感操作，
 # 2s 那种密度会把 searchcontact 打到限流（2026-09-22 实测：一次全量 alias 校验后
@@ -99,7 +99,7 @@ class ArticleSyncService:
             )
 
         if not config.force:
-            effective_interval = resolve_sync_interval(self._storage, account)
+            effective_interval = await resolve_sync_interval(self._storage, account)
             if should_skip_by_interval(account.last_synced_at, effective_interval, account.biz):
                 observer.on_skip('sync_interval')
                 return (
@@ -174,8 +174,8 @@ class ArticleSyncService:
 
         observer.on_log(f'列表 {stats.listed} 篇，新入队 {stats.enqueued} 条')
         # 列表成功即算「这个账号这一轮同步过了」：sync_interval_days / skip_minutes 都读这个字段
-        with self._storage.transaction():
-            self._storage.accounts.update_last_synced(account.biz)
+        async with self._storage.transaction():
+            await self._storage.accounts.update_last_synced(account.biz)
         return (
             SyncAccountResult(
                 biz=account.biz,
@@ -204,7 +204,7 @@ class ArticleSyncService:
         summary_rows: list[tuple[str, int]] = []
         details: list[SyncAccountResult] = []
 
-        def _build_report(*, current_account: AccountCredential | None = None) -> SyncReport:
+        async def _build_report(*, current_account: AccountCredential | None = None) -> SyncReport:
             current = None
             if current_account is not None:
                 current = {
@@ -240,7 +240,7 @@ class ArticleSyncService:
                     observer=page_observer,
                 )
             except SyncRunError as exc:
-                raise SyncRunError(str(exc), report=_build_report(current_account=account)) from exc
+                raise SyncRunError(str(exc), report=await _build_report(current_account=account)) from exc
             except SyncInterrupted:
                 cancelled_result = SyncAccountResult(
                     biz=account.biz,
@@ -330,20 +330,19 @@ async def run_sync_job(
     reset_sync_cancel()
     started_at = utc_now_iso()
     empty_report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
-    with open_storage() as storage:
-        settings = get_sync_settings(storage)
-        set_sync_state(storage, status='running', error='', started_at=started_at)
+    async with open_storage() as storage:
+        settings = await get_sync_settings(storage)
+        await set_sync_state(storage, status='running', error='', started_at=started_at)
 
         error: str | None = None
         report = empty_report
         accounts: list[AccountCredential] = []
         try:
-            accounts = storage.accounts.list_accounts()
-            if group_id is not None:
-                accounts = [account for account in accounts if account.group_id == group_id]
-            if biz_list is not None:
-                allowed_biz = set(biz_list)
-                accounts = [account for account in accounts if account.biz in allowed_biz]
+            # 抓取由订阅驱动：账号只要还有人关注就继续拉，没人订阅就停抓、保留数据。
+            accounts = await storage.accounts.list_syncable_accounts(
+                group_ids=[group_id] if group_id is not None else None,
+                biz_list=biz_list,
+            )
             job_observer.on_accounts_loaded(accounts)
 
             container = None
@@ -397,13 +396,13 @@ async def run_sync_job(
             report = empty_report
 
         try:
-            storage.rollback()
+            await storage.rollback()
         except Exception as exc:
             logger.warning('Failed to rollback storage connection: %s', exc)
 
         finished_at = utc_now_iso()
         try:
-            status = _persist_sync_outcome(
+            status = await _persist_sync_outcome(
                 storage,
                 started_at=started_at,
                 finished_at=finished_at,
@@ -414,10 +413,10 @@ async def run_sync_job(
         except Exception:
             logger.exception('Failed to persist sync outcome; retrying with a fresh connection.')
             try:
-                with open_storage() as retry_storage:
+                async with open_storage() as retry_storage:
                     with contextlib.suppress(Exception):
-                        retry_storage.rollback()
-                    status = _persist_sync_outcome(
+                        await retry_storage.rollback()
+                    status = await _persist_sync_outcome(
                         retry_storage,
                         started_at=started_at,
                         finished_at=finished_at,
@@ -427,7 +426,7 @@ async def run_sync_job(
                 return SyncJobResult(status=status, report=report, error=error)
             except Exception:
                 logger.exception('Failed to persist sync outcome with a fresh connection.')
-                return SyncJobResult(status=get_sync_status(storage), report=report, error=error or 'failed')
+                return SyncJobResult(status=await get_sync_status(storage), report=report, error=error or 'failed')
 
 
 __all__ = [

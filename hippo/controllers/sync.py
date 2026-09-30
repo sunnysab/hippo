@@ -98,7 +98,7 @@ def _build_sync_config(
     )
 
 
-def _append_cli_sync_history(
+async def _append_cli_sync_history(
     storage: PostgresStorage,
     *,
     started_at: str,
@@ -107,14 +107,14 @@ def _append_cli_sync_history(
     saved: int,
     error: str = '',
 ) -> None:
-    set_sync_state(
+    await set_sync_state(
         storage,
         status=status,
         error=error,
         started_at=started_at,
         finished_at=finished_at,
     )
-    append_sync_history(
+    await append_sync_history(
         storage,
         {
             'started_at': started_at,
@@ -139,7 +139,7 @@ async def _sync_error_handler(storage: PostgresStorage, *, started_at: str):
     try:
         yield
     except SyncRunError as exc:
-        _append_cli_sync_history(
+        await _append_cli_sync_history(
             storage,
             started_at=started_at,
             finished_at=utc_now_iso(),
@@ -149,7 +149,7 @@ async def _sync_error_handler(storage: PostgresStorage, *, started_at: str):
         )
         raise typer.Exit(code=1)
     except SyncInterrupted:
-        _append_cli_sync_history(
+        await _append_cli_sync_history(
             storage,
             started_at=started_at,
             finished_at=utc_now_iso(),
@@ -194,7 +194,7 @@ async def perform_sync(
         progress.close()
         closed_progress_biz.add(biz)
 
-    def observer_factory(account: AccountCredential, is_bulk: bool) -> SyncObserver:
+    async def observer_factory(account: AccountCredential, is_bulk: bool) -> SyncObserver:
         desc = f'同步 {account.nickname}' if not is_bulk else f'同步 {account.nickname} ({account.biz})'
         progress = tqdm(total=None, desc=desc, unit='msg', dynamic_ncols=True, leave=True)
         progress_map[account.biz] = progress
@@ -235,6 +235,7 @@ async def perform_sync(
 
 async def sync_account_articles(
     *,
+    user_id: int,
     biz: str | None,
     pages: int,
     sleep_seconds: float,
@@ -249,10 +250,14 @@ async def sync_account_articles(
         max_pages=pages,
     )
     started_at = utc_now_iso()
-    with open_storage() as storage:
-        account = storage.accounts.get_account(biz)
+    async with open_storage() as storage:
+        followed = {item.biz: item for item in await storage.accounts.list_followed_accounts(user_id)}
+        account = followed.get(biz) if biz else None
+        if account is None:
+            typer.echo('未关注该公众号，请先添加')
+            return
         typer.echo(f'开始同步 {account.nickname} 的文章')
-        async with _sync_error_handler(storage, started_at=started_at):
+        async with await _sync_error_handler(storage, started_at=started_at):
             report = await perform_sync(
                 storage=storage,
                 accounts=[account],
@@ -260,7 +265,7 @@ async def sync_account_articles(
                 bulk=False,
                 download=download,
             )
-            _append_cli_sync_history(
+            await _append_cli_sync_history(
                 storage,
                 started_at=started_at,
                 finished_at=utc_now_iso(),
@@ -272,6 +277,7 @@ async def sync_account_articles(
 
 async def sync_all_accounts(
     *,
+    user_id: int,
     sleep_seconds: float,
     force: bool,
     skip_time: int | None,
@@ -279,15 +285,15 @@ async def sync_all_accounts(
 ) -> None:
     config = _build_sync_config(sleep_seconds=sleep_seconds, force=force, skip_minutes=skip_time)
 
-    with open_storage() as storage:
-        accounts = storage.accounts.list_accounts()
+    async with open_storage() as storage:
+        accounts = await storage.accounts.list_syncable_accounts()
         if not accounts:
             typer.echo('尚未保存任何账号，使用 `account add` 添加')
             return
 
         typer.echo(f'开始同步全部账号（{len(accounts)} 个，列表间隔 {config.sleep_seconds:g} 秒）')
         started_at = utc_now_iso()
-        async with _sync_error_handler(storage, started_at=started_at):
+        async with await _sync_error_handler(storage, started_at=started_at):
             report = await perform_sync(
                 storage=storage,
                 accounts=accounts,
@@ -295,7 +301,7 @@ async def sync_all_accounts(
                 bulk=True,
                 download=download,
             )
-            _append_cli_sync_history(
+            await _append_cli_sync_history(
                 storage,
                 started_at=started_at,
                 finished_at=utc_now_iso(),
@@ -308,6 +314,7 @@ async def sync_all_accounts(
 
 async def sync_group_accounts(
     *,
+    user_id: int,
     group: str,
     sleep_seconds: float,
     force: bool,
@@ -316,19 +323,19 @@ async def sync_group_accounts(
 ) -> None:
     config = _build_sync_config(sleep_seconds=sleep_seconds, force=force, skip_minutes=skip_time)
 
-    with open_storage() as storage:
-        groups = storage.groups.list_groups()
+    async with open_storage() as storage:
+        groups = await storage.groups.list_groups(user_id=user_id)
         if not any(item.name == group for item in groups):
             typer.echo('分组不存在，请先创建分组')
             return
-        accounts = storage.accounts.list_accounts(group=group)
+        accounts = await storage.accounts.list_followed_accounts(user_id, group=group)
         if not accounts:
             typer.echo('分组内暂无账号')
             return
 
         typer.echo(f'开始同步分组 {group}（{len(accounts)} 个，列表间隔 {config.sleep_seconds:g} 秒）')
         started_at = utc_now_iso()
-        async with _sync_error_handler(storage, started_at=started_at):
+        async with await _sync_error_handler(storage, started_at=started_at):
             report = await perform_sync(
                 storage=storage,
                 accounts=accounts,
@@ -336,7 +343,7 @@ async def sync_group_accounts(
                 bulk=True,
                 download=download,
             )
-            _append_cli_sync_history(
+            await _append_cli_sync_history(
                 storage,
                 started_at=started_at,
                 finished_at=utc_now_iso(),

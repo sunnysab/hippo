@@ -2,22 +2,22 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 import httpx
 import psycopg
 
 from .article_queries import _normalize_record
+from .logger import get_logger
 from .storage import PostgresStorage, fetchone_row
 from .utils import utc_now_iso
 
-logger = logging.getLogger('hippo.serve')
+logger = get_logger(__name__)
 
 
-def _ensure_avatar_images_table(storage: PostgresStorage) -> None:
-    with storage.transaction(), storage.conn.cursor() as cur:
-        cur.execute(
+async def _ensure_avatar_images_table(storage: PostgresStorage) -> None:
+    async with storage.transaction(), storage.conn.cursor() as cur:
+        await cur.execute(
             """
                 CREATE TABLE IF NOT EXISTS avatar_images (
                     biz TEXT PRIMARY KEY,
@@ -30,8 +30,8 @@ def _ensure_avatar_images_table(storage: PostgresStorage) -> None:
         )
 
 
-def _get_avatar_row(storage: PostgresStorage, biz: str) -> dict[str, Any] | None:
-    return fetchone_row(
+async def _get_avatar_row(storage: PostgresStorage, biz: str) -> dict[str, Any] | None:
+    return await fetchone_row(
         storage,
         'SELECT avatar_url, content_type, data FROM avatar_images WHERE biz = %s',
         [biz],
@@ -39,9 +39,9 @@ def _get_avatar_row(storage: PostgresStorage, biz: str) -> dict[str, Any] | None
     )
 
 
-def _upsert_avatar_url(storage: PostgresStorage, biz: str, url: str) -> None:
-    with storage.transaction(), storage.conn.cursor() as cur:
-        cur.execute(
+async def _upsert_avatar_url(storage: PostgresStorage, biz: str, url: str) -> None:
+    async with storage.transaction(), storage.conn.cursor() as cur:
+        await cur.execute(
             """
                 INSERT INTO avatar_images (biz, avatar_url, updated_at)
                 VALUES (%s, %s, %s)
@@ -53,7 +53,7 @@ def _upsert_avatar_url(storage: PostgresStorage, biz: str, url: str) -> None:
         )
 
 
-def _store_avatar(
+async def _store_avatar(
     storage: PostgresStorage,
     biz: str,
     *,
@@ -61,8 +61,8 @@ def _store_avatar(
     data: bytes,
     avatar_url: str | None = None,
 ) -> None:
-    with storage.transaction(), storage.conn.cursor() as cur:
-        cur.execute(
+    async with storage.transaction(), storage.conn.cursor() as cur:
+        await cur.execute(
             """
                 INSERT INTO avatar_images (biz, avatar_url, content_type, data, updated_at)
                 VALUES (%s, %s, %s, %s, %s)
@@ -76,7 +76,7 @@ def _store_avatar(
         )
 
 
-def _fetch_and_cache_avatar(storage: PostgresStorage, biz: str, url: str) -> tuple[bytes, str] | None:
+async def _fetch_and_cache_avatar(storage: PostgresStorage, biz: str, url: str) -> tuple[bytes, str] | None:
     headers = {
         'Referer': 'https://mp.weixin.qq.com/',
         'Origin': 'https://mp.weixin.qq.com',
@@ -89,7 +89,7 @@ def _fetch_and_cache_avatar(storage: PostgresStorage, biz: str, url: str) -> tup
         content_type = resp.headers.get('Content-Type') or 'application/octet-stream'
         data = resp.content
         if data:
-            _store_avatar(storage, biz, content_type=content_type, data=data, avatar_url=url)
+            await _store_avatar(storage, biz, content_type=content_type, data=data, avatar_url=url)
         return data, content_type
     except Exception as exc:
         logger.warning('Failed to fetch avatar for %s: %s', biz, exc)

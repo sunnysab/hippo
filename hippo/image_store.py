@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 from typing import Protocol
 
 from .file_storage import FileStorage
 from .image_hashes import IMAGE_HASH_ALGO, compute_image_content_hash
+from .logger import get_logger
 from .repositories import ImageRepository
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ArticleImageStore(Protocol):

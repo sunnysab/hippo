@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from hippo.server import router
+from hippo.server import create_app
 
 ROOT = Path(__file__).resolve().parent.parent
 SETTINGS_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'settings' / 'SettingsPage.tsx'
@@ -12,9 +12,10 @@ GROUPS_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'groups' / 'GroupsPage.tsx'
 
 class SettingsApiNamespaceTest(unittest.TestCase):
     def test_server_exposes_settings_routes(self) -> None:
+        app = create_app()
         route_map: dict[str, set[str]] = {}
-        for route in router.routes:
-            methods = {method.upper() for method in (route.methods or set())}
+        for route in app.routes:
+            methods = {method.upper() for method in (getattr(route, 'methods', None) or set())}
             route_map.setdefault(route.path, set()).update(methods)
 
         self.assertIn('/api/settings/status', route_map)

@@ -12,16 +12,16 @@
 from __future__ import annotations
 
 import json
-import logging
 from dataclasses import dataclass
 from typing import Any
 
 from .downloader import ArticleDownloader
+from .logger import get_logger
 from .models import ArticleRecord
 from .storage import PostgresStorage
 from .weixin_source import FetchedArticle, SessionExpiredError, WeixinSource, classify_daemon_error
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 DOCUMENT_SOURCE = 'api_6771'
 
@@ -61,7 +61,7 @@ class WeixinArticleSync:
         stats = SyncStats()
         listed = await self._source.list_articles(source_key, biz, pages=pages)
         stats.listed = len(listed.items)
-        stats.enqueued = self._storage.article_queue.enqueue_many(
+        stats.enqueued = await self._storage.article_queue.enqueue_many(
             {
                 'biz': item.biz,
                 'sn': item.sn,
@@ -73,7 +73,7 @@ class WeixinArticleSync:
         )
         # 列表响应顺带带回了 daemon 解析出的 gh_：缓存下来，下次解析就不必再走 searchcontact
         if listed.gh_id:
-            self._storage.accounts.set_gh_id(biz, listed.gh_id)
+            await self._storage.accounts.set_gh_id(biz, listed.gh_id)
         self._storage.commit()
         logger.info('列表 %s：%d 篇，新入队 %d', source_key, stats.listed, stats.enqueued)
         return stats
@@ -81,7 +81,7 @@ class WeixinArticleSync:
     async def drain(self, *, limit: int | None = None) -> SyncStats:
         """把队列里的 pending 抓完（每批 ≤ ``batch_size``）。"""
         stats = SyncStats()
-        requeued = self._storage.article_queue.requeue_stale()
+        requeued = await self._storage.article_queue.requeue_stale()
         self._storage.commit()
         if requeued:
             logger.warning('重置 %d 条卡在 processing 的队列项', requeued)
@@ -90,7 +90,7 @@ class WeixinArticleSync:
             take = self._batch_size if remaining is None else min(self._batch_size, remaining)
             if take <= 0:
                 break
-            batch = self._storage.article_queue.take_pending(take)
+            batch = await self._storage.article_queue.take_pending(take)
             self._storage.commit()  # 先落「已领取」，崩溃后由 requeue_stale 兜底
             if not batch:
                 break
@@ -102,7 +102,7 @@ class WeixinArticleSync:
             await self._process_batch_inner(batch, stats)
         except SessionExpiredError:
             # 会话失效是基础设施故障：整批回 pending 且不计 attempts，交给上层等重新登录。
-            self._storage.article_queue.requeue(
+            await self._storage.article_queue.requeue(
                 [int(row['id']) for row in batch], error='daemon session expired'
             )
             self._storage.commit()
@@ -113,7 +113,7 @@ class WeixinArticleSync:
         try:
             bodies = await self._source.fetch_bodies(urls)
         except Exception as exc:
-            self._fail(batch, exc)
+            await self._fail(batch, exc)
             stats.failed += len(batch)
             return
         by_url = {body.url: body for body in bodies}
@@ -122,7 +122,7 @@ class WeixinArticleSync:
             body = by_url.get(url)
             if body is None or not body.html:
                 diagnostic = self._source.body_error_for(url)
-                self._fail(
+                await self._fail(
                     [row],
                     RuntimeError(diagnostic or f'daemon response omitted body for {url}'),
                 )
@@ -130,16 +130,16 @@ class WeixinArticleSync:
                 continue
             try:
                 await self._store(row, body)
-                self._storage.article_queue.mark_done([int(row['id'])])
+                await self._storage.article_queue.mark_done([int(row['id'])])
                 stats.ingested += 1
             except Exception as exc:
                 self._storage.rollback()
                 logger.warning('落库失败 %s：%s', row.get('long_link'), exc)
-                self._fail([row], exc)
+                await self._fail([row], exc)
                 stats.failed += 1
         self._storage.commit()
 
-    def _fail(self, rows: list[dict[str, Any]], exc: Exception) -> None:
+    async def _fail(self, rows: list[dict[str, Any]], exc: Exception) -> None:
         message = str(exc)
         if classify_daemon_error(message) == 'session':
             # 不写 attempts、不写 failed：让 _process_batch 整批回 pending
@@ -148,7 +148,7 @@ class WeixinArticleSync:
         # Retry is bounded by article_queue.mark_failed (three attempts), while the
         # original daemon diagnostic remains recorded for inspection.
         retryable = True
-        self._storage.article_queue.mark_failed(
+        await self._storage.article_queue.mark_failed(
             [int(row['id']) for row in rows], error=message, retryable=retryable
         )
         self._storage.commit()
@@ -186,7 +186,7 @@ class WeixinArticleSync:
         )
         if article_pk is None:
             raise RuntimeError('articles 写入后没有拿到 id')
-        self._storage.documents.save(
+        await self._storage.documents.save(
             article_pk=article_pk,
             source=DOCUMENT_SOURCE,
             url_token=body.slug,

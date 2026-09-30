@@ -20,7 +20,7 @@ class SyncScheduler:
         self._task: asyncio.Task[None] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
-    def start(self) -> None:
+    async def start(self) -> None:
         if self._task and not self._task.done():
             return
         self._stop.clear()
@@ -49,8 +49,8 @@ class SyncScheduler:
     async def _loop_sync(self) -> None:
         last_run_duration = 0.0
         while not self._stop.is_set():
-            with open_storage() as storage:
-                settings = get_sync_settings(storage)
+            async with open_storage() as storage:
+                settings = await get_sync_settings(storage)
             if not settings.get('enabled'):
                 last_run_duration = 0.0
                 await self._wait(10)

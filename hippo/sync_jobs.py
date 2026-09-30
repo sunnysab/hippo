@@ -66,7 +66,7 @@ class SyncJobRepository:
     def __init__(self, conn) -> None:
         self._conn = conn
 
-    def create_job(
+    async def create_job(
         self,
         *,
         trigger_type: str,
@@ -75,8 +75,8 @@ class SyncJobRepository:
     ) -> SyncTaskState:
         task_id = uuid.uuid4().hex
         now = utc_now_dt()
-        with self._conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
                 """
                 INSERT INTO sync_jobs (
                     id,
@@ -100,14 +100,14 @@ class SyncJobRepository:
                     now,
                 ),
             )
-            row = cur.fetchone()
+            row = await cur.fetchone()
         if not row:
             raise RuntimeError('Failed to create sync job')
         return _row_to_state(dict(row))  # type: ignore[arg-type]
 
-    def list_jobs(self, *, limit: int = 5) -> list[SyncTaskState]:
-        with self._conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
+    async def list_jobs(self, *, limit: int = 5) -> list[SyncTaskState]:
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
                 """
                 SELECT *
                 FROM sync_jobs
@@ -116,29 +116,29 @@ class SyncJobRepository:
                 """,
                 (max(int(limit), 1),),
             )
-            rows = cur.fetchall()
+            rows = await cur.fetchall()
         return [_row_to_state(dict(row)) for row in rows if row]  # type: ignore[arg-type]
 
-    def get_job(self, task_id: str) -> SyncTaskState | None:
-        with self._conn.cursor(row_factory=dict_row) as cur:
-            cur.execute('SELECT * FROM sync_jobs WHERE id = %s', (task_id,))
-            row = cur.fetchone()
+    async def get_job(self, task_id: str) -> SyncTaskState | None:
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute('SELECT * FROM sync_jobs WHERE id = %s', (task_id,))
+            row = await cur.fetchone()
         return _row_to_state(dict(row)) if row else None  # type: ignore[arg-type]
 
-    def has_active_job(self, *, trigger_type: str | None = None) -> bool:
+    async def has_active_job(self, *, trigger_type: str | None = None) -> bool:
         query = "SELECT 1 FROM sync_jobs WHERE status IN ('queued', 'running')"
         params: list[Any] = []
         if trigger_type:
             query += ' AND trigger_type = %s'
             params.append(trigger_type)
         query += ' LIMIT 1'
-        with self._conn.cursor() as cur:
-            cur.execute(query, params)
-            return cur.fetchone() is not None
+        async with self._conn.cursor() as cur:
+            await cur.execute(query, params)
+            return await cur.fetchone() is not None
 
-    def claim_next_job(self, *, worker_id: str) -> SyncTaskState | None:
-        with self._conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
+    async def claim_next_job(self, *, worker_id: str) -> SyncTaskState | None:
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
                 """
                 WITH candidate AS (
                     SELECT id
@@ -158,12 +158,12 @@ class SyncJobRepository:
                 """,
                 (worker_id,),
             )
-            row = cur.fetchone()
+            row = await cur.fetchone()
         return _row_to_state(dict(row)) if row else None  # type: ignore[arg-type]
 
-    def mark_running(self, task_id: str, *, worker_id: str) -> None:
-        with self._conn.cursor() as cur:
-            cur.execute(
+    async def mark_running(self, task_id: str, *, worker_id: str) -> None:
+        async with self._conn.cursor() as cur:
+            await cur.execute(
                 """
                 UPDATE sync_jobs
                 SET status = 'running',
@@ -175,9 +175,9 @@ class SyncJobRepository:
                 (worker_id, task_id),
             )
 
-    def recover_stale_running_jobs(self, *, stale_after_minutes: int = 15) -> int:
-        with self._conn.cursor() as cur:
-            cur.execute(
+    async def recover_stale_running_jobs(self, *, stale_after_minutes: int = 15) -> int:
+        async with self._conn.cursor() as cur:
+            await cur.execute(
                 """
                 UPDATE sync_jobs
                 SET status = 'failed',
@@ -195,7 +195,7 @@ class SyncJobRepository:
             )
             return int(cur.rowcount or 0)
 
-    def update_progress(
+    async def update_progress(
         self,
         task_id: str,
         *,
@@ -208,8 +208,8 @@ class SyncJobRepository:
         accounts: list[dict[str, Any]],
         report: dict[str, Any] | None = None,
     ) -> None:
-        with self._conn.cursor() as cur:
-            cur.execute(
+        async with self._conn.cursor() as cur:
+            await cur.execute(
                 """
                 UPDATE sync_jobs
                 SET phase = %s,
@@ -235,9 +235,9 @@ class SyncJobRepository:
                 ),
             )
 
-    def cancel_job(self, task_id: str) -> bool:
-        with self._conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
+    async def cancel_job(self, task_id: str) -> bool:
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
                 """
                 UPDATE sync_jobs
                 SET status = CASE
@@ -255,18 +255,18 @@ class SyncJobRepository:
                 """,
                 (task_id,),
             )
-            row = cur.fetchone()
+            row = await cur.fetchone()
         return row is not None
 
-    def is_cancelling(self, task_id: str) -> bool:
-        with self._conn.cursor() as cur:
-            cur.execute(
+    async def is_cancelling(self, task_id: str) -> bool:
+        async with self._conn.cursor() as cur:
+            await cur.execute(
                 "SELECT 1 FROM sync_jobs WHERE id = %s AND status = 'cancelling'",
                 (task_id,),
             )
-            return cur.fetchone() is not None
+            return await cur.fetchone() is not None
 
-    def mark_finished(
+    async def mark_finished(
         self,
         task_id: str,
         *,
@@ -274,8 +274,8 @@ class SyncJobRepository:
         error: str | None,
         result: dict[str, Any] | None,
     ) -> None:
-        with self._conn.cursor() as cur:
-            cur.execute(
+        async with self._conn.cursor() as cur:
+            await cur.execute(
                 """
                 UPDATE sync_jobs
                 SET status = %s,

@@ -10,14 +10,14 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from typing import Any
 
+from .logger import get_logger
 from .storage import PostgresStorage, open_storage
 from .weixin_source import load_bot_class, query_param
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 RECONNECT_SECONDS = 30.0
 
@@ -31,22 +31,28 @@ async def enqueue_pushed_article(storage: PostgresStorage, push: Any) -> bool:
         logger.debug('推送缺少 gh_id/sn，忽略：%s', url[:80])
         return False
 
-    with storage.conn.cursor() as cur:
-        cur.execute(
+    async with storage.conn.cursor() as cur:
+        await cur.execute(
             """
-            SELECT biz FROM accounts
-             WHERE NOT is_disabled AND (gh_id = %s OR nickname = %s)
+            SELECT a.biz FROM accounts a
+             WHERE NOT a.is_disabled
+               AND (a.gh_id = %s OR a.nickname = %s)
+               -- 没人订阅就不再入队，避免浪费 daemon 的抓取配额
+               AND EXISTS (
+                   SELECT 1 FROM subscription s
+                    WHERE s.biz = a.biz AND NOT s.is_disabled
+               )
              LIMIT 1
             """,
             (gh_id, getattr(push, 'pub_name', '')),
         )
-        row = cur.fetchone()
-    storage.rollback()
+        row = await cur.fetchone()
+    await storage.rollback()
     if row is None:
         logger.debug('推送来自未登记的公众号 %s（%s）', gh_id, getattr(push, 'pub_name', ''))
         return False
 
-    inserted = storage.article_queue.enqueue_many(
+    inserted = await storage.article_queue.enqueue_many(
         [
             {
                 'biz': str(row[0]),
@@ -64,7 +70,7 @@ async def enqueue_pushed_article(storage: PostgresStorage, push: Any) -> bool:
             }
         ]
     )
-    storage.commit()
+    await storage.commit()
     if inserted:
         logger.info(
             '推送入队：%s - %s', getattr(push, 'pub_name', gh_id), getattr(push, 'title', '')
@@ -83,7 +89,7 @@ async def watch_article_push(*, reconnect_seconds: float = RECONNECT_SECONDS) ->
         @bot.on_article
         async def _on_article(push: Any) -> None:
             try:
-                with open_storage() as storage:
+                async with open_storage() as storage:
                     await enqueue_pushed_article(storage, push)
             except Exception:
                 logger.exception('article_push 入队失败')

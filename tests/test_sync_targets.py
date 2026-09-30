@@ -16,7 +16,7 @@ class _FakeQueue:
     def __init__(self) -> None:
         self.enqueued: list[dict] = []
 
-    def enqueue_many(self, items) -> int:
+    async def enqueue_many(self, items) -> int:
         for item in items:
             self.enqueued.append(item)
         return len(self.enqueued)
@@ -27,14 +27,14 @@ class _FakeAccounts:
         self.synced: list[str] = []
         self.gh_ids: list[tuple[str, str]] = []
 
-    def update_last_synced(self, biz: str) -> None:
+    async def update_last_synced(self, biz: str) -> None:
         self.synced.append(biz)
 
-    def set_gh_id(self, biz: str, gh_id: str) -> int:
+    async def set_gh_id(self, biz: str, gh_id: str) -> int:
         self.gh_ids.append((biz, gh_id))
         return 1
 
-    def get_latest_publish_at(self, biz: str):
+    async def get_latest_publish_at(self, biz: str):
         return None
 
 
@@ -47,13 +47,13 @@ class _FakeStorage:
     def transaction(self):
         return self
 
-    def commit(self) -> None:
+    async def commit(self) -> None:
         self.commits += 1
 
-    def __enter__(self):
+    async def __aenter__(self):
         return self
 
-    def __exit__(self, exc_type, exc, tb):
+    async def __aexit__(self, exc_type, exc, tb):
         return None
 
 

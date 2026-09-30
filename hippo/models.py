@@ -36,6 +36,16 @@ class AccountGroup(HippoBaseModel):
     sync_recent_days: int | None = None
 
 
+class User(HippoBaseModel):
+    id: int
+    username: str
+    email: str | None = None
+    email_verified: bool = False
+    role: str = 'user'
+    timezone: str = 'Asia/Shanghai'
+    is_disabled: bool = False
+
+
 class ArticleRecord(HippoBaseModel):
     biz: str
     article_id: str
@@ -60,4 +70,5 @@ __all__ = [
     'AccountGroup',
     'ArticleRecord',
     'DownloadResult',
+    'User',
 ]

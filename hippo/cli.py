@@ -32,10 +32,11 @@ from .downloader import _attach_image_block_metadata, _parse_markdown_blocks
 from .file_storage import FileStorageError, S3FileStorage
 from .image_hashes import ensure_image_hash_by_id
 from .image_store import ArticleImageService
-from .logger import setup_logger
-from .models import AccountCredential, AccountGroup
+from .logger import configure_logging, setup_logger
+from .models import AccountCredential, AccountGroup, User
 from .repositories import ARTICLE_CONTENT_PRESENT_SQL as _ARTICLE_CONTENT_PRESENT_SQL
 from .rss import build_rss_xml, query_rss_items
+from .security import hash_password
 from .server import serve as run_server
 from .storage import PostgresStorage, StorageInitError, open_storage
 from .sync_worker import run_sync_worker
@@ -74,14 +75,7 @@ def main_callback(
 ) -> None:
     """Hippo WeChat article exporter CLI"""
     if verbose:
-        # Reinitialize logger with verbose console output
-        import logging
-
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.DEBUG)
-        console_formatter = logging.Formatter('%(levelname)s: %(message)s')
-        console_handler.setFormatter(console_formatter)
-        logging.getLogger('hippo').addHandler(console_handler)
+        configure_logging(verbose=True)
 
 
 accounts_app = typer.Typer(
@@ -101,6 +95,11 @@ articles_app = typer.Typer(
 )
 db_app = typer.Typer(
     help='Database maintenance',
+    no_args_is_help=True,
+    rich_markup_mode=None,
+)
+user_app = typer.Typer(
+    help='Manage user accounts',
     no_args_is_help=True,
     rich_markup_mode=None,
 )
@@ -179,7 +178,8 @@ def _parse_octal_mode(value: str) -> int:
 
 
 @db_app.command('init')
-def init_db(
+@coro
+async def init_db(
     pg_dsn: str | None = typer.Option(None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'),
     backfill_image_hashes: bool = typer.Option(
         False,
@@ -197,11 +197,11 @@ def init_db(
     if not resolved_dsn:
         typer.echo('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
         raise typer.Exit(code=2)
-    with PostgresStorage(resolved_dsn, auto_init=True):
+    async with PostgresStorage(resolved_dsn, auto_init=True):
         pass
     typer.echo('PostgreSQL schema initialized.')
     if backfill_image_hashes:
-        _backfill_article_image_hashes(
+        await _backfill_article_image_hashes(
             pg_dsn=resolved_dsn,
             limit=image_hash_limit,
             dry_run=False,
@@ -209,20 +209,22 @@ def init_db(
 
 
 @db_app.command('rebuild-counts')
-def rebuild_counts(
+@coro
+async def rebuild_counts(
     pg_dsn: str | None = typer.Option(None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'),
 ) -> None:
     resolved_dsn = pg_dsn or os.environ.get('HIPPO_PG_DSN')
     if not resolved_dsn:
         typer.echo('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
         raise typer.Exit(code=2)
-    with PostgresStorage(resolved_dsn, auto_init=False) as storage, storage.transaction(), storage.conn.cursor() as cur:
-        cur.execute('SELECT hippo_rebuild_article_counts()')
+    async with PostgresStorage(resolved_dsn, auto_init=False) as storage, storage.transaction(), storage.conn.cursor() as cur:
+        await cur.execute('SELECT hippo_rebuild_article_counts()')
     typer.echo('Rebuilt cached article counts.')
 
 
 @db_app.command('backfill-item-show-type')
-def backfill_item_show_type(
+@coro
+async def backfill_item_show_type(
     pg_dsn: str | None = typer.Option(None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'),
     limit: int | None = typer.Option(None, min=1, help='Optional max article count to backfill per run'),
     batch_size: int = typer.Option(1000, min=1, help='Article batch size used during backfill'),
@@ -298,29 +300,29 @@ def backfill_item_show_type(
         COALESCE((SELECT MAX(id) FROM candidate), %s) AS last_seen_id
     """
 
-    with PostgresStorage(resolved_dsn, auto_init=False) as storage:
+    async with PostgresStorage(resolved_dsn, auto_init=False) as storage:
         if dry_run:
-            with storage.conn.cursor() as cur:
+            async with storage.conn.cursor() as cur:
                 if limit is None:
-                    cur.execute(f'SELECT COUNT(*) FROM ({raw_candidate_ids_sql}) AS candidate')
-                    raw_total = int(cur.fetchone()[0] or 0)
-                    cur.execute(f'SELECT COUNT(*) FROM ({fallback_candidate_ids_sql}) AS candidate')
-                    fallback_total = int(cur.fetchone()[0] or 0)
+                    await cur.execute(f'SELECT COUNT(*) FROM ({raw_candidate_ids_sql}) AS candidate')
+                    raw_total = int((await cur.fetchone())[0] or 0)
+                    await cur.execute(f'SELECT COUNT(*) FROM ({fallback_candidate_ids_sql}) AS candidate')
+                    fallback_total = int((await cur.fetchone())[0] or 0)
                 else:
-                    cur.execute(
+                    await cur.execute(
                         f'SELECT COUNT(*) FROM ({raw_candidate_ids_sql} LIMIT %s) AS candidate',
                         (limit,),
                     )
-                    raw_total = int(cur.fetchone()[0] or 0)
+                    raw_total = int((await cur.fetchone())[0] or 0)
                     remaining_after_raw = max(limit - raw_total, 0)
                     fallback_total = 0
                     if remaining_after_raw > 0:
-                        cur.execute(
+                        await cur.execute(
                             f'SELECT COUNT(*) FROM ({fallback_candidate_ids_sql} LIMIT %s) AS candidate',
                             (remaining_after_raw,),
                         )
-                        fallback_total = int(cur.fetchone()[0] or 0)
-            storage.rollback()
+                        fallback_total = int((await cur.fetchone())[0] or 0)
+            await storage.rollback()
             total_candidates = raw_total + fallback_total
             if total_candidates == 0:
                 typer.echo('No NULL item_show_type rows could be inferred.')
@@ -342,12 +344,12 @@ def backfill_item_show_type(
             progress.set_description_str('Backfill item_show_type [raw]')
             while raw_remaining != 0:
                 current_batch_size = batch_size if raw_remaining is None else min(batch_size, raw_remaining)
-                with storage.transaction(), storage.conn.cursor() as cur:
-                    cur.execute(
+                async with storage.transaction(), storage.conn.cursor() as cur:
+                    await cur.execute(
                         raw_batch_update_sql,
                         (raw_last_id, current_batch_size, raw_last_id),
                     )
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                 raw_updated = int(row[0] or 0)
                 next_last_id = int(row[1] or raw_last_id)
                 if next_last_id <= raw_last_id:
@@ -363,12 +365,12 @@ def backfill_item_show_type(
             progress.set_description_str('Backfill item_show_type [fallback]')
             while fallback_remaining != 0:
                 current_batch_size = batch_size if fallback_remaining is None else min(batch_size, fallback_remaining)
-                with storage.transaction(), storage.conn.cursor() as cur:
-                    cur.execute(
+                async with storage.transaction(), storage.conn.cursor() as cur:
+                    await cur.execute(
                         fallback_batch_update_sql,
                         (fallback_last_id, current_batch_size, fallback_last_id),
                     )
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                 fallback_updated = int(row[0] or 0)
                 next_last_id = int(row[1] or fallback_last_id)
                 if next_last_id <= fallback_last_id:
@@ -386,7 +388,7 @@ def backfill_item_show_type(
     typer.echo(f'Backfilled item_show_type for {updated} articles.')
 
 
-def _process_batch(
+async def _process_batch(
     storage: Any,
     rows: list[tuple],
     *,
@@ -394,8 +396,8 @@ def _process_batch(
 ) -> tuple[int, int]:
     article_pks = [int(row[0]) for row in rows]
 
-    with storage.conn.cursor() as cur:
-        cur.execute(
+    async with storage.conn.cursor() as cur:
+        await cur.execute(
             """
             SELECT article_pk, id, orig_url
             FROM article_images
@@ -404,8 +406,8 @@ def _process_batch(
             """,
             (article_pks,),
         )
-        image_rows = cur.fetchall()
-    storage.rollback()
+        image_rows = await cur.fetchall()
+    await storage.rollback()
 
     image_id_maps: dict[int, dict[str, int]] = {}
     for current_article_pk, image_id, orig_url in image_rows:
@@ -417,7 +419,7 @@ def _process_batch(
         if not markdown:
             continue
         _title, _cover_local, blocks, normalized_markdown = _parse_markdown_blocks(markdown)
-        rebuilt_blocks = _attach_image_block_metadata(
+        rebuilt_blocks = await _attach_image_block_metadata(
             blocks,
             resolve_url=lambda value: value.strip() if isinstance(value, str) else None,
             image_id_by_url=image_id_maps.get(int(current_article_pk)),
@@ -434,8 +436,8 @@ def _process_batch(
     batch_updated = len(updates)
 
     if not dry_run and updates:
-        with storage.transaction(), storage.conn.cursor() as cur:
-            cur.executemany(
+        async with storage.transaction(), storage.conn.cursor() as cur:
+            await cur.executemany(
                 """
                     UPDATE article_content
                     SET content_markdown = %s,
@@ -456,7 +458,7 @@ def _process_batch(
     return len(rows), batch_updated
 
 
-def _backfill_range(
+async def _backfill_range(
     resolved_dsn: str,
     *,
     start_pk: int = 0,
@@ -472,7 +474,7 @@ def _backfill_range(
     processed = 0
     updated = 0
     last_article_pk = start_pk
-    with PostgresStorage(resolved_dsn, auto_init=False) as storage:
+    async with PostgresStorage(resolved_dsn, auto_init=False) as storage:
         while True:
             remaining = None if limit is None else max(limit - processed, 0)
             if remaining == 0:
@@ -497,15 +499,15 @@ def _backfill_range(
             select_sql += ' ORDER BY article_pk ASC LIMIT %s'
             params.append(current_batch_size)
 
-            with storage.conn.cursor() as cur:
-                cur.execute(select_sql, params)
-                rows = cur.fetchall()
-            storage.rollback()
+            async with storage.conn.cursor() as cur:
+                await cur.execute(select_sql, params)
+                rows = await cur.fetchall()
+            await storage.rollback()
 
             if not rows:
                 break
 
-            batch_processed, batch_updated = _process_batch(storage, rows, dry_run=dry_run)
+            batch_processed, batch_updated = await _process_batch(storage, rows, dry_run=dry_run)
             processed += batch_processed
             updated += batch_updated
             last_article_pk = int(rows[-1][0])
@@ -524,7 +526,7 @@ def _backfill_range(
     return processed, updated
 
 
-def _backfill_pks(
+async def _backfill_pks(
     resolved_dsn: str,
     *,
     article_pks: list[int],
@@ -536,12 +538,12 @@ def _backfill_pks(
     label = f'[worker {worker_id}] ' if worker_id is not None else ''
     processed = 0
     updated = 0
-    with PostgresStorage(resolved_dsn, auto_init=False) as storage:
+    async with PostgresStorage(resolved_dsn, auto_init=False) as storage:
         for i in range(0, len(article_pks), batch_size):
             batch_pks = article_pks[i : i + batch_size]
 
-            with storage.conn.cursor() as cur:
-                cur.execute(
+            async with storage.conn.cursor() as cur:
+                await cur.execute(
                     """
                     SELECT article_pk, content_markdown, content_json
                     FROM article_content
@@ -550,13 +552,13 @@ def _backfill_pks(
                     """,
                     (batch_pks,),
                 )
-                rows = cur.fetchall()
-            storage.rollback()
+                rows = await cur.fetchall()
+            await storage.rollback()
 
             if not rows:
                 continue
 
-            batch_processed, batch_updated = _process_batch(storage, rows, dry_run=dry_run)
+            batch_processed, batch_updated = await _process_batch(storage, rows, dry_run=dry_run)
             processed += batch_processed
             updated += batch_updated
 
@@ -575,7 +577,8 @@ def _backfill_pks(
 
 
 @db_app.command('backfill-content-json')
-def backfill_content_json(
+@coro
+async def backfill_content_json(
     pg_dsn: str | None = typer.Option(None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'),
     article_pk: int | None = typer.Option(None, min=1, help='Only backfill a specific article_pk'),
     limit: int | None = typer.Option(None, min=1, help='Optional max row count to backfill per run'),
@@ -590,7 +593,7 @@ def backfill_content_json(
         raise typer.Exit(code=2)
 
     if article_pk is not None or workers <= 1:
-        processed, updated = _backfill_range(
+        processed, updated = await _backfill_range(
             resolved_dsn,
             start_pk=article_pk - 1 if article_pk else 0,
             end_pk=article_pk if article_pk else None,
@@ -613,9 +616,9 @@ def backfill_content_json(
 
     typer.echo('Loading matching article_pks...')
     resume_clause = ' AND content_json IS NULL' if resume else ''
-    with PostgresStorage(resolved_dsn, auto_init=False) as storage:
-        with storage.conn.cursor() as cur:
-            cur.execute(
+    async with PostgresStorage(resolved_dsn, auto_init=False) as storage:
+        async with storage.conn.cursor() as cur:
+            await cur.execute(
                 f"""
                 SELECT article_pk
                 FROM article_content
@@ -625,8 +628,8 @@ def backfill_content_json(
                 ORDER BY article_pk ASC
                 """
             )
-            all_pks = [int(row[0]) for row in cur.fetchall()]
-        storage.rollback()
+            all_pks = [int(row[0]) for row in await cur.fetchall()]
+        await storage.rollback()
 
     if not all_pks:
         typer.echo('No article_content rows matched.')
@@ -651,13 +654,16 @@ def backfill_content_json(
             if not chunk:
                 continue
             future = executor.submit(
-                _backfill_pks,
-                resolved_dsn=resolved_dsn,
-                article_pks=chunk,
-                batch_size=batch_size,
-                dry_run=dry_run,
-                echo_lock=echo_lock,
-                worker_id=w + 1,
+                lambda chunk=chunk, w=w: asyncio.run(
+                    _backfill_pks(
+                        resolved_dsn=resolved_dsn,
+                        article_pks=chunk,
+                        batch_size=batch_size,
+                        dry_run=dry_run,
+                        echo_lock=echo_lock,
+                        worker_id=w + 1,
+                    )
+                )
             )
             futures.append(future)
 
@@ -688,6 +694,68 @@ app.add_typer(accounts_app, name='account')
 accounts_app.add_typer(groups_app, name='group')
 app.add_typer(articles_app, name='article')
 app.add_typer(db_app, name='db')
+app.add_typer(user_app, name='user')
+
+
+@user_app.command('add')
+@coro
+async def add_user(
+    username: str = typer.Argument(..., help='登录名'),
+    password: str = typer.Option(
+        ...,
+        '--password',
+        prompt=True,
+        hide_input=True,
+        confirmation_prompt=True,
+        help='密码（省略则交互输入）',
+    ),
+    email: str | None = typer.Option(None, '--email', help='邮箱地址'),
+    admin: bool = typer.Option(False, '--admin', help='授予管理员角色'),
+    timezone: str = typer.Option('Asia/Shanghai', '--timezone', help='用户时区'),
+) -> None:
+    """创建用户账号。
+
+    CLI 创建的管理员默认已通过邮箱验证，因为运行它的人本来就持有数据库。
+    """
+    async with open_storage() as storage:
+        if await storage.users.get_with_password(username) is not None:
+            typer.echo(f'User already exists: {username}')
+            raise typer.Exit(code=1)
+        async with storage.transaction():
+            user = await storage.users.create(
+                username=username,
+                password_hash=await asyncio.to_thread(hash_password, password),
+                email=email,
+                role='admin' if admin else 'user',
+                # The operator running this command already holds the database,
+                # so CLI-created accounts skip the e-mail verification loop.
+                email_verified=True,
+                timezone=timezone,
+            )
+    typer.echo(f'Created user #{user.id} {user.username} ({user.role})')
+
+
+@db_app.command('migrate-multiuser')
+@coro
+async def migrate_multiuser(
+    owner: str = typer.Option(..., '--owner', help='接管现有分组与订阅的用户名'),
+) -> None:
+    """把多用户改造前的分组与账号同步设置归到某个用户名下。
+
+    可重复执行：已经归属过的数据不会被重复处理。
+    """
+    async with open_storage() as storage:
+        credentials = await storage.users.get_with_password(owner)
+        if credentials is None:
+            typer.echo(f'User not found: {owner}. Create it first with `hippo user add`.', err=True)
+            raise typer.Exit(code=1)
+        user, _ = credentials
+        async with storage.transaction():
+            groups = await storage.subscriptions.claim_orphan_groups(user.id)
+            subscriptions = await storage.subscriptions.backfill_from_accounts(user.id)
+    typer.echo(
+        f'Assigned {groups} group(s) and created {subscriptions} subscription(s) for {owner}.'
+    )
 
 
 def _parse_since(value: str | None) -> int | None:
@@ -697,8 +765,11 @@ def _parse_since(value: str | None) -> int | None:
         raise typer.BadParameter('时间格式应为 YYYY-MM-DD') from exc
 
 
-def _build_group_defaults(storage: PostgresStorage) -> dict[int, AccountGroup]:
-    return {group.id: group for group in storage.groups.list_groups()}
+async def _build_group_defaults(
+    storage: PostgresStorage,
+    user_id: int,
+) -> dict[int, AccountGroup]:
+    return {group.id: group for group in await storage.groups.list_groups(user_id=user_id)}
 
 
 def _resolve_recent_since(
@@ -777,13 +848,41 @@ def _build_image_store(storage: PostgresStorage, *, enabled: bool) -> ArticleIma
         raise typer.Exit(code=1)
 
 
-def _resolve_account(storage: PostgresStorage, name: str | None) -> AccountCredential:
+async def _current_cli_user(username: str | None) -> User:
+    """Resolve ``--user`` against a fresh connection (sync commands open their own)."""
+    async with open_storage() as storage:
+        return await _cli_user(storage, username)
+
+
+async def _cli_user(storage: PostgresStorage, username: str | None) -> User:
+    """Resolve the acting user for a CLI command.
+
+    The CLI has no session, so per-user commands take ``--user`` and fall back to
+    the first administrator.
+    """
+    users = await storage.users.list_all()
+    if not users:
+        raise typer.BadParameter('还没有任何用户，请先执行 `hippo user add`.')
+    if username is None:
+        admins = [user for user in users if user.role == 'admin']
+        return admins[0] if admins else users[0]
+    for user in users:
+        if user.username == username:
+            return user
+    raise typer.BadParameter(f'用户不存在：{username}')
+
+
+async def _resolve_account(
+    storage: PostgresStorage,
+    user_id: int,
+    name: str | None,
+) -> AccountCredential:
     if name is None:
         raise LookupError('请输入公众号名称或 fakeid')
     target = name.strip()
     if not target:
         raise LookupError('请输入公众号名称或 fakeid')
-    accounts = storage.accounts.list_accounts()
+    accounts = await storage.accounts.list_followed_accounts(user_id)
     exact = [acc for acc in accounts if acc.biz == target]
     if exact:
         return exact[0]
@@ -802,11 +901,14 @@ def _resolve_account(storage: PostgresStorage, name: str | None) -> AccountCrede
 
 
 @accounts_app.command('list')
-def list_accounts(
+@coro
+async def list_accounts(
     group: str | None = typer.Option(None, help='Filter by group name'),
+    user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
 ) -> None:
-    with open_storage() as storage:
-        accounts = storage.accounts.list_accounts(group=group)
+    async with open_storage() as storage:
+        user = await _cli_user(storage, user_name)
+        accounts = await storage.accounts.list_followed_accounts(user.id, group=group)
     if not accounts:
         typer.echo('尚未保存任何账号，使用 `account add` 添加')
         return
@@ -829,21 +931,29 @@ def list_accounts(
 
 
 @groups_app.command('add')
-def add_group(
+@coro
+async def add_group(
     name: str = typer.Argument(..., help='Group name'),
+    user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
 ) -> None:
     if not name.strip():
         typer.echo('Please provide a group name.')
         raise typer.Exit(code=2)
-    with open_storage() as storage, storage.transaction():
-        group = storage.groups.upsert_group(name)
+    async with open_storage() as storage:
+        user = await _cli_user(storage, user_name)
+        async with storage.transaction():
+            group = await storage.groups.upsert_group(name, user_id=user.id)
     typer.echo(f'Group {group.name} saved.')
 
 
 @groups_app.command('list')
-def list_groups() -> None:
-    with open_storage() as storage:
-        groups = storage.groups.list_groups()
+@coro
+async def list_groups(
+    user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
+) -> None:
+    async with open_storage() as storage:
+        user = await _cli_user(storage, user_name)
+        groups = await storage.groups.list_groups(user_id=user.id)
     if not groups:
         typer.echo('No groups found.')
         return
@@ -858,13 +968,16 @@ def list_groups() -> None:
 @coro
 async def sync_group(
     group: str = typer.Argument(..., help='Group name'),
+    user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
     sleep_seconds: float = typer.Option(DEFAULT_SYNC_REQUEST_INTERVAL, min=0, help='账号之间的列表请求间隔秒数'),
     force: bool = typer.Option(False, is_flag=True, help='忽略跳过条件，强制同步'),
     skip_time: int | None = typer.Option(None, min=1, help='多少分钟内同步过则跳过'),
     download: bool = typer.Option(True, '--download/--no-download', help='同步后顺带抓一批正文'),
 ) -> None:
     _require_nonempty(group, 'Please provide a group name.')
+    resolved_user = await _current_cli_user(user_name)
     await perform_group_sync(
+        user_id=resolved_user.id,
         group=group,
         sleep_seconds=sleep_seconds,
         force=force,
@@ -874,90 +987,111 @@ async def sync_group(
 
 
 @groups_app.command('set')
-def set_account_group(
+@coro
+async def set_account_group(
     account: str = typer.Argument(..., help='Account name, alias, or fakeid'),
     group: str = typer.Argument(..., help='Group name'),
+    user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
 ) -> None:
     _require_nonempty(account, 'Please provide an account name or fakeid.')
     _require_nonempty(group, 'Please provide a group name.')
-    with open_storage() as storage:
+    async with open_storage() as storage:
+        user = await _cli_user(storage, user_name)
         try:
-            target = _resolve_account(storage, account)
+            target = await _resolve_account(storage, user.id, account)
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
-        with storage.transaction():
-            storage.accounts.set_account_group(target.biz, group)
+        async with storage.transaction():
+            group_row = await storage.groups.upsert_group(group, user_id=user.id)
+            await storage.subscriptions.set_group(user.id, [target.biz], group_row.id)
     typer.echo(f'Account {target.nickname} ({target.biz}) assigned to group {group}.')
 
 
 @groups_app.command('clear')
-def clear_account_group(
+@coro
+async def clear_account_group(
     account: str = typer.Argument(..., help='Account name, alias, or fakeid'),
+    user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
 ) -> None:
     _require_nonempty(account, 'Please provide an account name or fakeid.')
-    with open_storage() as storage:
+    async with open_storage() as storage:
+        user = await _cli_user(storage, user_name)
         try:
-            target = _resolve_account(storage, account)
+            target = await _resolve_account(storage, user.id, account)
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
-        with storage.transaction():
-            storage.accounts.set_account_group(target.biz, None)
+        async with storage.transaction():
+            await storage.subscriptions.set_group(user.id, [target.biz], None)
     typer.echo(f'Account {target.nickname} ({target.biz}) group cleared.')
 
 
 @accounts_app.command('remove')
-def remove_account(account: str = typer.Argument(..., help='Account name, alias, or fakeid')) -> None:
-    with open_storage() as storage:
+@coro
+async def remove_account(
+    account: str = typer.Argument(..., help='Account name, alias, or fakeid'),
+    user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
+) -> None:
+    """取消关注：只解除订阅，共享的抓取数据保留。"""
+    async with open_storage() as storage:
+        user = await _cli_user(storage, user_name)
         try:
-            target = _resolve_account(storage, account)
+            target = await _resolve_account(storage, user.id, account)
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
-        with storage.transaction():
-            removed = storage.accounts.remove_account(target.biz)
+        async with storage.transaction():
+            removed = await storage.subscriptions.remove_many(user.id, [target.biz])
     if removed:
-        typer.echo(f'Account {target.nickname} ({target.biz}) removed.')
+        typer.echo(f'Unfollowed {target.nickname} ({target.biz}).')
     else:
-        typer.echo(f'Account {target.biz} not found.')
+        typer.echo(f'Account {target.biz} not followed.')
 
 
 @accounts_app.command('disable')
-def disable_account(
+@coro
+async def disable_account(
     account: str = typer.Argument(..., help='Account name, alias, or fakeid'),
+    user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
 ) -> None:
     _require_nonempty(account, 'Please provide an account name or fakeid.')
-    with open_storage() as storage:
+    async with open_storage() as storage:
+        user = await _cli_user(storage, user_name)
         try:
-            target = _resolve_account(storage, account)
+            target = await _resolve_account(storage, user.id, account)
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
-        with storage.transaction():
-            storage.accounts.set_account_disabled(target.biz, True)
+        async with storage.transaction():
+            await storage.subscriptions.set_disabled(user.id, [target.biz], True)
     typer.echo(f'Account {target.nickname} ({target.biz}) disabled.')
 
 
 @accounts_app.command('enable')
-def enable_account(
+@coro
+async def enable_account(
     account: str = typer.Argument(..., help='Account name, alias, or fakeid'),
+    user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
 ) -> None:
     _require_nonempty(account, 'Please provide an account name or fakeid.')
-    with open_storage() as storage:
+    async with open_storage() as storage:
+        user = await _cli_user(storage, user_name)
         try:
-            target = _resolve_account(storage, account)
+            target = await _resolve_account(storage, user.id, account)
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
-        with storage.transaction():
-            storage.accounts.set_account_disabled(target.biz, False)
+        async with storage.transaction():
+            await storage.subscriptions.set_disabled(user.id, [target.biz], False)
     typer.echo(f'Account {target.nickname} ({target.biz}) enabled.')
 
 
 @accounts_app.command('sync-config')
-def set_account_sync_config(
+@coro
+async def set_account_sync_config(
     account: str = typer.Argument(..., help='Account name, alias, or fakeid'),
+    user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
     interval_days: int | None = typer.Option(None, '--interval-days', min=1, help='每 N 天同步一次'),
     clear_interval_days: bool = typer.Option(
         False, '--clear-interval-days', is_flag=True, help='清空间隔覆盖，改回按发文历史自动推导'
@@ -969,17 +1103,16 @@ def set_account_sync_config(
     if interval_days is None and not clear_interval_days:
         typer.echo('No sync settings provided.')
         return
-    with open_storage() as storage:
+    async with open_storage() as storage:
+        user = await _cli_user(storage, user_name)
         try:
-            target = _resolve_account(storage, account)
+            target = await _resolve_account(storage, user.id, account)
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
-        updated = target.model_copy(
-            update={'sync_interval_days': None if clear_interval_days else interval_days}
-        )
-        with storage.transaction():
-            storage.accounts.upsert_account(updated)
+        value = None if clear_interval_days else interval_days
+        async with storage.transaction():
+            await storage.subscriptions.set_interval(user.id, [target.biz], value)
     typer.echo(f'Account {target.nickname} ({target.biz}) sync interval updated.')
 
 
@@ -989,13 +1122,16 @@ def set_account_sync_config(
 @coro
 async def sync_account_articles(
     biz: str | None = typer.Option(None, help='指定账号 fakeid，留空使用默认账号'),
+    user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
     pages: int = typer.Option(1, min=1, help='列表抓取的分页数量'),
     sleep_seconds: float = typer.Option(DEFAULT_SYNC_REQUEST_INTERVAL, min=0, help='账号之间的列表请求间隔秒数'),
     force: bool = typer.Option(False, is_flag=True, help='忽略跳过条件，强制同步'),
     skip_time: int | None = typer.Option(None, min=1, help='多少分钟内同步过则跳过'),
     download: bool = typer.Option(True, '--download/--no-download', help='同步后顺带抓一批正文'),
 ) -> None:
+    resolved_user = await _current_cli_user(user_name)
     await perform_account_sync(
+        user_id=resolved_user.id,
         biz=biz,
         pages=pages,
         sleep_seconds=sleep_seconds,
@@ -1008,12 +1144,15 @@ async def sync_account_articles(
 @accounts_app.command('sync-all')
 @coro
 async def sync_all_accounts(
+    user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
     sleep_seconds: float = typer.Option(DEFAULT_SYNC_REQUEST_INTERVAL, min=0, help='账号之间的列表请求间隔秒数'),
     force: bool = typer.Option(False, is_flag=True, help='忽略跳过条件，强制同步'),
     skip_time: int | None = typer.Option(None, min=1, help='多少分钟内同步过则跳过'),
     download: bool = typer.Option(True, '--download/--no-download', help='同步后顺带抓一批正文'),
 ) -> None:
+    resolved_user = await _current_cli_user(user_name)
     await perform_all_sync(
+        user_id=resolved_user.id,
         sleep_seconds=sleep_seconds,
         force=force,
         skip_time=skip_time,
@@ -1022,15 +1161,22 @@ async def sync_all_accounts(
 
 
 @articles_app.command('list')
-def list_articles(
+@coro
+async def list_articles(
     biz: str | None = typer.Option(None, help='指定账号 fakeid，留空使用默认账号'),
+    user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
     limit: int = typer.Option(5, min=1, max=50, help='显示的文章数量'),
     since: str | None = typer.Option(None, help='仅显示某时间后的文章，格式 YYYY-MM-DD'),
 ) -> None:
     since_timestamp = _parse_since(since)
-    with open_storage() as storage:
-        account = storage.accounts.get_account(biz)
-        articles = storage.articles.list_articles(account.biz, limit=limit, since_timestamp=since_timestamp)
+    async with open_storage() as storage:
+        user = await _cli_user(storage, user_name)
+        followed = await storage.accounts.list_followed_accounts(user.id)
+        account = next((item for item in followed if item.biz == biz), None) if biz else (followed[0] if followed else None)
+        if account is None:
+            typer.echo('未找到账号，请先执行 `account sync`')
+            raise typer.Exit(code=1)
+        articles = await storage.articles.list_articles(account.biz, limit=limit, since_timestamp=since_timestamp)
     if not articles:
         typer.echo('未找到文章，请先执行 `account sync`')
         return
@@ -1080,6 +1226,7 @@ async def sync_article_download(
 
 async def _sync_article_download_async(
     *,
+    user_id: int,
     account: str,
     limit: int | None,
     with_images: bool,
@@ -1091,9 +1238,9 @@ async def _sync_article_download_async(
     image_workers: int | None,
 ) -> None:
     since_timestamp = _parse_since(since)
-    with open_storage() as storage:
+    async with open_storage() as storage:
         try:
-            account_record = _resolve_account(storage, account)
+            account_record = await _resolve_account(storage, user_id, account)
         except LookupError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1)
@@ -1101,9 +1248,9 @@ async def _sync_article_download_async(
             typer.echo(f'Account {account_record.nickname} ({account_record.biz}) is disabled. Skipping.')
             return
         if since_timestamp is None:
-            group_defaults = _build_group_defaults(storage)
+            group_defaults = await _build_group_defaults(storage, user_id)
             since_timestamp = _resolve_recent_since(account_record, group_defaults)
-        articles = storage.articles.list_articles(
+        articles = await storage.articles.list_articles(
             account_record.biz,
             limit=limit,
             since_timestamp=since_timestamp,
@@ -1187,6 +1334,7 @@ async def sync_all_article_download(
 
 async def _sync_all_article_download_async(
     *,
+    user_id: int,
     limit: int | None,
     with_images: bool,
     article_only: bool,
@@ -1198,12 +1346,12 @@ async def _sync_all_article_download_async(
 ) -> None:
     since_timestamp = _parse_since(since)
     total_downloads = 0
-    with open_storage() as storage:
-        accounts = storage.accounts.list_accounts()
+    async with open_storage() as storage:
+        accounts = await storage.accounts.list_followed_accounts(user_id)
         if not accounts:
             typer.echo('尚未保存任何账号，使用 `account add` 添加')
             return
-        group_defaults = _build_group_defaults(storage)
+        group_defaults = await _build_group_defaults(storage, user_id)
         download_images = with_images and not article_only
         record_images_only = article_only
         container = build_downloader_container(
@@ -1228,7 +1376,7 @@ async def _sync_all_article_download_async(
                 account_since = since_timestamp
                 if account_since is None:
                     account_since = _resolve_recent_since(account, group_defaults)
-                articles = storage.articles.list_articles(
+                articles = await storage.articles.list_articles(
                     account.biz,
                     limit=limit,
                     since_timestamp=account_since,
@@ -1309,7 +1457,7 @@ async def _download_article_async(
     if not url:
         typer.echo('请提供文章 URL。示例：python -m hippo article download "https://mp.weixin.qq.com/..."')
         raise typer.Exit(code=2)
-    with open_storage() as storage:
+    async with open_storage() as storage:
         try:
             container = build_downloader_container(
                 storage=storage,
@@ -1390,7 +1538,7 @@ async def backfill_article_image_hashes(
     )
 
 
-def _backfill_article_image_hashes(
+async def _backfill_article_image_hashes(
     *,
     pg_dsn: str | None,
     limit: int | None,
@@ -1399,7 +1547,7 @@ def _backfill_article_image_hashes(
     dry_run: bool,
 ) -> None:
     asyncio.run(
-        _backfill_article_image_hashes_async(
+        await _backfill_article_image_hashes_async(
             pg_dsn=pg_dsn,
             limit=limit,
             workers=workers,
@@ -1447,10 +1595,10 @@ async def _backfill_article_image_hashes_async(
           AND (i.hash_algo IS NULL OR i.hash_algo = '' OR i.content_hash IS NULL OR i.content_hash = '')
     """
     order_clause = 'ORDER BY i.id DESC'
-    with PostgresStorage(resolved_dsn) as storage:
-        with storage.conn.cursor() as cur:
-            cur.execute(count_query)
-            total_count = int(cur.fetchone()[0])
+    async with PostgresStorage(resolved_dsn) as storage:
+        async with storage.conn.cursor() as cur:
+            await cur.execute(count_query)
+            total_count = int((await cur.fetchone())[0])
         if limit is not None:
             total_count = min(total_count, limit)
         progress = tqdm(
@@ -1465,7 +1613,7 @@ async def _backfill_article_image_hashes_async(
                 last_id: int | None = None
                 remaining = total_count
                 while remaining > 0:
-                    with storage.conn.cursor() as cur:
+                    async with storage.conn.cursor() as cur:
                         current_limit = min(fetch_size, remaining)
                         if last_id is None:
                             query = f'{base_query} {order_clause} LIMIT %s'
@@ -1473,8 +1621,8 @@ async def _backfill_article_image_hashes_async(
                         else:
                             query = f'{base_query} AND i.id < %s {order_clause} LIMIT %s'
                             params = (last_id, current_limit)
-                        cur.execute(query, params)
-                        rows = cur.fetchall()
+                        await cur.execute(query, params)
+                        rows = await cur.fetchall()
                     if not rows:
                         break
                     if dry_run:
@@ -1531,10 +1679,14 @@ async def _backfill_article_image_hashes_async(
 
 # ---------------------------------------------------------------------------
 @app.command('export-accounts')
-def export_accounts() -> None:
+@coro
+async def export_accounts(
+    user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
+) -> None:
     """Dump stored accounts as JSON (sensitive)."""
-    with open_storage() as storage:
-        accounts = storage.accounts.list_accounts()
+    async with open_storage() as storage:
+        user = await _cli_user(storage, user_name)
+        accounts = await storage.accounts.list_followed_accounts(user.id)
     payload = [
         {
             'biz': account.biz,
@@ -1604,7 +1756,8 @@ async def sync_worker(
 
 
 @app.command('rss')
-def rss(
+@coro
+async def rss(
     group: list[str] | None = typer.Option(None, '--group', help='分组名称，可多次传入'),
     groups: str | None = typer.Option(None, '--groups', help='多个分组名称，逗号分隔'),
     limit: int | None = typer.Option(50, min=1, help='最多生成的条目数'),
@@ -1621,7 +1774,7 @@ def rss(
     if groups:
         names.extend([item.strip() for item in groups.split(',') if item.strip()])
     try:
-        items = query_rss_items(
+        items = await query_rss_items(
             group_names=names,
             limit=limit,
             days=days,
