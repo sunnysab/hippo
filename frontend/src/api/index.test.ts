@@ -22,7 +22,7 @@ describe('api auth handling', () => {
       code: 'AUTH_REQUIRED',
       message: 'Session expired',
     });
-    expect(window.location.hash).toBe('#/settings/login');
+    expect(window.location.hash).toBe('#/login');
   });
 
   it('throws an auth-tagged error for apiSend 401 responses', async () => {
@@ -35,6 +35,6 @@ describe('api auth handling', () => {
       code: 'AUTH_REQUIRED',
       message: 'Please login again',
     });
-    expect(window.location.hash).toBe('#/settings/login');
+    expect(window.location.hash).toBe('#/login');
   });
 });
