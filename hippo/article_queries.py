@@ -623,7 +623,29 @@ async def _ensure_image_hash(storage: PostgresStorage, image_id: int, *, allow_o
         raise ApiError(str(exc), status=502) from exc
 
 
-async def _block_image(storage: PostgresStorage, image_id: int) -> dict[str, Any]:
+async def _ensure_image_visible(storage: PostgresStorage, user_id: int, image_id: int) -> None:
+    """404 unless the image belongs to an article this user subscribes to.
+
+    Images are addressed by a global id, so without this check any signed-in
+    user could walk the ids and read (or block) images from other people's
+    subscriptions.
+    """
+    row = await fetchone_row(
+        storage,
+        (
+            'SELECT 1 FROM article_images i'
+            ' JOIN articles a ON a.id = i.article_pk'
+            ' JOIN subscription s ON s.biz = a.biz AND s.user_id = %s'
+            ' WHERE i.id = %s'
+        ),
+        [user_id, image_id],
+    )
+    if not row:
+        raise ApiError('图片不存在', status=404)
+
+
+async def _block_image(storage: PostgresStorage, user_id: int, image_id: int) -> dict[str, Any]:
+    await _ensure_image_visible(storage, user_id, image_id)
     hash_record = await _ensure_image_hash(storage, image_id)
     async with storage.transaction():
         await storage.images.block_image_hash(
@@ -639,7 +661,8 @@ async def _block_image(storage: PostgresStorage, image_id: int) -> dict[str, Any
     }
 
 
-async def _fetch_image(storage: PostgresStorage, image_id: int) -> tuple[bytes, str]:
+async def _fetch_image(storage: PostgresStorage, user_id: int, image_id: int) -> tuple[bytes, str]:
+    await _ensure_image_visible(storage, user_id, image_id)
     try:
         return await fetch_image_bytes(storage, image_id)
     except LookupError as exc:

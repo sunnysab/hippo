@@ -1,8 +1,10 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from hippo.api.routers import account as account_api
+from hippo.article_queries import _ensure_image_visible
+from hippo.exceptions import ApiError
 
 
 class AccountApiTest(unittest.IsolatedAsyncioTestCase):
@@ -27,6 +29,24 @@ class AccountApiTest(unittest.IsolatedAsyncioTestCase):
         payload = await account_api.list_accounts(storage=storage, user=user)
 
         self.assertEqual('', payload['accounts'][0]['alias'])
+
+
+    async def test_an_image_from_an_unsubscribed_account_is_a_404(self) -> None:
+        # No subscription row matches, so the lookup comes back empty.
+        storage = SimpleNamespace(
+            meta=SimpleNamespace(get=AsyncMock(return_value=None)),
+        )
+        with (
+            patch('hippo.article_queries.fetchone_row', AsyncMock(return_value=None)),
+            self.assertRaises(ApiError) as ctx,
+        ):
+            await _ensure_image_visible(storage, 7, 123)
+        self.assertEqual(404, ctx.exception.status)
+
+    async def test_an_own_image_passes_the_check(self) -> None:
+        storage = SimpleNamespace(meta=SimpleNamespace(get=AsyncMock(return_value=None)))
+        with patch('hippo.article_queries.fetchone_row', AsyncMock(return_value={'?column?': 1})):
+            await _ensure_image_visible(storage, 7, 123)
 
 
 if __name__ == '__main__':
