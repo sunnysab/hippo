@@ -1,0 +1,191 @@
+/**
+ * Design tokens: the single source of truth for the visual language.
+ *
+ * Everything else in `styles/` refers to these variables, so the whole app can
+ * be re-themed — including dark mode — by overriding them here.
+ *
+ * The palette is deliberately neutral and flat: greys carry the hierarchy,
+ * borders do the work that shadows used to, and the accent is plain black
+ * rather than a brand colour.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* Typography — system stacks only; no decorative display faces. */
+  --font-sans: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+  --font-display: var(--font-sans);
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  --font-serif: 'Iowan Old Style', 'Palatino Linotype', 'Noto Serif CJK SC', 'Source Han Serif SC', Georgia, serif;
+
+  /* Greyscale ramp — the only source of hierarchy. */
+  --bg: #f4f4f4;
+  --bg-elevated: #fafafa;
+  --surface: #ffffff;
+  --surface-panel: #ffffff;
+  --surface-panel-strong: #ffffff;
+  --surface-muted: #ededed;
+  --surface-soft: #f7f7f7;
+  --surface-strong: #e2e2e2;
+  --surface-chip: #eeeeee;
+  --surface-chip-soft: #f4f4f4;
+  --surface-item: transparent;
+  --surface-item-hover: #f2f2f2;
+  --surface-item-active: #e9e9e9;
+  --border: #e2e2e2;
+  --border-strong: #cfcfcf;
+
+  --text: #111111;
+  --muted: #6b6b6b;
+  --muted-soft: #9a9a9a;
+  --faint: #9a9a9a;
+
+  /* Accent is plain black: a tool, not a brand. */
+  --accent: #111111;
+  --accent-hover: #000000;
+  --accent-soft: #eeeeee;
+  --accent-mist: rgba(17, 17, 17, 0.06);
+  --accent-ink: #ffffff;
+
+  /* Semantic colours are for text, borders and status dots — never big fills. */
+  --info: #2f638f;
+  --info-soft: #e8e8e8;
+  --success: #1f6f43;
+  --success-soft: #e8e8e8;
+  --warning: #8a5a00;
+  --warning-soft: #e8e8e8;
+  --danger: #b3261e;
+  --danger-soft: #e8e8e8;
+
+  /* Flat by construction: shadows are deliberately disabled. */
+  --shadow-xs: none;
+  --shadow-soft: none;
+  --shadow: none;
+  --shadow-float: none;
+  --lift-hover: 0;
+
+  /* Tool-like corners: one tiny radius everywhere. */
+  --radius: 2px;
+  --radius-lg: 2px;
+  --radius-sm: 2px;
+  --radius-control: 2px;
+  --radius-tight: 2px;
+  --radius-xs: 2px;
+  --radius-pill: 2px;
+
+  /* Code blocks inside articles (markdown rendering). */
+  --code-bg: #f6f8fa;
+  --code-text: #24292f;
+  --code-keyword: #3730a3;
+  --code-string: #166534;
+  --code-number: #c2410c;
+  --code-type: #0f766e;
+  --code-tag: #be123c;
+  --code-func: #6d28d9;
+  --code-attr: #1d4ed8;
+  --code-meta: #7e22ce;
+
+  /* Overlays (toasts) stay dark in both themes. */
+  --overlay-bg: rgba(17, 17, 17, 0.92);
+  --overlay-ink: #ffffff;
+
+  --app-topbar-height: 64px;
+  --reader-width: 860px;
+  --reader-font: 17px;
+  --reader-line: 1.75;
+  --reader-letter: 0.2px;
+  --reader-family: var(--font-sans);
+  --article-list-width: 28%;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #0f0f0f;
+  --bg-elevated: #171717;
+  --surface: #171717;
+  --surface-panel: #171717;
+  --surface-panel-strong: #171717;
+  --surface-muted: #202020;
+  --surface-soft: #1c1c1c;
+  --surface-strong: #2a2a2a;
+  --surface-chip: #242424;
+  --surface-chip-soft: #1e1e1e;
+  --surface-item-hover: #202020;
+  --surface-item-active: #2a2a2a;
+  --border: #2a2a2a;
+  --border-strong: #3a3a3a;
+
+  --text: #ededed;
+  --muted: #8a8a8a;
+  --muted-soft: #6b6b6b;
+  --faint: #6b6b6b;
+
+  --accent: #ededed;
+  --accent-hover: #ffffff;
+  --accent-soft: #2a2a2a;
+  --accent-mist: rgba(237, 237, 237, 0.08);
+  --accent-ink: #111111;
+
+  --info: #7fb0d8;
+  --success: #6fbf8f;
+  --warning: #d4a24c;
+  --danger: #e0776e;
+  --info-soft: #202020;
+  --success-soft: #202020;
+  --warning-soft: #202020;
+  --danger-soft: #202020;
+
+  --code-bg: #161b22;
+  --code-text: #e6edf3;
+  --code-keyword: #a5b4fc;
+  --code-string: #86efac;
+  --code-number: #fdba74;
+  --code-type: #5eead4;
+  --code-tag: #fda4af;
+  --code-func: #c4b5fd;
+  --code-attr: #93c5fd;
+  --code-meta: #d8b4fe;
+}
+
+/* “Follow the system” is the default; the explicit attribute above wins. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --bg: #0f0f0f;
+    --bg-elevated: #171717;
+    --surface: #171717;
+    --surface-panel: #171717;
+    --surface-panel-strong: #171717;
+    --surface-muted: #202020;
+    --surface-soft: #1c1c1c;
+    --surface-strong: #2a2a2a;
+    --surface-chip: #242424;
+    --surface-chip-soft: #1e1e1e;
+    --surface-item-hover: #202020;
+    --surface-item-active: #2a2a2a;
+    --border: #2a2a2a;
+    --border-strong: #3a3a3a;
+
+    --text: #ededed;
+    --muted: #8a8a8a;
+    --muted-soft: #6b6b6b;
+    --faint: #6b6b6b;
+
+    --accent: #ededed;
+    --accent-hover: #ffffff;
+    --accent-soft: #2a2a2a;
+    --accent-mist: rgba(237, 237, 237, 0.08);
+    --accent-ink: #111111;
+
+    --info: #7fb0d8;
+    --success: #6fbf8f;
+    --warning: #d4a24c;
+    --danger: #e0776e;
+    --info-soft: #202020;
+    --success-soft: #202020;
+    --warning-soft: #202020;
+    --danger-soft: #202020;
+  }
+}
