@@ -6,7 +6,7 @@ out, and silent password/session changes going unlogged.
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from hippo.api.routers import admin as admin_api
 from hippo.exceptions import ApiError
@@ -90,6 +90,41 @@ class AdminGuardTest(unittest.IsolatedAsyncioTestCase):
                 storage=storage,
             )
         storage.users.set_password.assert_not_awaited()
+
+    async def test_toggling_registration_is_audited(self) -> None:
+        storage = _storage()
+        storage.site = None
+        settings = {'registration_enabled': True, 'site_name': 'Hippo', 'public_base_url': ''}
+        before = {**settings, 'registration_enabled': False}
+
+        with patch.object(admin_api, 'get_site_settings', AsyncMock(return_value=before)), patch.object(
+            admin_api, 'set_site_settings', AsyncMock(return_value=settings)
+        ):
+            result = await admin_api.update_site_settings(
+                SimpleNamespace(headers={}, client=None),
+                body={'registration_enabled': True},
+                actor=_user(1),
+                storage=storage,
+            )
+
+        self.assertTrue(result['registration_enabled'])
+        self.assertEqual('admin.site_settings_updated', storage.audit.record.await_args.args[1])
+
+    async def test_an_unchanged_value_is_not_audited(self) -> None:
+        storage = _storage()
+        settings = {'registration_enabled': False, 'site_name': 'Hippo', 'public_base_url': ''}
+
+        with patch.object(admin_api, 'get_site_settings', AsyncMock(return_value=dict(settings))), patch.object(
+            admin_api, 'set_site_settings', AsyncMock(return_value=settings)
+        ):
+            await admin_api.update_site_settings(
+                SimpleNamespace(headers={}, client=None),
+                body={'site_name': 'Hippo'},
+                actor=_user(1),
+                storage=storage,
+            )
+
+        storage.audit.record.assert_not_awaited()
 
     async def test_unknown_role_is_rejected(self) -> None:
         storage = _storage(target=_user(7, role='user'))
