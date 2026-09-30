@@ -15,6 +15,7 @@ from .article import (
 )
 from .audit import AuditRepository
 from .image import ArticleImageTarget, ImageRepository
+from .llm import LlmProviderRepository, mask_key
 from .meta import MetaRepository
 from .queue import ArticleQueueRepository
 from .session import UserSessionRepository
@@ -33,9 +34,11 @@ __all__ = [
     'DownloadAttemptRepository',
     'GroupRepository',
     'ImageRepository',
+    'LlmProviderRepository',
     'MetaRepository',
     'SubscriptionRepository',
     'UserRepository',
     'UserSessionRepository',
     'UserTokenRepository',
+    'mask_key',
 ]
