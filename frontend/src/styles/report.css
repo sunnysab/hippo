@@ -1,0 +1,78 @@
+/* Daily report: reading layout, not a dashboard. */
+
+.report-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.report-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.report-groups {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.report-preview {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.report-group-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.report-list {
+  margin: 0 0 20px;
+  padding: 0;
+  list-style: none;
+}
+
+.report-item {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.report-link {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.report-link:hover {
+  text-decoration: underline;
+}
+
+.report-meta {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.report-digest {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.report-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.report-settings .input[multiple] {
+  height: auto;
+  min-height: 80px;
+}

@@ -25,6 +25,7 @@ export function TopBar({ topbarRef, currentTab, daemonStatus, lastSyncAt }: TopB
     { key: 'groups', label: t('nav.groups', 'Groups'), path: '/groups' },
     { key: 'articles', label: t('nav.articles', 'Articles'), path: '/articles' },
     { key: 'chat', label: t('nav.chat', '对话'), path: '/chat' },
+    { key: 'report', label: t('nav.report', '日报'), path: '/report' },
     { key: 'settings', label: t('nav.sync', 'Settings'), path: '/settings/sync' },
     ...(isAdmin ? [{ key: 'admin', label: t('nav.admin', '管理'), path: '/admin' }] : []),
   ];
