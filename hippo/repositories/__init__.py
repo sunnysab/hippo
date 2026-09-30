@@ -15,6 +15,7 @@ from .article import (
     DownloadAttemptRepository,
 )
 from .audit import AuditRepository
+from .chat import ChatRepository
 from .image import ArticleImageTarget, ImageRepository
 from .llm import LlmProviderRepository, mask_key
 from .meta import MetaRepository
@@ -33,6 +34,7 @@ __all__ = [
     'ArticleQueueRepository',
     'ArticleRepository',
     'AuditRepository',
+    'ChatRepository',
     'DownloadAttemptRepository',
     'GroupRepository',
     'ImageRepository',
