@@ -18,6 +18,7 @@ import { SettingsEmailRoute } from './pages/settings/SettingsEmailRoute';
 import { SettingsFilterRoute } from './pages/settings/SettingsFilterRoute';
 import { SettingsLoginRoute } from './pages/settings/SettingsLoginRoute';
 import { SettingsSyncRoute } from './pages/settings/SettingsSyncRoute';
+import { AdminPage } from './pages/admin/AdminPage';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { status } = useAuth();
@@ -30,6 +31,16 @@ function RequireAuth({ children }: { children: ReactNode }) {
   }
   if (status === 'anonymous') {
     return <Navigate to="/login" replace />;
+  }
+  return <>{children}</>;
+}
+
+function RequireAdmin({ children }: { children: ReactNode }) {
+  const { isAdmin } = useAuth();
+  // The API enforces this too; the redirect just avoids rendering a page whose
+  // every request would come back 403.
+  if (!isAdmin) {
+    return <Navigate to="/groups" replace />;
   }
   return <>{children}</>;
 }
@@ -65,6 +76,14 @@ function AppRoutes() {
                     <Route path="filter" element={<SettingsFilterRoute />} />
                     <Route path="email" element={<SettingsEmailRoute />} />
                   </Route>
+                  <Route
+                    path="/admin"
+                    element={
+                      <RequireAdmin>
+                        <AdminPage />
+                      </RequireAdmin>
+                    }
+                  />
                   <Route path="*" element={<Navigate to="/groups" replace />} />
                 </Routes>
               </AppShell>

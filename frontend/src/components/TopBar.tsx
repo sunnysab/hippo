@@ -13,7 +13,7 @@ interface TopBarProps {
 
 export function TopBar({ topbarRef, currentTab, daemonStatus, lastSyncAt }: TopBarProps) {
   const { t } = useI18n();
-  const { user, signOut } = useAuth();
+  const { user, signOut, isAdmin } = useAuth();
   const { mode, cycle } = useTheme();
   const themeLabel = {
     system: t('theme.system', '跟随系统'),
@@ -25,6 +25,7 @@ export function TopBar({ topbarRef, currentTab, daemonStatus, lastSyncAt }: TopB
     { key: 'groups', label: t('nav.groups', 'Groups'), path: '/groups' },
     { key: 'articles', label: t('nav.articles', 'Articles'), path: '/articles' },
     { key: 'settings', label: t('nav.sync', 'Settings'), path: '/settings/sync' },
+    ...(isAdmin ? [{ key: 'admin', label: t('nav.admin', '管理'), path: '/admin' }] : []),
   ];
 
   return (
