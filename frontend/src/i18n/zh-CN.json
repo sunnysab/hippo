@@ -408,5 +408,13 @@
   "admin.llm.created": "provider 已创建",
   "admin.llm.deleteTitle": "删除 Provider",
   "admin.llm.deleteConfirm": "删除 {name}？引用它的会话会失去 provider。",
-  "common.delete": "删除"
+  "common.delete": "删除",
+  "admin.site.title": "站点设置",
+  "admin.site.name": "站点名称",
+  "admin.site.baseUrl": "Public Base URL",
+  "admin.site.baseUrlHint": "用于拼接验证与重置邮件里的链接；留空时按请求 Host 推断。",
+  "admin.site.registration": "注册",
+  "admin.site.registrationEnabled": "开放注册",
+  "admin.site.registrationHint": "关闭后新账号无法注册（接口返回 403），已有账号不受影响。",
+  "admin.site.saved": "站点设置已保存"
 }

@@ -15,6 +15,7 @@ from fastapi import APIRouter, Body, Depends, Request, status
 from ...exceptions import ApiError
 from ...models import User
 from ...security import hash_password
+from ...site_settings import get_site_settings, set_site_settings
 from ...storage import PostgresStorage
 from ..deps import client_ip, get_storage, require_admin
 
@@ -199,3 +200,37 @@ async def revoke_sessions(
 async def _username_taken(storage: PostgresStorage, username: str) -> bool:
     async with storage.transaction():
         return await storage.users.get_with_password(username) is not None
+
+
+@router.get('/admin/site')
+async def read_site_settings(
+    _: User = Depends(require_admin),
+    storage: PostgresStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Instance-wide settings: what the site is called and whether it takes sign-ups."""
+    return await get_site_settings(storage)
+
+
+@router.patch('/admin/site')
+async def update_site_settings(
+    request: Request,
+    body: dict[str, Any] = Body(default={}),
+    actor: User = Depends(require_admin),
+    storage: PostgresStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Merge site settings.
+
+    Closing registration does not invalidate accounts that already exist; it
+    only stops new ones from being created.
+    """
+    before = await get_site_settings(storage)
+    settings = await set_site_settings(storage, body)
+    changed = {key: value for key, value in settings.items() if before.get(key) != value}
+    if changed:
+        await storage.audit.record(
+            actor.id,
+            'admin.site_settings_updated',
+            detail=changed,
+            ip=client_ip(request),
+        )
+    return settings

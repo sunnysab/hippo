@@ -127,3 +127,8 @@
     min-height: 36px;
   }
 }
+
+.admin-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
