@@ -24,15 +24,20 @@ const handleAuthError = (message?: string) => {
   const t = (window as unknown as Record<string, unknown>).__hippo_t as ((k: string, f: string) => string) | undefined;
   const fallback = t ? t('login.sessionExpired', 'Session expired. Please login again.') : 'Session expired. Please login again.';
   emitToast(message || fallback);
-  window.location.hash = '#/settings/login';
+  window.location.hash = '#/login';
 };
 
-export const apiGet = async (path: string): Promise<Record<string, unknown>> => {
+export const apiGet = async (
+  path: string,
+  options: { silent?: boolean } = {},
+): Promise<Record<string, unknown>> => {
   const res = await fetch(path, { headers: { 'Accept': 'application/json' } });
   if (!res.ok) {
     const payload = await res.json().catch(() => ({})) as Record<string, string>;
     if (res.status === 401) {
-      handleAuthError(payload.error);
+      // Callers that expect an anonymous answer (the auth probe) opt out of the
+      // global redirect so they can render the login form instead.
+      if (!options.silent) handleAuthError(payload.error);
       throw createApiError(payload.error || 'Authentication required', {
         code: 'AUTH_REQUIRED',
         status: res.status,
@@ -47,7 +52,7 @@ export const apiSend = async (
   path: string,
   method: string,
   body: Record<string, unknown>,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; silent?: boolean } = {},
 ): Promise<Record<string, unknown>> => {
   const timeoutMs = Number(options.timeoutMs);
   const withTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0;
@@ -74,7 +79,7 @@ export const apiSend = async (
   if (!res.ok && res.status !== 204) {
     const payload = await res.json().catch(() => ({})) as Record<string, string>;
     if (res.status === 401) {
-      handleAuthError(payload.error);
+      if (!options.silent) handleAuthError(payload.error);
       throw createApiError(payload.error || 'Authentication required', {
         code: 'AUTH_REQUIRED',
         status: res.status,
