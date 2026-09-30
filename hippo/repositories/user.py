@@ -95,6 +95,39 @@ class UserRepository:
             rows = await cur.fetchall()
         return [_row_to_user(row) for row in rows]
 
+    async def list_with_stats(self) -> list[dict[str, Any]]:
+        """Every user plus live-session count and last sign-in, for the admin list.
+
+        Last sign-in is derived from the session table: a dedicated column would
+        need a write on every request for a value only this page reads.
+        """
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT u.id, u.username, u.email, u.email_verified, u.role,
+                       u.timezone, u.is_disabled, u.created_at,
+                       count(s.token_hash) AS session_count,
+                       max(s.created_at) AS last_login_at
+                FROM users u
+                LEFT JOIN user_session s
+                       ON s.user_id = u.id AND s.expires_at > now()
+                GROUP BY u.id
+                ORDER BY u.id
+                """
+            )
+            rows = await cur.fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            record = dict(row)
+            record['email_verified'] = bool(record['email_verified'])
+            record['is_disabled'] = bool(record['is_disabled'])
+            record['session_count'] = int(record['session_count'])
+            for key in ('created_at', 'last_login_at'):
+                value = record.get(key)
+                record[key] = value.isoformat() if value else None
+            result.append(record)
+        return result
+
     async def count(self) -> int:
         async with self._conn.cursor() as cur:
             await cur.execute('SELECT count(*) FROM users')
