@@ -11,6 +11,8 @@ load_dotenv()
 
 APP_NAME: Final = 'hippo'
 CLI_NAME: Final = 'hippo'
+DEFAULT_HOST: Final = '127.0.0.1'
+DEFAULT_PORT: Final = 8000
 DEFAULT_USER_AGENT: Final = (
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
     'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
@@ -51,8 +53,10 @@ __all__ = [
     'ARTICLE_WORKER_URL',
     'CLI_NAME',
     'DEFAULT_GROUP_NAME',
+    'DEFAULT_HOST',
     'DEFAULT_MAX_CONTENT_DOWNLOAD_ATTEMPTS',
     'DEFAULT_PAGE_SIZE',
+    'DEFAULT_PORT',
     'DEFAULT_RECENT_DAYS',
     'DEFAULT_SYNC_REQUEST_INTERVAL',
     'DEFAULT_USER_AGENT',

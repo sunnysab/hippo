@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS meta (
 
 CREATE TABLE IF NOT EXISTS account_groups (
     id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
     article_count BIGINT NOT NULL DEFAULT 0,
     sync_mode TEXT,
     sync_recent_days INTEGER,
@@ -435,3 +435,211 @@ CREATE TABLE IF NOT EXISTS article_queue (
 
 CREATE INDEX IF NOT EXISTS idx_article_queue_state
 ON article_queue (state, id);
+
+-- ============================================================
+-- 多用户：账号与会话
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    email TEXT,
+    email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user',
+    timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+    is_disabled BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+-- 邮箱大小写不敏感；允许多个 NULL（管理员可由 CLI 创建但尚未绑定邮箱）
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email
+ON users (lower(email)) WHERE email IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS user_session (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_agent TEXT,
+    ip TEXT,
+    created_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_session_user
+ON user_session (user_id);
+
+-- 一份实体同时服务邮箱验证与密码重置
+CREATE TABLE IF NOT EXISTS user_token (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    token_hash TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_token_hash
+ON user_token (token_hash);
+
+CREATE INDEX IF NOT EXISTS idx_user_token_user
+ON user_token (user_id, kind);
+
+-- ============================================================
+-- 多用户：订阅（关注谁、放哪个分组、是否停用都是 per-user 的）
+-- ============================================================
+
+ALTER TABLE account_groups ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+
+CREATE INDEX IF NOT EXISTS idx_account_groups_user
+ON account_groups (user_id);
+
+CREATE TABLE IF NOT EXISTS subscription (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    biz TEXT NOT NULL REFERENCES accounts(biz) ON DELETE CASCADE,
+    group_id INTEGER REFERENCES account_groups(id) ON DELETE SET NULL,
+    is_disabled BOOLEAN NOT NULL DEFAULT FALSE,
+    sync_interval_days INTEGER,
+    created_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, biz)
+);
+
+CREATE INDEX IF NOT EXISTS idx_subscription_biz
+ON subscription (biz);
+
+-- ============================================================
+-- 多用户：阅读状态
+-- 刻意不加 FK 到 articles（153 万行），加 FK 会全表扫描验证并持锁阻塞写入
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS article_read (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    article_pk INTEGER NOT NULL,
+    read_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, article_pk)
+);
+
+-- ============================================================
+-- 划线（quote + prefix/suffix 锚定，不用 offset）
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS annotation (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    article_pk INTEGER NOT NULL,
+    quote TEXT NOT NULL,
+    prefix TEXT NOT NULL DEFAULT '',
+    suffix TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    color TEXT NOT NULL DEFAULT 'default',
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_annotation_user_article
+ON annotation (user_id, article_pk);
+
+-- ============================================================
+-- LLM provider（管理员在面板里维护；必须先于 chat_session 定义）
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS llm_provider (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    base_url TEXT NOT NULL,
+    api_key TEXT NOT NULL,
+    model TEXT NOT NULL,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+-- ============================================================
+-- AI 会话：article_pk 为空即自由聊天，非空即对某篇文章的解读
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS chat_session (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    article_pk INTEGER,
+    provider_id INTEGER REFERENCES llm_provider(id) ON DELETE SET NULL,
+    title TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_session_user
+ON chat_session (user_id, updated_at DESC);
+
+-- 一篇文章只对应一个解读会话（自由聊天的 article_pk 为 NULL，不受约束）
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_session_article
+ON chat_session (user_id, article_pk) WHERE article_pk IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS chat_message (
+    id BIGSERIAL PRIMARY KEY,
+    session_id INTEGER NOT NULL REFERENCES chat_session(id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_message_session
+ON chat_message (session_id, id);
+
+-- ============================================================
+-- 日报
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS report_setting (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    send_hour INTEGER NOT NULL DEFAULT 8,
+    recipients TEXT[] NOT NULL DEFAULT '{}',
+    group_ids INTEGER[] NOT NULL DEFAULT '{}',
+    include_read BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS report_delivery (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    report_date DATE NOT NULL,
+    channel TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL,
+    -- 幂等：同一天同一渠道只投递一次，重启不会重发
+    UNIQUE (user_id, report_date, channel)
+);
+
+-- ============================================================
+-- 审计日志：谁改了什么。运行日志走 OTLP，不入库
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    action TEXT NOT NULL,
+    target TEXT,
+    detail JSONB,
+    ip TEXT,
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_created
+ON audit_log (created_at DESC);
+
+-- 遗留表清理。avatar_images 仍在使用（微信读书时代的账号头像已被它取代），不要动。
+DROP TABLE IF EXISTS test_alter;
+DROP TABLE IF EXISTS login_sessions;
+DROP TABLE IF EXISTS account_images;
+
+-- 分组名只在同一个用户内唯一：两个用户可以各有自己的「技术」分组。
+-- 旧库上该列带有全局唯一约束，先摘掉；NULL user_id（尚未归属的遗留分组）不参与唯一性。
+ALTER TABLE account_groups DROP CONSTRAINT IF EXISTS account_groups_name_key;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_account_groups_user_name
+ON account_groups (user_id, name);
+
+-- 每个用户自己的阅读偏好（过滤词等）。全局同步节奏、SMTP、站点设置仍留在 meta，
+-- 由管理员维护。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences JSONB NOT NULL DEFAULT '{}'::jsonb;
