@@ -213,7 +213,7 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
     return title, cover_local, blocks, body_markdown
 
 
-def _attach_image_block_metadata(
+async def _attach_image_block_metadata(
     blocks: list[dict],
     *,
     resolve_url,
@@ -225,7 +225,7 @@ def _attach_image_block_metadata(
             updated_blocks.append(block)
             continue
         local_path = block.get('local_path')
-        orig_url = resolve_url(str(local_path)) if local_path else None
+        orig_url = await resolve_url(str(local_path)) if local_path else None
         updated = dict(block)
         updated.pop('local_path', None)
         updated['orig_url'] = orig_url
@@ -384,7 +384,7 @@ class ImageDownloadManager:
         async with self._lock:
             self._done += 1
 
-    def _record_failure(self, *, article: ArticleRecord, orig_url: str, reason: str) -> None:
+    async def _record_failure(self, *, article: ArticleRecord, orig_url: str, reason: str) -> None:
         if self._image_store and orig_url:
             self._image_store.mark_failed(
                 biz=article.biz,
@@ -394,7 +394,7 @@ class ImageDownloadManager:
             )
             return
         if self._storage and orig_url:
-            self._storage.images.mark_article_image_failed(
+            await self._storage.images.mark_article_image_failed(
                 article.biz,
                 article.article_id,
                 orig_url,
@@ -430,7 +430,7 @@ class ImageDownloadManager:
                 resolved_url=resolved_url,
                 referer=referer,
             )
-            self._record_failure(article=article, orig_url=orig_url, reason=reason)
+            await self._record_failure(article=article, orig_url=orig_url, reason=reason)
             await self._mark_done()
             return
 
@@ -459,7 +459,7 @@ class ImageDownloadManager:
                         )
                     elif orig_url:
                         reason = 'Image store not configured'
-                        self._record_failure(article=article, orig_url=orig_url, reason=reason)
+                        await self._record_failure(article=article, orig_url=orig_url, reason=reason)
                         await self._mark_done()
                         return
                     await self._mark_done()
@@ -478,7 +478,7 @@ class ImageDownloadManager:
                             resolved_url=resolved_url,
                             referer=referer,
                         )
-                        self._record_failure(article=article, orig_url=orig_url, reason=str(exc))
+                        await self._record_failure(article=article, orig_url=orig_url, reason=str(exc))
                         await self._mark_done()
                         return
                     await asyncio.sleep(min(2**attempt, _RETRY_BACKOFF_MAX))
@@ -496,7 +496,7 @@ class ImageDownloadManager:
         async with asyncio.TaskGroup() as tg:
             for resolved in urls:
                 tg.create_task(
-                    self._download_one(
+                    await self._download_one(
                         article=article,
                         resolved_url=resolved,
                         orig_url=resolved,
@@ -701,7 +701,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         if not pending:
             return results, skipped, failed
 
-        def _record_failure(article: ArticleRecord, error: str) -> None:
+        async def _record_failure(article: ArticleRecord, error: str) -> None:
             if self.storage:
                 download_attempts = getattr(self.storage, 'download_attempts', None)
                 if download_attempts is not None:
@@ -728,7 +728,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                         results.append(result)
                     except Exception as exc:
                         failed += 1
-                        _record_failure(article, str(exc))
+                        await _record_failure(article, str(exc))
                         _log_download_error(
                             stage='article_download',
                             article=article,
@@ -764,7 +764,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                         result = await task
                     except Exception as exc:
                         failed += 1
-                        _record_failure(article, str(exc))
+                        await _record_failure(article, str(exc))
                         _log_download_error(
                             stage='article_download',
                             article=article,
@@ -797,7 +797,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         record_images_only: bool = False,
         title: str | None = None,
     ) -> DownloadResult:
-        self._ensure_adhoc_account('adhoc')
+        await self._ensure_adhoc_account('adhoc')
         return await self._fetcher.download_from_url(
             url,
             persist=lambda article, raw_html: self._persist_article(
@@ -809,7 +809,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
             title=title,
         )
 
-    def _ensure_adhoc_account(self, biz: str) -> None:
+    async def _ensure_adhoc_account(self, biz: str) -> None:
         if biz != 'adhoc' or not self.storage:
             return
         account_repo = getattr(self.storage, 'accounts', None)
@@ -822,7 +822,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
             return
         if callable(get_account):
             try:
-                get_account(biz, fallback_to_default=False)
+                await get_account(biz, fallback_to_default=False)
                 return
             except LookupError:
                 pass
@@ -881,7 +881,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         markdown_content = parsed_article.markdown
         pg_error: Exception | None = None
         try:
-            self._store_article_pg(
+            await self._store_article_pg(
                 article=article,
                 markdown_content=markdown_content,
                 url_map=url_map,
@@ -921,7 +921,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         # `with_images` 只决定要不要顺带塞进内存队列马上抓；正文链路默认不抓，
         # 交给独立的图片回填循环，两条链路各有各的节奏。
         asset_count, url_map = _collect_image_urls(html, referer=referer)
-        article_pk = self._store_article_pg(
+        article_pk = await self._store_article_pg(
             article=article,
             markdown_content=markdown,
             url_map=url_map,
@@ -933,7 +933,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         logger.debug('ingest_body: %s images=%d queued=%s', article.link, asset_count, with_images)
         return article_pk
 
-    def _store_article_pg(
+    async def _store_article_pg(
         self,
         *,
         article: ArticleRecord,
@@ -952,7 +952,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         base_url = article.link or 'https://mp.weixin.qq.com/'
         resolved_map = {raw: resolved for raw, resolved in url_map.items() if resolved}
 
-        def resolve_url(value: str | None) -> str | None:
+        async def resolve_url(value: str | None) -> str | None:
             if not value:
                 return None
             if not isinstance(value, str):
@@ -965,7 +965,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         for raw, resolved in resolved_map.items():
             content_markdown = content_markdown.replace(f']({raw})', f']({resolved})')
 
-        cover_url = resolve_url(cover_local) or resolve_url(article.cover)
+        cover_url = await resolve_url(cover_local) or await resolve_url(article.cover)
         images: list[dict] = []
         image_positions: list[tuple[str, str]] = []
         if cover_local:
@@ -977,7 +977,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         for kind, local_path in image_positions:
             if not local_path:
                 continue
-            orig_url = resolve_url(str(local_path))
+            orig_url = await resolve_url(str(local_path))
             if not orig_url:
                 continue
             images.append(
@@ -992,10 +992,10 @@ class ArticleDownloader(AbstractAsyncContextManager):
             position += 1
 
         url_token = _extract_url_token(article.link)
-        blocks_with_urls = _attach_image_block_metadata(blocks, resolve_url=resolve_url)
+        blocks_with_urls = await _attach_image_block_metadata(blocks, resolve_url=resolve_url)
 
         if hasattr(self.storage, 'transaction'):
-            with self.storage.transaction():
+            async with self.storage.transaction():
                 article_pk = save_article_content(
                     article,
                     url_token=url_token,

@@ -37,7 +37,7 @@ class SyncTaskObserver(SyncObserver):
         self._account = account
         self._lock = lock
 
-    def _progress(self) -> AccountProgress:
+    async def _progress(self) -> AccountProgress:
         progress = self._state.accounts.get(self._account.biz)
         if not progress:
             progress = AccountProgress(biz=self._account.biz, nickname=self._account.nickname or self._account.biz)
@@ -48,34 +48,34 @@ class SyncTaskObserver(SyncObserver):
         with self._lock:
             self._state.last_log = message
 
-    def on_progress(self, *, current: int | None, total: int | None, delta: int | None) -> None:
+    async def on_progress(self, *, current: int | None, total: int | None, delta: int | None) -> None:
         with self._lock:
-            progress = self._progress()
+            progress = await self._progress()
             progress.article_current = current
             progress.article_total = total
             progress.touch()
 
-    def on_page(self, payload: dict[str, Any]) -> None:
+    async def on_page(self, payload: dict[str, Any]) -> None:
         records = payload.get('records') or []
         last_record = records[0] if records else None
         with self._lock:
-            progress = self._progress()
+            progress = await self._progress()
             progress.page_count = int(payload.get('page_count') or progress.page_count)
             progress.saved += int(payload.get('saved') or 0)
             progress.last_article = _article_snapshot(last_record)
             progress.touch()
             self._state.current_article = progress.last_article
 
-    def on_complete(self, summary: SyncSummary) -> None:
+    async def on_complete(self, summary: SyncSummary) -> None:
         with self._lock:
-            progress = self._progress()
+            progress = await self._progress()
             progress.page_count = summary.page_count
             progress.saved = summary.total_saved
             progress.touch()
 
-    def on_skip(self, reason: str) -> None:
+    async def on_skip(self, reason: str) -> None:
         with self._lock:
-            progress = self._progress()
+            progress = await self._progress()
             progress.status = 'skipped'
             progress.phase = None
             progress.skip_reason = reason
@@ -95,7 +95,7 @@ class _SyncTaskJobObserver:
                 self._state.started_at = utc_now_iso()
             self._state.last_log = None
 
-    def on_accounts_loaded(self, accounts: list[AccountCredential]) -> None:
+    async def on_accounts_loaded(self, accounts: list[AccountCredential]) -> None:
         with self._manager._lock:
             self._state.accounts_total = len(accounts)
             for account in accounts:
@@ -104,7 +104,7 @@ class _SyncTaskJobObserver:
                     AccountProgress(biz=account.biz, nickname=account.nickname or account.biz),
                 )
 
-    def on_account_start(self, account: AccountCredential) -> None:
+    async def on_account_start(self, account: AccountCredential) -> None:
         with self._manager._lock:
             self._state.current_account = {
                 'biz': account.biz,
@@ -121,7 +121,7 @@ class _SyncTaskJobObserver:
             progress.error = None
             progress.touch()
 
-    def on_account_stage(self, account: AccountCredential, stage: str) -> None:
+    async def on_account_stage(self, account: AccountCredential, stage: str) -> None:
         with self._manager._lock:
             if self._state.current_account and self._state.current_account.get('biz') != account.biz:
                 return
@@ -131,7 +131,7 @@ class _SyncTaskJobObserver:
                 progress.phase = stage
                 progress.touch()
 
-    def on_account_done(self, result: SyncAccountResult, summary: SyncSummary | None) -> None:
+    async def on_account_done(self, result: SyncAccountResult, summary: SyncSummary | None) -> None:
         with self._manager._lock:
             progress = self._state.accounts.setdefault(
                 result.biz,
@@ -175,7 +175,7 @@ class SyncTaskManager:
         self._max_tasks = max_tasks
         self._lock = threading.Lock()
 
-    def create_sync_task(
+    async def create_sync_task(
         self,
         *,
         group_id: int | None = None,
@@ -216,7 +216,7 @@ class SyncTaskManager:
             state.last_log = 'waiting_for_slot'
             state.phase = None
 
-        def observer_factory(account: AccountCredential, _: bool) -> SyncObserver:
+        async def observer_factory(account: AccountCredential, _: bool) -> SyncObserver:
             return SyncTaskObserver(state=state, account=account, lock=self._lock)
 
         job_observer = _SyncTaskJobObserver(self, state)

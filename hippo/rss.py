@@ -11,10 +11,9 @@ from email.utils import formatdate
 from typing import Any
 from xml.sax.saxutils import escape
 
-from .storage import PostgresStorage, ensure_default_group, fetchall_rows, open_storage
+from .article_queries import SUBSCRIPTION_JOIN
+from .storage import PostgresStorage, fetchall_rows, open_storage
 from .utils import parse_iso_date_to_timestamp
-
-DEFAULT_GROUP_NAME = 'Default'
 
 
 @dataclass(slots=True)
@@ -26,17 +25,17 @@ class RssItem:
     description: str
 
 
-def _resolve_group_ids(storage: PostgresStorage, names: Iterable[str]) -> list[int]:
+async def _resolve_group_ids(
+    storage: PostgresStorage,
+    user_id: int,
+    names: Iterable[str],
+) -> list[int]:
     cleaned = [name.strip() for name in names if name and name.strip()]
     if not cleaned:
         return []
     placeholders = ','.join(['%s'] * len(cleaned))
-    query = (
-        f'SELECT id, name FROM account_groups WHERE name IN ({placeholders})'
-        if cleaned
-        else 'SELECT id, name FROM account_groups'
-    )
-    rows = fetchall_rows(storage, query, cleaned)
+    query = f'SELECT id, name FROM account_groups WHERE user_id = %s AND name IN ({placeholders})'
+    rows = await fetchall_rows(storage, query, [user_id, *cleaned])
     found = {row['name']: row['id'] for row in rows}
     missing = [name for name in cleaned if name not in found]
     if missing:
@@ -102,8 +101,9 @@ def _extract_description(raw: Any, image_base: str | None) -> str:
     return ''.join(parts)
 
 
-def query_rss_items(
+async def query_rss_items(
     *,
+    user_id: int,
     group_names: list[str],
     limit: int | None,
     days: int | None,
@@ -111,15 +111,14 @@ def query_rss_items(
     until: str | None,
     image_base_url: str | None,
 ) -> list[RssItem]:
-    with open_storage() as storage:
-        ensure_default_group(storage, name=DEFAULT_GROUP_NAME)
-        group_ids = _resolve_group_ids(storage, group_names)
+    async with open_storage() as storage:
+        group_ids = await _resolve_group_ids(storage, user_id, group_names)
 
         where: list[str] = []
         params: list[Any] = []
 
         if group_ids:
-            where.append('acc.group_id = ANY(%s)')
+            where.append('sub.group_id = ANY(%s)')
             params.append(group_ids)
 
         since_ts = parse_iso_date_to_timestamp(since, tz=UTC)
@@ -142,15 +141,17 @@ def query_rss_items(
             'SELECT a.id, a.title, a.link, a.publish_at, a.digest, c.content_json'
             ' FROM articles a'
             ' JOIN accounts acc ON acc.biz = a.biz'
+            f'{SUBSCRIPTION_JOIN}'
             ' LEFT JOIN article_content c ON c.article_pk = a.id'
             f' {where_sql}'
             ' ORDER BY a.publish_at DESC NULLS LAST, a.id DESC'
         )
+        params = [user_id, *params]
         if limit:
             query = f'{query} {limit_sql}'
             params.append(limit)
 
-        rows = fetchall_rows(storage, query, params)
+        rows = await fetchall_rows(storage, query, params)
 
     items: list[RssItem] = []
     for row in rows:

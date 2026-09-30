@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
 from typing import Any
 
@@ -14,10 +13,11 @@ except Exception:  # pragma: no cover - optional fallback
 
 from .exceptions import ApiError
 from .image_hashes import ensure_image_hash, fetch_image_bytes
+from .logger import get_logger
 from .storage import PostgresStorage, fetchall_rows, fetchone_row
 from .utils import normalize_value, parse_iso_date_to_timestamp
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 ARTICLE_SORT_PUBLISH_AT_DESC = 'publish_at_desc'
@@ -142,6 +142,15 @@ def _tokenize_query(text: str) -> list[str]:
     return tokens[:12]
 
 
+#: Restricts a query to the accounts a user follows. Aliases the row as ``sub``
+#: so callers can filter on ``sub.group_id``. Its ``user_id`` parameter is bound
+#: before every WHERE parameter because the join appears first in the SQL.
+SUBSCRIPTION_JOIN = (
+    ' JOIN subscription sub'
+    ' ON sub.biz = a.biz AND sub.user_id = %s AND NOT sub.is_disabled'
+)
+
+
 def _build_article_where_clause(
     *,
     group_ids: list[int] | None,
@@ -162,7 +171,7 @@ def _build_article_where_clause(
         where.append('a.article_id = %s')
         params.append(article_id)
     if group_ids is not None:
-        where.append('acc.group_id = ANY(%s)')
+        where.append('sub.group_id = ANY(%s)')
         params.append(group_ids)
     if biz:
         where.append('a.biz = %s')
@@ -192,6 +201,7 @@ def _build_article_where_clause(
 def _build_article_query(
     *,
     storage: PostgresStorage,
+    user_id: int,
     group_ids: list[int] | None,
     biz: str | None,
     item_show_type: int | None,
@@ -241,24 +251,26 @@ def _build_article_query(
         ' a.source_url, a.publish_at, a.created_at,'
         ' acc.nickname AS account_nickname, acc.alias AS account_alias,'
         ' acc.round_head_img AS account_avatar,'
-        ' acc.group_id, g.name AS group_name,'
+        ' sub.group_id, g.name AS group_name,'
         f' {image_select}'
         f'{rank_select}'
         ' FROM articles a'
         ' JOIN accounts acc ON acc.biz = a.biz'
-        ' LEFT JOIN account_groups g ON g.id = acc.group_id'
+        f'{SUBSCRIPTION_JOIN}'
+        ' LEFT JOIN account_groups g ON g.id = sub.group_id'
         f' {image_sql}'
         f' {where_sql}'
         f' {order_sql}'
         f' {limit_sql}'
     )
-    params = select_params + params + [limit, offset]
+    params = [*select_params, user_id, *params, limit, offset]
     return query_sql, params
 
 
-def _count_articles(
+async def _count_articles(
     *,
     storage: PostgresStorage,
+    user_id: int,
     group_ids: list[int] | None,
     biz: str | None,
     item_show_type: int | None,
@@ -278,18 +290,19 @@ def _count_articles(
         until_ts=until_ts,
         article_id=article_id,
     )
-    row = fetchone_row(
+    row = await fetchone_row(
         storage,
-        (f'SELECT COUNT(*) AS total FROM articles a JOIN accounts acc ON acc.biz = a.biz {where_sql}'),
-        params,
+        (f'SELECT COUNT(*) AS total FROM articles a{SUBSCRIPTION_JOIN} {where_sql}'),
+        [user_id, *params],
         normalize=_normalize_record,
     )
     return int(row.get('total') or 0) if row else 0
 
 
-def _count_article_item_show_type_facets(
+async def _count_article_item_show_type_facets(
     *,
     storage: PostgresStorage,
+    user_id: int,
     group_ids: list[int] | None,
     biz: str | None,
     query: str | None,
@@ -308,17 +321,17 @@ def _count_article_item_show_type_facets(
         until_ts=until_ts,
         article_id=article_id,
     )
-    rows = fetchall_rows(
+    rows = await fetchall_rows(
         storage,
         (
             'SELECT COALESCE(a.item_show_type, 0) AS item_show_type, COUNT(*) AS total'
             ' FROM articles a'
-            ' JOIN accounts acc ON acc.biz = a.biz'
+            f'{SUBSCRIPTION_JOIN}'
             f' {where_sql}'
             ' GROUP BY COALESCE(a.item_show_type, 0)'
             ' ORDER BY COALESCE(a.item_show_type, 0) ASC'
         ),
-        params,
+        [user_id, *params],
         normalize=_normalize_record,
     )
     order_map = {value: index for index, value in enumerate(sorted(_ITEM_SHOW_TYPE_VALUES))}
@@ -341,17 +354,22 @@ def _count_article_item_show_type_facets(
     return facets
 
 
-def _get_cached_article_total(
+async def _get_cached_article_total(
     storage: PostgresStorage,
     *,
+    user_id: int,
     group_ids: list[int] | None,
     biz: str | None,
 ) -> int:
     if biz:
-        row = fetchone_row(
+        row = await fetchone_row(
             storage,
-            'SELECT group_id, article_count FROM accounts WHERE biz = %s',
-            [biz],
+            (
+                'SELECT sub.group_id, a.article_count FROM accounts a'
+                f'{SUBSCRIPTION_JOIN}'
+                ' WHERE a.biz = %s'
+            ),
+            [user_id, biz],
             normalize=_normalize_record,
         )
         if not row:
@@ -360,25 +378,32 @@ def _get_cached_article_total(
             return 0
         return int(row.get('article_count') or 0)
     if group_ids is not None:
-        row = fetchone_row(
+        row = await fetchone_row(
             storage,
-            'SELECT COALESCE(SUM(article_count), 0) AS total FROM account_groups WHERE id = ANY(%s)',
-            [group_ids],
+            (
+                'SELECT COALESCE(SUM(article_count), 0) AS total FROM account_groups'
+                ' WHERE user_id = %s AND id = ANY(%s)'
+            ),
+            [user_id, group_ids],
             normalize=_normalize_record,
         )
         return int(row.get('total') or 0) if row else 0
-    row = fetchone_row(
+    row = await fetchone_row(
         storage,
-        'SELECT COALESCE(SUM(article_count), 0) AS total FROM accounts',
-        [],
+        (
+            'SELECT COALESCE(SUM(a.article_count), 0) AS total FROM accounts a'
+            f'{SUBSCRIPTION_JOIN}'
+        ),
+        [user_id],
         normalize=_normalize_record,
     )
     return int(row.get('total') or 0) if row else 0
 
 
-def _list_articles(
+async def _list_articles(
     storage: PostgresStorage,
     *,
+    user_id: int,
     group_ids: list[int] | None,
     biz: str | None,
     item_show_type: int | None,
@@ -394,6 +419,7 @@ def _list_articles(
     offset = max(page - 1, 0) * page_size
     query_sql, params = _build_article_query(
         storage=storage,
+        user_id=user_id,
         group_ids=group_ids,
         biz=biz,
         item_show_type=item_show_type,
@@ -406,7 +432,7 @@ def _list_articles(
         offset=offset,
         article_id=article_id,
     )
-    rows = fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
+    rows = await fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
     for row in rows:
         row['item_show_type'] = _coalesce_item_show_type(row.get('item_show_type'))
         row['account_avatar_url'] = f'/api/account/{row["biz"]}/avatar'
@@ -419,8 +445,9 @@ def _list_articles(
         or bool(exclude_keywords)
     )
     if has_active_filters:
-        total = _count_articles(
+        total = await _count_articles(
             storage=storage,
+            user_id=user_id,
             group_ids=group_ids,
             biz=biz,
             item_show_type=item_show_type,
@@ -431,9 +458,12 @@ def _list_articles(
             article_id=article_id,
         )
     else:
-        total = _get_cached_article_total(storage, group_ids=group_ids, biz=biz)
-    item_show_type_facets = _count_article_item_show_type_facets(
+        total = await _get_cached_article_total(
+            storage, user_id=user_id, group_ids=group_ids, biz=biz
+        )
+    item_show_type_facets = await _count_article_item_show_type_facets(
         storage=storage,
+        user_id=user_id,
         group_ids=group_ids,
         biz=biz,
         query=query,
@@ -451,20 +481,21 @@ def _list_articles(
     }
 
 
-def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
-    article = fetchone_row(
+async def _get_article(storage: PostgresStorage, user_id: int, article_id: int) -> dict[str, Any]:
+    article = await fetchone_row(
         storage,
         (
             'SELECT a.id, a.biz, a.article_id, a.title, a.item_show_type, a.author, a.digest, a.cover, a.link,'
             ' a.source_url, a.publish_at, a.created_at,'
             ' acc.nickname AS account_nickname, acc.alias AS account_alias,'
-            ' acc.round_head_img AS account_avatar, acc.group_id, g.name AS group_name'
+            ' acc.round_head_img AS account_avatar, sub.group_id, g.name AS group_name'
             ' FROM articles a'
             ' JOIN accounts acc ON acc.biz = a.biz'
-            ' LEFT JOIN account_groups g ON g.id = acc.group_id'
+            f'{SUBSCRIPTION_JOIN}'
+            ' LEFT JOIN account_groups g ON g.id = sub.group_id'
             ' WHERE a.id = %s'
         ),
-        [article_id],
+        [user_id, article_id],
         normalize=_normalize_record,
     )
     if not article:
@@ -472,7 +503,7 @@ def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
     article['item_show_type'] = _coalesce_item_show_type(article.get('item_show_type'))
     article['account_avatar_url'] = f'/api/account/{article["biz"]}/avatar'
 
-    content_row = fetchone_row(
+    content_row = await fetchone_row(
         storage,
         'SELECT content_json, updated_at FROM article_content WHERE article_pk = %s',
         [article_id],
@@ -501,13 +532,13 @@ def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
     else:
         content_status = 'invalid'
 
-    images, blocked_image_ids = _get_visible_article_images(storage, article_id)
+    images, blocked_image_ids = await _get_visible_article_images(storage, article_id)
     if isinstance(content_json, list) and blocked_image_ids:
         content_json = _filter_blocked_content_blocks(content_json, blocked_image_ids)
 
     fetch_diagnostic = None
     if content_status != 'ok':
-        fetch_diagnostic = fetchone_row(
+        fetch_diagnostic = await fetchone_row(
             storage,
             """
             SELECT last_error, error_type, retryable, attempts, last_attempt_at
@@ -528,24 +559,45 @@ def _get_article(storage: PostgresStorage, article_id: int) -> dict[str, Any]:
     }
 
 
-def _list_article_images(storage: PostgresStorage, article_id: int) -> list[dict[str, Any]]:
-    images, _blocked_image_ids = _get_visible_article_images(storage, article_id)
+async def _assert_article_visible(storage: PostgresStorage, user_id: int, article_id: int) -> None:
+    """Raise 404 unless the article belongs to an account the user follows.
+
+    404 rather than 403: a caller must not be able to tell a foreign article
+    apart from one that does not exist.
+    """
+    row = await fetchone_row(
+        storage,
+        f'SELECT 1 AS ok FROM articles a{SUBSCRIPTION_JOIN} WHERE a.id = %s',
+        [user_id, article_id],
+        normalize=_normalize_record,
+    )
+    if not row:
+        raise ApiError('Article not found', status=404)
+
+
+async def _list_article_images(
+    storage: PostgresStorage,
+    user_id: int,
+    article_id: int,
+) -> list[dict[str, Any]]:
+    await _assert_article_visible(storage, user_id, article_id)
+    images, _blocked_image_ids = await _get_visible_article_images(storage, article_id)
     return images
 
 
-def _get_visible_article_images(
+async def _get_visible_article_images(
     storage: PostgresStorage,
     article_id: int,
 ) -> tuple[list[dict[str, Any]], set[int]]:
-    images = storage.images.get_article_images(article_id)
-    if storage.images.has_blocked_hashes():
+    images = await storage.images.get_article_images(article_id)
+    if await storage.images.has_blocked_hashes():
         for image in images:
             if not image.get('content_hash'):
                 try:
-                    ensure_image_hash(storage, int(image['id']))
+                    await ensure_image_hash(storage, int(image['id']))
                 except Exception:
                     logger.warning('Failed to ensure hash for image %s', image['id'])
-    blocked_image_ids = storage.images.list_blocked_image_ids(article_id)
+    blocked_image_ids = await storage.images.list_blocked_image_ids(article_id)
     visible_images = [image for image in images if int(image['id']) not in blocked_image_ids]
     return visible_images, blocked_image_ids
 
@@ -561,20 +613,20 @@ def _filter_blocked_content_blocks(
     ]
 
 
-def _ensure_image_hash(storage: PostgresStorage, image_id: int, *, allow_origin_fetch: bool = True) -> dict[str, Any]:
+async def _ensure_image_hash(storage: PostgresStorage, image_id: int, *, allow_origin_fetch: bool = True) -> dict[str, Any]:
     try:
-        with storage.transaction():
-            return ensure_image_hash(storage, image_id, allow_origin_fetch=allow_origin_fetch)
+        async with storage.transaction():
+            return await ensure_image_hash(storage, image_id, allow_origin_fetch=allow_origin_fetch)
     except LookupError as exc:
         raise ApiError(str(exc), status=404) from exc
     except RuntimeError as exc:
         raise ApiError(str(exc), status=502) from exc
 
 
-def _block_image(storage: PostgresStorage, image_id: int) -> dict[str, Any]:
-    hash_record = _ensure_image_hash(storage, image_id)
-    with storage.transaction():
-        storage.images.block_image_hash(
+async def _block_image(storage: PostgresStorage, image_id: int) -> dict[str, Any]:
+    hash_record = await _ensure_image_hash(storage, image_id)
+    async with storage.transaction():
+        await storage.images.block_image_hash(
             hash_algo=hash_record['hash_algo'],
             content_hash=hash_record['content_hash'],
             source_image_id=image_id,
@@ -587,18 +639,19 @@ def _block_image(storage: PostgresStorage, image_id: int) -> dict[str, Any]:
     }
 
 
-def _fetch_image(storage: PostgresStorage, image_id: int) -> tuple[bytes, str]:
+async def _fetch_image(storage: PostgresStorage, image_id: int) -> tuple[bytes, str]:
     try:
-        return fetch_image_bytes(storage, image_id)
+        return await fetch_image_bytes(storage, image_id)
     except LookupError as exc:
         raise ApiError(str(exc), status=404) from exc
     except RuntimeError as exc:
         raise ApiError(str(exc), status=502) from exc
 
 
-def _list_feed(
+async def _list_feed(
     storage: PostgresStorage,
     *,
+    user_id: int,
     group_ids: list[int] | None,
     biz: str | None,
     query: str | None,
@@ -610,6 +663,7 @@ def _list_feed(
     sort_mode = _normalize_article_sort(None, has_query=bool(query_text))
     query_sql, params = _build_article_query(
         storage=storage,
+        user_id=user_id,
         group_ids=group_ids,
         biz=biz,
         item_show_type=None,
@@ -621,4 +675,4 @@ def _list_feed(
         limit=limit,
         offset=0,
     )
-    return fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
+    return await fetchall_rows(storage, query_sql, params, normalize=_normalize_record)

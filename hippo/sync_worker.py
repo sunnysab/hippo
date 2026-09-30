@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 import os
 import socket
 import time
@@ -12,7 +11,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .container import build_sync_container
+from .logger import get_logger
 from .models import AccountCredential
+from .observability.logging import shutdown_logging
+from .observability.metrics import instrument as metric
+from .observability.otel import init_telemetry
 from .storage import PostgresStorage, open_storage, save_meta_json
 from .sync_core import request_sync_cancel
 from .sync_service import (
@@ -33,7 +36,8 @@ from .utils import utc_now_iso
 from .weixin_source import SessionExpiredError, WeixinSource
 from .weixin_watch import watch_article_push
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+SERVICE_NAME = 'hippo-sync-worker'
 
 # 正文 drain：每轮抓一批（<=daemon 的 [articles].batch_size），节流由 daemon 侧闸门决定
 BODY_BATCH = 5
@@ -50,7 +54,7 @@ _WORKER_STATE_MIN_INTERVAL = 30.0
 _last_worker_state_at = 0.0
 
 
-def publish_worker_state(storage: PostgresStorage) -> None:
+async def publish_worker_state(storage: PostgresStorage) -> None:
     """把 worker 心跳和队列水位写进 meta。
 
     web 轮询 ``/api/settings/status`` 时直接读 meta，不用每次去扫 ``article_images``
@@ -63,12 +67,12 @@ def publish_worker_state(storage: PostgresStorage) -> None:
         return
     _last_worker_state_at = now
     queue_stats = {
-        'articles': storage.article_queue.stats(),
-        'images': storage.images.count_backlog(),
+        'articles': await storage.article_queue.stats(),
+        'images': await storage.images.count_backlog(),
     }
-    with storage.transaction():
-        storage.meta.set(WORKER_HEARTBEAT_KEY, utc_now_iso())
-        save_meta_json(storage, QUEUE_STATS_KEY, queue_stats)
+    async with storage.transaction():
+        await storage.meta.set(WORKER_HEARTBEAT_KEY, utc_now_iso())
+        await save_meta_json(storage, QUEUE_STATS_KEY, queue_stats)
 
 
 class _WorkerProgressTracker:
@@ -84,9 +88,9 @@ class _WorkerProgressTracker:
         self._accounts: dict[str, AccountProgress] = {}
         self._report: dict[str, Any] | None = None
 
-    def _save(self) -> None:
-        with self._storage.transaction():
-            self._storage.sync_jobs.update_progress(
+    async def _save(self) -> None:
+        async with self._storage.transaction():
+            await self._storage.sync_jobs.update_progress(
                 self._task_id,
                 phase=self._phase,
                 accounts_total=self._accounts_total,
@@ -108,17 +112,17 @@ class _WorkerProgressTracker:
             self._accounts[account.biz] = progress
         return progress
 
-    def on_lock_acquired(self) -> None:
+    async def on_lock_acquired(self) -> None:
         self._last_log = None
-        self._save()
+        await self._save()
 
-    def on_accounts_loaded(self, accounts: list[AccountCredential]) -> None:
+    async def on_accounts_loaded(self, accounts: list[AccountCredential]) -> None:
         self._accounts_total = len(accounts)
         for account in accounts:
             self._progress_for(account)
-        self._save()
+        await self._save()
 
-    def on_account_start(self, account: AccountCredential) -> None:
+    async def on_account_start(self, account: AccountCredential) -> None:
         self._current_account = {
             'biz': account.biz,
             'nickname': account.nickname or account.biz,
@@ -130,17 +134,17 @@ class _WorkerProgressTracker:
         progress.phase = 'listing'
         progress.error = None
         progress.touch()
-        self._save()
+        await self._save()
 
-    def on_account_stage(self, account: AccountCredential, stage: str) -> None:
+    async def on_account_stage(self, account: AccountCredential, stage: str) -> None:
         self._phase = stage
         progress = self._progress_for(account)
         if progress.status == 'running':
             progress.phase = stage
             progress.touch()
-        self._save()
+        await self._save()
 
-    def on_account_done(self, result: SyncAccountResult, summary: SyncSummary | None) -> None:
+    async def on_account_done(self, result: SyncAccountResult, summary: SyncSummary | None) -> None:
         progress = self._progress_for(AccountCredential(biz=result.biz, nickname=result.nickname or result.biz))
         if result.skipped:
             progress.status = 'skipped'
@@ -163,25 +167,25 @@ class _WorkerProgressTracker:
         if self._current_account and self._current_account.get('biz') == result.biz:
             self._current_account = None
             self._phase = None
-        self._save()
+        await self._save()
 
-    def on_images_start(self) -> None:
+    async def on_images_start(self) -> None:
         self._phase = 'images'
         self._last_log = 'downloading_images'
-        self._save()
+        await self._save()
 
-    def on_images_done(self) -> None:
+    async def on_images_done(self) -> None:
         self._phase = None
         self._last_log = None
-        self._save()
+        await self._save()
 
-    def on_log(self, message: str) -> None:
+    async def on_log(self, message: str) -> None:
         self._last_log = message
-        self._save()
+        await self._save()
 
-    def set_report(self, result: SyncJobResult) -> None:
+    async def set_report(self, result: SyncJobResult) -> None:
         self._report = result.report.to_dict()
-        self._save()
+        await self._save()
 
 
 class _WorkerObserver(SyncObserver):
@@ -194,7 +198,7 @@ class _WorkerObserver(SyncObserver):
         self._tracker = tracker
         self._account = account
 
-    def on_log(self, message: str) -> None:
+    async def on_log(self, message: str) -> None:
         self._tracker._last_log = message
         self._tracker._save()
 
@@ -244,42 +248,42 @@ def _parse_meta_datetime(value: str | None) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
-def recover_stale_running_jobs(
+async def recover_stale_running_jobs(
     storage: PostgresStorage,
     *,
     stale_after_minutes: int = 15,
 ) -> int:
-    return storage.sync_jobs.recover_stale_running_jobs(
+    return await storage.sync_jobs.recover_stale_running_jobs(
         stale_after_minutes=stale_after_minutes,
     )
 
 
-def maybe_enqueue_scheduled_job(storage: PostgresStorage) -> bool:
-    settings = get_sync_settings(storage)
+async def maybe_enqueue_scheduled_job(storage: PostgresStorage) -> bool:
+    settings = await get_sync_settings(storage)
     if not settings.get('enabled'):
         return False
     start_hour, end_hour = _get_window_hours(settings)
     now = datetime.now()
     if not _is_within_sync_window(now, start_hour=start_hour, end_hour=end_hour):
         return False
-    if storage.sync_jobs.has_active_job():
+    if await storage.sync_jobs.has_active_job():
         return False
     interval_seconds = max(int(settings.get('interval_minutes') or 1), 1) * 60
-    last_started = _parse_meta_datetime(storage.meta.get(SYNC_STARTED_KEY))
+    last_started = _parse_meta_datetime(await storage.meta.get(SYNC_STARTED_KEY))
     if last_started is not None:
         elapsed = (datetime.now(UTC) - last_started).total_seconds()
         if elapsed < interval_seconds:
             return False
-    with storage.transaction():
-        storage.sync_jobs.create_job(trigger_type='scheduled')
+    async with storage.transaction():
+        await storage.sync_jobs.create_job(trigger_type='scheduled')
     return True
 
 
 async def _poll_cancel(task_id: str, poll_interval: float = 1.0) -> None:
     while True:
         try:
-            with open_storage() as storage:
-                if storage.sync_jobs.is_cancelling(task_id):
+            async with open_storage() as storage:
+                if await storage.sync_jobs.is_cancelling(task_id):
                     request_sync_cancel()
                     return
         except Exception as exc:
@@ -288,11 +292,11 @@ async def _poll_cancel(task_id: str, poll_interval: float = 1.0) -> None:
 
 
 async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
-    job = storage.sync_jobs.claim_next_job(worker_id=worker_id)
+    job = await storage.sync_jobs.claim_next_job(worker_id=worker_id)
     if not job:
         return False
-    with storage.transaction():
-        storage.sync_jobs.mark_running(job.task_id, worker_id=worker_id)
+    async with storage.transaction():
+        await storage.sync_jobs.mark_running(job.task_id, worker_id=worker_id)
     tracker = _WorkerProgressTracker(storage=storage, task_id=job.task_id)
     poll_task = asyncio.create_task(_poll_cancel(job.task_id))
     try:
@@ -304,8 +308,8 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
                 observer=tracker,
             )
         except Exception as exc:
-            with storage.transaction():
-                storage.sync_jobs.mark_finished(
+            async with storage.transaction():
+                await storage.sync_jobs.mark_finished(
                     job.task_id,
                     status='failed',
                     error=str(exc),
@@ -313,12 +317,11 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
                 )
             return True
         tracker.set_report(result)
-        with open_storage() as check_storage:
-            was_cancelled = check_storage.sync_jobs.is_cancelling(job.task_id)
+        was_cancelled = await storage.sync_jobs.is_cancelling(job.task_id)
         final_status = 'cancelled' if was_cancelled else str(result.status.get('status') or 'success')
         final_error = 'Cancelled by user' if was_cancelled else result.error
-        with storage.transaction():
-            storage.sync_jobs.mark_finished(
+        async with storage.transaction():
+            await storage.sync_jobs.mark_finished(
                 job.task_id,
                 status=final_status,
                 error=final_error,
@@ -337,10 +340,10 @@ async def drain_bodies_once(storage: PostgresStorage, *, limit: int = BODY_BATCH
     列表只负责把文章放进 ``article_queue``；这里才是正文真正的入口，是常驻的
     （24h 不断），速率由 daemon 的 ``[articles]`` 预算保证。
     """
-    settings = get_sync_settings(storage)
+    settings = await get_sync_settings(storage)
     if not settings.get('download_content'):
         return 0
-    if not storage.article_queue.stats().get('pending'):
+    if not await storage.article_queue.stats().get('pending'):
         return 0
     container = build_sync_container(
         storage=storage,
@@ -354,6 +357,10 @@ async def drain_bodies_once(storage: PostgresStorage, *, limit: int = BODY_BATCH
                 await app.downloader.wait_for_images()
     if result.ingested or result.failed:
         logger.info('正文 drain：落库 %d 篇，失败 %d 篇', result.ingested, result.failed)
+    if result.ingested:
+        metric('counter', 'hippo.article.drained', unit='{article}').add(result.ingested)
+    if result.failed:
+        metric('counter', 'hippo.article.drain_failed', unit='{article}').add(result.failed)
     return result.ingested
 
 
@@ -386,8 +393,8 @@ async def _image_backfill_loop(
     """常驻图片队列消费：与正文抓取并行，互不干扰。"""
     while True:
         try:
-            with open_storage() as storage:
-                publish_worker_state(storage)
+            async with open_storage() as storage:
+                await publish_worker_state(storage)
             await backfill_images_once(batch=batch)
         except asyncio.CancelledError:
             raise
@@ -412,8 +419,8 @@ async def _body_drain_loop(poll_interval: float = DRAIN_POLL_SECONDS) -> None:
     """常驻正文抓取循环：与列表 job 并行，互不阻塞。"""
     while True:
         try:
-            with open_storage() as storage:
-                publish_worker_state(storage)
+            async with open_storage() as storage:
+                await publish_worker_state(storage)
                 await drain_bodies_once(storage)
         except asyncio.CancelledError:
             raise
@@ -433,6 +440,7 @@ async def run_sync_worker(
     drain_interval: float = DRAIN_POLL_SECONDS,
 ) -> None:
     resolved_worker_id = worker_id or f'{socket.gethostname()}-{os.getpid()}'
+    telemetry = init_telemetry(SERVICE_NAME)
     # 正文抓取跑在独立 task：它经常被 daemon 的节奏闸门挡住几十秒，
     # 不能拖住主循环里「入队新文章 / 执行同步 job」的响应。
     drain_task = asyncio.create_task(_body_drain_loop(drain_interval))
@@ -441,12 +449,18 @@ async def run_sync_worker(
     watch_task = asyncio.create_task(watch_article_push())
     try:
         while True:
-            with open_storage() as storage:
-                publish_worker_state(storage)
-                with storage.transaction():
-                    recover_stale_running_jobs(storage)
-                    maybe_enqueue_scheduled_job(storage)
+            started_at = time.perf_counter()
+            async with open_storage() as storage:
+                await publish_worker_state(storage)
+                async with storage.transaction():
+                    await recover_stale_running_jobs(storage)
+                    await maybe_enqueue_scheduled_job(storage)
+                pending = int((await storage.article_queue.stats()).get('pending') or 0)
                 handled = await run_worker_once(storage=storage, worker_id=resolved_worker_id)
+            metric('histogram', 'hippo.worker.round.duration', unit='s').record(
+                time.perf_counter() - started_at
+            )
+            metric('histogram', 'hippo.queue.pending', unit='{article}').record(pending)
             if handled:
                 continue
             await asyncio.sleep(max(float(poll_interval), 0.2))
@@ -455,6 +469,9 @@ async def run_sync_worker(
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        if telemetry is not None:
+            telemetry.shutdown()
+        shutdown_logging()
 
 
 __all__ = [

@@ -4,29 +4,29 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import logging
 import threading
 from typing import Any
 
 from .http import MPClient
+from .logger import get_logger
 from .s3 import build_image_key, fetch_object_bytes, get_s3_client, upload_object_bytes
 from .storage import PostgresStorage, fetchone_row, open_storage
 
 IMAGE_HASH_ALGO = 'sha256'
-logger = logging.getLogger('hippo.image_hashes')
+logger = get_logger(__name__)
 
 
 def compute_image_content_hash(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def fetch_image_bytes(
+async def fetch_image_bytes(
     storage: PostgresStorage,
     image_id: int,
     *,
     allow_origin_fetch: bool = True,
 ) -> tuple[bytes, str]:
-    row = fetchone_row(
+    row = await fetchone_row(
         storage,
         (
             'SELECT i.content_type, i.s3_key, i.orig_url, a.link AS referer'
@@ -77,13 +77,13 @@ def fetch_image_bytes(
     return payload, resolved_type
 
 
-def ensure_image_hash(
+async def ensure_image_hash(
     storage: PostgresStorage,
     image_id: int,
     *,
     allow_origin_fetch: bool = True,
 ) -> dict[str, Any]:
-    row = storage.images.get_image_hash(image_id)
+    row = await storage.images.get_image_hash(image_id)
     if not row:
         raise LookupError(f'Image {image_id} not found')
     if row.get('hash_algo') == IMAGE_HASH_ALGO and row.get('content_hash'):
@@ -92,13 +92,13 @@ def ensure_image_hash(
             'hash_algo': str(row['hash_algo']),
             'content_hash': str(row['content_hash']),
         }
-    payload, _content_type = fetch_image_bytes(
+    payload, _content_type = await fetch_image_bytes(
         storage,
         image_id,
         allow_origin_fetch=allow_origin_fetch,
     )
     content_hash = compute_image_content_hash(payload)
-    storage.images.save_image_hash(
+    await storage.images.save_image_hash(
         image_id=image_id,
         hash_algo=IMAGE_HASH_ALGO,
         content_hash=content_hash,
@@ -110,14 +110,14 @@ def ensure_image_hash(
     }
 
 
-def ensure_image_hash_by_id(
+async def ensure_image_hash_by_id(
     pg_dsn: str,
     image_id: int,
     *,
     allow_origin_fetch: bool = True,
 ) -> dict[str, Any]:
-    with PostgresStorage(pg_dsn) as storage, storage.transaction():
-        return ensure_image_hash(
+    async with PostgresStorage(pg_dsn) as storage, storage.transaction():
+        return await ensure_image_hash(
             storage,
             image_id,
             allow_origin_fetch=allow_origin_fetch,
@@ -143,7 +143,7 @@ def _store_image_to_s3_async(
     content_type: str | None,
     s3_key: str | None,
 ) -> None:
-    def _worker() -> None:
+    async def _worker() -> None:
         bundle = get_s3_client()
         if not bundle:
             return
@@ -157,8 +157,8 @@ def _store_image_to_s3_async(
                 payload=payload,
                 content_type=content_type,
             )
-            with open_storage() as storage, storage.transaction(), storage.conn.cursor() as cur:
-                cur.execute(
+            async with open_storage() as storage, storage.transaction(), storage.conn.cursor() as cur:
+                await cur.execute(
                     """
                             UPDATE article_images
                             SET s3_key = %s,

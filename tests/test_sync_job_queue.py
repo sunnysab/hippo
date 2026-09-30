@@ -6,7 +6,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from hippo.server import run_sync
+from hippo.api.routers.settings import run_sync
 from hippo.sync_service import SyncJobResult
 from hippo.sync_settings import _persist_sync_outcome
 from hippo.sync_types import SyncReport
@@ -23,7 +23,7 @@ class _FakeSyncJobs:
         self.active_job = False
         self.recovered: list[int] = []
 
-    def create_job(
+    async def create_job(
         self,
         *,
         trigger_type: str,
@@ -38,19 +38,22 @@ class _FakeSyncJobs:
         self.created.append(payload)
         return self.queued_state
 
-    def claim_next_job(self, *, worker_id: str):
+    async def claim_next_job(self, *, worker_id: str):
         if self.claimed:
             return None
         self.claimed = True
         return self.queued_state
 
-    def has_active_job(self, *, trigger_type: str | None = None) -> bool:
+    async def has_active_job(self, *, trigger_type: str | None = None) -> bool:
         return self.active_job
 
-    def mark_running(self, task_id: str, *, worker_id: str) -> None:
+    async def is_cancelling(self, task_id: str) -> bool:
+        return False
+
+    async def mark_running(self, task_id: str, *, worker_id: str) -> None:
         self.started.append((task_id, worker_id))
 
-    def update_progress(
+    async def update_progress(
         self,
         task_id: str,
         *,
@@ -77,7 +80,7 @@ class _FakeSyncJobs:
             }
         )
 
-    def mark_finished(
+    async def mark_finished(
         self,
         task_id: str,
         *,
@@ -94,7 +97,7 @@ class _FakeSyncJobs:
             }
         )
 
-    def recover_stale_running_jobs(self, *, stale_after_minutes: int = 15) -> int:
+    async def recover_stale_running_jobs(self, *, stale_after_minutes: int = 15) -> int:
         self.recovered.append(stale_after_minutes)
         self.active_job = False
         return 1
@@ -104,13 +107,13 @@ class _FakeMeta:
     def __init__(self, values: dict[str, str] | None = None) -> None:
         self._values = dict(values or {})
 
-    def get(self, key: str) -> str | None:
+    async def get(self, key: str) -> str | None:
         return self._values.get(key)
 
-    def set(self, key: str, value: str) -> None:
+    async def set(self, key: str, value: str) -> None:
         self._values[key] = value
 
-    def delete(self, key: str) -> None:
+    async def delete(self, key: str) -> None:
         self._values.pop(key, None)
 
 
@@ -118,7 +121,7 @@ class _FakeSessions:
     def __init__(self, updated_at: datetime | None = None) -> None:
         self._updated_at = updated_at
 
-    def get_login_updated_at(self) -> datetime | None:
+    async def get_login_updated_at(self) -> datetime | None:
         return self._updated_at
 
 
@@ -126,7 +129,10 @@ class _FakeAccounts:
     def __init__(self, biz_values: list[str] | None = None) -> None:
         self._biz_values = biz_values or []
 
-    def list_accounts(self):
+    async def list_accounts(self):
+        return [SimpleNamespace(biz=value) for value in self._biz_values]
+
+    async def list_followed_accounts(self, user_id: int, **_kwargs):
         return [SimpleNamespace(biz=value) for value in self._biz_values]
 
 
@@ -147,10 +153,10 @@ class _FakeStorage:
     def transaction(self):
         return self
 
-    def __enter__(self):
+    async def __aenter__(self):
         return self
 
-    def __exit__(self, exc_type, exc, tb):
+    async def __aexit__(self, exc_type, exc, tb):
         return None
 
 
@@ -164,6 +170,11 @@ class _PersistStorage(_FakeStorage):
         self.sent_emails: list[dict] = []
 
 
+def _admin() -> SimpleNamespace:
+    """Stand-in for the signed-in user (the router receives one via Depends)."""
+    return SimpleNamespace(id=1, username='admin', role='admin')
+
+
 class SyncJobQueueTest(unittest.TestCase):
     def test_run_sync_queues_job_and_returns_queued_status(self) -> None:
         from hippo.sync_types import SyncTaskState
@@ -175,7 +186,7 @@ class SyncJobQueueTest(unittest.TestCase):
         )
         storage = _FakeStorage(_FakeSyncJobs(queued_state))
 
-        payload = asyncio.run(run_sync(body={}, storage=storage))
+        payload = asyncio.run(run_sync(body={}, storage=storage, user=_admin()))
 
         self.assertEqual(payload, {'status': 'queued', 'task_id': 'job-1'})
         self.assertEqual(
@@ -198,6 +209,7 @@ class SyncJobQueueTest(unittest.TestCase):
             run_sync(
                 body={'biz_list': ['biz-a', ' ', 'biz-b', 'biz-a']},
                 storage=storage,
+                user=_admin(),
             )
         )
 
@@ -283,13 +295,13 @@ class SyncJobQueueTest(unittest.TestCase):
             def __init__(self, queries: list[str]) -> None:
                 self._queries = queries
 
-            def __enter__(self):
+            async def __aenter__(self):
                 return self
 
-            def __exit__(self, exc_type, exc, tb):
+            async def __aexit__(self, exc_type, exc, tb):
                 return None
 
-            def execute(self, query: str, params=None) -> None:
+            async def execute(self, query: str, params=None) -> None:
                 self._queries.append(query)
 
         class _Conn:
@@ -302,8 +314,8 @@ class SyncJobQueueTest(unittest.TestCase):
         conn = _Conn()
         repo = SyncJobRepository(conn)
 
-        repo.mark_running('job-5', worker_id='worker-1')
-        repo.mark_finished('job-5', status='failed', error='boom', result=None)
+        asyncio.run(repo.mark_running('job-5', worker_id='worker-1'))
+        asyncio.run(repo.mark_finished('job-5', status='failed', error='boom', result=None))
 
         joined = '\n'.join(conn.queries)
         self.assertIn('clock_timestamp()', joined)
@@ -316,13 +328,13 @@ class SyncJobQueueTest(unittest.TestCase):
                 self._queries = queries
                 self.rowcount = 3
 
-            def __enter__(self):
+            async def __aenter__(self):
                 return self
 
-            def __exit__(self, exc_type, exc, tb):
+            async def __aexit__(self, exc_type, exc, tb):
                 return None
 
-            def execute(self, query: str, params=None) -> None:
+            async def execute(self, query: str, params=None) -> None:
                 self._queries.append(query)
 
         class _Conn:
@@ -335,7 +347,7 @@ class SyncJobQueueTest(unittest.TestCase):
         conn = _Conn()
         repo = SyncJobRepository(conn)
 
-        recovered = repo.recover_stale_running_jobs()
+        recovered = asyncio.run(repo.recover_stale_running_jobs())
 
         self.assertEqual(recovered, 3)
         joined = '\n'.join(conn.queries)
@@ -349,7 +361,7 @@ class SyncJobQueueTest(unittest.TestCase):
         sync_jobs = _FakeSyncJobs()
         storage = _FakeStorage(sync_jobs)
 
-        recovered = recover_stale_running_jobs(storage)
+        recovered = asyncio.run(recover_stale_running_jobs(storage))
 
         self.assertEqual(recovered, 1)
         self.assertEqual(sync_jobs.recovered, [15])
@@ -370,7 +382,7 @@ class SyncJobQueueTest(unittest.TestCase):
             error='invalid args',
         )
 
-        tracker.on_account_done(result, None)
+        asyncio.run(tracker.on_account_done(result, None))
 
         update = storage.sync_jobs.progress_updates[-1]
         self.assertEqual(update['accounts_done'], 1)
@@ -409,16 +421,16 @@ class SyncJobQueueTest(unittest.TestCase):
         )
 
         with patch('hippo.sync_settings._send_sync_alert') as mock_alert:
-            status = _persist_sync_outcome(
+            status = asyncio.run(_persist_sync_outcome(
                 storage,
                 started_at='2026-04-03T11:30:54.694914+00:00',
                 finished_at='2026-04-03T11:37:43.925005+00:00',
                 error=None,
                 report=report,
-            )
+            ))
 
         self.assertEqual(status['status'], 'success')
-        self.assertEqual(storage.meta.get('sync:last_error'), '')
-        self.assertIn('failed_accounts', storage.meta.get('sync:history') or '')
+        self.assertEqual(asyncio.run(storage.meta.get('sync:last_error')), '')
+        self.assertIn('failed_accounts', asyncio.run(storage.meta.get('sync:history')) or '')
         mock_alert.assert_called_once()
 

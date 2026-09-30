@@ -79,140 +79,139 @@ async def backfill_article_images(
                     raise
                 await asyncio.sleep(min(sleep_base * (2 ** (attempt - 1)), 5.0))
 
-    async with MPClient() as client:
-        with PostgresStorage(resolved_dsn) as storage:
-            image_store = _build_image_store(storage)
-            if not image_store:
-                raise RuntimeError('Failed to initialize image store (S3 not configured).')
+    async with MPClient() as client, PostgresStorage(resolved_dsn) as storage:
+        image_store = _build_image_store(storage)
+        if not image_store:
+            raise RuntimeError('Failed to initialize image store (S3 not configured).')
 
-            failed_clause = '' if retry_failed else ' AND i.failed_at IS NULL'
-            count_query = (
-                'SELECT COUNT(*)'
-                ' FROM article_images i'
-                ' JOIN articles a ON a.id = i.article_pk'
-                f" WHERE (i.s3_key IS NULL OR i.s3_key = '') AND i.orig_url IS NOT NULL{failed_clause}"
-            )
-            with storage.conn.cursor() as cur:
-                cur.execute(count_query)
-                total_count = cur.fetchone()[0]
+        failed_clause = '' if retry_failed else ' AND i.failed_at IS NULL'
+        count_query = (
+            'SELECT COUNT(*)'
+            ' FROM article_images i'
+            ' JOIN articles a ON a.id = i.article_pk'
+            f" WHERE (i.s3_key IS NULL OR i.s3_key = '') AND i.orig_url IS NOT NULL{failed_clause}"
+        )
+        async with storage.conn.cursor() as cur:
+            await cur.execute(count_query)
+            total_count = (await cur.fetchone())[0]
 
-            if limit is not None:
-                total_count = min(total_count, limit)
+        if limit is not None:
+            total_count = min(total_count, limit)
 
-            base_query = (
-                'SELECT i.id, a.biz, a.article_id, a.link, i.orig_url'
-                ' FROM article_images i'
-                ' JOIN articles a ON a.id = i.article_pk'
-                f" WHERE (i.s3_key IS NULL OR i.s3_key = '') AND i.orig_url IS NOT NULL{failed_clause}"
-            )
-            order_clause = 'ORDER BY i.id DESC'
+        base_query = (
+            'SELECT i.id, a.biz, a.article_id, a.link, i.orig_url'
+            ' FROM article_images i'
+            ' JOIN articles a ON a.id = i.article_pk'
+            f" WHERE (i.s3_key IS NULL OR i.s3_key = '') AND i.orig_url IS NOT NULL{failed_clause}"
+        )
+        order_clause = 'ORDER BY i.id DESC'
 
-            if dry_run:
-                progress = tqdm(total=total_count, desc='Backfill images', unit='img', dynamic_ncols=True, leave=True)
-                try:
-                    last_id: int | None = None
-                    remaining = total_count
-                    while remaining > 0:
-                        with storage.conn.cursor() as cur:
-                            current_limit = min(100, remaining)
-                            if last_id is None:
-                                cur.execute(f'{base_query} {order_clause} LIMIT %s', (current_limit,))
-                            else:
-                                cur.execute(
-                                    f'{base_query} AND i.id < %s {order_clause} LIMIT %s', (last_id, current_limit)
-                                )
-                            rows = cur.fetchall()
-                        if not rows:
-                            break
-                        for _, _, _, _, orig_url in rows:
-                            _log(f'DRY-RUN {orig_url}')
-                            skipped += 1
-                            progress.update(1)
-                        remaining -= len(rows)
-                        last_id = rows[-1][0]
-                finally:
-                    progress.close()
-            else:
-                worker_count = max(1, workers)
-                batch_size = worker_count * 4
-                sem = asyncio.Semaphore(worker_count)
-
-                async def process_item(
-                    item: tuple,
-                ) -> tuple[tuple, bytes | None, str | None, str | None]:
-                    _, _biz, _article_id, referer, orig_url = item
-                    normalized = _normalize_image_url(str(orig_url))
-                    if not is_http_url(normalized):
-                        return item, None, None, f'Invalid URL scheme: {normalized}'
-                    async with sem:
-                        try:
-                            data, content_type = await download_with_retry(
-                                client,
-                                normalized,
-                                referer=str(referer) if referer else None,
+        if dry_run:
+            progress = tqdm(total=total_count, desc='Backfill images', unit='img', dynamic_ncols=True, leave=True)
+            try:
+                last_id: int | None = None
+                remaining = total_count
+                while remaining > 0:
+                    async with storage.conn.cursor() as cur:
+                        current_limit = min(100, remaining)
+                        if last_id is None:
+                            await cur.execute(f'{base_query} {order_clause} LIMIT %s', (current_limit,))
+                        else:
+                            await cur.execute(
+                                f'{base_query} AND i.id < %s {order_clause} LIMIT %s', (last_id, current_limit)
                             )
-                            return item, data, content_type, None
-                        except Exception as exc:
-                            return item, None, None, _format_http_error(exc)
+                        rows = await cur.fetchall()
+                    if not rows:
+                        break
+                    for _, _, _, _, orig_url in rows:
+                        _log(f'DRY-RUN {orig_url}')
+                        skipped += 1
+                        progress.update(1)
+                    remaining -= len(rows)
+                    last_id = rows[-1][0]
+            finally:
+                progress.close()
+        else:
+            worker_count = max(1, workers)
+            batch_size = worker_count * 4
+            sem = asyncio.Semaphore(worker_count)
 
-                progress = tqdm(total=total_count, desc='Backfill images', unit='img', dynamic_ncols=True, leave=True)
-                try:
-                    last_id = None
-                    remaining = total_count
-                    recent_cutoff = int(time.time()) - RECENT_WINDOW_SECONDS
-                    while remaining > 0:
-                        with storage.conn.cursor() as cur:
-                            current_limit = min(batch_size, remaining)
-                            # 优先批：最近发布的文章（推送/列表刚入库的），图片马上补齐
-                            cur.execute(
-                                f'{base_query} AND a.publish_at >= %s {order_clause} LIMIT %s',
-                                (recent_cutoff, current_limit),
-                            )
-                            batch = cur.fetchall()
-                            if not batch:
-                                if last_id is None:
-                                    cur.execute(f'{base_query} {order_clause} LIMIT %s', (current_limit,))
-                                else:
-                                    cur.execute(
-                                        f'{base_query} AND i.id < %s {order_clause} LIMIT %s',
-                                        (last_id, current_limit),
-                                    )
-                                batch = cur.fetchall()
-                            else:
-                                last_id = batch[-1][0]
+            async def process_item(
+                item: tuple,
+            ) -> tuple[tuple, bytes | None, str | None, str | None]:
+                _, _biz, _article_id, referer, orig_url = item
+                normalized = _normalize_image_url(str(orig_url))
+                if not is_http_url(normalized):
+                    return item, None, None, f'Invalid URL scheme: {normalized}'
+                async with sem:
+                    try:
+                        data, content_type = await download_with_retry(
+                            client,
+                            normalized,
+                            referer=str(referer) if referer else None,
+                        )
+                        return item, data, content_type, None
+                    except Exception as exc:
+                        return item, None, None, _format_http_error(exc)
+
+            progress = tqdm(total=total_count, desc='Backfill images', unit='img', dynamic_ncols=True, leave=True)
+            try:
+                last_id = None
+                remaining = total_count
+                recent_cutoff = int(time.time()) - RECENT_WINDOW_SECONDS
+                while remaining > 0:
+                    async with storage.conn.cursor() as cur:
+                        current_limit = min(batch_size, remaining)
+                        # 优先批：最近发布的文章（推送/列表刚入库的），图片马上补齐
+                        await cur.execute(
+                            f'{base_query} AND a.publish_at >= %s {order_clause} LIMIT %s',
+                            (recent_cutoff, current_limit),
+                        )
+                        batch = await cur.fetchall()
                         if not batch:
-                            break
+                            if last_id is None:
+                                await cur.execute(f'{base_query} {order_clause} LIMIT %s', (current_limit,))
+                            else:
+                                await cur.execute(
+                                    f'{base_query} AND i.id < %s {order_clause} LIMIT %s',
+                                    (last_id, current_limit),
+                                )
+                            batch = await cur.fetchall()
+                        else:
+                            last_id = batch[-1][0]
+                    if not batch:
+                        break
 
-                        tasks = [asyncio.create_task(process_item(item)) for item in batch]
-                        for task_coro in asyncio.as_completed(tasks):
-                            item, data, content_type, error = await task_coro
-                            _, biz, article_id, _, orig_url = item
-                            try:
-                                if error:
-                                    raise RuntimeError(error)
-                                image_store.store(
-                                    biz=biz,
-                                    article_id=article_id,
-                                    orig_url=str(orig_url),
-                                    content_type=content_type,
-                                    data=data,
-                                )
-                                updated += 1
-                            except Exception as exc:
-                                failed += 1
-                                image_store.mark_failed(
-                                    biz=biz,
-                                    article_id=article_id,
-                                    orig_url=str(orig_url),
-                                    reason=str(exc),
-                                )
-                                _log(f'FAILED {orig_url}: {_format_http_error(exc)}')
-                            finally:
-                                progress.update(1)
-                        remaining -= len(batch)
-                        last_id = batch[-1][0]
-                finally:
-                    progress.close()
+                    tasks = [asyncio.create_task(process_item(item)) for item in batch]
+                    for task_coro in asyncio.as_completed(tasks):
+                        item, data, content_type, error = await task_coro
+                        _, biz, article_id, _, orig_url = item
+                        try:
+                            if error:
+                                raise RuntimeError(error)
+                            image_store.store(
+                                biz=biz,
+                                article_id=article_id,
+                                orig_url=str(orig_url),
+                                content_type=content_type,
+                                data=data,
+                            )
+                            updated += 1
+                        except Exception as exc:
+                            failed += 1
+                            image_store.mark_failed(
+                                biz=biz,
+                                article_id=article_id,
+                                orig_url=str(orig_url),
+                                reason=str(exc),
+                            )
+                            _log(f'FAILED {orig_url}: {_format_http_error(exc)}')
+                        finally:
+                            progress.update(1)
+                    remaining -= len(batch)
+                    last_id = batch[-1][0]
+            finally:
+                progress.close()
 
     return {'updated': updated, 'skipped': skipped, 'failed': failed}
 

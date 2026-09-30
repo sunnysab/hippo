@@ -13,13 +13,13 @@ class _FakeCursor:
         self._result: list[tuple] = []
         self._sql: str = ''
 
-    def __enter__(self) -> _FakeCursor:
+    async def __aenter__(self) -> _FakeCursor:
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+    async def __aexit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
         return None
 
-    def execute(self, sql: str, params=None) -> None:  # type: ignore[no-untyped-def]
+    async def execute(self, sql: str, params=None) -> None:  # type: ignore[no-untyped-def]
         self._sql = sql
         normalized_sql = ' '.join(sql.split())
         if normalized_sql.startswith(
@@ -57,13 +57,13 @@ class _FakeCursor:
             return
         raise AssertionError(f'Unexpected SQL: {normalized_sql}')
 
-    def fetchall(self) -> list[tuple]:
+    async def fetchall(self) -> list[tuple]:
         return list(self._result)
 
-    def fetchone(self) -> tuple | None:
+    async def fetchone(self) -> tuple | None:
         return self._result[0] if self._result else None
 
-    def executemany(self, sql: str, params_seq) -> None:  # type: ignore[no-untyped-def]
+    async def executemany(self, sql: str, params_seq) -> None:  # type: ignore[no-untyped-def]
         self._conn.executed_updates.extend(list(params_seq))
 
 
@@ -90,7 +90,7 @@ class _FakeConn:
     def cursor(self) -> _FakeCursor:
         return _FakeCursor(self)
 
-    def rollback(self) -> None:
+    async def rollback(self) -> None:
         self.rollback_count += 1
 
     def select_all_pks(self, last_article_pk: int) -> list[tuple]:
@@ -111,10 +111,10 @@ class _FakeConn:
 
 
 class _FakeTransaction:
-    def __enter__(self) -> _FakeTransaction:
+    async def __aenter__(self) -> _FakeTransaction:
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+    async def __aexit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
         return None
 
 
@@ -127,14 +127,14 @@ class _FakeStorage:
         self.conn = _FakeConn()
         _FakeStorage.instances.append(self)
 
-    def __enter__(self) -> _FakeStorage:
+    async def __aenter__(self) -> _FakeStorage:
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+    async def __aexit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
         return None
 
-    def rollback(self) -> None:
-        self.conn.rollback()
+    async def rollback(self) -> None:
+        await self.conn.rollback()
 
     def transaction(self) -> _FakeTransaction:
         return _FakeTransaction()

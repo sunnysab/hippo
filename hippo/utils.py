@@ -165,7 +165,7 @@ def resolve_auto_interval(days_since_last_publish: int | None) -> int:
     return 30
 
 
-def resolve_sync_interval(
+async def resolve_sync_interval(
     storage: PostgresStorage,
     account: Any,
 ) -> int:
@@ -178,7 +178,7 @@ def resolve_sync_interval(
         return account.sync_interval_days
 
     try:
-        latest_publish_at = storage.accounts.get_latest_publish_at(account.biz)
+        latest_publish_at = await storage.accounts.get_latest_publish_at(account.biz)
     except Exception:
         return 1
 

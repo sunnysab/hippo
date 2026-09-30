@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from hippo.weixin_source import SessionExpiredError, WeixinSource, classify_daemon_error
 from hippo.weixin_worker import SyncStats, WeixinArticleSync
@@ -63,11 +64,11 @@ class _RecordingQueue:
         self.requeued: list[int] = []
         self.failed: list[int] = []
 
-    def requeue(self, ids, *, error: str) -> int:
+    async def requeue(self, ids, *, error: str) -> int:
         self.requeued.extend(int(i) for i in ids)
         return len(self.requeued)
 
-    def mark_failed(self, ids, *, error: str, retryable: bool, max_attempts: int = 3) -> int:
+    async def mark_failed(self, ids, *, error: str, retryable: bool, max_attempts: int = 3) -> int:
         self.failed.extend(int(i) for i in ids)
         return len(self.failed)
 
@@ -81,7 +82,7 @@ class _FailingSource:
 
 
 def _storage_with(queue: _RecordingQueue) -> SimpleNamespace:
-    return SimpleNamespace(article_queue=queue, commit=lambda: None, rollback=lambda: None)
+    return SimpleNamespace(article_queue=queue, commit=AsyncMock(), rollback=AsyncMock())
 
 
 class SessionFailureBookkeepingTest(unittest.TestCase):
