@@ -64,3 +64,66 @@
   padding: 24px 0;
   text-align: center;
 }
+
+/* Section navigation: a horizontal strip so the table keeps the full width. */
+
+.admin-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.admin-nav {
+  display: flex;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-nav-item {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.admin-nav-item:hover {
+  color: var(--text);
+}
+
+.admin-nav-item.is-active {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.admin-mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+
+.admin-ok {
+  color: var(--text);
+}
+
+.admin-fail {
+  color: var(--text);
+  text-decoration: underline dotted;
+}
+
+.auth-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+@media (max-width: 720px) {
+  .admin-nav {
+    overflow-x: auto;
+  }
+
+  .admin-actions .btn {
+    min-height: 36px;
+  }
+}

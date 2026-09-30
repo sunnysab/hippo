@@ -19,6 +19,8 @@ import { SettingsFilterRoute } from './pages/settings/SettingsFilterRoute';
 import { SettingsLoginRoute } from './pages/settings/SettingsLoginRoute';
 import { SettingsSyncRoute } from './pages/settings/SettingsSyncRoute';
 import { AdminPage } from './pages/admin/AdminPage';
+import { AdminLayout } from './pages/admin/AdminLayout';
+import { AdminLlmPage } from './pages/admin/AdminLlmPage';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { status } = useAuth();
@@ -80,10 +82,13 @@ function AppRoutes() {
                     path="/admin"
                     element={
                       <RequireAdmin>
-                        <AdminPage />
+                        <AdminLayout />
                       </RequireAdmin>
                     }
-                  />
+                  >
+                    <Route index element={<AdminPage />} />
+                    <Route path="llm" element={<AdminLlmPage />} />
+                  </Route>
                   <Route path="*" element={<Navigate to="/groups" replace />} />
                 </Routes>
               </AppShell>
