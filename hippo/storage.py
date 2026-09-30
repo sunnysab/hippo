@@ -27,6 +27,7 @@ from .repositories import (
     DownloadAttemptRepository,
     GroupRepository,
     ImageRepository,
+    LlmProviderRepository,
     MetaRepository,
     SubscriptionRepository,
     UserRepository,
@@ -234,6 +235,7 @@ class PostgresStorage(AbstractAsyncContextManager):
         self.tokens = UserTokenRepository(self.conn)
         self.subscriptions = SubscriptionRepository(self.conn)
         self.audit = AuditRepository(self.conn)
+        self.llm = LlmProviderRepository(self.conn)
 
     async def close(self) -> None:
         if self.conn is None:
