@@ -41,7 +41,8 @@ async def _update_group(
     if not updates:
         raise ApiError('No fields to update')
     try:
-        group = await storage.groups.update_group(group_id, user_id=user_id, **updates)
+        async with storage.transaction():
+            group = await storage.groups.update_group(group_id, user_id=user_id, **updates)
     except LookupError:
         raise ApiError('Group not found', status=404)
     except ValueError as exc:
@@ -53,7 +54,8 @@ async def _delete_group(storage: PostgresStorage, user_id: int, group_id: int) -
     default_group = await ensure_default_group(storage, user_id, name=DEFAULT_GROUP_NAME)
     default_id = default_group.id
     try:
-        await storage.groups.delete_group(group_id, default_id, user_id=user_id)
+        async with storage.transaction():
+            await storage.groups.delete_group(group_id, default_id, user_id=user_id)
     except LookupError:
         raise ApiError('Group not found', status=404)
     except ValueError as exc:

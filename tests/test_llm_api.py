@@ -14,6 +14,14 @@ from hippo.exceptions import ApiError
 from hippo.repositories.llm import mask_key
 
 
+class _NullTransaction:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 class MaskKeyTest(unittest.TestCase):
     def test_only_the_last_four_characters_survive(self) -> None:
         masked = mask_key('sk-1234567890abcdef')
@@ -31,6 +39,7 @@ class ProviderUpdateTest(unittest.IsolatedAsyncioTestCase):
     async def test_blank_api_key_leaves_the_stored_one_untouched(self) -> None:
         updated = {'name': 'p', 'base_url': 'http://x', 'model': 'm'}
         storage = SimpleNamespace(
+            transaction=lambda: _NullTransaction(),
             llm=SimpleNamespace(
                 get=AsyncMock(return_value={'id': 1, 'name': 'p'}),
                 update=AsyncMock(return_value=updated),
@@ -50,6 +59,7 @@ class ProviderUpdateTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_new_api_key_is_passed_through(self) -> None:
         storage = SimpleNamespace(
+            transaction=lambda: _NullTransaction(),
             llm=SimpleNamespace(
                 get=AsyncMock(return_value={'id': 1, 'name': 'p'}),
                 update=AsyncMock(return_value={'name': 'p'}),
@@ -83,6 +93,7 @@ class ProviderUpdateTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_base_url_is_normalized(self) -> None:
         storage = SimpleNamespace(
+            transaction=lambda: _NullTransaction(),
             llm=SimpleNamespace(create=AsyncMock(return_value={'id': 1, 'name': 'p'})),
             audit=SimpleNamespace(record=AsyncMock()),
         )

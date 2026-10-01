@@ -59,21 +59,22 @@ async def create_provider(
     if not name or not base_url or not api_key or not model:
         raise ApiError('name、base_url、api_key、model 均为必填', status=400)
 
-    provider = await storage.llm.create(
-        name=name,
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
-        is_default=bool(body.get('is_default')),
-        enabled=bool(body.get('enabled', True)),
-    )
-    await storage.audit.record(
-        actor.id,
-        'admin.llm_provider_created',
-        target=name,
-        detail={'base_url': base_url, 'model': model},
-        ip=client_ip(request),
-    )
+    async with storage.transaction():
+        provider = await storage.llm.create(
+            name=name,
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            is_default=bool(body.get('is_default')),
+            enabled=bool(body.get('enabled', True)),
+        )
+        await storage.audit.record(
+            actor.id,
+            'admin.llm_provider_created',
+            target=name,
+            detail={'base_url': base_url, 'model': model},
+            ip=client_ip(request),
+        )
     return provider
 
 
@@ -101,14 +102,15 @@ async def update_provider(
     # cannot echo it back.
     api_key = str(body.get('api_key') or '').strip() or None
 
-    updated = await storage.llm.update(target_id, changes, api_key=api_key)
-    await storage.audit.record(
-        actor.id,
-        'admin.llm_provider_updated',
-        target=str(updated['name']) if updated else provider_id,
-        detail={'changed': sorted([*changes, *(['api_key'] if api_key else [])])},
-        ip=client_ip(request),
-    )
+    async with storage.transaction():
+        updated = await storage.llm.update(target_id, changes, api_key=api_key)
+        await storage.audit.record(
+            actor.id,
+            'admin.llm_provider_updated',
+            target=str(updated['name']) if updated else provider_id,
+            detail={'changed': sorted([*changes, *(['api_key'] if api_key else [])])},
+            ip=client_ip(request),
+        )
     return updated or {}
 
 
@@ -123,13 +125,14 @@ async def delete_provider(
     provider = await storage.llm.get(target_id)
     if provider is None:
         raise ApiError('provider 不存在', status=404)
-    await storage.llm.delete(target_id)
-    await storage.audit.record(
-        actor.id,
-        'admin.llm_provider_deleted',
-        target=str(provider['name']),
-        ip=client_ip(request),
-    )
+    async with storage.transaction():
+        await storage.llm.delete(target_id)
+        await storage.audit.record(
+            actor.id,
+            'admin.llm_provider_deleted',
+            target=str(provider['name']),
+            ip=client_ip(request),
+        )
 
 
 @router.post('/llm/provider/{provider_id}/test')
