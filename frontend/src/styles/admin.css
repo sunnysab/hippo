@@ -26,12 +26,12 @@
 
 .admin-table th {
   font-weight: 500;
-  color: var(--text-muted);
+  color: var(--muted);
   white-space: nowrap;
 }
 
 .admin-table tr.is-disabled {
-  color: var(--text-muted);
+  color: var(--muted);
 }
 
 .admin-table .input {
@@ -46,7 +46,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--muted);
 }
 
 .admin-badge-warn {
@@ -83,7 +83,7 @@
 .admin-nav-item {
   padding: 6px 12px;
   border-radius: var(--radius-sm);
-  color: var(--text-muted);
+  color: var(--muted);
   font-size: 13px;
   text-decoration: none;
 }

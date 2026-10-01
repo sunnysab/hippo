@@ -106,7 +106,7 @@ export function AccountSearchModal({ isOpen, onClose }: AccountSearchModalProps)
       <div className="modal search-modal">
         <div className="modal-header">
           <div className="modal-title">{t('accounts.searchTitle', 'Add Account')}</div>
-          <button className="icon-btn" id="btn-account-search-close" type="button" aria-label="Close" onClick={handleClose}>
+          <button className="icon-btn" id="btn-account-search-close" type="button" aria-label={t('common.close', 'Close')} onClick={handleClose}>
             <span className="icon">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3z"/></svg>
             </span>

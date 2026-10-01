@@ -118,7 +118,7 @@ body {
   bottom: 0;
   left: 0;
   height: 2px;
-  background: rgba(41, 93, 80, 0.72);
+  background: var(--accent);
   opacity: 0;
   transform: scaleX(0.72);
   transform-origin: center;
@@ -254,7 +254,7 @@ body {
   margin-bottom: 14px;
   padding: 13px 14px;
   border-radius: var(--radius-sm);
-  background: rgba(245, 234, 210, 0.92);
+  background: var(--warning-soft);
   color: var(--warning);
 }
 
@@ -310,9 +310,9 @@ body {
 .loading-spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid rgba(122, 134, 122, 0.18);
+  border: 2px solid var(--border-strong);
   border-top-color: var(--accent);
-  border-radius: var(--radius);
+  border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
 
@@ -445,7 +445,7 @@ body {
 
 .switch.inline {
   padding: 5px 8px;
-  border-radius: 9px;
+  border-radius: var(--radius);
 }
 
 .switch input {
@@ -525,7 +525,9 @@ body {
 }
 
 :focus-visible {
-  outline: 3px solid rgba(47, 99, 143, 0.2);
+  /* Theme-aware, and strong enough to clear the 3:1 contrast bar the old
+     20%-alpha blue did not. */
+  outline: 3px solid color-mix(in srgb, var(--info) 70%, transparent);
   outline-offset: 3px;
 }
 
@@ -619,7 +621,9 @@ body {
   }
 
   .content {
-    padding: calc(var(--app-topbar-height) + 14px) 0 16px;
+    /* The top bar moves to the bottom on phones, so the desktop offset is
+       just dead space at the top of every page. */
+    padding: 14px 0 16px;
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
