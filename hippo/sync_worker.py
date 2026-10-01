@@ -343,7 +343,7 @@ async def drain_bodies_once(storage: PostgresStorage, *, limit: int = BODY_BATCH
     settings = await get_sync_settings(storage)
     if not settings.get('download_content'):
         return 0
-    if not await storage.article_queue.stats().get('pending'):
+    if not (await storage.article_queue.stats()).get('pending'):
         return 0
     container = build_sync_container(
         storage=storage,
