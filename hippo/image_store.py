@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 
 from .file_storage import FileStorage
@@ -14,7 +16,7 @@ logger = get_logger(__name__)
 
 
 class ArticleImageStore(Protocol):
-    def store(
+    async def store(
         self,
         *,
         biz: str,
@@ -24,7 +26,7 @@ class ArticleImageStore(Protocol):
         data: bytes,
     ) -> None: ...
 
-    def mark_failed(
+    async def mark_failed(
         self,
         *,
         biz: str,
@@ -40,13 +42,13 @@ class ArticleImageService:
         *,
         image_repo: ImageRepository,
         file_storage: FileStorage,
-        transaction: Callable[[], object] | None = None,
+        transaction: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> None:
         self._image_repo = image_repo
         self._file_storage = file_storage
         self._transaction = transaction
 
-    def store(
+    async def store(
         self,
         *,
         biz: str,
@@ -55,25 +57,27 @@ class ArticleImageService:
         content_type: str | None,
         data: bytes,
     ) -> None:
-        def _run() -> None:
-            target = self._image_repo.get_article_image_target(biz, article_id, orig_url)
+        async def _run() -> None:
+            target = await self._image_repo.get_article_image_target(biz, article_id, orig_url)
             if not target:
                 return
-            s3_key = self._file_storage.store_article_image(
+            # S3 上传与内容哈希都是同步阻塞调用，放线程池里跑，别卡住事件循环。
+            s3_key = await asyncio.to_thread(
+                self._file_storage.store_article_image,
                 image_id=target.image_id,
                 content_type=content_type,
                 payload=data,
                 key=target.s3_key,
             )
-            self._image_repo.update_article_image_metadata(
+            await self._image_repo.update_article_image_metadata(
                 article_pk=target.article_pk,
                 orig_url=orig_url,
                 content_type=content_type,
                 s3_key=s3_key,
             )
             try:
-                content_hash = compute_image_content_hash(data)
-                self._image_repo.save_image_hash(
+                content_hash = await asyncio.to_thread(compute_image_content_hash, data)
+                await self._image_repo.save_image_hash(
                     image_id=target.image_id,
                     hash_algo=IMAGE_HASH_ALGO,
                     content_hash=content_hash,
@@ -82,12 +86,12 @@ class ArticleImageService:
                 logger.warning('Failed to save hash for image %s', target.image_id)
 
         if self._transaction:
-            with self._transaction():
-                _run()
+            async with self._transaction():
+                await _run()
         else:
-            _run()
+            await _run()
 
-    def mark_failed(
+    async def mark_failed(
         self,
         *,
         biz: str,
@@ -96,10 +100,10 @@ class ArticleImageService:
         reason: str,
     ) -> None:
         if self._transaction:
-            with self._transaction():
-                self._image_repo.mark_article_image_failed(biz, article_id, orig_url, reason)
+            async with self._transaction():
+                await self._image_repo.mark_article_image_failed(biz, article_id, orig_url, reason)
         else:
-            self._image_repo.mark_article_image_failed(biz, article_id, orig_url, reason)
+            await self._image_repo.mark_article_image_failed(biz, article_id, orig_url, reason)
 
 
 __all__ = ['ArticleImageService', 'ArticleImageStore']
