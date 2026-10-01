@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { GroupList } from '../pages/groups/GroupList';
 import { BatchActions } from '../pages/groups/BatchActions';
-import { ActiveTaskPanel } from '../pages/settings/ActiveTaskPanel';
+import { ActiveTaskPanel } from '../pages/admin/ActiveTaskPanel';
 import { ArticleFilterSummary } from '../pages/articles/ArticleFilterSummary';
 import { GroupHeader } from '../pages/groups/GroupHeader';
 import { ArticleTypeFacets } from '../pages/articles/ArticleTypeFacets';

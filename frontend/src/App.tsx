@@ -16,13 +16,13 @@ import { ArticlesPage } from './pages/articles/ArticlesPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 import { SettingsEmailRoute } from './pages/settings/SettingsEmailRoute';
 import { SettingsFilterRoute } from './pages/settings/SettingsFilterRoute';
-import { SettingsLoginRoute } from './pages/settings/SettingsLoginRoute';
-import { SettingsSyncRoute } from './pages/settings/SettingsSyncRoute';
 import { AdminPage } from './pages/admin/AdminPage';
 import { AdminLayout } from './pages/admin/AdminLayout';
 import { AdminLlmPage } from './pages/admin/AdminLlmPage';
 import { AdminSitePage } from './pages/admin/AdminSitePage';
 import { AdminLogPage } from './pages/admin/AdminLogPage';
+import { AdminSyncPage } from './pages/admin/AdminSyncPage';
+import { AdminLoginPage } from './pages/admin/AdminLoginPage';
 import { ChatPage } from './pages/chat/ChatPage';
 import { ReportPage } from './pages/report/ReportPage';
 
@@ -78,9 +78,7 @@ function AppRoutes() {
                   <Route path="/chat" element={<ChatPage />} />
                   <Route path="/report" element={<ReportPage />} />
                   <Route path="/settings" element={<SettingsPage />}>
-                    <Route index element={<Navigate to="sync" replace />} />
-                    <Route path="login" element={<SettingsLoginRoute />} />
-                    <Route path="sync" element={<SettingsSyncRoute />} />
+                    <Route index element={<Navigate to="filter" replace />} />
                     <Route path="filter" element={<SettingsFilterRoute />} />
                     <Route path="email" element={<SettingsEmailRoute />} />
                   </Route>
@@ -93,6 +91,8 @@ function AppRoutes() {
                     }
                   >
                     <Route index element={<AdminPage />} />
+                    <Route path="sync" element={<AdminSyncPage />} />
+                    <Route path="login" element={<AdminLoginPage />} />
                     <Route path="llm" element={<AdminLlmPage />} />
                     <Route path="site" element={<AdminSitePage />} />
                     <Route path="log" element={<AdminLogPage />} />

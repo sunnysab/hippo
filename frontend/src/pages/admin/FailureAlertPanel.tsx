@@ -3,7 +3,7 @@ import { useSettingsState, type SyncSettings } from '../../store/settings';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
 import { apiSend, isAuthError } from '../../api';
-import { buildAlertSettingsPayload, type SyncSettingsFormState } from './form';
+import { buildAlertSettingsPayload, type SyncSettingsFormState } from '../settings/form';
 
 interface FailureAlertPanelProps {
   formState: SyncSettingsFormState;

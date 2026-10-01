@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { TopBar } from './TopBar';
 import { apiGet } from '../api';
 import { useI18n } from '../i18n';
+import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import { formatRelativeTime } from '../utils/format';
 import { onToast } from '../utils/events';
@@ -11,6 +12,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { t } = useI18n();
+  const { isAdmin } = useAuth();
   const { showToast } = useToast();
   const appRef = useRef<HTMLDivElement>(null);
   const topbarRef = useRef<HTMLElement>(null);
@@ -98,7 +100,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, []);
 
   const handleBannerLogin = () => {
-    navigate('/settings/login');
+    navigate('/admin/login');
   };
 
   const handleBannerDismiss = () => {
@@ -122,14 +124,16 @@ export function AppShell({ children }: { children: ReactNode }) {
       <main className="content">
         <div className={`banner${bannerVisible ? '' : ' is-hidden'}${bannerError ? ' is-error' : ''}`} id="status-banner">
           <div className="banner-text" id="banner-text">{bannerText}</div>
-          <button
-            className="btn ghost"
-            id="btn-banner-login"
-            type="button"
-            onClick={handleBannerLogin}
-          >
-            {t('login.relogin', 'Re-login')}
-          </button>
+          {isAdmin && (
+            <button
+              className="btn ghost"
+              id="btn-banner-login"
+              type="button"
+              onClick={handleBannerLogin}
+            >
+              {t('login.relogin', 'Re-login')}
+            </button>
+          )}
           <button
             className="btn ghost"
             id="btn-banner-dismiss"

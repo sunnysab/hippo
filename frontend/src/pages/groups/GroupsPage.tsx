@@ -104,7 +104,7 @@ export function GroupsPage() {
   const handleGroupSync = async (groupId: number) => {
     try {
       await apiSend('/api/settings/run', 'POST', { group_id: groupId });
-      window.location.hash = '#/settings/sync';
+      window.location.hash = '#/admin/sync';
       showToast(t('groups.syncTriggered', 'Group sync triggered.'));
     } catch (err) {
       if (isAuthError(err)) return;

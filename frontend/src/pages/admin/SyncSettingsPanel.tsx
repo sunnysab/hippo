@@ -7,7 +7,7 @@ import { emitRefresh } from '../../utils/events';
 import {
   buildSyncSettingsPayload,
   type SyncSettingsFormState,
-} from './form';
+} from '../settings/form';
 
 interface SyncSettingsPanelProps {
   formState: SyncSettingsFormState;
