@@ -42,23 +42,18 @@ export function FilterSettingsPanel({
           </button>
         </div>
       </div>
-      <div className="sync-form-sections">
-        <section className="sync-form-section">
-          <div className="sync-section-title">{t('sync.sectionFilter', 'Filter')}</div>
-          <div className="form-grid">
-            <label className="sync-textarea-field">
-              <span>{t('sync.articleExcludeKeywords', 'Exclude article keywords')}</span>
-              <textarea
-                id="sync-article-exclude-keywords"
-                rows={5}
-                placeholder={'promo\nad'}
-                value={formState.articleExcludeKeywords}
-                onChange={(event) => setFormState((prev) => ({ ...prev, articleExcludeKeywords: event.target.value }))}
-              ></textarea>
-              <small className="muted">{t('sync.articleExcludeKeywordsHint', 'One keyword per line, or separate by comma / semicolon.')}</small>
-            </label>
-          </div>
-        </section>
+      <div className="form-grid">
+        <label className="sync-textarea-field">
+          <span>{t('sync.articleExcludeKeywords', 'Exclude article keywords')}</span>
+          <textarea
+            id="sync-article-exclude-keywords"
+            rows={5}
+            placeholder={'promo\nad'}
+            value={formState.articleExcludeKeywords}
+            onChange={(event) => setFormState((prev) => ({ ...prev, articleExcludeKeywords: event.target.value }))}
+          ></textarea>
+          <small className="muted">{t('sync.articleExcludeKeywordsHint', 'One keyword per line, or separate by comma / semicolon.')}</small>
+        </label>
       </div>
     </div>
   );

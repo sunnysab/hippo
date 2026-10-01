@@ -1,12 +1,14 @@
 /* Daily report: reading layout, not a dashboard. */
 
 .report-layout {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  align-items: start;
   gap: 12px;
 }
 
 .report-toolbar {
+  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
@@ -19,6 +21,13 @@
   align-items: center;
   gap: 12px;
   font-size: 13px;
+}
+
+/* The summary and the send button close the toolbar on the right, aligned
+   with the inputs rather than floating in the middle of the row. */
+.report-toolbar .panel-footer {
+  margin: 0 0 0 auto;
+  justify-content: flex-end;
 }
 
 .report-preview {
@@ -75,4 +84,17 @@
 .report-settings .input[multiple] {
   height: auto;
   min-height: 80px;
+}
+
+@media (max-width: 1180px) {
+  .report-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* One column means the page itself scrolls; a scroller inside it is just
+     a second scrollbar for the same content. */
+  .report-preview {
+    max-height: none;
+    overflow: visible;
+  }
 }

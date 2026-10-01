@@ -353,6 +353,9 @@
 .account-sub {
   font-size: 12px;
   color: var(--muted);
+  /* Queue rows carry raw daemon URLs and biz ids with no break opportunities;
+     without this they blow the grid track past the panel. */
+  overflow-wrap: anywhere;
 }
 
 .account-stats {
