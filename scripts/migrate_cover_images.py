@@ -35,7 +35,7 @@ def _ensure_cover_image(cur, *, article_pk: int, cover_url: str, now: datetime) 
     row = cur.fetchone()
     if row:
         image_id, kind = row[0], row[1]
-        if kind != "cover":
+        if kind != 'cover':
             cur.execute(
                 """
                 UPDATE article_images
@@ -82,7 +82,7 @@ def _ensure_cover_image(cur, *, article_pk: int, cover_url: str, now: datetime) 
         VALUES (%s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
-        (article_pk, 0, "cover", cover_url, None, now),
+        (article_pk, 0, 'cover', cover_url, None, now),
     )
     return int(cur.fetchone()[0])
 
@@ -120,7 +120,7 @@ def migrate(*, batch_size: int, alter_type: bool) -> None:
                         now=now,
                     )
                     cur.execute(
-                        "UPDATE articles SET cover = %s, updated_at = %s WHERE id = %s",
+                        'UPDATE articles SET cover = %s, updated_at = %s WHERE id = %s',
                         (cover_id, now, article_pk),
                     )
                     total += 1
@@ -154,10 +154,8 @@ def migrate(*, batch_size: int, alter_type: bool) -> None:
                     break
                 last_id = rows[-1][0]
             if remaining:
-                sample = ", ".join(str(item[0]) for item in remaining[:5])
-                raise RuntimeError(
-                    f"Non-numeric cover still exists. sample_article_ids=[{sample}]"
-                )
+                sample = ', '.join(str(item[0]) for item in remaining[:5])
+                raise RuntimeError(f'Non-numeric cover still exists. sample_article_ids=[{sample}]')
             with storage.transaction(), storage.conn.cursor() as cur:
                 cur.execute(
                     """
@@ -166,16 +164,16 @@ def migrate(*, batch_size: int, alter_type: bool) -> None:
                         USING NULLIF(cover, '')::integer
                         """
                 )
-    print(f"migrated={total}")
+    print(f'migrated={total}')
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Backfill cover images and store cover as image id.")
-    parser.add_argument("--batch", type=int, default=200, help="Batch size")
-    parser.add_argument("--alter-type", action="store_true", help="Alter articles.cover to INTEGER")
+    parser = argparse.ArgumentParser(description='Backfill cover images and store cover as image id.')
+    parser.add_argument('--batch', type=int, default=200, help='Batch size')
+    parser.add_argument('--alter-type', action='store_true', help='Alter articles.cover to INTEGER')
     args = parser.parse_args()
     migrate(batch_size=max(args.batch, 1), alter_type=bool(args.alter_type))
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

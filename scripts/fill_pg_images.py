@@ -33,17 +33,17 @@ def _iter_missing_images(
     """
     params: list = []
     if limit is not None:
-        query += " LIMIT %s"
+        query += ' LIMIT %s'
         params.append(limit)
     with storage.conn.cursor() as cur:
         cur.execute(query, params)
         rows = cur.fetchall()
     for row in rows:
         yield {
-            "biz": row[0],
-            "article_id": row[1],
-            "referer": row[2],
-            "orig_url": row[3],
+            'biz': row[0],
+            'article_id': row[1],
+            'referer': row[2],
+            'orig_url': row[3],
         }
 
 
@@ -67,11 +67,11 @@ def _download_with_retry(
 
 
 def _normalize_image_url(url: str) -> str:
-    trimmed = url.strip().strip("\"'")
-    if " " in trimmed:
-        trimmed = trimmed.split(" ", 1)[0]
-    if trimmed.endswith("\""):
-        trimmed = trimmed.rstrip("\"")
+    trimmed = url.strip().strip('"\'')
+    if ' ' in trimmed:
+        trimmed = trimmed.split(' ', 1)[0]
+    if trimmed.endswith('"'):
+        trimmed = trimmed.rstrip('"')
     return trimmed
 
 
@@ -79,25 +79,25 @@ def _format_error(exc: Exception) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
         url = exc.request.url
-        return f"{exc} status={status} url={url}"
+        return f'{exc} status={status} url={url}'
     if isinstance(exc, httpx.RequestError):
-        return f"{exc} url={exc.request.url}"
+        return f'{exc} url={exc.request.url}'
     return str(exc)
 
 
 def main() -> int:
     load_env()
-    parser = argparse.ArgumentParser(description="Backfill missing image objects in S3")
-    parser.add_argument("--pg-dsn", default=os.environ.get("HIPPO_PG_DSN"))
-    parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--workers", type=int, default=8)
-    parser.add_argument("--retries", type=int, default=3)
-    parser.add_argument("--sleep-base", type=float, default=0.5)
-    parser.add_argument("--dry-run", action="store_true")
+    parser = argparse.ArgumentParser(description='Backfill missing image objects in S3')
+    parser.add_argument('--pg-dsn', default=os.environ.get('HIPPO_PG_DSN'))
+    parser.add_argument('--limit', type=int, default=None)
+    parser.add_argument('--workers', type=int, default=8)
+    parser.add_argument('--retries', type=int, default=3)
+    parser.add_argument('--sleep-base', type=float, default=0.5)
+    parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
 
     if not args.pg_dsn:
-        print("Missing --pg-dsn or HIPPO_PG_DSN", file=sys.stderr)
+        print('Missing --pg-dsn or HIPPO_PG_DSN', file=sys.stderr)
         return 2
 
     updated = 0
@@ -108,8 +108,8 @@ def main() -> int:
         try:
             items = list(_iter_missing_images(storage, limit=args.limit))
             if args.dry_run:
-                for item in tqdm(items, desc="Backfill images", unit="img"):
-                    print(f"DRY-RUN {item['orig_url']}")
+                for item in tqdm(items, desc='Backfill images', unit='img'):
+                    print(f'DRY-RUN {item["orig_url"]}')
                     skipped += 1
             else:
                 try:
@@ -126,26 +126,24 @@ def main() -> int:
                 def worker(item: dict) -> tuple[dict, bytes, str | None]:
                     data, content_type = _download_with_retry(
                         client,
-                        _normalize_image_url(str(item["orig_url"])),
-                        referer=item.get("referer"),
+                        _normalize_image_url(str(item['orig_url'])),
+                        referer=item.get('referer'),
                         retries=max(1, args.retries),
                         sleep_base=max(0.1, args.sleep_base),
                     )
                     return item, data, content_type
 
-                with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=worker_count
-                ) as executor:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
                     future_map = {executor.submit(worker, item): item for item in items}
-                    with tqdm(total=len(items), desc="Backfill images", unit="img") as bar:
+                    with tqdm(total=len(items), desc='Backfill images', unit='img') as bar:
                         for future in concurrent.futures.as_completed(future_map):
                             item = future_map[future]
-                            orig_url = str(item["orig_url"])
+                            orig_url = str(item['orig_url'])
                             try:
                                 _, data, content_type = future.result()
                                 image_store.store(
-                                    biz=item["biz"],
-                                    article_id=item["article_id"],
+                                    biz=item['biz'],
+                                    article_id=item['article_id'],
                                     orig_url=orig_url,
                                     content_type=content_type,
                                     data=data,
@@ -154,17 +152,17 @@ def main() -> int:
                             except Exception as exc:
                                 failed += 1
                                 print(
-                                    f"FAILED {orig_url}: {_format_error(exc)}",
+                                    f'FAILED {orig_url}: {_format_error(exc)}',
                                     file=sys.stderr,
                                 )
                             finally:
                                 bar.update(1)
         except KeyboardInterrupt:
-            print("Interrupted. Exiting.")
+            print('Interrupted. Exiting.')
 
-    print(f"Done. updated={updated} skipped={skipped} failed={failed}")
+    print(f'Done. updated={updated} skipped={skipped} failed={failed}')
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     raise SystemExit(main())

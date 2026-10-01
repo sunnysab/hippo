@@ -50,7 +50,7 @@ def pick(dsn: str, shape: str, limit: int | None, retry_failed: bool) -> list[di
 def mark(dsn: str, article_pk: int, note: str) -> None:
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            'INSERT INTO meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
             (f'link_convert_failed:{article_pk}', note[:200]),
         )
         conn.commit()
@@ -70,7 +70,7 @@ async def convert(dsn: str, shape: str, limit: int | None, retry_failed: bool, d
     log(f'待置换 {len(rows)} 篇（shape={shape}）')
     if dry_run:
         for row in rows[:5]:
-            log(f"DRY-RUN {row['id']} {row['link'][:80]}")
+            log(f'DRY-RUN {row["id"]} {row["link"][:80]}')
         return len(rows)
 
     sys.path.insert(0, os.environ['WEIXIN_SDK_PATH'])
@@ -116,9 +116,7 @@ def main() -> int:
     if not args.pg_dsn:
         log('缺少 HIPPO_PG_DSN / --pg-dsn')
         return 2
-    return asyncio.run(
-        convert(args.pg_dsn, args.shape, args.limit, args.retry_failed, args.dry_run)
-    )
+    return asyncio.run(convert(args.pg_dsn, args.shape, args.limit, args.retry_failed, args.dry_run))
 
 
 if __name__ == '__main__':
