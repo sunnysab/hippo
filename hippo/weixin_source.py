@@ -59,8 +59,7 @@ def load_bot_class() -> Any:
         from weixin_bot import WeChatBot  # type: ignore[import-not-found]
     except ImportError as exc:
         raise RuntimeError(
-            f'weixin-bot SDK 不可用（{sdk_path}）：把 weixin-rs/sdk/python 拷到该路径，'
-            '或用 WEIXIN_SDK_PATH 指定'
+            f'weixin-bot SDK 不可用（{sdk_path}）：把 weixin-rs/sdk/python 拷到该路径，或用 WEIXIN_SDK_PATH 指定'
         ) from exc
     return WeChatBot
 
@@ -134,9 +133,7 @@ class FetchedArticle:
 class WeixinSource:
     """daemon RPC 的薄封装：连接、确保登录、列表、正文。"""
 
-    def __init__(
-        self, host: str | None = None, port: int | None = None, *, auto_login: bool = True
-    ) -> None:
+    def __init__(self, host: str | None = None, port: int | None = None, *, auto_login: bool = True) -> None:
         self.host = host or os.environ.get('WEIXIN_DAEMON_HOST', '127.0.0.1')
         self.port = int(port or os.environ.get('WEIXIN_DAEMON_PORT', '9099'))
         self._auto_login = auto_login

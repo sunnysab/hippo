@@ -145,10 +145,7 @@ def _tokenize_query(text: str) -> list[str]:
 #: Restricts a query to the accounts a user follows. Aliases the row as ``sub``
 #: so callers can filter on ``sub.group_id``. Its ``user_id`` parameter is bound
 #: before every WHERE parameter because the join appears first in the SQL.
-SUBSCRIPTION_JOIN = (
-    ' JOIN subscription sub'
-    ' ON sub.biz = a.biz AND sub.user_id = %s AND NOT sub.is_disabled'
-)
+SUBSCRIPTION_JOIN = ' JOIN subscription sub ON sub.biz = a.biz AND sub.user_id = %s AND NOT sub.is_disabled'
 
 
 def _build_article_where_clause(
@@ -364,11 +361,7 @@ async def _get_cached_article_total(
     if biz:
         row = await fetchone_row(
             storage,
-            (
-                'SELECT sub.group_id, a.article_count FROM accounts a'
-                f'{SUBSCRIPTION_JOIN}'
-                ' WHERE a.biz = %s'
-            ),
+            (f'SELECT sub.group_id, a.article_count FROM accounts a{SUBSCRIPTION_JOIN} WHERE a.biz = %s'),
             [user_id, biz],
             normalize=_normalize_record,
         )
@@ -380,20 +373,14 @@ async def _get_cached_article_total(
     if group_ids is not None:
         row = await fetchone_row(
             storage,
-            (
-                'SELECT COALESCE(SUM(article_count), 0) AS total FROM account_groups'
-                ' WHERE user_id = %s AND id = ANY(%s)'
-            ),
+            ('SELECT COALESCE(SUM(article_count), 0) AS total FROM account_groups WHERE user_id = %s AND id = ANY(%s)'),
             [user_id, group_ids],
             normalize=_normalize_record,
         )
         return int(row.get('total') or 0) if row else 0
     row = await fetchone_row(
         storage,
-        (
-            'SELECT COALESCE(SUM(a.article_count), 0) AS total FROM accounts a'
-            f'{SUBSCRIPTION_JOIN}'
-        ),
+        (f'SELECT COALESCE(SUM(a.article_count), 0) AS total FROM accounts a{SUBSCRIPTION_JOIN}'),
         [user_id],
         normalize=_normalize_record,
     )
@@ -458,9 +445,7 @@ async def _list_articles(
             article_id=article_id,
         )
     else:
-        total = await _get_cached_article_total(
-            storage, user_id=user_id, group_ids=group_ids, biz=biz
-        )
+        total = await _get_cached_article_total(storage, user_id=user_id, group_ids=group_ids, biz=biz)
     item_show_type_facets = await _count_article_item_show_type_facets(
         storage=storage,
         user_id=user_id,
@@ -613,7 +598,9 @@ def _filter_blocked_content_blocks(
     ]
 
 
-async def _ensure_image_hash(storage: PostgresStorage, image_id: int, *, allow_origin_fetch: bool = True) -> dict[str, Any]:
+async def _ensure_image_hash(
+    storage: PostgresStorage, image_id: int, *, allow_origin_fetch: bool = True
+) -> dict[str, Any]:
     try:
         async with storage.transaction():
             return await ensure_image_hash(storage, image_id, allow_origin_fetch=allow_origin_fetch)

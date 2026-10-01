@@ -81,9 +81,7 @@ async def login(
 
     user = credentials[0]
     async with storage.transaction():
-        token = await storage.sessions.issue(
-            user.id, user_agent=request.headers.get('user-agent'), ip=ip
-        )
+        token = await storage.sessions.issue(user.id, user_agent=request.headers.get('user-agent'), ip=ip)
         await storage.audit.record(user.id, 'auth.login', target=user.username, ip=ip)
     login_limiter.reset(limiter_key)
 
@@ -146,9 +144,7 @@ async def change_password(
         token = await storage.sessions.issue(
             user.id, user_agent=request.headers.get('user-agent'), ip=client_ip(request)
         )
-        await storage.audit.record(
-            user.id, 'auth.password_changed', target=user.username, ip=client_ip(request)
-        )
+        await storage.audit.record(user.id, 'auth.password_changed', target=user.username, ip=client_ip(request))
 
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     _set_session_cookie(response, token)

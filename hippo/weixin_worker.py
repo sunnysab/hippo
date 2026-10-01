@@ -102,9 +102,7 @@ class WeixinArticleSync:
             await self._process_batch_inner(batch, stats)
         except SessionExpiredError:
             # 会话失效是基础设施故障：整批回 pending 且不计 attempts，交给上层等重新登录。
-            await self._storage.article_queue.requeue(
-                [int(row['id']) for row in batch], error='daemon session expired'
-            )
+            await self._storage.article_queue.requeue([int(row['id']) for row in batch], error='daemon session expired')
             self._storage.commit()
             raise
 
@@ -164,9 +162,7 @@ class WeixinArticleSync:
             biz=str(row['biz']),
             article_id=body.slug,
             title=body.title or str(payload.get('title') or '(untitled)'),
-            item_show_type=(
-                body.item_show_type if body.item_show_type is not None else payload.get('item_show_type')
-            ),
+            item_show_type=(body.item_show_type if body.item_show_type is not None else payload.get('item_show_type')),
             author=body.author or None,
             digest=body.digest or payload.get('digest'),
             cover=body.cover_url or payload.get('cover_url'),

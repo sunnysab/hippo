@@ -181,7 +181,6 @@ class AccountRepository:
             removed = cur.rowcount
         return removed
 
-
     async def update_last_synced(self, biz: str) -> None:
         now = utc_now_dt()
         async with self._conn.cursor() as cur:
@@ -189,7 +188,6 @@ class AccountRepository:
                 'UPDATE accounts SET last_synced_at = %s, updated_at = %s WHERE biz = %s',
                 (now, now, biz),
             )
-
 
     async def list_accounts_paginated(
         self,
@@ -322,7 +320,6 @@ class AccountRepository:
         if ts is None:
             return None
         return datetime.fromtimestamp(ts, tz=UTC)
-
 
 
 class GroupRepository:

@@ -34,7 +34,7 @@ def _format_time(publish_at: Any, timezone_name: str) -> str:
         return ''
     try:
         moment = datetime.fromtimestamp(int(publish_at), tz=UTC)
-    except (TypeError, ValueError, OSError):
+    except TypeError, ValueError, OSError:
         return ''
     return moment.astimezone(resolve_timezone(timezone_name)).strftime('%H:%M')
 

@@ -433,6 +433,7 @@ async def _body_drain_loop(poll_interval: float = DRAIN_POLL_SECONDS) -> None:
             logger.exception('正文 drain 失败')
         await asyncio.sleep(max(float(poll_interval), 1.0))
 
+
 async def run_sync_worker(
     *,
     poll_interval: float = 5.0,
@@ -457,9 +458,7 @@ async def run_sync_worker(
                     await maybe_enqueue_scheduled_job(storage)
                 pending = int((await storage.article_queue.stats()).get('pending') or 0)
                 handled = await run_worker_once(storage=storage, worker_id=resolved_worker_id)
-            metric('histogram', 'hippo.worker.round.duration', unit='s').record(
-                time.perf_counter() - started_at
-            )
+            metric('histogram', 'hippo.worker.round.duration', unit='s').record(time.perf_counter() - started_at)
             metric('histogram', 'hippo.queue.pending', unit='{article}').record(pending)
             if handled:
                 continue

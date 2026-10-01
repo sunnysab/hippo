@@ -72,9 +72,7 @@ async def enqueue_pushed_article(storage: PostgresStorage, push: Any) -> bool:
     )
     await storage.commit()
     if inserted:
-        logger.info(
-            '推送入队：%s - %s', getattr(push, 'pub_name', gh_id), getattr(push, 'title', '')
-        )
+        logger.info('推送入队：%s - %s', getattr(push, 'pub_name', gh_id), getattr(push, 'title', ''))
     return bool(inserted)
 
 

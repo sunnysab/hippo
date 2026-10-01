@@ -49,9 +49,7 @@ async def _mail(
     if not str(settings.get('smtp_host') or '').strip():
         logger.warning('SMTP is not configured; cannot send %s', subject)
         return False
-    await asyncio.to_thread(
-        send_email, settings, to_email=to_email, subject=subject, body=body, html=html
-    )
+    await asyncio.to_thread(send_email, settings, to_email=to_email, subject=subject, body=body, html=html)
     return True
 
 
@@ -107,9 +105,7 @@ async def register(
 
     password_hash = await asyncio.to_thread(hash_password, password)
     async with storage.transaction():
-        user = await storage.users.create(
-            username=username, password_hash=password_hash, email=email
-        )
+        user = await storage.users.create(username=username, password_hash=password_hash, email=email)
         token = await storage.tokens.issue(user.id, VERIFY_EMAIL, ttl=VERIFY_TTL)
         await storage.audit.record(user.id, 'auth.registered', target=username, ip=ip)
 

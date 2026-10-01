@@ -85,9 +85,7 @@ async def _list_accounts(
 
 async def _get_account(storage: PostgresStorage, user_id: int, biz: str) -> dict[str, Any]:
     try:
-        return _normalize_account_payload(
-            await storage.accounts.get_account_detail(biz, user_id=user_id)
-        )
+        return _normalize_account_payload(await storage.accounts.get_account_detail(biz, user_id=user_id))
     except LookupError:
         raise ApiError('Account not found', status=404)
 
@@ -507,9 +505,7 @@ async def batch_update_accounts(
     if not updates:
         raise ApiError('No fields to update')
     async with storage.transaction():
-        updated = await storage.subscriptions.set_interval(
-            user.id, biz_list, updates['sync_interval_days']
-        )
+        updated = await storage.subscriptions.set_interval(user.id, biz_list, updates['sync_interval_days'])
     return {'updated': updated}
 
 

@@ -37,9 +37,7 @@ async def deliver_once(
     concurrent callers both send, and a failed claim is cheaper to explain than
     a duplicate e-mail.
     """
-    claimed = await storage.reports.record_delivery(
-        user_id, report_date, CHANNEL_EMAIL, 'pending'
-    )
+    claimed = await storage.reports.record_delivery(user_id, report_date, CHANNEL_EMAIL, 'pending')
     if not claimed:
         logger.debug('Report already delivered: user=%s date=%s', user_id, report_date.isoformat())
         return {'sent': False, 'reason': 'already_delivered'}

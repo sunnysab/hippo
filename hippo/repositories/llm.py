@@ -67,9 +67,7 @@ class LlmProviderRepository:
 
     async def get_default(self) -> dict[str, Any] | None:
         async with self._conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(
-                f'SELECT {_COLUMNS} FROM llm_provider WHERE is_default AND enabled LIMIT 1'
-            )
+            await cur.execute(f'SELECT {_COLUMNS} FROM llm_provider WHERE is_default AND enabled LIMIT 1')
             row = await cur.fetchone()
         return dict(row) if row else None
 

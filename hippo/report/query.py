@@ -23,7 +23,7 @@ def resolve_timezone(name: str | None) -> ZoneInfo:
     """Return the zone, falling back rather than failing a scheduled run."""
     try:
         return ZoneInfo(name or DEFAULT_TIMEZONE)
-    except (ZoneInfoNotFoundError, ValueError):
+    except ZoneInfoNotFoundError, ValueError:
         return ZoneInfo(DEFAULT_TIMEZONE)
 
 
@@ -164,7 +164,7 @@ class ReportRepository:
                 LEFT JOIN accounts ac ON ac.biz = a.biz
                 LEFT JOIN account_groups g ON g.id = s.group_id
                 LEFT JOIN article_read ar ON ar.article_pk = a.id AND ar.user_id = s.user_id
-                WHERE {" AND ".join(clauses)}
+                WHERE {' AND '.join(clauses)}
                 ORDER BY a.publish_at DESC, a.id DESC
                 """,
                 params,
