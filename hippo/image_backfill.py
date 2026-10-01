@@ -189,7 +189,7 @@ async def backfill_article_images(
                         try:
                             if error:
                                 raise RuntimeError(error)
-                            image_store.store(
+                            await image_store.store(
                                 biz=biz,
                                 article_id=article_id,
                                 orig_url=str(orig_url),
@@ -199,7 +199,7 @@ async def backfill_article_images(
                             updated += 1
                         except Exception as exc:
                             failed += 1
-                            image_store.mark_failed(
+                            await image_store.mark_failed(
                                 biz=biz,
                                 article_id=article_id,
                                 orig_url=str(orig_url),

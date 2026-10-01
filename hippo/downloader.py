@@ -386,7 +386,7 @@ class ImageDownloadManager:
 
     async def _record_failure(self, *, article: ArticleRecord, orig_url: str, reason: str) -> None:
         if self._image_store and orig_url:
-            self._image_store.mark_failed(
+            await self._image_store.mark_failed(
                 biz=article.biz,
                 article_id=article.article_id,
                 orig_url=orig_url,
@@ -450,7 +450,7 @@ class ImageDownloadManager:
                 try:
                     data, content_type = await self._client.download_binary_with_type(resolved_url, referer=referer)
                     if self._image_store and orig_url:
-                        self._image_store.store(
+                        await self._image_store.store(
                             biz=article.biz,
                             article_id=article.article_id,
                             orig_url=orig_url,
@@ -648,7 +648,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                 try:
                     article_ids = [article.article_id for article in articles_list]
                     if article_ids:
-                        content_ids = set(get_content_ids(articles_list[0].biz, article_ids))
+                        content_ids = set(await get_content_ids(articles_list[0].biz, article_ids))
                 except Exception as exc:
                     logger.debug('Failed to query content IDs: %s', exc)
                     content_ids = None
@@ -661,7 +661,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                             progress.update(1)
                         continue
                 else:
-                    if self._is_downloaded(article):
+                    if await self._is_downloaded(article):
                         skipped += 1
                         if progress is not None:
                             progress.update(1)
@@ -680,7 +680,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                 filtered: list[ArticleRecord] = []
                 for biz, group in biz_groups.items():
                     group_ids = [a.article_id for a in group]
-                    within_limit = download_attempts.get_articles_within_limit(
+                    within_limit = await download_attempts.get_articles_within_limit(
                         biz, group_ids, max_attempts=max_download_attempts
                     )
                     blocked_count = len(group) - len(within_limit)
@@ -708,7 +708,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                 download_attempts = getattr(self.storage, 'download_attempts', None)
                 if download_attempts is not None:
                     try:
-                        download_attempts.increment_attempt(article.biz, article.article_id, error)
+                        await download_attempts.increment_attempt(article.biz, article.article_id, error)
                     except Exception as exc:
                         logger.debug('Failed to record download attempt: %s', exc)
 
@@ -836,10 +836,10 @@ class ArticleDownloader(AbstractAsyncContextManager):
         )
         transaction = getattr(self.storage, 'transaction', None)
         if callable(transaction):
-            with transaction():
-                upsert_account(credential)
+            async with transaction():
+                await upsert_account(credential)
         else:
-            upsert_account(credential)
+            await upsert_account(credential)
 
     async def _download_with_retry(
         self,
@@ -943,7 +943,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         url_map: dict[str, str],
         content_title: str | None = None,
         item_show_type: int | None = None,
-    ) -> None:
+    ) -> int | None:
         if not self.storage:
             return
         repo = getattr(self.storage, 'articles', None)
@@ -998,7 +998,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
 
         if hasattr(self.storage, 'transaction'):
             async with self.storage.transaction():
-                article_pk = save_article_content(
+                article_pk = await save_article_content(
                     article,
                     url_token=url_token,
                     title=content_title or title or article.title,
@@ -1009,7 +1009,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
                     images=images,
                 )
         else:
-            article_pk = save_article_content(
+            article_pk = await save_article_content(
                 article,
                 url_token=url_token,
                 title=content_title or title or article.title,
@@ -1021,13 +1021,13 @@ class ArticleDownloader(AbstractAsyncContextManager):
             )
         return article_pk
 
-    def _is_downloaded(self, article: ArticleRecord) -> bool:
+    async def _is_downloaded(self, article: ArticleRecord) -> bool:
         if self.storage and os.environ.get('HIPPO_PG_DSN'):
             repo = getattr(self.storage, 'articles', None)
             has_content = getattr(repo, 'has_article_content', None) if repo else None
             if callable(has_content):
                 try:
-                    return bool(has_content(article.biz, article.article_id))
+                    return bool(await has_content(article.biz, article.article_id))
                 except Exception:
                     return False
         return False
