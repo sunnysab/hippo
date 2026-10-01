@@ -36,7 +36,7 @@ def _iter_images(
     query = (
         'SELECT id, content_type, data '
         'FROM article_images '
-        'WHERE data IS NOT NULL AND (s3_key IS NULL OR s3_key = \'\') '
+        "WHERE data IS NOT NULL AND (s3_key IS NULL OR s3_key = '') "
         'ORDER BY id ASC'
     )
     params: list = []
@@ -53,11 +53,7 @@ def _iter_images(
 
 
 def _count_images(storage: PostgresStorage) -> int:
-    query = (
-        'SELECT COUNT(1) '
-        'FROM article_images '
-        'WHERE data IS NOT NULL AND (s3_key IS NULL OR s3_key = \'\')'
-    )
+    query = "SELECT COUNT(1) FROM article_images WHERE data IS NOT NULL AND (s3_key IS NULL OR s3_key = '')"
     with storage.conn.cursor() as cur:
         cur.execute(query)
         row = cur.fetchone()
@@ -72,17 +68,9 @@ def _update_s3_key(
     prune_db: bool,
 ) -> None:
     if prune_db:
-        query = (
-            'UPDATE article_images '
-            'SET s3_key = %s, data = NULL, updated_at = %s '
-            'WHERE id = %s'
-        )
+        query = 'UPDATE article_images SET s3_key = %s, data = NULL, updated_at = %s WHERE id = %s'
     else:
-        query = (
-            'UPDATE article_images '
-            'SET s3_key = %s, updated_at = %s '
-            'WHERE id = %s'
-        )
+        query = 'UPDATE article_images SET s3_key = %s, updated_at = %s WHERE id = %s'
     with storage.conn.cursor() as cur:
         cur.execute(query, (s3_key, _utc_now(), image_id))
     storage.conn.commit()
@@ -238,9 +226,7 @@ def main() -> int:
         workers_list: list[threading.Thread] = []
         with tqdm(total=total, desc='Migrate images', unit='img') as bar:
             for worker_id in range(1, workers + 1):
-                t = threading.Thread(
-                    target=_worker_loop, args=(worker_id, q, total, bar), daemon=True
-                )
+                t = threading.Thread(target=_worker_loop, args=(worker_id, q, total, bar), daemon=True)
                 t.start()
                 workers_list.append(t)
 

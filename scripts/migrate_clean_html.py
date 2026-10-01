@@ -29,9 +29,7 @@ SOURCE = 'rendered'
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--pg-dsn', default=os.environ.get('HIPPO_PG_DSN'), help='默认取 HIPPO_PG_DSN')
     p.add_argument('--batch-size', type=int, default=2000, help='每批行数（默认 2000）')
     p.add_argument('--limit', type=int, default=None, help='本次最多搬多少行')
@@ -56,8 +54,7 @@ def read_cursor(conn) -> int:
 def save_cursor(conn, value: int) -> None:
     with conn.cursor() as cur:
         cur.execute(
-            'insert into meta(key, value) values (%s, %s) '
-            'on conflict (key) do update set value = excluded.value',
+            'insert into meta(key, value) values (%s, %s) on conflict (key) do update set value = excluded.value',
             (CURSOR_KEY, str(value)),
         )
 
@@ -76,7 +73,7 @@ def pending_count(conn, cap: int = 100_000) -> int:
 def migrated_count(conn) -> int:
     with conn.cursor() as cur:
         cur.execute(
-            "select count(*) from article_document where source = %s and raw_html is not null",
+            'select count(*) from article_document where source = %s and raw_html is not null',
             (SOURCE,),
         )
         return int(cur.fetchone()[0])

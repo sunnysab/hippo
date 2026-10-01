@@ -62,9 +62,7 @@ async def main() -> int:
             enable_image_worker=image_service is not None,
         )
         try:
-            sync = WeixinArticleSync(
-                storage=storage, source=source, downloader=downloader, batch_size=args.batch_size
-            )
+            sync = WeixinArticleSync(storage=storage, source=source, downloader=downloader, batch_size=args.batch_size)
             listed = await sync.sync_account(biz=args.biz, source_key=args.key, pages=args.pages)
             print(f'列表 {listed.listed} 篇，新入队 {listed.enqueued} 条')
             drained = await sync.drain(limit=args.limit)

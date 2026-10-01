@@ -37,15 +37,11 @@ async def main() -> int:
         print('缺少 HIPPO_PG_DSN / --pg-dsn', file=sys.stderr)
         return 2
     storage = PostgresStorage(args.pg_dsn)
-    query = (
-        "select biz, nickname, coalesce(alias, '') from accounts where not is_disabled "
-        'order by biz'
-    )
+    query = "select biz, nickname, coalesce(alias, '') from accounts where not is_disabled order by biz"
     params: tuple = ()
     if not args.all:
         query = (
-            "select biz, nickname, coalesce(alias, '') from accounts where not is_disabled "
-            'order by random() limit %s'
+            "select biz, nickname, coalesce(alias, '') from accounts where not is_disabled order by random() limit %s"
         )
         params = (args.sample,)
     with storage.conn.cursor() as cur:

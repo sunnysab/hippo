@@ -63,7 +63,7 @@ async def follow_all(dsn: str, *, sleep_seconds: float, limit: int | None, dry_r
     log(f'待关注 {len(rows)} 个，每个间隔 {sleep_seconds}s')
     if dry_run:
         for row in rows:
-            log(f"DRY-RUN {row['nickname']} {row['gh_id']}")
+            log(f'DRY-RUN {row["nickname"]} {row["gh_id"]}')
         return len(rows)
 
     sys.path.insert(0, os.environ['WEIXIN_SDK_PATH'])
@@ -102,9 +102,7 @@ def main() -> int:
     if not args.pg_dsn:
         log('缺少 HIPPO_PG_DSN / --pg-dsn')
         return 2
-    return asyncio.run(
-        follow_all(args.pg_dsn, sleep_seconds=args.sleep, limit=args.limit, dry_run=args.dry_run)
-    )
+    return asyncio.run(follow_all(args.pg_dsn, sleep_seconds=args.sleep, limit=args.limit, dry_run=args.dry_run))
 
 
 if __name__ == '__main__':

@@ -59,10 +59,10 @@ def run(dry_run: bool = True) -> None:
         rows = cur.fetchall()
 
         if not rows:
-            print("No rows with HTML entities found.")
+            print('No rows with HTML entities found.')
             return
 
-        print(f"Found {len(rows)} row(s) with HTML entities:\n")
+        print(f'Found {len(rows)} row(s) with HTML entities:\n')
 
         updates: list[tuple[str, str | None, str | None, int]] = []
 
@@ -75,16 +75,16 @@ def run(dry_run: bool = True) -> None:
             changed = False
 
             if new_title != title:
-                print(f"  id={pk} title:  {title!r}")
-                print(f"             ->  {new_title!r}")
+                print(f'  id={pk} title:  {title!r}')
+                print(f'             ->  {new_title!r}')
                 changed = True
             if new_author != author:
-                print(f"  id={pk} author: {author!r}")
-                print(f"             ->  {new_author!r}")
+                print(f'  id={pk} author: {author!r}')
+                print(f'             ->  {new_author!r}')
                 changed = True
             if new_digest != digest:
-                print(f"  id={pk} digest: {digest!r}")
-                print(f"             ->  {new_digest!r}")
+                print(f'  id={pk} digest: {digest!r}')
+                print(f'             ->  {new_digest!r}')
                 changed = True
 
             if changed:
@@ -92,26 +92,26 @@ def run(dry_run: bool = True) -> None:
                 updates.append((new_title, new_author, new_digest, pk))
 
         if not updates:
-            print("No changes needed (all entities already match unescaped form).")
+            print('No changes needed (all entities already match unescaped form).')
             return
 
         if dry_run:
-            print(f"DRY RUN: {len(updates)} row(s) would be updated. Run with --execute to apply.")
+            print(f'DRY RUN: {len(updates)} row(s) would be updated. Run with --execute to apply.')
             return
 
         for new_title, new_author, new_digest, pk in updates:
             cur.execute(SQL_UPDATE, (new_title, new_author, new_digest, pk))
 
         conn.commit()
-        print(f"Fixed {len(updates)} row(s).")
+        print(f'Fixed {len(updates)} row(s).')
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Fix HTML entities in article fields")
-    parser.add_argument("--execute", action="store_true", help="Apply fixes (default: dry-run)")
+    parser = argparse.ArgumentParser(description='Fix HTML entities in article fields')
+    parser.add_argument('--execute', action='store_true', help='Apply fixes (default: dry-run)')
     args = parser.parse_args()
     run(dry_run=not args.execute)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
