@@ -16,8 +16,17 @@ def _user(user_id: int = 1, role: str = 'admin') -> SimpleNamespace:
     return SimpleNamespace(id=user_id, username=f'u{user_id}', role=role)
 
 
+class _NullTransaction:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 def _storage(*, target: SimpleNamespace | None = None) -> SimpleNamespace:
     return SimpleNamespace(
+        transaction=lambda: _NullTransaction(),
         users=SimpleNamespace(
             get=AsyncMock(return_value=target),
             set_disabled=AsyncMock(),

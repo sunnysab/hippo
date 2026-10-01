@@ -77,20 +77,21 @@ async def create_user(
         raise ApiError('邮箱已被使用', status=409)
 
     password_hash = await asyncio.to_thread(hash_password, password)
-    user = await storage.users.create(
-        username=username,
-        password_hash=password_hash,
-        email=email,
-        role=role,
-        email_verified=email_verified,
-    )
-    await storage.audit.record(
-        actor.id,
-        'admin.user_created',
-        target=username,
-        detail={'role': role, 'email': email},
-        ip=client_ip(request),
-    )
+    async with storage.transaction():
+        user = await storage.users.create(
+            username=username,
+            password_hash=password_hash,
+            email=email,
+            role=role,
+            email_verified=email_verified,
+        )
+        await storage.audit.record(
+            actor.id,
+            'admin.user_created',
+            target=username,
+            detail={'role': role, 'email': email},
+            ip=client_ip(request),
+        )
     return {'id': user.id, 'username': user.username, 'role': user.role}
 
 
@@ -109,45 +110,46 @@ async def update_user(
         raise ApiError('用户不存在', status=404)
 
     changes: dict[str, Any] = {}
-    if 'is_disabled' in body:
-        disabled = bool(body['is_disabled'])
-        if disabled:
-            _guard_self(actor, target_id, '禁用')
-            await storage.sessions.revoke_all_for_user(target_id)
-        await storage.users.set_disabled(target_id, disabled)
-        changes['is_disabled'] = disabled
+    async with storage.transaction():
+        if 'is_disabled' in body:
+            disabled = bool(body['is_disabled'])
+            if disabled:
+                _guard_self(actor, target_id, '禁用')
+                await storage.sessions.revoke_all_for_user(target_id)
+            await storage.users.set_disabled(target_id, disabled)
+            changes['is_disabled'] = disabled
 
-    if 'role' in body:
-        role = str(body['role'])
-        if role not in _ROLES:
-            raise ApiError(f'未知角色: {role}', status=400)
-        if role != 'admin':
-            _guard_self(actor, target_id, '降级')
-        await storage.users.set_role(target_id, role)
-        changes['role'] = role
+        if 'role' in body:
+            role = str(body['role'])
+            if role not in _ROLES:
+                raise ApiError(f'未知角色: {role}', status=400)
+            if role != 'admin':
+                _guard_self(actor, target_id, '降级')
+            await storage.users.set_role(target_id, role)
+            changes['role'] = role
 
-    if 'email_verified' in body:
-        verified = bool(body['email_verified'])
-        await storage.users.set_email_verified(target_id, verified)
-        changes['email_verified'] = verified
+        if 'email_verified' in body:
+            verified = bool(body['email_verified'])
+            await storage.users.set_email_verified(target_id, verified)
+            changes['email_verified'] = verified
 
-    if 'timezone' in body:
-        timezone = str(body['timezone'])
-        if not timezone:
-            raise ApiError('时区不能为空', status=400)
-        await storage.users.set_timezone(target_id, timezone)
-        changes['timezone'] = timezone
+        if 'timezone' in body:
+            timezone = str(body['timezone'])
+            if not timezone:
+                raise ApiError('时区不能为空', status=400)
+            await storage.users.set_timezone(target_id, timezone)
+            changes['timezone'] = timezone
 
-    if not changes:
-        raise ApiError('没有需要更新的字段', status=400)
+        if not changes:
+            raise ApiError('没有需要更新的字段', status=400)
 
-    await storage.audit.record(
-        actor.id,
-        'admin.user_updated',
-        target=target.username,
-        detail=changes,
-        ip=client_ip(request),
-    )
+        await storage.audit.record(
+            actor.id,
+            'admin.user_updated',
+            target=target.username,
+            detail=changes,
+            ip=client_ip(request),
+        )
     return {'id': target_id, 'changes': changes}
 
 
@@ -169,14 +171,15 @@ async def reset_password(
         raise ApiError('用户不存在', status=404)
 
     password_hash = await asyncio.to_thread(hash_password, password)
-    await storage.users.set_password(target_id, password_hash)
-    await storage.sessions.revoke_all_for_user(target_id)
-    await storage.audit.record(
-        actor.id,
-        'admin.password_reset',
-        target=target.username,
-        ip=client_ip(request),
-    )
+    async with storage.transaction():
+        await storage.users.set_password(target_id, password_hash)
+        await storage.sessions.revoke_all_for_user(target_id)
+        await storage.audit.record(
+            actor.id,
+            'admin.password_reset',
+            target=target.username,
+            ip=client_ip(request),
+        )
 
 
 @router.delete('/admin/user/{user_id}/session', status_code=status.HTTP_204_NO_CONTENT)
@@ -191,14 +194,15 @@ async def revoke_sessions(
     target = await storage.users.get(target_id)
     if target is None:
         raise ApiError('用户不存在', status=404)
-    revoked = await storage.sessions.revoke_all_for_user(target_id)
-    await storage.audit.record(
-        actor.id,
-        'admin.sessions_revoked',
-        target=target.username,
-        detail={'count': revoked},
-        ip=client_ip(request),
-    )
+    async with storage.transaction():
+        revoked = await storage.sessions.revoke_all_for_user(target_id)
+        await storage.audit.record(
+            actor.id,
+            'admin.sessions_revoked',
+            target=target.username,
+            detail={'count': revoked},
+            ip=client_ip(request),
+        )
 
 
 async def _username_taken(storage: PostgresStorage, username: str) -> bool:
@@ -231,12 +235,13 @@ async def update_site_settings(
     settings = await set_site_settings(storage, body)
     changed = {key: value for key, value in settings.items() if before.get(key) != value}
     if changed:
-        await storage.audit.record(
-            actor.id,
-            'admin.site_settings_updated',
-            detail=changed,
-            ip=client_ip(request),
-        )
+        async with storage.transaction():
+            await storage.audit.record(
+                actor.id,
+                'admin.site_settings_updated',
+                detail=changed,
+                ip=client_ip(request),
+            )
     return settings
 
 
