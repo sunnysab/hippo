@@ -4,7 +4,7 @@ import { escapeHtml, formatRelativeTime } from '../../utils/format';
 import { getSyncTone } from '../../utils/sync';
 
 const CountRow = ({ label, value, tone }: { label: string; value: number; tone: string }) => (
-  <div className={`sync-progress-item ${tone ? `sync-tone-${tone}` : ''}`}>
+  <div className={`sync-progress-item sync-tone-${getSyncTone(tone)}`}>
     <div className="sync-progress-copy">
       <div className="sync-progress-title-row">
         <div className="account-name">{label}</div>

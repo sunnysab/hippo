@@ -51,15 +51,19 @@
   --accent-mist: rgba(17, 17, 17, 0.06);
   --accent-ink: #ffffff;
 
-  /* Semantic colours are for text, borders and status dots — never big fills. */
+  /* Status scale. Each role ships one readable foreground plus one tint; the
+     tint is mixed from the role colour and the current surface, so a single
+     definition serves both themes. Foregrounds colour text, borders and dots;
+     tints fill chips and notice bars. Never a big fill. */
   --info: #2f638f;
-  --info-soft: #e8e8e8;
   --success: #1f6f43;
-  --success-soft: #e8e8e8;
   --warning: #8a5a00;
-  --warning-soft: #e8e8e8;
   --danger: #b3261e;
-  --danger-soft: #e8e8e8;
+
+  --info-soft: color-mix(in srgb, var(--info) 12%, var(--surface));
+  --success-soft: color-mix(in srgb, var(--success) 12%, var(--surface));
+  --warning-soft: color-mix(in srgb, var(--warning) 14%, var(--surface));
+  --danger-soft: color-mix(in srgb, var(--danger) 12%, var(--surface));
 
   /* Flat by construction: shadows are deliberately disabled. */
   --shadow-xs: none;
@@ -135,10 +139,6 @@
   --success: #6fbf8f;
   --warning: #d4a24c;
   --danger: #e0776e;
-  --info-soft: #202020;
-  --success-soft: #202020;
-  --warning-soft: #202020;
-  --danger-soft: #202020;
 
   --code-bg: #161b22;
   --code-text: #e6edf3;
@@ -187,9 +187,5 @@
     --success: #6fbf8f;
     --warning: #d4a24c;
     --danger: #e0776e;
-    --info-soft: #202020;
-    --success-soft: #202020;
-    --warning-soft: #202020;
-    --danger-soft: #202020;
   }
 }

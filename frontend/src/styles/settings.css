@@ -135,6 +135,8 @@
   background: none;
 }
 
+/* Card state mirrors the badge tone, so the border and the label can never
+   disagree. The status vocabulary is the one getSyncTone() maps. */
 .login-card[data-status='waiting'],
 .login-card[data-status='scanned'],
 .login-card[data-status='starting'],
@@ -142,15 +144,19 @@
   border-color: var(--info);
 }
 
+.login-card[data-status='online'],
 .login-card[data-status='success'],
 .login-card[data-status='ok'] {
   border-color: var(--success);
 }
 
+.login-card[data-status='logged_out'],
 .login-card[data-status='missing'] {
   border-color: var(--warning);
 }
 
+.login-card[data-status='expired'],
+.login-card[data-status='unreachable'],
 .login-card[data-status='error'] {
   border-color: var(--danger);
 }
@@ -419,18 +425,22 @@
 }
 
 .sync-tone-success.sync-status-badge {
+  background: var(--success-soft);
   color: var(--success);
 }
 
 .sync-tone-danger.sync-status-badge {
+  background: var(--danger-soft);
   color: var(--danger);
 }
 
 .sync-tone-info.sync-status-badge {
+  background: var(--info-soft);
   color: var(--info);
 }
 
 .sync-tone-warning.sync-status-badge {
+  background: var(--warning-soft);
   color: var(--warning);
 }
 
@@ -446,6 +456,24 @@
 
 .sync-queue .sync-progress-title-row {
   justify-content: space-between;
+}
+
+/* Queue rows already carry a tone; show it on the count rather than on the
+   row chrome, which would fight the list dividers. */
+.sync-progress-item.sync-tone-success .meta-count {
+  color: var(--success);
+}
+
+.sync-progress-item.sync-tone-danger .meta-count {
+  color: var(--danger);
+}
+
+.sync-progress-item.sync-tone-info .meta-count {
+  color: var(--info);
+}
+
+.sync-progress-item.sync-tone-warning .meta-count {
+  color: var(--warning);
 }
 
 @media (max-width: 1180px) {
