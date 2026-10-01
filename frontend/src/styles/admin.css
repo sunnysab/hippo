@@ -93,8 +93,8 @@
 }
 
 .admin-nav-item.is-active {
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: var(--surface-item-active);
+  color: var(--text);
 }
 
 .admin-mono {

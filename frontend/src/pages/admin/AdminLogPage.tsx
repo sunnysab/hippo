@@ -177,7 +177,10 @@ export function AdminLogPage() {
                       <td>{entry.username ?? (entry.user_id ?? '—')}</td>
                       <td className="admin-mono">{entry.action}</td>
                       <td>{entry.target ?? '—'}</td>
-                      <td className="admin-mono admin-detail">
+                      <td
+                        className="admin-mono admin-detail"
+                        title={entry.detail ? JSON.stringify(entry.detail) : undefined}
+                      >
                         {entry.detail ? JSON.stringify(entry.detail) : '—'}
                       </td>
                       <td className="admin-mono">{entry.ip ?? '—'}</td>

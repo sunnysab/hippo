@@ -195,7 +195,7 @@ export function ReportPage() {
         )}
       </section>
 
-      <section className="panel">
+      <section className="panel report-settings-panel">
         <div className="panel-header">
           <h2 className="panel-title">{t('report.settingTitle', '日报设置')}</h2>
         </div>
