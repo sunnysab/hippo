@@ -217,7 +217,11 @@ async def rebuild_counts(
     if not resolved_dsn:
         typer.echo('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
         raise typer.Exit(code=2)
-    async with PostgresStorage(resolved_dsn, auto_init=False) as storage, storage.transaction(), storage.conn.cursor() as cur:
+    async with (
+        PostgresStorage(resolved_dsn, auto_init=False) as storage,
+        storage.transaction(),
+        storage.conn.cursor() as cur,
+    ):
         await cur.execute('SELECT hippo_rebuild_article_counts()')
     typer.echo('Rebuilt cached article counts.')
 
@@ -753,9 +757,7 @@ async def migrate_multiuser(
         async with storage.transaction():
             groups = await storage.subscriptions.claim_orphan_groups(user.id)
             subscriptions = await storage.subscriptions.backfill_from_accounts(user.id)
-    typer.echo(
-        f'Assigned {groups} group(s) and created {subscriptions} subscription(s) for {owner}.'
-    )
+    typer.echo(f'Assigned {groups} group(s) and created {subscriptions} subscription(s) for {owner}.')
 
 
 def _parse_since(value: str | None) -> int | None:
@@ -1172,7 +1174,9 @@ async def list_articles(
     async with open_storage() as storage:
         user = await _cli_user(storage, user_name)
         followed = await storage.accounts.list_followed_accounts(user.id)
-        account = next((item for item in followed if item.biz == biz), None) if biz else (followed[0] if followed else None)
+        account = (
+            next((item for item in followed if item.biz == biz), None) if biz else (followed[0] if followed else None)
+        )
         if account is None:
             typer.echo('未找到账号，请先执行 `account sync`')
             raise typer.Exit(code=1)

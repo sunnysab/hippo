@@ -260,9 +260,7 @@ class ArticleSyncService:
                 consecutive_failures += 1
                 job_observer.on_account_done(result, summary)
                 if consecutive_failures >= MAX_CONSECUTIVE_LIST_FAILURES:
-                    job_observer.on_log(
-                        f'连续 {consecutive_failures} 个账号失败，中止本轮（可能被限流），留到下一轮'
-                    )
+                    job_observer.on_log(f'连续 {consecutive_failures} 个账号失败，中止本轮（可能被限流），留到下一轮')
                     break
                 continue
             consecutive_failures = 0
@@ -380,9 +378,7 @@ async def run_sync_job(
                     if error is None and settings.get('download_content'):
                         job_observer.on_log('正文阶段：处理待抓队列')
                         drained = await app.weixin_sync.drain(limit=settings.get('content_limit') or JOB_BODY_BATCH)
-                        job_observer.on_log(
-                            f'正文落库 {drained.ingested} 篇，失败 {drained.failed} 篇'
-                        )
+                        job_observer.on_log(f'正文落库 {drained.ingested} 篇，失败 {drained.failed} 篇')
                         report = replace(report, downloaded=report.downloaded + drained.ingested)
                     if _get_cancel_event().is_set() and not error:
                         error = 'Cancelled by user'

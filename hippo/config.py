@@ -29,7 +29,6 @@ DEFAULT_WINDOW_END_HOUR: Final = 24
 DEFAULT_MAX_CONTENT_DOWNLOAD_ATTEMPTS: Final = 3
 
 
-
 def _env_int(name: str, default: int | None = None) -> int | None:
     raw = os.environ.get(name)
     if raw is None:

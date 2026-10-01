@@ -46,11 +46,7 @@ def _env_flag(name: str, default: bool) -> bool:
 
 def otlp_endpoint() -> str | None:
     """Return the configured OTLP endpoint, if any."""
-    return (
-        os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT')
-        or os.environ.get('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT')
-        or None
-    )
+    return os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT') or os.environ.get('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT') or None
 
 
 def telemetry_enabled() -> bool:

@@ -687,7 +687,9 @@ class ArticleDownloader(AbstractAsyncContextManager):
                     if blocked_count > 0:
                         logger.info(
                             'Skipping %d articles for %s in download_many (exceeded %d attempts)',
-                            blocked_count, biz, max_download_attempts,
+                            blocked_count,
+                            biz,
+                            max_download_attempts,
                         )
                         skipped += blocked_count
                         if progress is not None:

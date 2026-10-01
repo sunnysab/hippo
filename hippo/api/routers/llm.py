@@ -152,9 +152,7 @@ async def test_provider(
     started = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
-            response = await client.get(
-                url, headers={'Authorization': f'Bearer {provider["api_key"]}'}
-            )
+            response = await client.get(url, headers={'Authorization': f'Bearer {provider["api_key"]}'})
         latency_ms = round((time.perf_counter() - started) * 1000)
         if response.status_code >= 400:
             return {

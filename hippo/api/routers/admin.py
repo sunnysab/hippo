@@ -346,11 +346,7 @@ async def signoz_link(
     since = until - timedelta(minutes=minutes)
     start_ms = int(since.timestamp() * 1000)
     end_ms = int(until.timestamp() * 1000)
-    url = (
-        f'{SIGNOZ_URL}/logs?'
-        f'&startTime={start_ms}&endTime={end_ms}'
-        f'&service.name=hippo'
-    )
+    url = f'{SIGNOZ_URL}/logs?&startTime={start_ms}&endTime={end_ms}&service.name=hippo'
     return {'available': True, 'url': url, 'since': since.isoformat(), 'until': until.isoformat()}
 
 
