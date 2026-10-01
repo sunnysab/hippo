@@ -45,32 +45,33 @@ async def main() -> int:
         print('缺少 HIPPO_PG_DSN / --pg-dsn', file=sys.stderr)
         return 2
 
-    storage = PostgresStorage(args.pg_dsn)
-    image_service = None
-    try:
-        image_service = ArticleImageService(
-            image_repo=storage.images, file_storage=S3FileStorage(), transaction=storage.transaction
-        )
-    except FileStorageError as exc:
-        print(f'未配置对象存储，跳过图片下载：{exc}', file=sys.stderr)
-
-    async with MPClient() as client, WeixinSource() as source:
-        downloader = ArticleDownloader(
-            client=client,
-            storage=storage,
-            image_store=image_service,
-            enable_image_worker=image_service is not None,
-        )
+    async with PostgresStorage(args.pg_dsn) as storage:
+        image_service = None
         try:
-            sync = WeixinArticleSync(storage=storage, source=source, downloader=downloader, batch_size=args.batch_size)
-            listed = await sync.sync_account(biz=args.biz, source_key=args.key, pages=args.pages)
-            print(f'列表 {listed.listed} 篇，新入队 {listed.enqueued} 条')
-            drained = await sync.drain(limit=args.limit)
-            print(f'正文：落库 {drained.ingested} 篇，失败 {drained.failed} 篇')
-            print(f'队列状态：{storage.article_queue.stats()}')
-        finally:
-            await downloader.aclose()
-    storage.close()
+            image_service = ArticleImageService(
+                image_repo=storage.images, file_storage=S3FileStorage(), transaction=storage.transaction
+            )
+        except FileStorageError as exc:
+            print(f'未配置对象存储，跳过图片下载：{exc}', file=sys.stderr)
+
+        async with MPClient() as client, WeixinSource() as source:
+            downloader = ArticleDownloader(
+                client=client,
+                storage=storage,
+                image_store=image_service,
+                enable_image_worker=image_service is not None,
+            )
+            try:
+                sync = WeixinArticleSync(
+                    storage=storage, source=source, downloader=downloader, batch_size=args.batch_size
+                )
+                listed = await sync.sync_account(biz=args.biz, source_key=args.key, pages=args.pages)
+                print(f'列表 {listed.listed} 篇，新入队 {listed.enqueued} 条')
+                drained = await sync.drain(limit=args.limit)
+                print(f'正文：落库 {drained.ingested} 篇，失败 {drained.failed} 篇')
+                print(f'队列状态：{await storage.article_queue.stats()}')
+            finally:
+                await downloader.aclose()
     return 0
 
 

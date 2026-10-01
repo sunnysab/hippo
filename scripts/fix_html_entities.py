@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import html
 
 from hippo.storage import open_storage
@@ -50,67 +51,67 @@ def needs_fix(value: str | None) -> bool:
     return '&' in value and value != full_unescape(value)
 
 
-def run(dry_run: bool = True) -> None:
-    storage = open_storage(auto_init=False)
-    conn = storage.conn
+async def run(dry_run: bool = True) -> None:
+    async with open_storage(auto_init=False) as storage:
+        conn = storage.conn
 
-    with conn.cursor() as cur:
-        cur.execute(SQL_FIND)
-        rows = cur.fetchall()
+        async with conn.cursor() as cur:
+            await cur.execute(SQL_FIND)
+            rows = await cur.fetchall()
 
-        if not rows:
-            print('No rows with HTML entities found.')
-            return
+            if not rows:
+                print('No rows with HTML entities found.')
+                return
 
-        print(f'Found {len(rows)} row(s) with HTML entities:\n')
+            print(f'Found {len(rows)} row(s) with HTML entities:\n')
 
-        updates: list[tuple[str, str | None, str | None, int]] = []
+            updates: list[tuple[str, str | None, str | None, int]] = []
 
-        for row in rows:
-            pk, title, author, digest = row
-            new_title = full_unescape(title) if needs_fix(title) else title
-            new_author = full_unescape(author) if needs_fix(author) else author
-            new_digest = full_unescape(digest) if needs_fix(digest) else digest
+            for row in rows:
+                pk, title, author, digest = row
+                new_title = full_unescape(title) if needs_fix(title) else title
+                new_author = full_unescape(author) if needs_fix(author) else author
+                new_digest = full_unescape(digest) if needs_fix(digest) else digest
 
-            changed = False
+                changed = False
 
-            if new_title != title:
-                print(f'  id={pk} title:  {title!r}')
-                print(f'             ->  {new_title!r}')
-                changed = True
-            if new_author != author:
-                print(f'  id={pk} author: {author!r}')
-                print(f'             ->  {new_author!r}')
-                changed = True
-            if new_digest != digest:
-                print(f'  id={pk} digest: {digest!r}')
-                print(f'             ->  {new_digest!r}')
-                changed = True
+                if new_title != title:
+                    print(f'  id={pk} title:  {title!r}')
+                    print(f'             ->  {new_title!r}')
+                    changed = True
+                if new_author != author:
+                    print(f'  id={pk} author: {author!r}')
+                    print(f'             ->  {new_author!r}')
+                    changed = True
+                if new_digest != digest:
+                    print(f'  id={pk} digest: {digest!r}')
+                    print(f'             ->  {new_digest!r}')
+                    changed = True
 
-            if changed:
-                print()
-                updates.append((new_title, new_author, new_digest, pk))
+                if changed:
+                    print()
+                    updates.append((new_title, new_author, new_digest, pk))
 
-        if not updates:
-            print('No changes needed (all entities already match unescaped form).')
-            return
+            if not updates:
+                print('No changes needed (all entities already match unescaped form).')
+                return
 
-        if dry_run:
-            print(f'DRY RUN: {len(updates)} row(s) would be updated. Run with --execute to apply.')
-            return
+            if dry_run:
+                print(f'DRY RUN: {len(updates)} row(s) would be updated. Run with --execute to apply.')
+                return
 
-        for new_title, new_author, new_digest, pk in updates:
-            cur.execute(SQL_UPDATE, (new_title, new_author, new_digest, pk))
+            for new_title, new_author, new_digest, pk in updates:
+                await cur.execute(SQL_UPDATE, (new_title, new_author, new_digest, pk))
 
-        conn.commit()
-        print(f'Fixed {len(updates)} row(s).')
+            await conn.commit()
+            print(f'Fixed {len(updates)} row(s).')
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='Fix HTML entities in article fields')
     parser.add_argument('--execute', action='store_true', help='Apply fixes (default: dry-run)')
     args = parser.parse_args()
-    run(dry_run=not args.execute)
+    asyncio.run(run(dry_run=not args.execute))
 
 
 if __name__ == '__main__':

@@ -36,7 +36,7 @@ async def main() -> int:
     if not args.pg_dsn:
         print('缺少 HIPPO_PG_DSN / --pg-dsn', file=sys.stderr)
         return 2
-    storage = PostgresStorage(args.pg_dsn)
+
     query = "select biz, nickname, coalesce(alias, '') from accounts where not is_disabled order by biz"
     params: tuple = ()
     if not args.all:
@@ -44,31 +44,32 @@ async def main() -> int:
             "select biz, nickname, coalesce(alias, '') from accounts where not is_disabled order by random() limit %s"
         )
         params = (args.sample,)
-    with storage.conn.cursor() as cur:
-        cur.execute(query, params)
-        rows = cur.fetchall()
 
     ok = 0
     empty_alias = 0
     failed: list[tuple[str, str, str]] = []
-    async with WeixinSource() as source:
-        for index, (biz, nickname, alias) in enumerate(rows):
-            if index:
-                await asyncio.sleep(args.sleep)
-            if not alias.strip():
-                empty_alias += 1
-                failed.append((nickname, '', 'alias 为空'))
-                continue
-            try:
-                listed = await source.list_articles(alias.strip(), biz, pages=1)
-            except Exception as exc:
-                failed.append((nickname, alias, str(exc)[:120]))
-                continue
-            if listed.items:
-                ok += 1
-            else:
-                failed.append((nickname, alias, '列表返回 0 篇'))
-    storage.close()
+    async with PostgresStorage(args.pg_dsn) as storage:
+        async with storage.conn.cursor() as cur:
+            await cur.execute(query, params)
+            rows = await cur.fetchall()
+
+        async with WeixinSource() as source:
+            for index, (biz, nickname, alias) in enumerate(rows):
+                if index:
+                    await asyncio.sleep(args.sleep)
+                if not alias.strip():
+                    empty_alias += 1
+                    failed.append((nickname, '', 'alias 为空'))
+                    continue
+                try:
+                    listed = await source.list_articles(alias.strip(), biz, pages=1)
+                except Exception as exc:
+                    failed.append((nickname, alias, str(exc)[:120]))
+                    continue
+                if listed.items:
+                    ok += 1
+                else:
+                    failed.append((nickname, alias, '列表返回 0 篇'))
 
     print(f'账号 {len(rows)} 个：成功 {ok}，alias 为空 {empty_alias}，失败 {len(failed) - empty_alias}')
     for nickname, alias, reason in failed[:20]:
