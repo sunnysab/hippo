@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import sys
@@ -66,10 +67,10 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def mark_skipped(storage: PostgresStorage, article_pk: int, reason: str) -> None:
+async def mark_skipped(storage: PostgresStorage, article_pk: int, reason: str) -> None:
     """记一笔不可重试的尝试，好让候选查询下次跳过它（否则会反复取到同一批）。"""
-    with storage.transaction(), storage.conn.cursor() as cur:
-        cur.execute(
+    async with storage.transaction(), storage.conn.cursor() as cur:
+        await cur.execute(
             """
             INSERT INTO article_download_attempts
                 (biz, article_id, attempts, last_error, last_attempt_at, created_at, error_type, retryable)
@@ -89,7 +90,7 @@ def log(message: str) -> None:
     print(f'[replay] {message}', file=sys.stderr, flush=True)
 
 
-def main() -> int:
+async def main() -> int:
     args = parse_args()
     if not args.pg_dsn:
         log('缺少 HIPPO_PG_DSN / --pg-dsn')
@@ -107,77 +108,76 @@ def main() -> int:
         params.append(args.slug)
     where = ' AND '.join(filters) if filters else 'TRUE'
 
-    storage = PostgresStorage(args.pg_dsn)
     done = failed = skipped = 0
-    cursor = 0
-    while args.limit is None or done + failed < args.limit:
-        batch = args.batch_size
-        if args.limit is not None:
-            batch = min(batch, args.limit - done - failed)
-        if batch <= 0:
-            break
-        query = BASE_SQL.format(filters=where)
-        with storage.conn.cursor() as cur:
-            cur.execute(query, (*params, cursor, batch))
-            rows = cur.fetchall()
-        storage.rollback()
-        if not rows:
-            break
-        cursor = int(rows[-1][0])
-
-        article_pks = [int(row[0]) for row in rows]
-        with storage.conn.cursor() as cur:
-            cur.execute(
-                'SELECT article_pk, id, orig_url FROM article_images WHERE article_pk = ANY(%s)',
-                (article_pks,),
-            )
-            image_rows = cur.fetchall()
-        storage.rollback()
-        image_ids: dict[int, dict[str, int]] = {}
-        for article_pk, image_id, orig_url in image_rows:
-            image_ids.setdefault(int(article_pk), {})[str(orig_url)] = int(image_id)
-
-        updates: list[tuple[str, str, int]] = []
-        for article_pk, raw_html in rows:
-            try:
-                markdown = _postprocess_markdown(markdownify(raw_html, heading_style='ATX'))
-                _title, _cover, blocks, body_markdown = _parse_markdown_blocks(markdown)
-                blocks = _attach_image_block_metadata(
-                    blocks,
-                    resolve_url=lambda value: value.strip() if isinstance(value, str) else None,
-                    image_id_by_url=image_ids.get(int(article_pk)),
-                )
-                updates.append((body_markdown, json.dumps(blocks, ensure_ascii=False), int(article_pk)))
-            except Exception as exc:
-                log(f'✗ 文章 {article_pk} 渲染失败：{exc}')
-                failed += 1
-
-        if args.check:
-            empty = len(rows) - len(updates)
-            log(f'check：本批 {len(rows)} 篇，可渲染 {len(updates)}，渲染为空 {empty}')
-            done += len(updates)
-            failed += empty
+    async with PostgresStorage(args.pg_dsn) as storage:
+        cursor = 0
+        while args.limit is None or done + failed < args.limit:
+            batch = args.batch_size
             if args.limit is not None:
+                batch = min(batch, args.limit - done - failed)
+            if batch <= 0:
                 break
-            continue
-        if args.dry_run:
-            log(f'dry-run：本批可更新 {len(updates)} 篇')
-            done += len(updates)
-            break
-        if updates:
-            with storage.transaction(), storage.conn.cursor() as cur:
-                cur.executemany(
-                    'UPDATE article_content SET content_markdown = %s, content_json = %s::jsonb, '
-                    'updated_at = NOW() WHERE article_pk = %s',
-                    updates,
-                )
-        done += len(updates)
-        log(f'已补 {done} 篇（失败 {failed}）')
+            query = BASE_SQL.format(filters=where)
+            async with storage.conn.cursor() as cur:
+                await cur.execute(query, (*params, cursor, batch))
+                rows = await cur.fetchall()
+            await storage.rollback()
+            if not rows:
+                break
+            cursor = int(rows[-1][0])
 
-    storage.close()
+            article_pks = [int(row[0]) for row in rows]
+            async with storage.conn.cursor() as cur:
+                await cur.execute(
+                    'SELECT article_pk, id, orig_url FROM article_images WHERE article_pk = ANY(%s)',
+                    (article_pks,),
+                )
+                image_rows = await cur.fetchall()
+            await storage.rollback()
+            image_ids: dict[int, dict[str, int]] = {}
+            for article_pk, image_id, orig_url in image_rows:
+                image_ids.setdefault(int(article_pk), {})[str(orig_url)] = int(image_id)
+
+            updates: list[tuple[str, str, int]] = []
+            for article_pk, raw_html in rows:
+                try:
+                    markdown = _postprocess_markdown(markdownify(raw_html, heading_style='ATX'))
+                    _title, _cover, blocks, body_markdown = _parse_markdown_blocks(markdown)
+                    blocks = await _attach_image_block_metadata(
+                        blocks,
+                        resolve_url=lambda value: value.strip() if isinstance(value, str) else None,
+                        image_id_by_url=image_ids.get(int(article_pk)),
+                    )
+                    updates.append((body_markdown, json.dumps(blocks, ensure_ascii=False), int(article_pk)))
+                except Exception as exc:
+                    log(f'✗ 文章 {article_pk} 渲染失败：{exc}')
+                    failed += 1
+
+            if args.check:
+                empty = len(rows) - len(updates)
+                log(f'check：本批 {len(rows)} 篇，可渲染 {len(updates)}，渲染为空 {empty}')
+                done += len(updates)
+                failed += empty
+                if args.limit is not None:
+                    break
+                continue
+            if args.dry_run:
+                log(f'dry-run：本批可更新 {len(updates)} 篇')
+                done += len(updates)
+                break
+            if updates:
+                async with storage.transaction(), storage.conn.cursor() as cur:
+                    await cur.executemany(
+                        'UPDATE article_content SET content_markdown = %s, content_json = %s::jsonb, '
+                        'updated_at = NOW() WHERE article_pk = %s',
+                        updates,
+                    )
+            done += len(updates)
+            log(f'已补 {done} 篇（失败 {failed}）')
+
     log(f'完成：补 {done} 篇，跳过 {skipped} 篇（渲染不出文字），失败 {failed} 篇')
     return 0
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    sys.exit(asyncio.run(main()))
