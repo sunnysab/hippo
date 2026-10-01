@@ -173,10 +173,14 @@ class WeixinSource:
         status = await self._bot.get_status()
         if status.get('logged_in'):
             return
+        if status.get('need_relogin'):
+            # 免扫重登已被微信侧拒（``auto_auth_rejected``）：再调 login_auto 只会重复失败，
+            # 直接按会话失效上报，调用方会暂停等人工扫码。
+            raise SessionExpiredError('daemon 登录态已失效（认证被拒），需要人工扫码重新登录')
         await self._bot.login_auto()
         status = await self._bot.get_status()
         if not status.get('logged_in'):
-            raise RuntimeError('daemon 未登录，且 login_auto 未成功（需要人工扫码）')
+            raise SessionExpiredError('daemon 未登录，且 login_auto 未成功（需要人工扫码）')
 
     async def _list_raw(self, source_key: str, pages: int) -> dict[str, Any]:
         """裸 RPC：响应顶层带着解析后的 ``biz``（``gh_…``），SDK 的高层封装会把它丢掉。"""
