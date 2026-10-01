@@ -241,6 +241,14 @@
   min-width: 0;
 }
 
+/* alias 是 `gh_...` 这种无空格长串，不截断会溢出格子压到右侧按钮上 */
+.search-meta .account-name,
+.search-meta .account-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .search-meta .account-sub {
   margin: 0;
 }
