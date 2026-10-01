@@ -5,6 +5,8 @@ export function AdminLayout() {
   const { t } = useI18n();
   const sections = [
     { key: 'user', label: t('admin.nav.user', '用户'), path: '/admin' },
+    { key: 'sync', label: t('admin.nav.sync', '同步'), path: '/admin/sync' },
+    { key: 'login', label: t('admin.nav.login', '登录'), path: '/admin/login' },
     { key: 'llm', label: t('admin.nav.llm', 'LLM 配置'), path: '/admin/llm' },
     { key: 'site', label: t('admin.nav.site', '站点设置'), path: '/admin/site' },
     { key: 'log', label: t('admin.nav.log', '日志'), path: '/admin/log' },
