@@ -36,6 +36,13 @@ from hippo.weixin_source import WeixinSource, classify_daemon_error
 # 每轮从库里取多少篇候选（一轮内再按 --batch-size 分批请求）
 FETCH_WINDOW = 200
 
+MAX_ATTEMPTS = 3
+
+# 推送/列表来的实时任务优先：它们和本脚本抢同一个 daemon 闸门。队列里有活时先让路，
+# 但最多让 YIELD_MAX_SECONDS，免得持续有推送时历史欠账永远排不上。
+YIELD_POLL_SECONDS = 30.0
+YIELD_MAX_SECONDS = 1800.0
+
 MISSING_SQL = """
 SELECT a.id, a.biz, a.article_id, a.title, a.item_show_type, a.author, a.digest,
        a.link, a.source_url, a.publish_at, a.raw_json
@@ -60,6 +67,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--batch-size', type=int, default=5, help='每批 URL 数（与 daemon [articles].batch_size 对齐）')
     p.add_argument('--limit', type=int, default=None, help='本次最多处理多少篇')
     p.add_argument('--retry-failed', action='store_true', help='重试之前失败过的（默认跳过）')
+    p.add_argument(
+        '--yield-max-minutes',
+        type=float,
+        default=YIELD_MAX_SECONDS / 60,
+        help='实时队列有活时最多让路多少分钟（0 = 不让路，立即补历史）',
+    )
     p.add_argument('--dry-run', action='store_true')
     return p.parse_args()
 
@@ -73,23 +86,23 @@ def is_short_article_link(url: str) -> bool:
     return path.startswith('/s/') and bool(path.removeprefix('/s/'))
 
 
-def load_image_meta(storage: PostgresStorage, article_pk: int) -> dict[str, tuple]:
+async def load_image_meta(storage: PostgresStorage, article_pk: int) -> dict[str, tuple]:
     """记下已有图片的存储信息：ingest 会重建 image 行，之后要按 orig_url 还原。"""
-    with storage.conn.cursor() as cur:
-        cur.execute(IMAGE_META_SQL, (article_pk,))
-        rows = cur.fetchall()
-    storage.rollback()
+    async with storage.conn.cursor() as cur:
+        await cur.execute(IMAGE_META_SQL, (article_pk,))
+        rows = await cur.fetchall()
+    await storage.rollback()
     return {str(url): (s3, ctype, algo, chash) for url, s3, ctype, algo, chash in rows if url}
 
 
-def restore_image_meta(storage: PostgresStorage, article_pk: int, meta: dict[str, tuple]) -> None:
+async def restore_image_meta(storage: PostgresStorage, article_pk: int, meta: dict[str, tuple]) -> None:
     if not meta:
         return
-    with storage.conn.cursor() as cur:
+    async with storage.conn.cursor() as cur:
         for orig_url, (s3_key, ctype, algo, chash) in meta.items():
             if not s3_key:
                 continue
-            cur.execute(
+            await cur.execute(
                 """
                 UPDATE article_images
                    SET s3_key = %s,
@@ -101,45 +114,36 @@ def restore_image_meta(storage: PostgresStorage, article_pk: int, meta: dict[str
                 """,
                 (s3_key, ctype, algo, chash, article_pk, orig_url),
             )
-    storage.commit()
+    await storage.commit()
 
 
-MAX_ATTEMPTS = 3
-
-# 推送/列表来的实时任务优先：它们和本脚本抢同一个 daemon 闸门。队列里有活时先让路，
-# 但最多让 YIELD_MAX_SECONDS，免得持续有推送时历史欠账永远排不上。
-YIELD_POLL_SECONDS = 30.0
-YIELD_MAX_SECONDS = 1800.0
-
-
-def live_queue_pending(storage: PostgresStorage) -> int:
-    with storage.conn.cursor() as cur:
-        cur.execute(
-            "SELECT COUNT(*) FROM article_queue WHERE state IN ('pending', 'processing')"
-        )
-        row = cur.fetchone()
-    storage.rollback()
+async def live_queue_pending(storage: PostgresStorage) -> int:
+    async with storage.conn.cursor() as cur:
+        await cur.execute("SELECT COUNT(*) FROM article_queue WHERE state IN ('pending', 'processing')")
+        row = await cur.fetchone()
+    await storage.rollback()
     return int(row[0]) if row else 0
 
 
-async def yield_to_live_queue(storage: PostgresStorage, log_fn) -> float:
+async def yield_to_live_queue(storage: PostgresStorage, log_fn, *, max_seconds: float = YIELD_MAX_SECONDS) -> float:
     """队列里有实时任务就让路，返回本次让了多少秒。"""
     waited = 0.0
-    while waited < YIELD_MAX_SECONDS:
-        pending = live_queue_pending(storage)
+    while waited < max_seconds:
+        pending = await live_queue_pending(storage)
         if pending <= 0:
             return waited
         if waited == 0.0:
-            log_fn(f'实时队列有 {pending} 篇在等，先让路（最多 {int(YIELD_MAX_SECONDS / 60)} 分钟）')
+            log_fn(f'实时队列有 {pending} 篇在等，先让路（最多 {int(max_seconds / 60)} 分钟）')
         await asyncio.sleep(YIELD_POLL_SECONDS)
         waited += YIELD_POLL_SECONDS
-    log_fn('让路已超上限，先补一批历史')
+    if max_seconds > 0:
+        log_fn('让路已超上限，先补一批历史')
     return waited
 
 
-def record_attempt(storage: PostgresStorage, *, biz: str, article_id: str, error: str, retryable: bool) -> None:
-    with storage.transaction(), storage.conn.cursor() as cur:
-        cur.execute(
+async def record_attempt(storage: PostgresStorage, *, biz: str, article_id: str, error: str, retryable: bool) -> None:
+    async with storage.transaction(), storage.conn.cursor() as cur:
+        await cur.execute(
             """
             INSERT INTO article_download_attempts
                 (biz, article_id, attempts, last_error, last_attempt_at, created_at, error_type, retryable)
@@ -154,9 +158,30 @@ def record_attempt(storage: PostgresStorage, *, biz: str, article_id: str, error
         )
 
 
-def to_record(row: tuple) -> ArticleRecord:
-    (pk, biz, article_id, title, item_show_type, author, digest,
-     link, source_url, publish_at, raw_json) = row
+def payload_of(row: tuple) -> dict:
+    raw = row[10]
+    if not raw:
+        return {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def request_link(row: tuple) -> str:
+    """问正文用的链接：优先用列表阶段存下的长链。
+
+    微信对 ``/s/<token>`` 短链会跳到验证码页，daemon 只能拿到非 JSON 响应；
+    长链（``/s?__biz=…&mid=…``）才走得通。拿不到就退回 ``articles.link``。
+    """
+    link = str(payload_of(row).get('ContentUrl') or '').strip()
+    return link if link.startswith('http') else str(row[7])
+
+
+def to_record(row: tuple) -> tuple[ArticleRecord, int]:
+    (pk, biz, article_id, title, item_show_type, author, digest, link, source_url, publish_at, raw_json) = row
     return ArticleRecord(
         biz=str(biz),
         article_id=str(article_id),
@@ -178,130 +203,146 @@ async def main() -> int:
         log('缺少 HIPPO_PG_DSN / --pg-dsn')
         return 2
 
-    storage = PostgresStorage(args.pg_dsn)
-    retry_clause = '' if args.retry_failed else (
+    retry_clause = (
+        ''
+        if args.retry_failed
         # 只跳过"确定不可恢复"和"已经重试到上限"的：网络抖动这类可恢复失败还能再试
-        'AND NOT EXISTS (SELECT 1 FROM article_download_attempts t '
-        'WHERE t.biz = a.biz AND t.article_id = a.article_id '
-        f'AND (NOT t.retryable OR t.attempts >= {MAX_ATTEMPTS}))'
-    )
-    image_service = None
-    try:
-        image_service = ArticleImageService(
-            image_repo=storage.images, file_storage=S3FileStorage(), transaction=storage.transaction
+        else (
+            'AND NOT EXISTS (SELECT 1 FROM article_download_attempts t '
+            'WHERE t.biz = a.biz AND t.article_id = a.article_id '
+            f'AND (NOT t.retryable OR t.attempts >= {MAX_ATTEMPTS}))'
         )
-    except FileStorageError as exc:
-        log(f'未配置对象存储，跳过图片登记：{exc}')
+    )
 
     filled = failed = 0
-    async with MPClient() as client, WeixinSource() as source:
-        downloader = ArticleDownloader(
-            client=client, storage=storage, image_store=image_service, enable_image_worker=False
-        )
+    async with PostgresStorage(args.pg_dsn) as storage:
+        image_service = None
         try:
-            while True:
-                remaining = None if args.limit is None else args.limit - filled - failed
-                if remaining is not None and remaining <= 0:
-                    break
-                fetch_size = FETCH_WINDOW if remaining is None else min(FETCH_WINDOW, remaining)
-                with storage.conn.cursor() as cur:
-                    cur.execute(MISSING_SQL.format(retry_clause=retry_clause), (fetch_size,))
-                    rows = cur.fetchall()
-                storage.rollback()
-                if not rows:
-                    break
-                if args.dry_run:
-                    for row in rows[:10]:
-                        log(f'DRY-RUN {row[3]}  {row[7]}')
-                    break
-                log(f'本轮 {len(rows)} 篇（已补 {filled}，失败 {failed}）')
+            image_service = ArticleImageService(
+                image_repo=storage.images, file_storage=S3FileStorage(), transaction=storage.transaction
+            )
+        except FileStorageError as exc:
+            log(f'未配置对象存储，跳过图片登记：{exc}')
 
-                for start in range(0, len(rows), args.batch_size):
-                    await yield_to_live_queue(storage, log)
-                    chunk = rows[start : start + args.batch_size]
-                    links = [str(row[7]) for row in chunk]
-                    try:
-                        bodies = await source.fetch_bodies(links)
-                    except Exception as exc:
-                        if classify_daemon_error(str(exc)) == 'session':
-                            # 会话失效不算文章的账：不记 attempts，干净退出（可续跑），
-                            # 重新登录后重跑本脚本即可。
-                            log(f'daemon 会话失效，本次到此为止（不计 attempts）：{exc}')
-                            return 3
-                        log(f'批次失败：{exc}')
-                        for row in chunk:
-                            record_attempt(
-                                storage, biz=str(row[1]), article_id=str(row[2]),
-                                error=str(exc), retryable=True,
-                            )
-                        failed += len(chunk)
-                        continue
-                    by_url = {body.url: body for body in bodies}
-                    for row in chunk:
-                        record, pk = to_record(row)
-                        body = by_url.get(str(row[7]))
-                        if body is None or not body.html:
-                            # A missing body is an observed daemon result, not proof of a
-                            # permanent upstream condition. Keep the daemon's diagnostic verbatim.
-                            diagnostic = source.body_error_for(str(row[7]))
-                            record_attempt(
-                                storage,
-                                biz=record.biz,
-                                article_id=record.article_id,
-                                error=diagnostic or f'daemon response omitted body for {row[7]}',
-                                retryable=True,
-                            )
-                            failed += 1
-                            continue
-                        meta = load_image_meta(storage, pk)
+        async with MPClient() as client, WeixinSource() as source:
+            downloader = ArticleDownloader(
+                client=client, storage=storage, image_store=image_service, enable_image_worker=False
+            )
+            try:
+                while True:
+                    remaining = None if args.limit is None else args.limit - filled - failed
+                    if remaining is not None and remaining <= 0:
+                        break
+                    fetch_size = FETCH_WINDOW if remaining is None else min(FETCH_WINDOW, remaining)
+                    async with storage.conn.cursor() as cur:
+                        await cur.execute(MISSING_SQL.format(retry_clause=retry_clause), (fetch_size,))
+                        rows = await cur.fetchall()
+                    await storage.rollback()
+                    if not rows:
+                        break
+                    if args.dry_run:
+                        for row in rows[:10]:
+                            log(f'DRY-RUN {row[3]}  {row[7]}')
+                        break
+                    log(f'本轮 {len(rows)} 篇（已补 {filled}，失败 {failed}）')
+
+                    for start in range(0, len(rows), args.batch_size):
+                        await yield_to_live_queue(storage, log, max_seconds=args.yield_max_minutes * 60)
+                        chunk = rows[start : start + args.batch_size]
+                        links = [request_link(row) for row in chunk]
                         try:
-                            body_link = record.link
-                            if (
-                                not is_short_article_link(record.link)
-                                and body.short_link
-                                and is_short_article_link(body.short_link)
-                            ):
-                                body_link = body.short_link
-                            article_to_store = record.model_copy(update={'link': body_link})
-                            await downloader.ingest_body(
-                                article=article_to_store,
-                                html=body.html,
-                                title=body.title or record.title,
-                                item_show_type=body.item_show_type,
-                                with_images=False,
-                            )
-                            restore_image_meta(storage, pk, meta)
-                            storage.documents.save(
-                                article_pk=pk,
-                                source='api_backfill',
-                                url_token=body.slug,
-                                raw_html=body.html,
-                                raw_json=json.loads(body.raw_json) if body.raw_json else None,
-                            )
-                            storage.commit()
-                            filled += 1
+                            bodies = await source.fetch_bodies(links)
                         except Exception as exc:
-                            storage.rollback()
-                            record_attempt(
-                                storage, biz=record.biz, article_id=record.article_id,
-                                error=str(exc), retryable=True,
-                            )
-                            failed += 1
-                        # 顺手：该号还没解析过 gh_ 就用这条响应补上
-                        if body.user_name.startswith('gh_'):
-                            with storage.conn.cursor() as cur:
-                                cur.execute(
-                                    'UPDATE accounts SET gh_id = %s, updated_at = NOW() '
-                                    'WHERE biz = %s AND (gh_id IS NULL OR gh_id = %s)',
-                                    (body.user_name, record.biz, body.user_name),
+                            if classify_daemon_error(str(exc)) == 'session':
+                                # 会话失效不算文章的账：不记 attempts，干净退出（可续跑），
+                                # 重新登录后重跑本脚本即可。
+                                log(f'daemon 会话失效，本次到此为止（不计 attempts）：{exc}')
+                                return 3
+                            log(f'批次失败：{exc}')
+                            for row in chunk:
+                                await record_attempt(
+                                    storage,
+                                    biz=str(row[1]),
+                                    article_id=str(row[2]),
+                                    error=str(exc),
+                                    retryable=True,
                                 )
-                            storage.commit()
-                    log(f'  进度 {min(start + args.batch_size, len(rows))}/{len(rows)}，成功 {filled}，失败 {failed}')
-                if len(rows) < fetch_size:
-                    break
-        finally:
-            await downloader.aclose()
-    storage.close()
+                            failed += len(chunk)
+                            continue
+                        by_url = {body.url: body for body in bodies}
+                        for row in chunk:
+                            record, pk = to_record(row)
+                            request_url = request_link(row)
+                            body = by_url.get(request_url) or by_url.get(str(row[7]))
+                            if body is None or not body.html:
+                                # A missing body is an observed daemon result, not proof of a
+                                # permanent upstream condition. Keep the daemon's diagnostic verbatim.
+                                diagnostic = source.body_error_for(request_url) or source.body_error_for(str(row[7]))
+                                reason = diagnostic or f'daemon response omitted body for {row[7]}'
+                                await record_attempt(
+                                    storage,
+                                    biz=record.biz,
+                                    article_id=record.article_id,
+                                    error=reason,
+                                    retryable=True,
+                                )
+                                log(f'  失败 {row[7]}：{reason}')
+                                failed += 1
+                                continue
+                            meta = await load_image_meta(storage, pk)
+                            try:
+                                body_link = record.link
+                                if (
+                                    not is_short_article_link(record.link)
+                                    and body.short_link
+                                    and is_short_article_link(body.short_link)
+                                ):
+                                    body_link = body.short_link
+                                article_to_store = record.model_copy(update={'link': body_link})
+                                await downloader.ingest_body(
+                                    article=article_to_store,
+                                    html=body.html,
+                                    title=body.title or record.title,
+                                    item_show_type=body.item_show_type,
+                                    with_images=False,
+                                )
+                                await restore_image_meta(storage, pk, meta)
+                                await storage.documents.save(
+                                    article_pk=pk,
+                                    source='api_backfill',
+                                    url_token=body.slug,
+                                    raw_html=body.html,
+                                    raw_json=json.loads(body.raw_json) if body.raw_json else None,
+                                )
+                                await storage.commit()
+                                filled += 1
+                            except Exception as exc:
+                                await storage.rollback()
+                                await record_attempt(
+                                    storage,
+                                    biz=record.biz,
+                                    article_id=record.article_id,
+                                    error=str(exc),
+                                    retryable=True,
+                                )
+                                log(f'  失败 {record.link}：{exc}')
+                                failed += 1
+                            # 顺手：该号还没解析过 gh_ 就用这条响应补上
+                            if body.user_name.startswith('gh_'):
+                                async with storage.conn.cursor() as cur:
+                                    await cur.execute(
+                                        'UPDATE accounts SET gh_id = %s, updated_at = NOW() '
+                                        'WHERE biz = %s AND (gh_id IS NULL OR gh_id = %s)',
+                                        (body.user_name, record.biz, body.user_name),
+                                    )
+                                await storage.commit()
+                        log(
+                            f'  进度 {min(start + args.batch_size, len(rows))}/{len(rows)}，成功 {filled}，失败 {failed}'
+                        )
+                    if len(rows) < fetch_size:
+                        break
+            finally:
+                await downloader.aclose()
     log(f'完成：补 {filled} 篇，失败 {failed} 篇')
     return 0
 
