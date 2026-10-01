@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import sys
 from typing import Any
@@ -25,10 +26,10 @@ from hippo.storage import PostgresStorage
 from hippo.weixin_source import WeixinSource
 
 CANDIDATE_SQL = """
-SELECT a.biz, a.nickname, u.url
+SELECT a.biz, a.nickname, u.url, u.raw_json
   FROM accounts a
   CROSS JOIN LATERAL (
-      SELECT ar.link AS url
+      SELECT ar.link AS url, ar.raw_json
         FROM articles ar
        WHERE ar.biz = a.biz AND ar.link LIKE '%%/s/%%'
        ORDER BY ar.publish_at DESC NULLS LAST, ar.id DESC
@@ -54,87 +55,104 @@ def log(message: str) -> None:
     print(f'[backfill gh_id] {message}', file=sys.stderr, flush=True)
 
 
+def candidate_link(url: str, raw_json: str | None) -> str:
+    """详情请求用的链接：优先用列表阶段存下的长链。
+
+    微信把 ``/s/<token>`` 短链跳到验证码页，拿不到 user_name；长链才走得通。
+    """
+    if raw_json:
+        try:
+            payload = json.loads(raw_json)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            long_link = str(payload.get('ContentUrl') or '').strip()
+            if long_link.startswith('http'):
+                return long_link
+    return str(url)
+
+
 async def main() -> int:
     args = parse_args()
     if not args.pg_dsn:
         log('缺少 HIPPO_PG_DSN / --pg-dsn')
         return 2
-    storage = PostgresStorage(args.pg_dsn)
-    with storage.conn.cursor() as cur:
-        cur.execute(CANDIDATE_SQL, (max(args.candidates, 1),))
-        rows = cur.fetchall()
-    storage.commit()
-
-    # 一个账号可以有多个候选文章：某一篇已删/隐私拿不到 user_name 时换下一篇
-    pending: dict[str, dict[str, Any]] = {}
-    for biz, nickname, url in rows:
-        entry = pending.setdefault(biz, {'nickname': nickname, 'urls': []})
-        entry['urls'].append(url)
-    # 没有任何文章可用的账号
-    with storage.conn.cursor() as cur:
-        cur.execute(
-            "SELECT a.biz, a.nickname, a.alias FROM accounts a "
-            "WHERE a.gh_id IS NULL AND NOT a.is_disabled "
-            "AND NOT EXISTS (SELECT 1 FROM articles ar WHERE ar.biz = a.biz AND ar.link LIKE '%%/s/%%')"
-        )
-        without_url = cur.fetchall()
-    storage.commit()
-    if args.limit is not None:
-        pending = dict(list(pending.items())[: args.limit])
-    log(f'待回填 {len(pending) + len(without_url)} 个账号：可用文章 {len(pending)}，无文章 {len(without_url)}')
 
     filled = failed = 0
-    async with WeixinSource() as source:
-        while pending:
-            chunk = list(pending.items())[: args.batch_size]
-            urls = [entry['urls'][0] for _biz, entry in chunk]
-            try:
-                bodies = await source.fetch_bodies(urls)
-            except Exception as exc:
-                log(f'批次失败（{exc}）：{urls[0][:60]}…')
-                failed += len(chunk)
-                pending = dict(list(pending.items())[args.batch_size :])
-                continue
-            by_url = {body.url: body for body in bodies}
-            for biz, entry in chunk:
-                body = by_url.get(entry['urls'][0])
-                gh_id = getattr(body, 'user_name', '') if body else ''
-                if gh_id.startswith('gh_'):
-                    with storage.transaction():
-                        storage.accounts.set_gh_id(biz, gh_id)
-                    filled += 1
-                    log(f'+ {entry["nickname"]} → {gh_id}')
-                    del pending[biz]
-                    continue
-                entry['urls'].pop(0)
-                if not entry['urls']:
-                    failed += 1
-                    log(f'✗ {entry["nickname"]}：{args.candidates} 篇都没拿到 user_name')
-                    del pending[biz]
-            log(f'剩余 {len(pending)}，成功 {filled}，失败 {failed}')
+    async with PostgresStorage(args.pg_dsn) as storage:
+        async with storage.conn.cursor() as cur:
+            await cur.execute(CANDIDATE_SQL, (max(args.candidates, 1),))
+            rows = await cur.fetchall()
+        await storage.commit()
 
-    if args.via_alias and without_url:
-        log(f'改用 alias 解析 {len(without_url)} 个无文章账号（searchcontact，注意限流）')
+        # 一个账号可以有多个候选文章：某一篇已删/隐私拿不到 user_name 时换下一篇
+        pending: dict[str, dict[str, Any]] = {}
+        for biz, nickname, url, raw_json in rows:
+            entry = pending.setdefault(biz, {'nickname': nickname, 'urls': []})
+            entry['urls'].append(candidate_link(url, raw_json))
+        # 没有任何文章可用的账号
+        async with storage.conn.cursor() as cur:
+            await cur.execute(
+                'SELECT a.biz, a.nickname, a.alias FROM accounts a '
+                'WHERE a.gh_id IS NULL AND NOT a.is_disabled '
+                "AND NOT EXISTS (SELECT 1 FROM articles ar WHERE ar.biz = a.biz AND ar.link LIKE '%%/s/%%')"
+            )
+            without_url = await cur.fetchall()
+        await storage.commit()
+        if args.limit is not None:
+            pending = dict(list(pending.items())[: args.limit])
+        log(f'待回填 {len(pending) + len(without_url)} 个账号：可用文章 {len(pending)}，无文章 {len(without_url)}')
+
         async with WeixinSource() as source:
-            for biz, nickname, alias in without_url:
-                if not alias:
-                    continue
+            while pending:
+                chunk = list(pending.items())[: args.batch_size]
+                urls = [entry['urls'][0] for _biz, entry in chunk]
                 try:
-                    listed = await source.list_articles(alias, biz, pages=1)
+                    bodies = await source.fetch_bodies(urls)
                 except Exception as exc:
-                    log(f'✗ {nickname}（{alias}）：{exc}')
-                    failed += 1
+                    log(f'批次失败（{exc}）：{urls[0][:60]}…')
+                    failed += len(chunk)
+                    pending = dict(list(pending.items())[args.batch_size :])
                     continue
-                if listed.gh_id:
-                    with storage.transaction():
-                        storage.accounts.set_gh_id(biz, listed.gh_id)
-                    filled += 1
-                    log(f'+ {nickname}（{alias}）→ {listed.gh_id}（列表 {len(listed.items)} 篇）')
-                elif listed.items:
-                    log(f'~ {nickname}（{alias}）列表可用，但没给 gh_')
-                await asyncio.sleep(20)
+                by_url = {body.url: body for body in bodies}
+                for biz, entry in chunk:
+                    body = by_url.get(entry['urls'][0])
+                    gh_id = getattr(body, 'user_name', '') if body else ''
+                    if gh_id.startswith('gh_'):
+                        async with storage.transaction():
+                            await storage.accounts.set_gh_id(biz, gh_id)
+                        filled += 1
+                        log(f'+ {entry["nickname"]} → {gh_id}')
+                        del pending[biz]
+                        continue
+                    entry['urls'].pop(0)
+                    if not entry['urls']:
+                        failed += 1
+                        log(f'✗ {entry["nickname"]}：{args.candidates} 篇都没拿到 user_name')
+                        del pending[biz]
+                log(f'剩余 {len(pending)}，成功 {filled}，失败 {failed}')
 
-    storage.close()
+        if args.via_alias and without_url:
+            log(f'改用 alias 解析 {len(without_url)} 个无文章账号（searchcontact，注意限流）')
+            async with WeixinSource() as source:
+                for biz, nickname, alias in without_url:
+                    if not alias:
+                        continue
+                    try:
+                        listed = await source.list_articles(alias, biz, pages=1)
+                    except Exception as exc:
+                        log(f'✗ {nickname}（{alias}）：{exc}')
+                        failed += 1
+                        continue
+                    if listed.gh_id:
+                        async with storage.transaction():
+                            await storage.accounts.set_gh_id(biz, listed.gh_id)
+                        filled += 1
+                        log(f'+ {nickname}（{alias}）→ {listed.gh_id}（列表 {len(listed.items)} 篇）')
+                    elif listed.items:
+                        log(f'~ {nickname}（{alias}）列表可用，但没给 gh_')
+                    await asyncio.sleep(20)
+
     log(f'完成：成功 {filled}，失败 {failed}')
     return 0
 

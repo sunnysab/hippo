@@ -43,50 +43,50 @@ async def main() -> int:
         log('缺少 HIPPO_PG_DSN / --pg-dsn')
         return 2
 
-    storage = PostgresStorage(args.pg_dsn)
     # `gh_unresolvable:<biz>` 是人工确认过"这个 alias 本身无效"的标记，别再试
     query = (
-        "SELECT biz, nickname, alias FROM accounts a "
+        'SELECT biz, nickname, alias FROM accounts a '
         "WHERE gh_id IS NULL AND NOT is_disabled AND coalesce(alias, '') <> '' "
         "  AND NOT EXISTS (SELECT 1 FROM meta m WHERE m.key = 'gh_unresolvable:' || a.biz) "
         'ORDER BY article_count DESC NULLS LAST'
     )
-    with storage.conn.cursor() as cur:
-        cur.execute(query)
-        rows = cur.fetchall()
-    storage.rollback()
-    if args.limit is not None:
-        rows = rows[: args.limit]
-    log(f'待解析 {len(rows)} 个账号（用 alias 调一次列表）')
 
     ok = failed = 0
-    bot_class = load_bot_class()
-    bot = bot_class(
-        host=os.environ.get('WEIXIN_DAEMON_HOST', '127.0.0.1'),
-        port=int(os.environ.get('WEIXIN_DAEMON_PORT', '9099')),
-    )
-    async with bot:
-        for index, (biz, nickname, alias) in enumerate(rows):
-            if index:
-                await asyncio.sleep(max(args.interval, 5.0))
-            try:
-                res = await bot.call('get_biz_articles', {'biz': str(alias), 'pages': 1})
-            except Exception as exc:
-                log(f'✗ {nickname}（{alias}）：{exc}')
-                failed += 1
-                continue
-            gh_id = str((res or {}).get('biz') or '')
-            count = int((res or {}).get('count') or 0)
-            if gh_id.startswith('gh_'):
-                with storage.transaction():
-                    storage.accounts.set_gh_id(str(biz), gh_id)
-                ok += 1
-                log(f'+ {nickname}（{alias}）→ {gh_id}（列表 {count} 篇）')
-            else:
-                failed += 1
-                log(f'✗ {nickname}（{alias}）：列表返回但没给 gh_（count={count}）')
+    async with PostgresStorage(args.pg_dsn) as storage:
+        async with storage.conn.cursor() as cur:
+            await cur.execute(query)
+            rows = await cur.fetchall()
+        await storage.rollback()
+        if args.limit is not None:
+            rows = rows[: args.limit]
+        log(f'待解析 {len(rows)} 个账号（用 alias 调一次列表）')
 
-    storage.close()
+        bot_class = load_bot_class()
+        bot = bot_class(
+            host=os.environ.get('WEIXIN_DAEMON_HOST', '127.0.0.1'),
+            port=int(os.environ.get('WEIXIN_DAEMON_PORT', '9099')),
+        )
+        async with bot:
+            for index, (biz, nickname, alias) in enumerate(rows):
+                if index:
+                    await asyncio.sleep(max(args.interval, 5.0))
+                try:
+                    res = await bot.call('get_biz_articles', {'biz': str(alias), 'pages': 1})
+                except Exception as exc:
+                    log(f'✗ {nickname}（{alias}）：{exc}')
+                    failed += 1
+                    continue
+                gh_id = str((res or {}).get('biz') or '')
+                count = int((res or {}).get('count') or 0)
+                if gh_id.startswith('gh_'):
+                    async with storage.transaction():
+                        await storage.accounts.set_gh_id(str(biz), gh_id)
+                    ok += 1
+                    log(f'+ {nickname}（{alias}）→ {gh_id}（列表 {count} 篇）')
+                else:
+                    failed += 1
+                    log(f'✗ {nickname}（{alias}）：列表返回但没给 gh_（count={count}）')
+
     log(f'完成：解析 {ok} 个，失败 {failed} 个')
     return 0
 
