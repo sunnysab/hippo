@@ -57,7 +57,7 @@
 
 .group-list-item:hover {
   transform: translateY(var(--lift-hover));
-  background: rgba(41, 93, 80, 0.04);
+  background: var(--accent-mist);
 }
 
 .group-list-item.is-active {
@@ -206,7 +206,7 @@
   width: 1px;
   height: 22px;
   margin: 0 2px;
-  background: rgba(154, 146, 126, 0.18);
+  background: var(--border);
 }
 
 .search-results {
@@ -308,13 +308,13 @@
 
 .card:hover {
   transform: translateY(var(--lift-hover));
-  background: rgba(255, 255, 255, 0.34);
+  background: var(--surface-item-hover);
 }
 
 .card.is-disabled {
   opacity: 0.74;
-  border-color: rgba(161, 74, 74, 0.18);
-  background: rgba(253, 236, 236, 0.22);
+  border-color: var(--border);
+  background: var(--surface-soft);
 }
 
 .card-header {

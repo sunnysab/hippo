@@ -123,7 +123,7 @@ export function ArticlesPage() {
               >
                 {t('articles.menu.copyLink', 'Copy link')}
               </button>
-              <button className="icon-btn" id="reader-copy" type="button" aria-label="Copy article text" title="Copy article text" onClick={async () => {
+              <button className="icon-btn" id="reader-copy" type="button" aria-label={t('articles.copyText', 'Copy article text')} title={t('articles.copyText', 'Copy article text')} onClick={async () => {
                 const content = previewRef.current?.querySelector('.reader');
                 if (content) {
                   const text = (content as HTMLElement).innerText;
@@ -137,8 +137,8 @@ export function ArticlesPage() {
                 id="reader-toggle"
                 type="button"
                 ref={readerToggleRef}
-                aria-label="Typography settings"
-                title="Typography settings"
+                aria-label={t('articles.typography', 'Typography settings')}
+                title={t('articles.typography', 'Typography settings')}
                 onClick={() => setReaderControlsOpen((prev) => !prev)}
               >
                 <span className="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4zM4 11h16v2H4zM4 16h16v2H4z"/></svg></span>
@@ -147,8 +147,8 @@ export function ArticlesPage() {
                 className="icon-btn"
                 id="btn-article-toggle"
                 type="button"
-                aria-label="Toggle list"
-                title="Toggle list"
+                aria-label={t('articles.toggleList', 'Toggle list')}
+                title={t('articles.toggleList', 'Toggle list')}
                 onClick={() => {
                   if (isNarrowViewport && mobileReading) {
                     dispatch({ type: 'SET_MOBILE_READING', reading: false });

@@ -53,7 +53,7 @@
 
 .settings-nav-item:hover {
   transform: translateY(var(--lift-hover));
-  background: rgba(41, 93, 80, 0.04);
+  background: var(--accent-mist);
 }
 
 .settings-nav-item.is-active {
@@ -139,23 +139,20 @@
 .login-card[data-status='scanned'],
 .login-card[data-status='starting'],
 .login-card[data-status='refresh'] {
-  border-color: rgba(47, 99, 143, 0.24);
+  border-color: var(--info);
 }
 
-.login-card[data-status='success'] {
-  border-color: rgba(53, 107, 71, 0.26);
-}
-
+.login-card[data-status='success'],
 .login-card[data-status='ok'] {
-  border-color: rgba(53, 107, 71, 0.26);
+  border-color: var(--success);
 }
 
 .login-card[data-status='missing'] {
-  border-color: rgba(180, 140, 60, 0.26);
+  border-color: var(--warning);
 }
 
 .login-card[data-status='error'] {
-  border-color: rgba(161, 74, 74, 0.26);
+  border-color: var(--danger);
 }
 
 .login-import {
@@ -324,7 +321,7 @@
   height: 6px;
   overflow: hidden;
   border-radius: var(--radius);
-  background: rgba(222, 216, 205, 0.72);
+  background: var(--surface-strong);
 }
 
 .sync-progress-track span {
@@ -380,6 +377,7 @@
   padding: 0 8px;
   border-radius: var(--radius);
   border: 1px solid currentColor;
+  background: var(--surface-chip);
   font-size: 10px;
   font-weight: 700;
   white-space: nowrap;
@@ -391,7 +389,7 @@
   min-height: 20px;
   padding: 0 7px;
   border-radius: var(--radius);
-  background: rgba(222, 216, 205, 0.45);
+  background: var(--surface-chip);
   color: var(--muted);
   font-size: 10px;
   font-weight: 600;
@@ -413,44 +411,23 @@
 }
 
 .sync-tone-success.sync-status-badge {
-  background: rgba(229, 239, 231, 0.32);
   color: var(--success);
 }
 
-.sync-tone-success.sync-progress-item {
-}
-
 .sync-tone-danger.sync-status-badge {
-  background: rgba(246, 228, 226, 0.28);
   color: var(--danger);
 }
 
-.sync-tone-danger.sync-progress-item {
-}
-
 .sync-tone-info.sync-status-badge {
-  background: rgba(227, 237, 245, 0.28);
   color: var(--info);
 }
 
-.sync-tone-info.sync-progress-item {
-}
-
 .sync-tone-warning.sync-status-badge {
-  background: rgba(245, 234, 210, 0.32);
   color: var(--warning);
 }
 
-.sync-tone-warning.sync-progress-item {
-}
-
-.sync-tone-muted.sync-status-badge {
-  background: rgba(242, 236, 226, 0.34);
-  color: var(--muted);
-}
-
+.sync-tone-muted.sync-status-badge,
 .sync-tone-neutral.sync-status-badge {
-  background: rgba(236, 231, 221, 0.28);
   color: var(--muted);
 }
 

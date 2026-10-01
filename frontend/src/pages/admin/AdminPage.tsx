@@ -4,6 +4,7 @@ import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
 import { useAuth } from '../../hooks/useAuth';
 import { ConfirmModal } from '../../components/ConfirmModal';
+import { formatDateTime } from '../../utils/format';
 
 interface AdminUser {
   id: number;
@@ -18,11 +19,7 @@ interface AdminUser {
   last_login_at: string | null;
 }
 
-const formatTime = (value: string | null) => {
-  if (!value) return '—';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString();
-};
+const formatTime = (value: string | null) => formatDateTime(value) || '—';
 
 export function AdminPage() {
   const { t } = useI18n();

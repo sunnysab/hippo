@@ -12,6 +12,10 @@
 :root {
   color-scheme: light dark;
 
+  /* Native checkboxes and radios follow the accent instead of the browser's
+     default blue, which is the only chroma in an otherwise greyscale UI. */
+  accent-color: var(--accent);
+
   /* Typography — system stacks only; no decorative display faces. */
   --font-sans: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
   --font-display: var(--font-sans);
