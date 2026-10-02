@@ -42,10 +42,7 @@ export const ArticleCard = memo(function ArticleCard({
         <div className="article-thumb placeholder"></div>
       )}
       <div className="article-info">
-        <div className="article-title-row">
-          <div className="article-title">{escapeHtml(article.title || '')}</div>
-          <ItemShowTypeBadge value={article.item_show_type} compact />
-        </div>
+        <div className="article-title">{escapeHtml(article.title || '')}</div>
         <div className="article-meta">
           {avatar ? (
             <img className="article-avatar" src={avatar} alt="" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
@@ -61,6 +58,7 @@ export const ArticleCard = memo(function ArticleCard({
           <span>{escapeHtml(formatDate(article.publish_at))}</span>
         </div>
         <div className="article-digest" title={digest}>{digest}</div>
+        <ItemShowTypeBadge value={article.item_show_type} compact />
       </div>
     </div>
   );

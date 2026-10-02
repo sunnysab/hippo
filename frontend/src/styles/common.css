@@ -325,8 +325,9 @@ body {
 }
 
 .panel {
+  /* No outline: a panel is a colour change against `--bg`, not a box drawn on
+     top of it. Every page then shares one less nested level. */
   background: var(--surface-panel);
-  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 16px;
   box-shadow: none;

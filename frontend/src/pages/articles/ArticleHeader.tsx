@@ -1,7 +1,6 @@
 import { useI18n } from '../../i18n';
 import { formatDateTime } from '../../utils/format';
 import type { Article } from '../../store/articles';
-import { ItemShowTypeBadge } from './ItemShowTypeBadge';
 import { getItemShowTypeLabel } from './itemShowType';
 
 interface ArticleHeaderProps {
@@ -15,12 +14,7 @@ export function ArticleHeader({ article }: ArticleHeaderProps) {
 
   return (
     <div className="article-header">
-      <div className="article-preview-title-row">
-        <h1 className="article-preview-title">{article.title || ''}</h1>
-        <div className="article-preview-type">
-          <ItemShowTypeBadge value={article.item_show_type} />
-        </div>
-      </div>
+      <h1 className="article-preview-title">{article.title || ''}</h1>
       <div className="article-preview-meta">
         <div className="article-preview-account">
           {avatarUrl ? (
