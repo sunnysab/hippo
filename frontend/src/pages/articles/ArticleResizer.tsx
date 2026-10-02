@@ -1,5 +1,12 @@
 import { useRef, useCallback, useEffect } from 'react';
 
+// Kept in sync with the list column's `minmax(360px, …)` in articles.css.
+const MIN_LIST_WIDTH = 360;
+const MAX_LIST_WIDTH = 800;
+
+const clampWidth = (value: number) =>
+  Math.min(Math.max(value, MIN_LIST_WIDTH), MAX_LIST_WIDTH);
+
 export function ArticleResizer() {
   const resizerRef = useRef<HTMLDivElement>(null);
   const root = document.documentElement;
@@ -10,7 +17,7 @@ export function ArticleResizer() {
 
     // Get current width from the list panel element
     const listPanel = document.querySelector('.article-list') as HTMLElement | null;
-    let startWidth = 300;
+    let startWidth = MIN_LIST_WIDTH;
     if (listPanel) {
       const rect = listPanel.getBoundingClientRect();
       if (rect.width > 0) startWidth = rect.width;
@@ -20,13 +27,10 @@ export function ArticleResizer() {
       if (Number.isFinite(parsed) && parsed > 0) startWidth = parsed;
     }
 
-    const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
-
     const onMove = (ev: MouseEvent | TouchEvent) => {
       const clientX = 'touches' in ev ? ev.touches[0].clientX : ev.clientX;
       const delta = clientX - startX;
-      const width = clamp(startWidth + delta, 220, 800);
-      root.style.setProperty('--article-list-width', `${width}px`);
+      root.style.setProperty('--article-list-width', `${clampWidth(startWidth + delta)}px`);
     };
 
     const onUp = () => {
@@ -48,11 +52,11 @@ export function ArticleResizer() {
     document.addEventListener('touchend', onUp);
   }, [root]);
 
-  // Load saved width
+  // Restore the saved width, clamped to the range the layout can actually use.
   useEffect(() => {
-    const saved = localStorage.getItem('hippo-article-width');
-    if (saved) {
-      root.style.setProperty('--article-list-width', saved);
+    const saved = parseFloat(localStorage.getItem('hippo-article-width') ?? '');
+    if (Number.isFinite(saved)) {
+      root.style.setProperty('--article-list-width', `${clampWidth(saved)}px`);
     }
   }, [root]);
 

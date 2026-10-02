@@ -162,7 +162,7 @@ describe('visual hierarchy semantics', () => {
     expect(screen.getByText('ID: 7').className).toContain('meta-note-button');
   });
 
-  it('marks article type facets as toggle-style controls instead of filled chips', () => {
+  it('marks article type facets as toggle-style controls', () => {
     articlesStateMock.mockReturnValue({
       state: {
         typeFacetsExpanded: true,

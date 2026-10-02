@@ -1,6 +1,6 @@
 .article-layout {
   display: grid;
-  grid-template-columns: minmax(320px, var(--article-list-width, 360px)) 10px minmax(0, 1fr);
+  grid-template-columns: minmax(360px, var(--article-list-width, 400px)) 10px minmax(0, 1fr);
   flex: 1;
   gap: 12px;
   min-height: 0;
@@ -111,11 +111,11 @@
   gap: 5px;
   min-height: 28px;
   max-width: 100%;
-  border: 1px solid var(--border);
+  border: none;
   appearance: none;
   padding: 3px 9px;
   border-radius: var(--radius);
-  background: none;
+  background: var(--surface-chip-soft);
   color: var(--text);
   cursor: pointer;
   transition: background 0.18s ease-out, transform 0.18s ease-out;
@@ -123,13 +123,11 @@
 
 .article-type-facet:hover {
   transform: translateY(var(--lift-hover));
-  background: var(--accent-mist);
+  background: var(--surface-chip);
 }
 
 .article-type-facet.is-active {
-  background: none;
-  border-color: var(--accent);
-  box-shadow: none;
+  background: var(--surface-strong);
 }
 
 .article-type-facet-toggle {
@@ -175,11 +173,10 @@
 .article-card {
   position: relative;
   display: grid;
-  grid-template-columns: 84px minmax(0, 1fr);
+  grid-template-columns: 120px minmax(0, 1fr);
   gap: 12px;
   padding: 11px;
   border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
   background: none;
   cursor: pointer;
   transition: background 0.18s ease-out, transform 0.18s ease-out;
@@ -196,12 +193,12 @@
 
 .article-card:hover,
 .article-card.is-active {
-  transform: translateY(-1px);
+  transform: translateY(var(--lift-hover));
   background: var(--surface-item-hover);
 }
 
 .article-card.is-active {
-  border-color: var(--border-strong);
+  background: var(--surface-item-active);
 }
 
 .article-card.is-active::before {
@@ -209,10 +206,13 @@
 }
 
 .article-thumb {
-  width: 84px;
-  height: 84px;
+  width: 100%;
+  height: auto;
+  align-self: start;
+  /* 16:9 is only what an image reserves before it loads; once the source reports
+     its own size the natural ratio wins, so covers are never cropped. */
+  aspect-ratio: auto 16 / 9;
   border-radius: var(--radius-control);
-  object-fit: cover;
   background: var(--surface-chip);
 }
 
@@ -227,18 +227,28 @@
   min-width: 0;
 }
 
-.article-title-row,
-.article-preview-title-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
 .article-title {
   font-size: 14px;
   font-weight: 700;
   line-height: 1.35;
+}
+
+/* The type badge gets its own row so it never eats into the title, and fades in
+   on hover, selection or focus. The row stays laid out while hidden, which is
+   what keeps the list from reflowing on hover. */
+.article-card .item-show-type-badge {
+  justify-self: start;
+  min-height: 18px;
+  padding: 1px 7px;
+  font-size: 10px;
+  opacity: 0;
+  transition: opacity 0.18s ease-out;
+}
+
+.article-card:hover .item-show-type-badge,
+.article-card:focus-within .item-show-type-badge,
+.article-card.is-active .item-show-type-badge {
+  opacity: 1;
 }
 
 .article-meta {
@@ -276,11 +286,21 @@
 }
 
 .article-resizer {
-  width: 8px;
   cursor: col-resize;
-  border-radius: var(--radius);
-  margin: 8px 0;
-  background: var(--border-strong);
+  /* Dragging must not scroll the list on touch devices. */
+  touch-action: none;
+  /* A hairline drawn through the middle of the grid column: the splitter reads
+     as a seam in one canvas instead of a third panel between two panels. */
+  background-image: linear-gradient(var(--border), var(--border));
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 1px 100%;
+  transition: background-size 0.16s ease-out;
+}
+
+.article-resizer:hover {
+  background-image: linear-gradient(var(--accent), var(--accent));
+  background-size: 3px 100%;
 }
 
 .article-preview-toolbar {
@@ -298,8 +318,9 @@
   min-height: 24px;
   padding: 4px 10px;
   border-radius: var(--radius);
-  border: 1px solid currentColor;
-  background: none;
+  /* A tint of the tone colour instead of an outline: the text stays the
+     identity carrier, the box only anchors it. */
+  background: color-mix(in srgb, currentColor 12%, transparent);
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
@@ -394,6 +415,7 @@
 }
 
 .article-preview-body {
+  position: relative;
   flex: 1;
   display: flex;
   justify-content: center;
@@ -402,7 +424,6 @@
   overflow-x: hidden;
   padding: 18px;
   border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
   background: var(--surface-soft);
 }
 
@@ -423,12 +444,6 @@
   letter-spacing: -0.03em;
   overflow-wrap: break-word;
   word-break: break-word;
-}
-
-.article-preview-type {
-  display: inline-flex;
-  align-items: center;
-  margin-top: 4px;
 }
 
 .article-preview-meta {
@@ -691,12 +706,7 @@
   }
 
   .article-card {
-    grid-template-columns: 68px minmax(0, 1fr);
-  }
-
-  .article-thumb {
-    width: 68px;
-    height: 68px;
+    grid-template-columns: 104px minmax(0, 1fr);
   }
 
   .article-preview-toolbar {
@@ -715,17 +725,9 @@
     flex: 0 0 34px;
   }
 
-  .article-preview-title-row,
   .article-preview-meta {
     flex-direction: column;
     align-items: flex-start;
-  }
-
-  .article-preview-title-row {
-    gap: 6px;
-  }
-
-  .article-preview-meta {
     gap: 12px;
   }
 

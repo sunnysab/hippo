@@ -5,8 +5,8 @@
  * be re-themed — including dark mode — by overriding them here.
  *
  * The palette is deliberately neutral and flat: greys carry the hierarchy,
- * borders do the work that shadows used to, and the accent is plain black
- * rather than a brand colour.
+ * background steps do the work that shadows and outlines used to (a surface is
+ * a fill, not a box), and the accent is plain black rather than a brand colour.
  */
 
 :root {
