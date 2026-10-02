@@ -29,6 +29,7 @@ from .sync_settings import (
     _get_window_hours,
     _is_within_sync_window,
     get_sync_settings,
+    mark_content_ingested,
 )
 from .sync_tasks import _article_snapshot
 from .sync_types import AccountProgress, SyncAccountResult, SyncObserver, SyncSummary
@@ -421,7 +422,9 @@ async def _body_drain_loop(poll_interval: float = DRAIN_POLL_SECONDS) -> None:
         try:
             async with open_storage() as storage:
                 await publish_worker_state(storage)
-                await drain_bodies_once(storage)
+                ingested = await drain_bodies_once(storage)
+                if ingested:
+                    await mark_content_ingested(storage)
         except asyncio.CancelledError:
             raise
         except SessionExpiredError as exc:

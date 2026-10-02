@@ -38,9 +38,13 @@ export function AppShell({ children }: { children: ReactNode }) {
       }
 
       const syncPayload = await apiGet('/api/settings/status');
-      const finished = syncPayload.last_finished_at as string | null;
-      if (finished) {
-        const ts = formatRelativeTime(finished, t);
+      // The push channel stores articles continuously while the list job may
+      // not have run for days, so report whichever happened most recently.
+      const latest = [syncPayload.last_ingest_at, syncPayload.last_finished_at]
+        .filter((value): value is string => typeof value === 'string' && value !== '')
+        .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
+      if (latest) {
+        const ts = formatRelativeTime(latest, t);
         setLastSyncAt(ts ? t('sync.lastSyncAt', 'Last sync {time}').replace('{time}', ts) : '');
       } else {
         setLastSyncAt('');
