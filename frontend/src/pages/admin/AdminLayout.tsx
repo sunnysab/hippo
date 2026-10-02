@@ -13,22 +13,34 @@ export function AdminLayout() {
   ];
 
   return (
-    <div className="admin-layout">
-      <nav className="admin-nav" aria-label={t('admin.navAria', '管理面板导航')}>
-        {sections.map((section) => (
-          <NavLink
-            key={section.key}
-            end={section.path === '/admin'}
-            className={({ isActive }) => `admin-nav-item${isActive ? ' is-active' : ''}`}
-            to={section.path}
-          >
-            {section.label}
-          </NavLink>
-        ))}
-      </nav>
-      <div className="admin-main">
-        <Outlet />
+    <section id="view-admin" className="view is-active">
+      <div className="rail-layout">
+        <aside className="panel rail-sidebar">
+          <div className="panel-header rail-sidebar-header">
+            <div>
+              <h2>{t('admin.title', 'Admin')}</h2>
+              <p className="muted">{t('admin.subtitle', 'Manage users, sync, sign-in and site settings.')}</p>
+            </div>
+          </div>
+          <nav className="rail-nav" aria-label={t('admin.navAria', '管理面板导航')}>
+            <div className="rail-nav-list">
+              {sections.map((section) => (
+                <NavLink
+                  key={section.key}
+                  end={section.path === '/admin'}
+                  className={({ isActive }) => `rail-nav-item${isActive ? ' is-active' : ''}`}
+                  to={section.path}
+                >
+                  <span className="rail-nav-label">{section.label}</span>
+                </NavLink>
+              ))}
+            </div>
+          </nav>
+        </aside>
+        <div className="rail-main">
+          <Outlet />
+        </div>
       </div>
-    </div>
+    </section>
   );
 }

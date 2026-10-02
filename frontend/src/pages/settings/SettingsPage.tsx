@@ -89,30 +89,30 @@ function SettingsPageContent({ initialFormState }: SettingsPageContentProps) {
 
   return (
     <section id="view-settings" className="view is-active">
-      <div className="settings-layout">
-        <aside className="panel settings-sidebar">
-          <div className="panel-header settings-sidebar-header">
+      <div className="rail-layout">
+        <aside className="panel rail-sidebar">
+          <div className="panel-header rail-sidebar-header">
             <div>
               <h2>{t('settings.title', 'Settings')}</h2>
               <p className="muted">{t('settings.subtitle', 'Manage filters and email settings.')}</p>
             </div>
           </div>
-          <nav className="settings-nav" aria-label={t('settings.navAria', 'Settings sections')}>
-            <div className="settings-nav-list">
+          <nav className="rail-nav" aria-label={t('settings.navAria', 'Settings sections')}>
+            <div className="rail-nav-list">
               {navItems.map((item) => (
                 <NavLink
                   key={item.key}
                   to={item.path}
-                  className={({ isActive: itemActive }) => `settings-nav-item${itemActive ? ' is-active' : ''}`}
+                  className={({ isActive: itemActive }) => `rail-nav-item${itemActive ? ' is-active' : ''}`}
                 >
-                  <span className="settings-nav-label">{item.title}</span>
-                  <span className="settings-nav-summary">{item.summary}</span>
+                  <span className="rail-nav-label">{item.title}</span>
+                  <span className="rail-nav-summary">{item.summary}</span>
                 </NavLink>
               ))}
             </div>
           </nav>
         </aside>
-        <div className="settings-main">
+        <div className="rail-main">
           <Outlet context={outletContext} />
         </div>
       </div>

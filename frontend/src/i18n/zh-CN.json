@@ -348,6 +348,8 @@
   "theme.light": "浅色",
   "theme.dark": "深色",
   "nav.admin": "管理",
+  "admin.title": "管理",
+  "admin.subtitle": "管理用户、同步、登录与站点配置。",
   "admin.loading": "加载中…",
   "admin.user.title": "用户管理",
   "admin.user.count": "{n} 个账号",

@@ -357,6 +357,127 @@ body {
   justify-content: center;
 }
 
+/* ---- Page rail --------------------------------------------------------- */
+
+/* A page that owns a sub-navigation (settings, admin): a rail of sections that
+   stays put beside one scrolling column of content. */
+.rail-layout {
+  display: grid;
+  /* Fixed-ish rail: a 0.3fr share of an ultrawide viewport gives the nav a
+     half-screen-wide column of links. */
+  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+  flex: 1;
+  gap: 12px;
+  min-height: 0;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.rail-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.rail-sidebar-header {
+  margin-bottom: 12px;
+}
+
+.rail-nav {
+  flex: 1;
+  min-height: 0;
+}
+
+.rail-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rail-nav-item {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-decoration: none;
+  transition: background 0.18s ease-out, transform 0.18s ease-out;
+}
+
+/* The current section is marked by a bar in the gutter, the same mark the
+   article list uses for its selected row. */
+.rail-nav-item::before {
+  content: '';
+  position: absolute;
+  inset: 10px auto 10px 0;
+  width: 3px;
+  border-radius: var(--radius);
+  background: transparent;
+}
+
+.rail-nav-item:hover {
+  transform: translateY(var(--lift-hover));
+  background: var(--accent-mist);
+}
+
+.rail-nav-item.is-active::before {
+  background: var(--accent);
+}
+
+.rail-nav-item.is-active .rail-nav-label,
+.rail-nav-item.is-active .rail-nav-summary {
+  color: var(--text);
+}
+
+.rail-nav-label {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.rail-nav-summary {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.rail-main {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+}
+
+/* Two columns no longer fit: the sections become a scroller strip above the
+   content, and the main column goes back to scrolling with the page. */
+@media (max-width: 1180px) {
+  .rail-layout {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    overflow: visible;
+  }
+
+  .rail-main {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .rail-nav-list {
+    flex-direction: row;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    gap: 6px;
+  }
+
+  .rail-nav-item {
+    min-width: min(170px, 64vw);
+    flex: none;
+  }
+}
+
 .muted {
   margin: 4px 0 0;
   color: var(--muted);
