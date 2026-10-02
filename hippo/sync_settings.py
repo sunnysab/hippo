@@ -23,6 +23,9 @@ ALERT_SENT_KEY = 'sync:alert_sent'
 # worker 侧写的运行态：心跳 + 队列水位（web 轮询直接读 meta，不扫大表）
 WORKER_HEARTBEAT_KEY = 'sync:worker_heartbeat_at'
 QUEUE_STATS_KEY = 'sync:queue_stats'
+#: 最近一次真正把文章落库的时刻。公众号推送是实时入队的，列表同步 job 可能
+#: 很久才跑一次，只用 SYNC_FINISHED_KEY 判断新鲜度会长期显示成几天前。
+SYNC_INGEST_KEY = 'sync:last_ingest_at'
 
 _ARTICLE_EXCLUDE_KEYWORD_LIMIT = 20
 
@@ -193,9 +196,16 @@ async def get_sync_status(storage: PostgresStorage) -> dict[str, Any]:
         'status': await storage.meta.get(SYNC_STATUS_KEY) or 'idle',
         'last_started_at': await storage.meta.get(SYNC_STARTED_KEY),
         'last_finished_at': await storage.meta.get(SYNC_FINISHED_KEY),
+        'last_ingest_at': await storage.meta.get(SYNC_INGEST_KEY),
         'last_error': await storage.meta.get(SYNC_ERROR_KEY),
         'history': await load_meta_json(storage, SYNC_HISTORY_KEY, []),
     }
+
+
+async def mark_content_ingested(storage: PostgresStorage, *, at: str | None = None) -> None:
+    """Record that article rows were just stored, whatever path did it."""
+    async with storage.transaction():
+        await storage.meta.set(SYNC_INGEST_KEY, at or datetime.now(UTC).isoformat())
 
 
 async def set_sync_state(
@@ -295,6 +305,7 @@ __all__ = [
     'SYNC_ERROR_KEY',
     'SYNC_FINISHED_KEY',
     'SYNC_HISTORY_KEY',
+    'SYNC_INGEST_KEY',
     'SYNC_SETTINGS_KEY',
     'SYNC_STARTED_KEY',
     'SYNC_STATUS_KEY',
@@ -308,6 +319,7 @@ __all__ = [
     'default_sync_settings',
     'get_sync_settings',
     'get_sync_status',
+    'mark_content_ingested',
     'set_sync_settings',
     'set_sync_state',
 ]

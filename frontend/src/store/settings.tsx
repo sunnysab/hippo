@@ -20,6 +20,7 @@ export interface SyncStatus {
   status: string;
   last_started_at: string | null;
   last_finished_at: string | null;
+  last_ingest_at: string | null;
   last_error: string | null;
   history: Array<Record<string, unknown>>;
   queue?: QueueStats;

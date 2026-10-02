@@ -69,6 +69,46 @@ describe('AppShell', () => {
     vi.useRealTimers();
   });
 
+  it('reports the newest ingest time, not only the last list sync', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-02T12:00:00.000Z'));
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+
+    // The push channel keeps storing articles while the list job is long idle.
+    apiGetMock.mockImplementation(async (path: string) => {
+      if (path === '/api/login') {
+        return { logged_in: true, status: 'online', nickname: 'tester' };
+      }
+      if (path === '/api/settings/status') {
+        return {
+          last_finished_at: '2026-04-23T12:00:00.000Z',
+          last_ingest_at: '2026-05-02T11:58:00.000Z',
+        };
+      }
+      throw new Error(`unexpected path: ${path}`);
+    });
+
+    render(
+      <MemoryRouter>
+        <I18nProvider>
+          <ToastProvider>
+            <AppShell>
+              <div>content</div>
+            </AppShell>
+          </ToastProvider>
+        </I18nProvider>
+      </MemoryRouter>,
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(screen.getByText('上次同步于 2 分钟前')).toBeTruthy();
+
+    vi.useRealTimers();
+  });
+
   it('shows the login banner when the daemon is not signed in', async () => {
     vi.stubGlobal('ResizeObserver', ResizeObserverMock);
 
