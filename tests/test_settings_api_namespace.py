@@ -5,7 +5,8 @@ from hippo.server import create_app
 
 ROOT = Path(__file__).resolve().parent.parent
 SETTINGS_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'settings' / 'SettingsPage.tsx'
-SYNC_SETTINGS_PANEL = ROOT / 'frontend' / 'src' / 'pages' / 'settings' / 'SyncSettingsPanel.tsx'
+ADMIN_SYNC_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminSyncPage.tsx'
+SYNC_SETTINGS_PANEL = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'SyncSettingsPanel.tsx'
 EMAIL_PANEL = ROOT / 'frontend' / 'src' / 'pages' / 'settings' / 'EmailPanel.tsx'
 GROUPS_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'groups' / 'GroupsPage.tsx'
 
@@ -40,12 +41,13 @@ class SettingsApiNamespaceTest(unittest.TestCase):
 
     def test_frontend_uses_settings_api_namespace(self) -> None:
         settings_page = SETTINGS_PAGE.read_text(encoding='utf-8')
+        sync_page = ADMIN_SYNC_PAGE.read_text(encoding='utf-8')
         sync_settings_panel = SYNC_SETTINGS_PANEL.read_text(encoding='utf-8')
         email_panel = EMAIL_PANEL.read_text(encoding='utf-8')
         groups_page = GROUPS_PAGE.read_text(encoding='utf-8')
 
-        self.assertIn('/api/settings/status', settings_page)
-        self.assertIn('/api/settings/tasks?limit=5&detail=true', settings_page)
+        self.assertIn('/api/settings/status', sync_page)
+        self.assertIn('/api/settings/tasks?limit=5&detail=true', sync_page)
         self.assertIn('/api/settings', settings_page)
         self.assertIn('/api/settings', sync_settings_panel)
         self.assertIn('/api/settings/test-email', email_panel)
