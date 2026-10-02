@@ -1,6 +1,8 @@
 .settings-layout {
   display: grid;
-  grid-template-columns: minmax(260px, 0.3fr) minmax(0, 1fr);
+  /* Fixed-ish sidebar: a 0.3fr share of an ultrawide viewport gives the nav a
+     half-screen-wide column of links. */
+  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
   flex: 1;
   gap: 12px;
   min-height: 0;
@@ -98,20 +100,30 @@
 }
 
 .settings-single-column {
-  grid-template-columns: minmax(0, var(--content-width));
+  grid-template-columns: minmax(0, 1fr);
 }
 
-.settings-sync-grid {
-  grid-template-columns: minmax(360px, 1.15fr) minmax(320px, 0.85fr);
+/* The sync console: settings the admin edits on the left, live state on the
+   right. Two columns rather than one stack so a wide window is not a column
+   of forms with half a screen of nothing beside it. */
+.sync-columns {
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) minmax(420px, 1fr);
+  align-items: start;
+  gap: 12px;
 }
 
-.settings-sync-grid .sync-settings,
-.settings-sync-grid .sync-history {
-  grid-column: 1 / -1;
+.sync-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
 }
 
+/* One panel per row: the filter blocks are read as a list of settings, and
+   side by side they leave one panel short and half the row empty. */
 .settings-filter-grid {
-  grid-template-columns: minmax(360px, 1fr) minmax(320px, 0.82fr);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .sync-login,
@@ -207,10 +219,10 @@
 
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  /* auto-fit collapses the unused tracks, so a two-field row would otherwise
-     stretch both inputs over the whole panel. */
-  max-width: var(--content-width);
+  /* auto-fill, not auto-fit: auto-fit collapses the unused tracks and lets a
+     two-field row stretch both inputs over the whole panel. auto-fill keeps
+     the tracks, so a control is one column wide on any viewport. */
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 10px;
 }
 
@@ -452,12 +464,7 @@
   color: var(--muted);
 }
 
-/* Let the count own the right edge of the row instead of hugging the label.
-   Capped to the same measure as the forms so the two columns line up. */
-.sync-queue .sync-progress-list {
-  max-width: var(--content-width);
-}
-
+/* Let the count own the right edge of the row instead of hugging the label. */
 .sync-queue .sync-progress-copy {
   flex: 1;
 }
@@ -495,15 +502,10 @@
     padding-right: 0;
   }
 
-  .settings-sync-grid,
+  .sync-columns,
   .settings-filter-grid,
   .settings-single-column {
     grid-template-columns: 1fr;
-  }
-
-  .settings-sync-grid .sync-settings,
-  .settings-sync-grid .sync-history {
-    grid-column: auto;
   }
 }
 

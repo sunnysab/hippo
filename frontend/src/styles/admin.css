@@ -1,5 +1,7 @@
 /* Admin console. Table-first: this page is scanned, not browsed. */
 
+/* Configuration panels stack in a single column. Side-by-side panels of forms
+   read as a dashboard and pair badly with fields of unequal height. */
 .admin-page {
   display: flex;
   flex-direction: column;

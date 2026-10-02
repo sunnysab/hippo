@@ -2,12 +2,11 @@
 
 .report-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  /* The preview is a reading column, so the settings rail takes the leftover
+     width rather than the preview growing past a readable line length. */
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 520px);
   align-items: start;
   gap: 12px;
-  /* Keep the preview column at a readable measure once the viewport outgrows
-     the sidebar's 360px. */
-  max-width: calc(var(--content-width) + 360px + 12px);
 }
 
 .report-toolbar {
