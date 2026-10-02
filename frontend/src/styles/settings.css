@@ -98,7 +98,7 @@
 }
 
 .settings-single-column {
-  grid-template-columns: minmax(0, 820px);
+  grid-template-columns: minmax(0, var(--content-width));
 }
 
 .settings-sync-grid {
@@ -208,6 +208,9 @@
 .form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  /* auto-fit collapses the unused tracks, so a two-field row would otherwise
+     stretch both inputs over the whole panel. */
+  max-width: var(--content-width);
   gap: 10px;
 }
 
@@ -449,7 +452,12 @@
   color: var(--muted);
 }
 
-/* Let the count own the right edge of the row instead of hugging the label. */
+/* Let the count own the right edge of the row instead of hugging the label.
+   Capped to the same measure as the forms so the two columns line up. */
+.sync-queue .sync-progress-list {
+  max-width: var(--content-width);
+}
+
 .sync-queue .sync-progress-copy {
   flex: 1;
 }

@@ -5,6 +5,9 @@
   grid-template-columns: minmax(0, 1fr) 360px;
   align-items: start;
   gap: 12px;
+  /* Keep the preview column at a readable measure once the viewport outgrows
+     the sidebar's 360px. */
+  max-width: calc(var(--content-width) + 360px + 12px);
 }
 
 .report-toolbar {

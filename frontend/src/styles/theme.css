@@ -98,6 +98,9 @@
   --overlay-ink: #ffffff;
 
   --app-topbar-height: 64px;
+  /* Measure for a column of form fields or status rows. Without it a grid of
+     two fields stretches each input across an ultrawide viewport. */
+  --content-width: 820px;
   --reader-width: 860px;
   --reader-font: 17px;
   --reader-line: 1.75;
