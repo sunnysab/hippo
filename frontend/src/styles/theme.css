@@ -98,9 +98,12 @@
   --overlay-ink: #ffffff;
 
   --app-topbar-height: 64px;
-  /* Measure for a column of form fields or status rows. Without it a grid of
-     two fields stretches each input across an ultrawide viewport. */
-  --content-width: 820px;
+  /* The app is a bounded column, not a full-bleed canvas. Past this width a
+     two-field form floats in a screen-wide panel and every page reads as a
+     left-aligned strip. One bound for every page keeps them consistent. */
+  --app-width: 1600px;
+  /* Keeps the fixed top bar aligned with the column above. */
+  --app-inset: max(12px, calc((100vw - var(--app-width)) / 2 + 12px));
   --reader-width: 860px;
   --reader-font: 17px;
   --reader-line: 1.75;

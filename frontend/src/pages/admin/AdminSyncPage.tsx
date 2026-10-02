@@ -148,12 +148,16 @@ function AdminSyncPanels({ initialFormState }: { initialFormState: SyncSettingsF
   const [formState, setFormState] = useState(initialFormState);
 
   return (
-    <div className="settings-panel-grid settings-sync-grid">
-      <SyncSettingsPanel formState={formState} setFormState={setFormState} />
-      <FailureAlertPanel formState={formState} setFormState={setFormState} />
-      <ActiveTaskPanel />
-      <QueuePanel />
-      <SyncHistoryPanel />
+    <div className="sync-columns">
+      <div className="sync-column">
+        <SyncSettingsPanel formState={formState} setFormState={setFormState} />
+        <FailureAlertPanel formState={formState} setFormState={setFormState} />
+      </div>
+      <div className="sync-column">
+        <ActiveTaskPanel />
+        <QueuePanel />
+        <SyncHistoryPanel />
+      </div>
     </div>
   );
 }
