@@ -308,8 +308,9 @@ async def search_account(
         known = by_alias.get(alias.lower()) if alias else None
         if known is None and nickname:
             known = by_nickname.get(nickname)
-        if avatar_url and known is not None:
-            await _upsert_avatar_url(storage, known.biz, avatar_url)
+        # 以 gh_id 为键缓存：搜索头像接口拿到的就是 gh_id，而 accounts.biz 是 fakeid。
+        if avatar_url:
+            await _upsert_avatar_url(storage, gh_id, avatar_url)
         results.append(
             {
                 'biz': gh_id,
@@ -317,7 +318,7 @@ async def search_account(
                 'alias': alias,
                 'round_head_img': avatar_url,
                 'is_added': known is not None and known.biz in followed_biz,
-                'avatar_url': f'/api/account/search/{quote(gh_id, safe="")}/avatar',
+                'avatar_url': f'/api/account/search/{quote(gh_id, safe="")}/avatar' if avatar_url else '',
             }
         )
     return {
@@ -334,10 +335,13 @@ async def get_search_avatar(
     storage: PostgresStorage = Depends(get_storage),
 ) -> Response:
     """
-    获取搜索到的（尚未添加的）公众号头像。
+    获取搜索结果的公众号头像。
+
+    头像按搜索结果里的 `gh_id` 缓存（搜索接口返回的 `avatar_url` 就是它），
+    与已关注账号的 `accounts.biz`（fakeid）不是同一套键。
 
     Args:
-        biz (str): 公众号唯一标识 (fakeid)。
+        biz (str): 搜索结果的 gh_id。
 
     Returns:
         Response: 包含正确 Content-Type 的图片数据。
