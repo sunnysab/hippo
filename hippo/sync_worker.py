@@ -397,6 +397,8 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
                     observer=tracker,
                 )
         except Exception as exc:
+            # 入队失败会把连接留在 aborted 事务里，先清掉再写失败状态，否则 mark_finished 也会炸
+            await storage.rollback()
             async with storage.transaction():
                 await storage.sync_jobs.mark_finished(
                     job.task_id,
@@ -549,7 +551,12 @@ async def run_sync_worker(
                     await maybe_enqueue_scheduled_job(storage)
                     await maybe_enqueue_backfill_job(storage)
                 pending = int((await storage.article_queue.stats()).get('pending') or 0)
-                handled = await run_worker_once(storage=storage, worker_id=resolved_worker_id)
+                try:
+                    handled = await run_worker_once(storage=storage, worker_id=resolved_worker_id)
+                except Exception:
+                    # 单个 job 的异常不该拖垮 worker（drain / 图片回填还跑在旁边）
+                    logger.exception('同步 job 执行异常，继续下一轮')
+                    handled = True
             metric('histogram', 'hippo.worker.round.duration', unit='s').record(time.perf_counter() - started_at)
             metric('histogram', 'hippo.queue.pending', unit='{article}').record(pending)
             if handled:

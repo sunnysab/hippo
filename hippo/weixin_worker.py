@@ -19,6 +19,7 @@ from .downloader import ArticleDownloader
 from .logger import get_logger
 from .models import ArticleRecord
 from .storage import PostgresStorage
+from .utils import strip_nul
 from .weixin_source import FetchedArticle, SessionExpiredError, WeixinSource, classify_daemon_error
 
 logger = get_logger(__name__)
@@ -173,13 +174,13 @@ class WeixinArticleSync:
         article = ArticleRecord(
             biz=str(row['biz']),
             article_id=body.slug,
-            title=body.title or str(payload.get('title') or '(untitled)'),
+            title=strip_nul(body.title or str(payload.get('title') or '(untitled)')),
             item_show_type=(body.item_show_type if body.item_show_type is not None else payload.get('item_show_type')),
-            author=body.author or None,
-            digest=body.digest or payload.get('digest'),
-            cover=body.cover_url or payload.get('cover_url'),
-            link=body.short_link,
-            source_url=body.source_url,
+            author=strip_nul(body.author) or None,
+            digest=strip_nul(body.digest or payload.get('digest')),
+            cover=strip_nul(body.cover_url or payload.get('cover_url')),
+            link=strip_nul(body.short_link),
+            source_url=strip_nul(body.source_url),
             publish_at=body.publish_time or payload.get('publish_time'),
             raw={'sn': row['sn'], 'list': payload},
         )

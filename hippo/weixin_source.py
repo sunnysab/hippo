@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from .utils import strip_nul
+
 DEFAULT_SDK_PATH = '/opt/weixin-rs/sdk/python'
 
 # 会话类错误（daemon 侧 -13/未登录）：不是文章的错，不计 attempts、整体暂停等重新登录。
@@ -216,12 +218,12 @@ class WeixinSource:
                 QueuedArticle(
                     biz=biz,
                     sn=sn,
-                    long_link=long_link,
+                    long_link=strip_nul(long_link),
                     payload={
-                        'title': article.get('title'),
-                        'digest': article.get('digest'),
+                        'title': strip_nul(article.get('title')),
+                        'digest': strip_nul(article.get('digest')),
                         'publish_time': article.get('publish_time'),
-                        'cover_url': article.get('cover_url'),
+                        'cover_url': strip_nul(article.get('cover_url')),
                     },
                 )
             )

@@ -14,6 +14,11 @@ if TYPE_CHECKING:
 _slug_pattern = re.compile(r'[^a-z0-9-]+')
 
 
+def strip_nul(value: Any) -> Any:
+    """去掉 NUL（``\\u0000``）：PG 的 text/jsonb 拒收，而微信的 title/digest 偶尔带一个。"""
+    return value.replace('\x00', '') if isinstance(value, str) else value
+
+
 def slugify(value: str, *, max_length: int = 80) -> str:
     normalized = unicodedata.normalize('NFKD', value).encode('ascii', 'ignore').decode('ascii')
     normalized = normalized.lower()
@@ -208,6 +213,7 @@ __all__ = [
     'should_skip_by_interval',
     'should_skip_by_time',
     'slugify',
+    'strip_nul',
     'to_utc_dt',
     'utc_now_dt',
     'utc_now_iso',

@@ -27,6 +27,44 @@ class _Bot:
         }
 
 
+class _ListBot:
+    def __init__(self, articles: list[dict]) -> None:
+        self._articles = articles
+
+    async def call(self, action, params, *, timeout):
+        assert action == 'get_biz_articles'
+        return {
+            'biz': 'gh_1',
+            'count': len(self._articles),
+            'articles': self._articles,
+            'next_offset': 'cur',
+            'is_end': False,
+        }
+
+
+class WeixinSourceListTest(unittest.TestCase):
+    def test_strips_nul_characters_that_postgres_would_reject(self) -> None:
+        source = WeixinSource(auto_login=False)
+        source._bot = _ListBot([
+            {
+                'title': 'a\x00b',
+                'digest': 'x\x00',
+                'url': 'https://mp.weixin.qq.com/s?__biz=Mz1&sn=abc',
+                'publish_time': 1,
+                'cover_url': 'https://example.invalid/c\x00.png',
+            }
+        ])
+
+        listed = asyncio.run(source.list_articles('gh_1', 'Mz1'))
+
+        self.assertEqual(1, len(listed.items))
+        payload = listed.items[0].payload
+        self.assertEqual('ab', payload['title'])
+        self.assertEqual('x', payload['digest'])
+        self.assertEqual('https://example.invalid/c.png', payload['cover_url'])
+        self.assertEqual('cur', listed.next_offset)
+
+
 class WeixinSourceBodyDiagnosticsTest(unittest.TestCase):
     def test_preserves_per_url_daemon_diagnostics(self) -> None:
         source = WeixinSource(auto_login=False)
