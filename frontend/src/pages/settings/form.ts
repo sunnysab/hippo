@@ -3,8 +3,6 @@ import type { SyncSettings } from '../../store/settings';
 export interface SyncSettingsFormState {
   enabled: boolean;
   intervalMinutes: string;
-  windowStartHour: string;
-  windowEndHour: string;
   sleepSeconds: string;
   skipMinutes: string;
   downloadContent: boolean;
@@ -34,8 +32,6 @@ export const buildSyncSettingsFormState = (
   return {
     enabled: Boolean(settings?.enabled),
     intervalMinutes: toStringValue(settings?.interval_minutes, '60'),
-    windowStartHour: toStringValue(settings?.window_start_hour, '6'),
-    windowEndHour: toStringValue(settings?.window_end_hour, '24'),
     sleepSeconds: toStringValue(settings?.sleep_seconds, '15'),
     skipMinutes: toStringValue(settings?.skip_minutes, '30'),
     downloadContent: Boolean(settings?.download_content),
@@ -60,8 +56,6 @@ const toNumber = (value: string, fallback: number): number => {
 export const buildSyncSettingsPayload = (form: SyncSettingsFormState): Record<string, unknown> => ({
   enabled: form.enabled,
   interval_minutes: toNumber(form.intervalMinutes, 60),
-  window_start_hour: toNumber(form.windowStartHour, 6),
-  window_end_hour: toNumber(form.windowEndHour, 24),
   sleep_seconds: toNumber(form.sleepSeconds, 15),
   skip_minutes: toNumber(form.skipMinutes, 30),
   download_content: form.downloadContent,

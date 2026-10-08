@@ -27,8 +27,6 @@ from .sync_settings import (
     QUEUE_STATS_KEY,
     SYNC_STARTED_KEY,
     WORKER_HEARTBEAT_KEY,
-    _get_window_hours,
-    _is_within_sync_window,
     get_sync_settings,
     mark_content_ingested,
 )
@@ -266,10 +264,6 @@ async def recover_stale_running_jobs(
 async def maybe_enqueue_scheduled_job(storage: PostgresStorage) -> bool:
     settings = await get_sync_settings(storage)
     if not settings.get('enabled'):
-        return False
-    start_hour, end_hour = _get_window_hours(settings)
-    now = datetime.now()
-    if not _is_within_sync_window(now, start_hour=start_hour, end_hour=end_hour):
         return False
     if await storage.sync_jobs.has_active_job():
         return False

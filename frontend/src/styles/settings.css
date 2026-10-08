@@ -156,24 +156,6 @@
   grid-column: 1 / -1;
 }
 
-.sync-window-field .sync-window-inputs {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.sync-window-field .sync-window-inputs input {
-  min-width: 0;
-  flex: 1;
-}
-
-.sync-window-field .sync-window-unit,
-.sync-window-field .sync-window-separator {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.form-grid .sync-window-note,
 .form-grid .sync-inline-note {
   grid-column: 1 / -1;
   margin: 0;

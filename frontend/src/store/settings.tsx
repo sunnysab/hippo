@@ -30,8 +30,6 @@ export interface SyncStatus {
 export interface SyncSettings {
   enabled: boolean;
   interval_minutes: number;
-  window_start_hour: number;
-  window_end_hour: number;
   sleep_seconds: number;
   skip_minutes: number;
   download_content: boolean;

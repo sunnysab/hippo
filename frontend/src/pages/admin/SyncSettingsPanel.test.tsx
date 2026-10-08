@@ -46,10 +46,7 @@ describe('SyncSettingsPanel', () => {
     vi.useFakeTimers();
     settingsStateMock.mockReturnValue({
       state: {
-        syncSettings: {
-          window_start_hour: 6,
-          window_end_hour: 24,
-        },
+        syncSettings: {},
       },
       dispatch: vi.fn(),
     });
@@ -76,8 +73,6 @@ describe('SyncSettingsPanel', () => {
         formState={{
           enabled: true,
           intervalMinutes: '60',
-          windowStartHour: '6',
-          windowEndHour: '24',
           sleepSeconds: '0.05',
           skipMinutes: '30',
           downloadContent: true,

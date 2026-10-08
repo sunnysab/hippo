@@ -22,10 +22,9 @@ export function SyncSettingsPanel({
   formState,
   setFormState,
 }: SyncSettingsPanelProps) {
-  const { state, dispatch } = useSettingsState();
+  const { dispatch } = useSettingsState();
   const { t } = useI18n();
   const { showToast } = useToast();
-  const settings = state.syncSettings;
 
   const watchTaskResult = async (taskId: string) => {
     const maxAttempts = 20;
@@ -58,7 +57,6 @@ export function SyncSettingsPanel({
     }
   };
 
-  const formatHour = (h: number) => `${String(h).padStart(2, '0')}:00`;
 
   return (
     <div className="panel sync-settings">
@@ -118,35 +116,6 @@ export function SyncSettingsPanel({
                 onChange={(event) => setFormState((prev) => ({ ...prev, intervalMinutes: event.target.value }))}
               />
             </label>
-            <label className="sync-window-field">
-              <span>{t('sync.windowRange', 'Sync window')}</span>
-              <div className="sync-window-inputs">
-                <input
-                  type="number"
-                  id="sync-window-start"
-                  min="0"
-                  max="23"
-                  value={formState.windowStartHour}
-                  onChange={(event) => setFormState((prev) => ({ ...prev, windowStartHour: event.target.value }))}
-                />
-                <span className="sync-window-unit">{t('sync.windowHour', 'h')}</span>
-                <span className="sync-window-separator">{t('sync.windowTo', 'to')}</span>
-                <input
-                  type="number"
-                  id="sync-window-end"
-                  min="0"
-                  max="24"
-                  value={formState.windowEndHour}
-                  onChange={(event) => setFormState((prev) => ({ ...prev, windowEndHour: event.target.value }))}
-                />
-                <span className="sync-window-unit">{t('sync.windowHour', 'h')}</span>
-              </div>
-            </label>
-            <p className="muted sync-window-note" id="sync-window-note">
-              {t('sync.windowHintRange', 'Current window: {start} - {end}')
-                .replace('{start}', formatHour(Number(formState.windowStartHour || settings?.window_start_hour || 6)))
-                .replace('{end}', formatHour(Number(formState.windowEndHour || settings?.window_end_hour || 24)))}
-            </p>
           </div>
         </section>
         <section className="sync-form-section">

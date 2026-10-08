@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
-from .config import DEFAULT_SYNC_REQUEST_INTERVAL, DEFAULT_WINDOW_END_HOUR, DEFAULT_WINDOW_START_HOUR
+from .config import DEFAULT_SYNC_REQUEST_INTERVAL
 from .emailer import get_email_settings, send_email
 from .logger import get_logger
 from .storage import PostgresStorage, load_meta_json, save_meta_json
@@ -36,8 +36,6 @@ def default_sync_settings() -> dict[str, Any]:
     return {
         'enabled': False,
         'interval_minutes': 60,
-        'window_start_hour': DEFAULT_WINDOW_START_HOUR,
-        'window_end_hour': DEFAULT_WINDOW_END_HOUR,
         'sleep_seconds': DEFAULT_SYNC_REQUEST_INTERVAL,
         'download_content': True,
         'download_images': True,
@@ -71,57 +69,11 @@ def _normalize_article_exclude_keywords(value: Any) -> str:
     return '\n'.join(_split_article_exclude_keywords(value))
 
 
-def _normalize_window_start_hour(value: Any) -> int:
-    try:
-        hour = int(value)
-    except TypeError, ValueError:
-        return DEFAULT_WINDOW_START_HOUR
-    return min(max(hour, 0), 23)
-
-
-def _normalize_window_end_hour(value: Any) -> int:
-    try:
-        hour = int(value)
-    except TypeError, ValueError:
-        return DEFAULT_WINDOW_END_HOUR
-    return min(max(hour, 0), 24)
-
-
-def _get_window_hours(settings: dict[str, Any]) -> tuple[int, int]:
-    return (
-        _normalize_window_start_hour(settings.get('window_start_hour')),
-        _normalize_window_end_hour(settings.get('window_end_hour')),
-    )
-
-
-def _is_within_sync_window(now: datetime, *, start_hour: int, end_hour: int) -> bool:
-    current_minute = now.hour * 60 + now.minute
-    start_minute = (start_hour % 24) * 60
-    end_minute = 24 * 60 if end_hour == 24 else (end_hour % 24) * 60
-    if start_minute == end_minute:
-        return True
-    if start_minute < end_minute:
-        return start_minute <= current_minute < end_minute
-    return current_minute >= start_minute or current_minute < end_minute
-
-
-def _seconds_until_window_start(now: datetime, *, start_hour: int, end_hour: int) -> float:
-    if _is_within_sync_window(now, start_hour=start_hour, end_hour=end_hour):
-        return 0.0
-    target_hour = start_hour % 24
-    target = now.replace(hour=target_hour, minute=0, second=0, microsecond=0)
-    if target <= now:
-        target += timedelta(days=1)
-    return max((target - now).total_seconds(), 1.0)
-
-
 async def get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
     settings = await load_meta_json(storage, SYNC_SETTINGS_KEY, default_sync_settings())
     defaults = default_sync_settings()
-    merged = {**defaults, **(settings or {})}
-    start_hour, end_hour = _get_window_hours(merged)
-    merged['window_start_hour'] = start_hour
-    merged['window_end_hour'] = end_hour
+    # 只认默认值里有的键：老配置里留下的 window_start_hour / window_end_hour 会被丢掉
+    merged = {**defaults, **{key: value for key, value in (settings or {}).items() if key in defaults}}
     merged['article_exclude_keywords'] = _normalize_article_exclude_keywords(
         merged.get('article_exclude_keywords'),
     )
@@ -310,8 +262,6 @@ __all__ = [
     'SYNC_STARTED_KEY',
     'SYNC_STATUS_KEY',
     'WORKER_HEARTBEAT_KEY',
-    '_get_window_hours',
-    '_is_within_sync_window',
     '_persist_sync_outcome',
     '_to_utc_timestamp',
     '_today_str',
