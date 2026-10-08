@@ -128,8 +128,10 @@ export function AccountSearchModal({ isOpen, onClose }: AccountSearchModalProps)
         <div className={`search-results${state.searchResults.length ? '' : ' is-hidden'}`} id="account-search-results">
           {state.searchResults.map((item) => (
             <div key={item.biz} className="search-item">
+              {/* 头像加载失败时只能隐藏、不能摘除：它是 grid 的第一列，
+                  元素消失会把 meta 挤进 42px 的列里，整行跟着错位。 */}
               {item.avatar_url ? (
-                <img className="account-avatar" src={item.avatar_url} alt="" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                <img className="account-avatar" src={item.avatar_url} alt="" onError={(e) => { (e.target as HTMLImageElement).style.visibility = 'hidden'; }} />
               ) : (
                 <div className="account-avatar"></div>
               )}

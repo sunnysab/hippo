@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { GroupList } from '../pages/groups/GroupList';
 import { BatchActions } from '../pages/groups/BatchActions';
@@ -6,6 +6,7 @@ import { ActiveTaskPanel } from '../pages/admin/ActiveTaskPanel';
 import { ArticleFilterSummary } from '../pages/articles/ArticleFilterSummary';
 import { GroupHeader } from '../pages/groups/GroupHeader';
 import { ArticleTypeFacets } from '../pages/articles/ArticleTypeFacets';
+import { AccountSearchModal } from '../pages/groups/AccountSearchModal';
 
 const groupsStateMock = vi.fn();
 const settingsStateMock = vi.fn();
@@ -48,6 +49,34 @@ vi.mock('react-router-dom', () => ({
 describe('visual hierarchy semantics', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('keeps the avatar slot when a search result avatar fails to load', () => {
+    groupsStateMock.mockReturnValue({
+      state: {
+        searchResults: [{
+          biz: 'biz-1',
+          nickname: '中投数研',
+          alias: 'gh_abc123',
+          round_head_img: '',
+          avatar_url: 'https://example.invalid/avatar.png',
+          is_added: false,
+        }],
+        searchLoading: false,
+        selectedGroupId: 2,
+        searchPage: 1,
+        searchHasMore: false,
+      },
+      dispatch: vi.fn(),
+    });
+
+    const { container } = render(<AccountSearchModal isOpen onClose={vi.fn()} />);
+    const avatar = container.querySelector('img.account-avatar') as HTMLImageElement;
+    fireEvent.error(avatar);
+
+    // 摘除元素会让 grid 把 meta 挤进头像列，整行跟着错位
+    expect(avatar.style.visibility).toBe('hidden');
+    expect(avatar.style.display).not.toBe('none');
   });
 
   it('uses low-emphasis count styling for group and batch counters', () => {

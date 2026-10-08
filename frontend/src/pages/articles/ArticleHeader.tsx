@@ -18,7 +18,7 @@ export function ArticleHeader({ article }: ArticleHeaderProps) {
       <div className="article-preview-meta">
         <div className="article-preview-account">
           {avatarUrl ? (
-            <img className="article-preview-avatar" src={avatarUrl} alt={article.account_nickname || ''} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+            <img className="article-preview-avatar" src={avatarUrl} alt={article.account_nickname || ''} onError={(e) => { (e.target as HTMLImageElement).style.visibility = 'hidden'; }} />
           ) : (
             <div className="article-preview-avatar placeholder"></div>
           )}

@@ -45,7 +45,7 @@ export const ArticleCard = memo(function ArticleCard({
         <div className="article-title">{escapeHtml(article.title || '')}</div>
         <div className="article-meta">
           {avatar ? (
-            <img className="article-avatar" src={avatar} alt="" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+            <img className="article-avatar" src={avatar} alt="" onError={(e) => { (e.target as HTMLImageElement).style.visibility = 'hidden'; }} />
           ) : null}
           <span
             className="article-account-name"

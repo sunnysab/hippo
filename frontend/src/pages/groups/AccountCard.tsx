@@ -87,7 +87,7 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
         </button>
       </div>
       <div className="account-meta">
-        <img className="account-avatar" src={account.avatar_url} alt="" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+        <img className="account-avatar" src={account.avatar_url} alt="" onError={(e) => { (e.target as HTMLImageElement).style.visibility = 'hidden'; }} />
         <div>
           <div
             className="account-name"
