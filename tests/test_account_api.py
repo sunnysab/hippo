@@ -53,13 +53,13 @@ class AccountApiTest(unittest.IsolatedAsyncioTestCase):
                 'userName': 'gh_abc123',
                 'nickName': '中投数研',
                 'alias': 'gh_abc',
-                'roundHeadImg': 'http://mmbiz.qpic.cn/avatar.png',
+                'headImgUrl': 'http://wx.qlogo.cn/mmhead/avatar/132',
             },
             {
                 'userName': 'gh_none456',
                 'nickName': '无头像号',
                 'alias': '',
-                'roundHeadImg': '',
+                'headImgUrl': '',
             },
         ]
         source = _FakeSource(items)
@@ -71,7 +71,7 @@ class AccountApiTest(unittest.IsolatedAsyncioTestCase):
         ):
             payload = await account_api.search_account(q='中投', storage=storage, user=user)
 
-        upsert.assert_awaited_once_with(storage, 'gh_abc123', 'http://mmbiz.qpic.cn/avatar.png')
+        upsert.assert_awaited_once_with(storage, 'gh_abc123', 'http://wx.qlogo.cn/mmhead/avatar/132')
         self.assertEqual('/api/account/search/gh_abc123/avatar', payload['results'][0]['avatar_url'])
         # 微信没给头像时留空，让前端走灰色占位块而不是一个必然 404 的代理地址。
         self.assertEqual('', payload['results'][1]['avatar_url'])

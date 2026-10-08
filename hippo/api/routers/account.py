@@ -304,7 +304,8 @@ async def search_account(
             continue
         nickname = str(item.get('nickName') or '').strip()
         alias = str(item.get('alias') or '').strip()
-        avatar_url = str(item.get('roundHeadImg') or item.get('headImg') or '').strip()
+        # 微信 H5 搜索返回的是 headImgUrl / headHDImgUrl（曾经的 roundHeadImg/headImg 从未存在过）
+        avatar_url = str(item.get('headImgUrl') or item.get('headHDImgUrl') or '').strip()
         known = by_alias.get(alias.lower()) if alias else None
         if known is None and nickname:
             known = by_nickname.get(nickname)
