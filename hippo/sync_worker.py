@@ -35,6 +35,7 @@ from .sync_types import AccountProgress, SyncAccountResult, SyncObserver, SyncRe
 from .utils import utc_now_iso
 from .weixin_source import SessionExpiredError, WeixinSource
 from .weixin_watch import watch_article_push
+from .weixin_worker import WeixinArticleSync
 
 logger = get_logger(__name__)
 SERVICE_NAME = 'hippo-sync-worker'
@@ -343,10 +344,13 @@ async def backfill_account_history(
     cursor = account.backfill_cursor or ''
     total = 0
     pages = 0
-    container = build_sync_container(storage=storage, enable_download=False, enable_images=False)
-    async with container as app:
+    # 回填只需要「列表 + 入队」，不建 downloader/image service：那套东西是给正文准备 的，
+    # 而且在长驻 worker 里额外构造一遍会跟常驻 drain 抢资源。
+    async with WeixinSource() as source:
+        sync = WeixinArticleSync(storage=storage, source=source)
         while True:
-            stats = await app.weixin_sync.sync_account(
+            await log(f'{account.nickname}：第 {pages + 1} 页…')
+            stats = await sync.sync_account(
                 biz=biz,
                 source_key=source_key,
                 pages=1,

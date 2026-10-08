@@ -10,12 +10,9 @@ from unittest.mock import AsyncMock, patch
 from hippo.sync_worker import backfill_account_history, maybe_enqueue_backfill_job
 
 
-class _FakeContainer:
-    def __init__(self, app: SimpleNamespace) -> None:
-        self._app = app
-
-    async def __aenter__(self) -> SimpleNamespace:
-        return self._app
+class _FakeSource:
+    async def __aenter__(self) -> _FakeSource:
+        return self
 
     async def __aexit__(self, *exc) -> bool:
         return False
@@ -92,12 +89,13 @@ class BackfillTest(unittest.IsolatedAsyncioTestCase):
             calls.append(kwargs)
             return pages[len(calls) - 1]
 
-        app = SimpleNamespace(weixin_sync=SimpleNamespace(sync_account=sync_account))
+        sync_impl = SimpleNamespace(sync_account=sync_account)
         account = SimpleNamespace(biz='Mz1', nickname='A', gh_id='gh_1', alias=None, backfill_cursor=None)
         storage = _storage(account)
 
         with (
-            patch('hippo.sync_worker.build_sync_container', return_value=_FakeContainer(app)),
+            patch('hippo.sync_worker.WeixinSource', return_value=_FakeSource()),
+            patch('hippo.sync_worker.WeixinArticleSync', return_value=sync_impl),
             patch('hippo.sync_worker.asyncio.sleep', AsyncMock()),
         ):
             result = await backfill_account_history(storage, biz='Mz1')
@@ -115,11 +113,14 @@ class BackfillTest(unittest.IsolatedAsyncioTestCase):
             calls.append(kwargs)
             return SimpleNamespace(listed=5, enqueued=0, next_offset=None, is_end=True)
 
-        app = SimpleNamespace(weixin_sync=SimpleNamespace(sync_account=sync_account))
+        sync_impl = SimpleNamespace(sync_account=sync_account)
         account = SimpleNamespace(biz='Mz2', nickname='B', gh_id='gh_2', alias=None, backfill_cursor='cur-9')
         storage = _storage(account)
 
-        with patch('hippo.sync_worker.build_sync_container', return_value=_FakeContainer(app)):
+        with (
+            patch('hippo.sync_worker.WeixinSource', return_value=_FakeSource()),
+            patch('hippo.sync_worker.WeixinArticleSync', return_value=sync_impl),
+        ):
             await backfill_account_history(storage, biz='Mz2')
 
         self.assertEqual(['cur-9'], [call['offset'] for call in calls])

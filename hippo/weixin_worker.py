@@ -52,7 +52,7 @@ class WeixinArticleSync:
         *,
         storage: PostgresStorage,
         source: WeixinSource,
-        downloader: ArticleDownloader,
+        downloader: ArticleDownloader | None = None,
         batch_size: int = 5,
     ) -> None:
         self._storage = storage
@@ -93,6 +93,8 @@ class WeixinArticleSync:
 
     async def drain(self, *, limit: int | None = None) -> SyncStats:
         """把队列里的 pending 抓完（每批 ≤ ``batch_size``）。"""
+        if self._downloader is None:
+            raise RuntimeError('这次实例没有 downloader，不能抓正文')
         stats = SyncStats()
         requeued = await self._storage.article_queue.requeue_stale()
         await self._storage.commit()
