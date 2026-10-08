@@ -32,6 +32,9 @@ class SyncStats:
     enqueued: int = 0
     ingested: int = 0
     failed: int = 0
+    # 列表分页：下一页游标 + 是否到底（回填循环靠它们决定还要不要继续）
+    next_offset: str | None = None
+    is_end: bool = False
 
     def merge(self, other: SyncStats) -> None:
         self.listed += other.listed
@@ -56,11 +59,20 @@ class WeixinArticleSync:
         self._downloader = downloader
         self._batch_size = max(1, batch_size)
 
-    async def sync_account(self, *, biz: str, source_key: str, pages: int = 1) -> SyncStats:
-        """拉一个账号的列表并入队（``source_key`` 是微信号 alias 或 gh_）。"""
+    async def sync_account(
+        self,
+        *,
+        biz: str,
+        source_key: str,
+        pages: int = 1,
+        offset: str = '',
+    ) -> SyncStats:
+        """拉一个账号的一页（或多页）列表并入队（``source_key`` 是微信号 alias 或 gh_）。"""
         stats = SyncStats()
-        listed = await self._source.list_articles(source_key, biz, pages=pages)
+        listed = await self._source.list_articles(source_key, biz, pages=pages, offset=offset)
         stats.listed = len(listed.items)
+        stats.next_offset = listed.next_offset
+        stats.is_end = listed.is_end
         stats.enqueued = await self._storage.article_queue.enqueue_many(
             {
                 'biz': item.biz,

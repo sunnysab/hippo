@@ -449,6 +449,10 @@ async def create_account(
         )
         # Adding an account to the catalogue also subscribes the caller to it.
         await storage.subscriptions.upsert(user.id, account.biz, group_id=int(group_id))
+        # 新加进来的号要把它能被看到的历史翻完：丢一条回填 job，worker 下一轮（5s 内）接手。
+        # 目录里已有的号（backfill_state 早就置 done）不会被重复回填。
+        if account.backfill_state == 'pending':
+            await storage.sync_jobs.create_job(trigger_type='backfill', biz_list=[account.biz])
     return _normalize_account_payload(
         {
             'biz': account.biz,

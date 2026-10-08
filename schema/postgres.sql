@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS accounts (
     sync_recent_days INTEGER,
     sync_interval_days INTEGER DEFAULT NULL,
     last_synced_at TIMESTAMPTZ,
+    -- 历史回填：新加的号置 pending，翻到底后置 done（见 sync_worker 的回填分支）
+    backfill_state TEXT NOT NULL DEFAULT 'done',
+    backfill_cursor TEXT,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
@@ -38,6 +41,9 @@ ON accounts (group_id);
 
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS sync_interval_days INTEGER DEFAULT NULL;
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS gh_id TEXT;
+-- 现有账号默认 done：升级时不要把 260 个号一次性重翻，新行在 upsert_account 里置 pending。
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS backfill_state TEXT NOT NULL DEFAULT 'done';
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS backfill_cursor TEXT;
 
 CREATE TABLE IF NOT EXISTS articles (
     id SERIAL PRIMARY KEY,

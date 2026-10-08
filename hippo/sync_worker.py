@@ -7,6 +7,7 @@ import contextlib
 import os
 import socket
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -32,7 +33,7 @@ from .sync_settings import (
     mark_content_ingested,
 )
 from .sync_tasks import _article_snapshot
-from .sync_types import AccountProgress, SyncAccountResult, SyncObserver, SyncSummary
+from .sync_types import AccountProgress, SyncAccountResult, SyncObserver, SyncReport, SyncSummary
 from .utils import utc_now_iso
 from .weixin_source import SessionExpiredError, WeixinSource
 from .weixin_watch import watch_article_push
@@ -43,6 +44,9 @@ SERVICE_NAME = 'hippo-sync-worker'
 # 正文 drain：每轮抓一批（<=daemon 的 [articles].batch_size），节流由 daemon 侧闸门决定
 BODY_BATCH = 5
 DRAIN_POLL_SECONDS = 60.0
+
+# 历史回填：页与页之间留一点间隔（列表接口没有 daemon 侧闸门，靠客户端自律）
+BACKFILL_PAGE_PAUSE_SECONDS = 1.5
 
 # 图片回填：独立于正文的队列（article_images 里 s3_key 为空的行）与节奏。
 # 图片走普通 HTTPS CDN，和正文的客户端协议不是同一个风控池，但同样不能无节制抓。
@@ -292,6 +296,72 @@ async def _poll_cancel(task_id: str, poll_interval: float = 1.0) -> None:
         await asyncio.sleep(poll_interval)
 
 
+async def backfill_account_history(
+    storage: PostgresStorage,
+    *,
+    biz: str,
+    on_log: Callable[[str], Awaitable[None]] | None = None,
+) -> SyncJobResult:
+    """把一个号的历史文章从新到旧翻到底。
+
+    邮件游标由 daemon 签发（``next_offset``），每页落库后即使中断也能接着翻；
+    翻到 ``is_end`` 或没有下一页游标为止——用户明确不要页数上限。
+
+    入队只当意图，是否打得出去看账号级开关：所有订阅者都停用了就跳过（与常规同步同一判定）。
+    """
+
+    async def log(message: str) -> None:
+        if on_log is not None:
+            await on_log(message)
+
+    empty = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
+    account = await storage.accounts.get_account(biz, fallback_to_default=False)
+    source_key = (account.gh_id or account.alias or '').strip()
+    if not source_key:
+        return SyncJobResult(
+            status={'status': 'failed'},
+            report=empty,
+            error=f'{biz} 既无 gh_id 也无 alias，无法列表',
+        )
+    if not await storage.accounts.list_syncable_accounts(biz_list=[biz]):
+        await log(f'{account.nickname}：所有订阅者都已停用，跳过回填')
+        async with storage.transaction():
+            await storage.accounts.mark_backfill_done(biz)
+        return SyncJobResult(status={'status': 'skipped'}, report=empty, error=None)
+
+    cursor = account.backfill_cursor or ''
+    total = 0
+    pages = 0
+    container = build_sync_container(storage=storage, enable_download=False, enable_images=False)
+    async with container as app:
+        while True:
+            stats = await app.weixin_sync.sync_account(
+                biz=biz,
+                source_key=source_key,
+                pages=1,
+                offset=cursor,
+            )
+            pages += 1
+            total += stats.enqueued
+            logger.info('回填 %s：第 %d 页 %d 篇，累计入队 %d', source_key, pages, stats.listed, total)
+            await log(f'第 {pages} 页：{stats.listed} 篇，累计入队 {total} 篇')
+            if stats.is_end or not stats.next_offset:
+                break
+            cursor = stats.next_offset
+            async with storage.transaction():
+                await storage.accounts.set_backfill_cursor(biz, cursor)
+            await asyncio.sleep(BACKFILL_PAGE_PAUSE_SECONDS)
+
+    async with storage.transaction():
+        await storage.accounts.mark_backfill_done(biz)
+    logger.info('回填 %s 完成：%d 页，入队 %d 篇', source_key, pages, total)
+    return SyncJobResult(
+        status={'status': 'success'},
+        report=SyncReport(total_saved=total, summary=[], details=[], downloaded=0),
+        error=None,
+    )
+
+
 async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
     job = await storage.sync_jobs.claim_next_job(worker_id=worker_id)
     if not job:
@@ -302,12 +372,19 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
     poll_task = asyncio.create_task(_poll_cancel(job.task_id))
     try:
         try:
-            result = await run_sync_job(
-                group_id=job.group_id,
-                biz_list=list(job.biz_list) if job.biz_list else None,
-                observer_factory=lambda account, _: _WorkerObserver(tracker=tracker, account=account),
-                observer=tracker,
-            )
+            if job.trigger_type == 'backfill' and job.biz_list:
+                result = await backfill_account_history(
+                    storage,
+                    biz=job.biz_list[0],
+                    on_log=tracker.on_log,
+                )
+            else:
+                result = await run_sync_job(
+                    group_id=job.group_id,
+                    biz_list=list(job.biz_list) if job.biz_list else None,
+                    observer_factory=lambda account, _: _WorkerObserver(tracker=tracker, account=account),
+                    observer=tracker,
+                )
         except Exception as exc:
             async with storage.transaction():
                 await storage.sync_jobs.mark_finished(
@@ -477,6 +554,7 @@ async def run_sync_worker(
 
 
 __all__ = [
+    'backfill_account_history',
     'backfill_images_once',
     'drain_bodies_once',
     'maybe_enqueue_scheduled_job',

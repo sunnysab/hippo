@@ -87,6 +87,9 @@ class ListedArticles:
 
     items: list[QueuedArticle]
     gh_id: str | None = None
+    # 下一页游标（服务端签发的不透明串）与「已到最后一页」；历史回填靠它们往后翻。
+    next_offset: str | None = None
+    is_end: bool = False
 
 
 @dataclass(slots=True)
@@ -182,20 +185,27 @@ class WeixinSource:
         if not status.get('logged_in'):
             raise SessionExpiredError('daemon 未登录，且 login_auto 未成功（需要人工扫码）')
 
-    async def _list_raw(self, source_key: str, pages: int) -> dict[str, Any]:
+    async def _list_raw(self, source_key: str, pages: int, offset: str = '') -> dict[str, Any]:
         """裸 RPC：响应顶层带着解析后的 ``biz``（``gh_…``），SDK 的高层封装会把它丢掉。"""
-        res = await self._bot.call(
-            'get_biz_articles', {'biz': source_key, 'pages': pages}, timeout=LIST_TIMEOUT_SECONDS
-        )
+        params: dict[str, Any] = {'biz': source_key, 'pages': pages}
+        if offset:
+            params['offset'] = offset
+        res = await self._bot.call('get_biz_articles', params, timeout=LIST_TIMEOUT_SECONDS)
         return res if isinstance(res, dict) else {}
 
-    async def list_articles(self, source_key: str, biz: str, pages: int = 1) -> ListedArticles:
+    async def list_articles(
+        self,
+        source_key: str,
+        biz: str,
+        pages: int = 1,
+        offset: str = '',
+    ) -> ListedArticles:
         """按 ``source_key``（微信号 alias 或 gh_）拉列表。
 
         ``biz`` 是 PG ``accounts.biz``（``Mz…==``），只用于填充队列项——daemon 的列表接口
-        不认这个形状。
+        不认这个形状。``offset`` 是上一页给出的游标；留空即从最新一页开始。
         """
-        res = await self._list_raw(source_key, pages)
+        res = await self._list_raw(source_key, pages, offset)
         out: list[QueuedArticle] = []
         for article in res.get('articles') or []:
             long_link = str(article.get('canonical_url') or article.get('url') or '')
@@ -216,7 +226,12 @@ class WeixinSource:
                 )
             )
         gh_id = str(res.get('biz') or '').strip() or None
-        return ListedArticles(items=out, gh_id=gh_id)
+        return ListedArticles(
+            items=out,
+            gh_id=gh_id,
+            next_offset=str(res.get('next_offset') or '').strip() or None,
+            is_end=bool(res.get('is_end')),
+        )
 
     async def fetch_bodies(self, urls: list[str]) -> list[FetchedArticle]:
         """批量抓正文（短链优先；daemon 负责节流与降级），保留每 URL 的 daemon 诊断。"""

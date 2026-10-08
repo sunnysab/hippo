@@ -27,8 +27,8 @@ class AccountRepository:
                 """
                 INSERT INTO accounts (biz, nickname, alias, gh_id, round_head_img,
                                       group_id, is_disabled, sync_mode, sync_recent_days,
-                                      sync_interval_days, last_synced_at, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                      sync_interval_days, last_synced_at, backfill_state, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s)
                 ON CONFLICT (biz) DO UPDATE SET
                     nickname=EXCLUDED.nickname,
                     alias=EXCLUDED.alias,
@@ -187,6 +187,21 @@ class AccountRepository:
             await cur.execute(
                 'UPDATE accounts SET last_synced_at = %s, updated_at = %s WHERE biz = %s',
                 (now, now, biz),
+            )
+
+    async def set_backfill_cursor(self, biz: str, cursor: str | None) -> None:
+        """记下历史回填翻到哪（游标由服务端签发，不透明）。"""
+        async with self._conn.cursor() as cur:
+            await cur.execute(
+                'UPDATE accounts SET backfill_cursor = %s, updated_at = %s WHERE biz = %s',
+                (cursor, utc_now_dt(), biz),
+            )
+
+    async def mark_backfill_done(self, biz: str) -> None:
+        async with self._conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE accounts SET backfill_state = 'done', backfill_cursor = NULL, updated_at = %s WHERE biz = %s",
+                (utc_now_dt(), biz),
             )
 
     async def list_accounts_paginated(

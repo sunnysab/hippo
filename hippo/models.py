@@ -23,6 +23,8 @@ class AccountCredential(HippoBaseModel):
     sync_mode: str | None = None
     sync_recent_days: int | None = None
     sync_interval_days: int | None = None
+    backfill_state: str = 'done'
+    backfill_cursor: str | None = None
     group_id: int | None = None
     group_name: str | None = None
 

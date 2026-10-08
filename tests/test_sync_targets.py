@@ -62,7 +62,13 @@ class _FakeSource:
         self._listed = listed
         self.calls: list[tuple[str, str, int]] = []
 
-    async def list_articles(self, source_key: str, biz: str, pages: int = 1) -> ListedArticles:
+    async def list_articles(
+        self,
+        source_key: str,
+        biz: str,
+        pages: int = 1,
+        offset: str = '',
+    ) -> ListedArticles:
         self.calls.append((source_key, biz, pages))
         return self._listed
 

@@ -1,4 +1,5 @@
 import unittest
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -42,6 +43,67 @@ class AccountApiTest(unittest.IsolatedAsyncioTestCase):
         payload = await account_api.list_accounts(storage=storage, user=user)
 
         self.assertEqual('', payload['accounts'][0]['alias'])
+
+    async def test_creating_an_account_queues_a_history_backfill(self) -> None:
+        @asynccontextmanager
+        async def transaction():
+            yield None
+
+        account = SimpleNamespace(
+            biz='Mz123',
+            nickname='中投数研',
+            alias=None,
+            round_head_img=None,
+            group_id=1,
+            backfill_state='pending',
+        )
+        storage = SimpleNamespace(
+            transaction=transaction,
+            accounts=SimpleNamespace(upsert_account=AsyncMock(return_value=account)),
+            subscriptions=SimpleNamespace(upsert=AsyncMock()),
+            sync_jobs=SimpleNamespace(create_job=AsyncMock()),
+        )
+        user = SimpleNamespace(id=1, username='admin', role='admin')
+
+        await account_api.create_account(
+            body={'biz': 'Mz123', 'nickname': '中投数研', 'group_id': 1},
+            storage=storage,
+            user=user,
+        )
+
+        storage.sync_jobs.create_job.assert_awaited_once_with(
+            trigger_type='backfill',
+            biz_list=['Mz123'],
+        )
+
+    async def test_an_account_already_backfilled_is_not_queued_again(self) -> None:
+        @asynccontextmanager
+        async def transaction():
+            yield None
+
+        account = SimpleNamespace(
+            biz='Mz456',
+            nickname='老号',
+            alias=None,
+            round_head_img=None,
+            group_id=1,
+            backfill_state='done',
+        )
+        storage = SimpleNamespace(
+            transaction=transaction,
+            accounts=SimpleNamespace(upsert_account=AsyncMock(return_value=account)),
+            subscriptions=SimpleNamespace(upsert=AsyncMock()),
+            sync_jobs=SimpleNamespace(create_job=AsyncMock()),
+        )
+        user = SimpleNamespace(id=1, username='admin', role='admin')
+
+        await account_api.create_account(
+            body={'biz': 'Mz456', 'nickname': '老号', 'group_id': 1},
+            storage=storage,
+            user=user,
+        )
+
+        storage.sync_jobs.create_job.assert_not_awaited()
 
     async def test_search_caches_avatars_under_the_gh_id(self) -> None:
         # accounts.biz 是 fakeid，搜索头像接口却按 gh_id 取图，落库必须用 gh_id。
