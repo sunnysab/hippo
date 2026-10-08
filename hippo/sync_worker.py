@@ -278,6 +278,23 @@ async def maybe_enqueue_scheduled_job(storage: PostgresStorage) -> bool:
     return True
 
 
+async def maybe_enqueue_backfill_job(storage: PostgresStorage) -> bool:
+    """给还没回填完的号补一条 job。
+
+    加号时已经入过队，这里兜的是被挂起的那些：进程重启或报错后
+    ``recover_stale_running_jobs`` 会把 job 标成 failed，账号却仍留在 pending，
+    所以每个 tick 都拿最新加进来的那个号补一条，直到它自己翻到底把状态置 done。
+    """
+    if await storage.sync_jobs.has_active_job():
+        return False
+    pending = await storage.accounts.list_pending_backfill(limit=1)
+    if not pending:
+        return False
+    async with storage.transaction():
+        await storage.sync_jobs.create_job(trigger_type='backfill', biz_list=[pending[0].biz])
+    return True
+
+
 async def _poll_cancel(task_id: str, poll_interval: float = 1.0) -> None:
     while True:
         try:
@@ -530,6 +547,7 @@ async def run_sync_worker(
                 async with storage.transaction():
                     await recover_stale_running_jobs(storage)
                     await maybe_enqueue_scheduled_job(storage)
+                    await maybe_enqueue_backfill_job(storage)
                 pending = int((await storage.article_queue.stats()).get('pending') or 0)
                 handled = await run_worker_once(storage=storage, worker_id=resolved_worker_id)
             metric('histogram', 'hippo.worker.round.duration', unit='s').record(time.perf_counter() - started_at)
@@ -551,6 +569,7 @@ __all__ = [
     'backfill_account_history',
     'backfill_images_once',
     'drain_bodies_once',
+    'maybe_enqueue_backfill_job',
     'maybe_enqueue_scheduled_job',
     'publish_worker_state',
     'recover_stale_running_jobs',

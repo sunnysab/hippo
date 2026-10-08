@@ -204,6 +204,21 @@ class AccountRepository:
                 (utc_now_dt(), biz),
             )
 
+    async def list_pending_backfill(self, *, limit: int = 1) -> list[AccountCredential]:
+        """还没回填完的号，最新加进来的优先（从新到旧）。"""
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT a.* FROM accounts a
+                WHERE a.backfill_state = 'pending'
+                ORDER BY a.created_at DESC
+                LIMIT %s
+                """,
+                (max(int(limit), 1),),
+            )
+            rows = await cur.fetchall()
+        return [_row_to_account(row) for row in rows]
+
     async def list_accounts_paginated(
         self,
         *,

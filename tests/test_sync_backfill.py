@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from hippo.sync_worker import backfill_account_history
+from hippo.sync_worker import backfill_account_history, maybe_enqueue_backfill_job
 
 
 class _FakeContainer:
@@ -38,6 +38,49 @@ def _storage(account: SimpleNamespace, *, syncable: bool = True) -> SimpleNamesp
 
 
 class BackfillTest(unittest.IsolatedAsyncioTestCase):
+    async def test_requeues_a_pending_backfill(self) -> None:
+        @asynccontextmanager
+        async def transaction():
+            yield None
+
+        storage = SimpleNamespace(
+            transaction=transaction,
+            accounts=SimpleNamespace(
+                list_pending_backfill=AsyncMock(return_value=[SimpleNamespace(biz='Mz9')]),
+            ),
+            sync_jobs=SimpleNamespace(
+                has_active_job=AsyncMock(return_value=False),
+                create_job=AsyncMock(),
+            ),
+        )
+
+        created = await maybe_enqueue_backfill_job(storage)
+
+        self.assertTrue(created)
+        storage.sync_jobs.create_job.assert_awaited_once_with(
+            trigger_type='backfill',
+            biz_list=['Mz9'],
+        )
+
+    async def test_does_not_requeue_while_a_job_is_active(self) -> None:
+        storage = SimpleNamespace(
+            sync_jobs=SimpleNamespace(has_active_job=AsyncMock(return_value=True)),
+        )
+
+        self.assertFalse(await maybe_enqueue_backfill_job(storage))
+
+    async def test_nothing_pending_queues_nothing(self) -> None:
+        storage = SimpleNamespace(
+            accounts=SimpleNamespace(list_pending_backfill=AsyncMock(return_value=[])),
+            sync_jobs=SimpleNamespace(
+                has_active_job=AsyncMock(return_value=False),
+                create_job=AsyncMock(),
+            ),
+        )
+
+        self.assertFalse(await maybe_enqueue_backfill_job(storage))
+        storage.sync_jobs.create_job.assert_not_awaited()
+
     async def test_follows_the_cursor_until_the_last_page(self) -> None:
         pages = [
             SimpleNamespace(listed=20, enqueued=20, next_offset='cur-1', is_end=False),
