@@ -972,7 +972,7 @@ async def sync_group(
     group: str = typer.Argument(..., help='Group name'),
     user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
     sleep_seconds: float = typer.Option(DEFAULT_SYNC_REQUEST_INTERVAL, min=0, help='账号之间的列表请求间隔秒数'),
-    force: bool = typer.Option(False, is_flag=True, help='忽略跳过条件，强制同步'),
+    force: bool = typer.Option(False, help='忽略跳过条件，强制同步'),
     skip_time: int | None = typer.Option(None, min=1, help='多少分钟内同步过则跳过'),
     download: bool = typer.Option(True, '--download/--no-download', help='同步后顺带抓一批正文'),
 ) -> None:
@@ -1096,7 +1096,7 @@ async def set_account_sync_config(
     user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
     interval_days: int | None = typer.Option(None, '--interval-days', min=1, help='每 N 天同步一次'),
     clear_interval_days: bool = typer.Option(
-        False, '--clear-interval-days', is_flag=True, help='清空间隔覆盖，改回按发文历史自动推导'
+        False, '--clear-interval-days', help='清空间隔覆盖，改回按发文历史自动推导'
     ),
 ) -> None:
     _require_nonempty(account, 'Please provide an account name or fakeid.')
@@ -1127,7 +1127,7 @@ async def sync_account_articles(
     user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
     pages: int = typer.Option(1, min=1, help='列表抓取的分页数量'),
     sleep_seconds: float = typer.Option(DEFAULT_SYNC_REQUEST_INTERVAL, min=0, help='账号之间的列表请求间隔秒数'),
-    force: bool = typer.Option(False, is_flag=True, help='忽略跳过条件，强制同步'),
+    force: bool = typer.Option(False, help='忽略跳过条件，强制同步'),
     skip_time: int | None = typer.Option(None, min=1, help='多少分钟内同步过则跳过'),
     download: bool = typer.Option(True, '--download/--no-download', help='同步后顺带抓一批正文'),
 ) -> None:
@@ -1148,7 +1148,7 @@ async def sync_account_articles(
 async def sync_all_accounts(
     user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
     sleep_seconds: float = typer.Option(DEFAULT_SYNC_REQUEST_INTERVAL, min=0, help='账号之间的列表请求间隔秒数'),
-    force: bool = typer.Option(False, is_flag=True, help='忽略跳过条件，强制同步'),
+    force: bool = typer.Option(False, help='忽略跳过条件，强制同步'),
     skip_time: int | None = typer.Option(None, min=1, help='多少分钟内同步过则跳过'),
     download: bool = typer.Option(True, '--download/--no-download', help='同步后顺带抓一批正文'),
 ) -> None:
@@ -1201,7 +1201,7 @@ async def list_articles(
 async def sync_article_download(
     account: str = typer.Argument(..., help='公众号名称或 fakeid'),
     limit: int | None = typer.Option(None, min=1, max=5000, help='下载文章数量，默认全部'),
-    with_images: bool = typer.Option(True, is_flag=True, help='是否下载图片'),
+    with_images: bool = typer.Option(True, help='是否下载图片'),
     article_only: bool = typer.Option(False, '--article-only', help='仅下载文章，不下载图片（仍创建图片记录）'),
     since: str | None = typer.Option(None, help='仅下载某日期后的文章'),
     worker_prefix: str | None = typer.Option(None, help='文章 HTML worker 前缀或模板，留空使用环境变量'),
@@ -1310,7 +1310,7 @@ async def _sync_article_download_async(
 @coro
 async def sync_all_article_download(
     limit: int | None = typer.Option(None, min=1, max=5000, help='每个账号下载文章数量，默认全部'),
-    with_images: bool = typer.Option(True, is_flag=True, help='是否下载图片'),
+    with_images: bool = typer.Option(True, help='是否下载图片'),
     article_only: bool = typer.Option(False, '--article-only', help='仅下载文章，不下载图片（仍创建图片记录）'),
     since: str | None = typer.Option(None, help='仅下载某日期后的文章'),
     worker_prefix: str | None = typer.Option(None, help='文章 HTML worker 前缀或模板，留空使用环境变量'),
@@ -1424,7 +1424,7 @@ async def _sync_all_article_download_async(
 @coro
 async def download_article(
     url: str = typer.Argument(..., help='文章 URL'),
-    with_images: bool = typer.Option(True, is_flag=True, help='是否下载图片'),
+    with_images: bool = typer.Option(True, help='是否下载图片'),
     title: str | None = typer.Option(None, help='覆盖文章标题'),
     worker_prefix: str | None = typer.Option(None, help='文章 HTML worker 前缀或模板，留空使用环境变量'),
     worker_proxy: str | None = typer.Option(None, help='访问 worker 时使用的代理（HTTP/SOCKS5），留空直连'),
@@ -1494,8 +1494,8 @@ async def backfill_article_images(
     workers: int = typer.Option(8, min=1, help='Concurrent image downloads'),
     retries: int = typer.Option(3, min=1, help='Download retries per image'),
     sleep_base: float = typer.Option(0.5, min=0.1, help='Base backoff sleep in seconds'),
-    retry_failed: bool = typer.Option(False, is_flag=True, help='Include previously failed images'),
-    dry_run: bool = typer.Option(False, is_flag=True, help='List targets without writing'),
+    retry_failed: bool = typer.Option(False, help='Include previously failed images'),
+    dry_run: bool = typer.Option(False, help='List targets without writing'),
 ) -> None:
     from .image_backfill import backfill_article_images
 
@@ -1531,7 +1531,7 @@ async def backfill_article_image_hashes(
         min=1,
         help='Batch size per fetch cycle (defaults to workers * 4)',
     ),
-    dry_run: bool = typer.Option(False, is_flag=True, help='List targets without writing'),
+    dry_run: bool = typer.Option(False, help='List targets without writing'),
 ) -> None:
     await _backfill_article_image_hashes_async(
         pg_dsn=pg_dsn,
