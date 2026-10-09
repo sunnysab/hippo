@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    env:
+      # The suite must never need a database. Pointing the DSN at a closed port
+      # turns an accidental connection into an immediate failure instead of a
+      # silent run against whatever .env happens to hold (which is exactly how
+      # a report test once hung for 15 minutes).
+      HIPPO_PG_DSN: postgresql://nobody:nobody@127.0.0.1:1/none
+      WEIXIN_SDK_PATH: /nonexistent/weixin-rs/sdk/python
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python and dependencies
+        run: |
+          uv python install 3.14
+          uv sync --extra weixin
+
+      - name: Lint
+        run: uv run ruff check hippo tests scripts
+
+      - name: Format check
+        run: uv run ruff format --check hippo scripts
+
+      - name: Tests
+        run: uv run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        run: npx eslint src --max-warnings 0
+
+      - name: Tests
+        run: npx vitest run
+
+      - name: Build
+        run: npm run build
