@@ -380,42 +380,6 @@ async def _count_article_item_show_type_facets(
     return facets
 
 
-async def _get_cached_article_total(
-    storage: PostgresStorage,
-    *,
-    user_id: int,
-    group_ids: list[int] | None,
-    biz: str | None,
-) -> int:
-    if biz:
-        row = await fetchone_row(
-            storage,
-            (f'SELECT sub.group_id, a.article_count FROM accounts a{SUBSCRIPTION_JOIN} WHERE a.biz = %s'),
-            [user_id, biz],
-            normalize=_normalize_record,
-        )
-        if not row:
-            return 0
-        if group_ids is not None and row.get('group_id') not in group_ids:
-            return 0
-        return int(row.get('article_count') or 0)
-    if group_ids is not None:
-        row = await fetchone_row(
-            storage,
-            ('SELECT COALESCE(SUM(article_count), 0) AS total FROM account_groups WHERE user_id = %s AND id = ANY(%s)'),
-            [user_id, group_ids],
-            normalize=_normalize_record,
-        )
-        return int(row.get('total') or 0) if row else 0
-    row = await fetchone_row(
-        storage,
-        (f'SELECT COALESCE(SUM(a.article_count), 0) AS total FROM accounts a{SUBSCRIPTION_JOIN}'),
-        [user_id],
-        normalize=_normalize_record,
-    )
-    return int(row.get('total') or 0) if row else 0
-
-
 async def _list_articles(
     storage: PostgresStorage,
     *,
@@ -454,31 +418,22 @@ async def _list_articles(
     for row in rows:
         row['item_show_type'] = _coalesce_item_show_type(row.get('item_show_type'))
         row['account_avatar_url'] = f'/api/account/{row["biz"]}/avatar'
-    has_active_filters = (
-        unread_only
-        or article_id not in (None, '')
-        or item_show_type is not None
-        or bool(query)
-        or since_ts is not None
-        or until_ts is not None
-        or bool(exclude_keywords)
+    # The facet scan below already walks exactly these rows, so the total is
+    # counted from the same live query instead of the per-account counter: one
+    # fact, one source, and the two numbers in the response cannot disagree.
+    total = await _count_articles(
+        storage=storage,
+        user_id=user_id,
+        group_ids=group_ids,
+        biz=biz,
+        item_show_type=item_show_type,
+        query=query,
+        exclude_keywords=exclude_keywords,
+        since_ts=since_ts,
+        until_ts=until_ts,
+        article_id=article_id,
+        unread_only=unread_only,
     )
-    if has_active_filters:
-        total = await _count_articles(
-            storage=storage,
-            user_id=user_id,
-            group_ids=group_ids,
-            biz=biz,
-            item_show_type=item_show_type,
-            query=query,
-            exclude_keywords=exclude_keywords,
-            since_ts=since_ts,
-            until_ts=until_ts,
-            article_id=article_id,
-            unread_only=unread_only,
-        )
-    else:
-        total = await _get_cached_article_total(storage, user_id=user_id, group_ids=group_ids, biz=biz)
     item_show_type_facets = await _count_article_item_show_type_facets(
         storage=storage,
         user_id=user_id,
