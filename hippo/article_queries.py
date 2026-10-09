@@ -377,7 +377,7 @@ async def _count_articles(
     return int(row.get('total') or 0) if row else 0
 
 
-async def _count_article_item_show_type_facets(
+async def _article_item_show_type_facets(
     *,
     storage: PostgresStorage,
     user_id: int,
@@ -391,7 +391,14 @@ async def _count_article_item_show_type_facets(
     unread_only: bool = False,
     starred_only: bool = False,
     sources: list[str] | None = None,
-) -> list[dict[str, int]]:
+) -> tuple[list[dict[str, int]], int]:
+    """Distribution by layout type, plus the size of the whole set.
+
+    The grand total rides along as a window function so the list does not have
+    to count the same rows a second time — on its own that count costs about as
+    much as this scan. Unknown types are dropped from the returned facets but
+    still count towards the total, which is why the two cannot simply be summed.
+    """
     where_sql, params, _tsquery_sql, _tsquery_params = _build_article_where_clause(
         group_ids=group_ids,
         biz=biz,
@@ -411,7 +418,8 @@ async def _count_article_item_show_type_facets(
     rows = await fetchall_rows(
         storage,
         (
-            'SELECT COALESCE(a.item_show_type, 0) AS item_show_type, COUNT(*) AS total'
+            'SELECT COALESCE(a.item_show_type, 0) AS item_show_type, COUNT(*) AS total,'
+            ' SUM(COUNT(*)) OVER () AS grand_total'
             ' FROM articles a'
             f'{accounts_join}'
             f'{SUBSCRIPTION_JOIN}'
@@ -425,7 +433,9 @@ async def _count_article_item_show_type_facets(
     )
     order_map = {value: index for index, value in enumerate(sorted(_ITEM_SHOW_TYPE_VALUES))}
     facet_counts: dict[int, int] = {}
+    grand_total = 0
     for row in rows:
+        grand_total = int(row.get('grand_total') or 0)
         item_show_type = row.get('item_show_type')
         total = row.get('total')
         if item_show_type is None:
@@ -440,7 +450,7 @@ async def _count_article_item_show_type_facets(
         facet_counts[normalized_type] = facet_counts.get(normalized_type, 0) + normalized_total
     facets = [{'item_show_type': item_show_type, 'count': count} for item_show_type, count in facet_counts.items()]
     facets.sort(key=lambda item: order_map.get(item['item_show_type'], 999))
-    return facets
+    return facets, grand_total
 
 
 async def _list_articles(
@@ -485,25 +495,7 @@ async def _list_articles(
     for row in rows:
         row['item_show_type'] = _coalesce_item_show_type(row.get('item_show_type'))
         row['account_avatar_url'] = f'/api/account/{row["biz"]}/avatar'
-    # The facet scan below already walks exactly these rows, so the total is
-    # counted from the same live query instead of the per-account counter: one
-    # fact, one source, and the two numbers in the response cannot disagree.
-    total = await _count_articles(
-        storage=storage,
-        user_id=user_id,
-        group_ids=group_ids,
-        biz=biz,
-        item_show_type=item_show_type,
-        query=query,
-        exclude_keywords=exclude_keywords,
-        since_ts=since_ts,
-        until_ts=until_ts,
-        article_id=article_id,
-        unread_only=unread_only,
-        starred_only=starred_only,
-        sources=sources,
-    )
-    item_show_type_facets = await _count_article_item_show_type_facets(
+    item_show_type_facets, facet_total = await _article_item_show_type_facets(
         storage=storage,
         user_id=user_id,
         group_ids=group_ids,
@@ -517,6 +509,26 @@ async def _list_articles(
         starred_only=starred_only,
         sources=sources,
     )
+    # The facets ignore their own filter, so their total is the answer unless a
+    # layout type is selected — only then is a second count worth its cost.
+    if item_show_type is None:
+        total = facet_total
+    else:
+        total = await _count_articles(
+            storage=storage,
+            user_id=user_id,
+            group_ids=group_ids,
+            biz=biz,
+            item_show_type=item_show_type,
+            query=query,
+            exclude_keywords=exclude_keywords,
+            since_ts=since_ts,
+            until_ts=until_ts,
+            article_id=article_id,
+            unread_only=unread_only,
+            starred_only=starred_only,
+            sources=sources,
+        )
     return {
         'articles': rows,
         'page': page,
