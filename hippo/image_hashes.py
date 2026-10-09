@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import threading
 from typing import Any
@@ -63,7 +62,7 @@ async def fetch_image_bytes(
         raise LookupError(f'Image {image_id} data missing')
     referer = row.get('referer')
     try:
-        payload, fetched_type = _download_image_from_origin(str(orig_url), referer=referer)
+        payload, fetched_type = await _download_image_from_origin(str(orig_url), referer=referer)
     except Exception as exc:
         logger.warning('Origin image fetch failed (id=%s url=%s): %s', image_id, orig_url, exc)
         raise RuntimeError(f'Image fetch failed for {image_id}') from exc
@@ -124,16 +123,19 @@ async def ensure_image_hash_by_id(
         )
 
 
-def _download_image_from_origin(
+async def _download_image_from_origin(
     orig_url: str,
     *,
     referer: str | None,
 ) -> tuple[bytes, str | None]:
-    async def _run() -> tuple[bytes, str | None]:
-        async with MPClient() as client:
-            return await client.download_binary_with_type(orig_url, referer=referer)
+    """Fetch an image we do not have stored yet, straight from the origin.
 
-    return asyncio.run(_run())
+    Must stay a coroutine: this is always called from a running event loop, and
+    `asyncio.run` here raised "cannot be called from a running event loop" — the
+    reader got a 502 instead of the picture.
+    """
+    async with MPClient() as client:
+        return await client.download_binary_with_type(orig_url, referer=referer)
 
 
 def _store_image_to_s3_async(

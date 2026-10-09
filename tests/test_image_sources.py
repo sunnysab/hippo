@@ -8,6 +8,8 @@ an HTML error page as the image.
 """
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from markdownify import markdownify
 
@@ -106,3 +108,39 @@ class ParseMarkdownBlocksTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class OriginFallbackTest(unittest.IsolatedAsyncioTestCase):
+    """An image we do not have yet is fetched from WeChat on demand.
+
+    The fallback used to call `asyncio.run` from inside the running event loop,
+    so it never fetched anything and the reader got a 502.
+    """
+
+    async def test_an_unstored_image_is_fetched_and_returned(self) -> None:
+        import hippo.image_hashes as image_hashes
+
+        storage = SimpleNamespace()
+        row = {
+            'content_type': None,
+            's3_key': None,
+            'orig_url': 'https://mmbiz.qpic.cn/a.jpg',
+            'referer': 'https://mp.weixin.qq.com/s/x',
+        }
+
+        with (
+            patch.object(image_hashes, 'fetchone_row', AsyncMock(return_value=row)),
+            patch.object(image_hashes, 'get_s3_client', lambda: None),
+            patch.object(
+                image_hashes,
+                '_download_image_from_origin',
+                AsyncMock(return_value=(b'image-bytes', 'image/jpeg')),
+            ) as download,
+            patch.object(image_hashes, '_store_image_to_s3_async') as store,
+        ):
+            payload, content_type = await image_hashes.fetch_image_bytes(storage, 7)
+
+        self.assertEqual(b'image-bytes', payload)
+        self.assertEqual('image/jpeg', content_type)
+        download.assert_awaited_once()
+        store.assert_called_once()
