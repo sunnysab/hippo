@@ -281,7 +281,6 @@ GET /api/article
 | `item_show_type` | int | 版式类型，见下表 |
 | `since` / `until` | str | 发布时间范围 |
 | `exclude_keywords` | str | 排除关键词（逗号/分号/换行分隔），命中标题、摘要或作者即过滤；不传则用个人设置里的 `article_exclude_keywords` |
-| `content` | str | 已废弃：历史上用于内联正文，现在**无论传什么都只返回元数据**（正文请用 `GET /api/article/{id}`） |
 
 `item_show_type` 取值：`0` 图文、`5` 视频、`6` 直播、`7` 专辑、`8` 话题、`10` 纯视频、`11` 图片消息、`17` 付费。
 数据库里为 `null` 的按 `0` 返回。

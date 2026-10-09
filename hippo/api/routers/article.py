@@ -46,7 +46,6 @@ async def list_articles(
     sort: str | None = None,
     page: int = 1,
     page_size: int = 20,
-    content: str = '',
     since: str | None = None,
     until: str | None = None,
     storage: PostgresStorage = Depends(get_storage),
@@ -63,7 +62,6 @@ async def list_articles(
         q (str | None): 搜索文章内容/标题。
         page (int): 页码。
         page_size (int): 每页数量。
-        content (str): 如果为 "1", "true", 或 "yes"，则返回文章内容。
         since (str | None): 起始日期筛选 (ISO 格式)。
         until (str | None): 结束日期筛选 (ISO 格式)。
 
