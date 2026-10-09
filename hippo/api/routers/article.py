@@ -6,9 +6,10 @@ import time as time_module
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Body, Depends, Response
 
 from ...article_queries import (
+    _assert_article_visible,
     _block_image,
     _fetch_image,
     _get_article,
@@ -16,6 +17,7 @@ from ...article_queries import (
     _list_articles,
     _normalize_article_sort,
     _normalize_item_show_type,
+    _normalize_read_filter,
     _parse_date,
     _split_article_exclude_keywords,
 )
@@ -44,6 +46,7 @@ async def list_articles(
     q: str | None = None,
     exclude_keywords: str | None = None,
     sort: str | None = None,
+    read: str | None = None,
     page: int = 1,
     page_size: int = 20,
     since: str | None = None,
@@ -60,6 +63,7 @@ async def list_articles(
         biz (str | None): 按公众号 biz 筛选。
         article_id (str | None): 按具体文章 ID 筛选 (微信原始 article_id)。
         q (str | None): 搜索文章内容/标题。
+        read (str | None): 传 `unread` 只返回未读文章。
         page (int): 页码。
         page_size (int): 每页数量。
         since (str | None): 起始日期筛选 (ISO 格式)。
@@ -94,6 +98,7 @@ async def list_articles(
         page=max(page, 1),
         page_size=min(max(page_size, 1), 200),
         article_id=article_id or None,
+        unread_only=_normalize_read_filter(read),
     )
 
 
@@ -116,6 +121,31 @@ async def get_article(
         ApiError: 如果文章未找到。
     """
     return await _get_article(storage, user.id, article_id)
+
+
+@router.put('/article/{article_id}/read')
+async def set_article_read(
+    article_id: int,
+    body: dict[str, Any] = Body(default={}),
+    storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
+) -> dict[str, Any]:
+    """
+    标记单篇文章的已读状态。
+
+    Args:
+        article_id (int): 文章 ID。
+        body (dict): `{"read": true}` 标记已读，`false` 标记未读（默认 true）。
+
+    Returns:
+        dict: 文章 ID 与已读时间（未读时为 null）。
+    """
+    await _assert_article_visible(storage, user.id, article_id)
+    read = body.get('read', True)
+    if not isinstance(read, bool):
+        raise ApiError('read must be a boolean', status=400)
+    read_at = await storage.reads.set_read(user_id=user.id, article_pk=article_id, read=read)
+    return {'article_id': article_id, 'read_at': read_at}
 
 
 @router.get('/article/{article_id}/image')

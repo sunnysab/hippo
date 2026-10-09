@@ -20,6 +20,7 @@ from .image import ArticleImageTarget, ImageRepository
 from .llm import LlmProviderRepository, mask_key
 from .meta import MetaRepository
 from .queue import ArticleQueueRepository
+from .read import ArticleReadRepository
 from .session import UserSessionRepository
 from .subscription import SubscriptionRepository
 from .token import UserTokenRepository
@@ -32,6 +33,7 @@ __all__ = [
     'ArticleDocumentRepository',
     'ArticleImageTarget',
     'ArticleQueueRepository',
+    'ArticleReadRepository',
     'ArticleRepository',
     'AuditRepository',
     'ChatRepository',

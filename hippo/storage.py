@@ -24,6 +24,7 @@ from .repositories import (
     AnnotationRepository,
     ArticleDocumentRepository,
     ArticleQueueRepository,
+    ArticleReadRepository,
     ArticleRepository,
     AuditRepository,
     ChatRepository,
@@ -240,6 +241,7 @@ class PostgresStorage(AbstractAsyncContextManager):
         self.audit = AuditRepository(self.conn)
         self.llm = LlmProviderRepository(self.conn)
         self.annotations = AnnotationRepository(self.conn)
+        self.reads = ArticleReadRepository(self.conn)
         self.chat = ChatRepository(self.conn)
         self.reports = ReportRepository(self.conn)
 

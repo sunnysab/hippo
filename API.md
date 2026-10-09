@@ -257,6 +257,7 @@ GET /api/account/search?q=中投&page=1&page_size=10
 |---|---|---|---|
 | GET | `/api/article` | 登录 | 文章列表（筛选 + 全文检索 + 分面） |
 | GET | `/api/article/{id}` | 登录 | 文章详情（含正文块与图片） |
+| PUT | `/api/article/{id}/read` | 登录 | 标记单篇文章已读 / 未读 |
 | GET | `/api/article/{id}/image` | 登录 | 文章图片列表 |
 | POST | `/api/article/{id}/refetch` | 登录 | 重新抓取正文 |
 | GET | `/api/article/refetch/{task_id}` | 登录 | 轮询重新抓取进度 |
@@ -278,6 +279,7 @@ GET /api/article
 | `group_ids` | str | 逗号分隔的多个分组，优先于 `group_id` |
 | `biz` | str | 按公众号筛选 |
 | `article_id` | str | 按微信原始 article_id 精确匹配 |
+| `read` | str | 传 `unread` 只返回未读文章；不传即全部 |
 | `item_show_type` | int | 版式类型，见下表 |
 | `since` / `until` | str | 发布时间范围 |
 | `exclude_keywords` | str | 排除关键词（逗号/分号/换行分隔），命中标题、摘要或作者即过滤；不传则用个人设置里的 `article_exclude_keywords` |
@@ -307,7 +309,8 @@ GET /api/article
       "account_avatar_url": "/api/account/MzIxMjM0NTY3OA==/avatar",
       "group_id": 1,
       "group_name": "经济&金融",
-      "image_id": 4488748
+      "image_id": 4488748,
+      "read_at": null
     }
   ],
   "page": 1,
@@ -322,6 +325,7 @@ GET /api/article
 - `cover` 与 `image_id` 都是 **`article_images.id`（整数）**，不是 URL；图片要走 `/api/image/{id}`。`cover` 可能为 `null`。
 - `image_id` 是「优先封面、否则第一张已落 S3 的图」，可直接当缩略图用；没有可用图时为 `null`。
 - `account_avatar` 是原始腾讯 CDN 地址，仅作信息保留；前端应使用 `account_avatar_url` 代理路径。
+- `read_at` 是**当前用户**的已读时间（ISO 8601），未读为 `null`。已读状态按用户隔离，不影响他人。
 - `item_show_type_facets` 是按当前筛选条件统计的版式分布（不受 `item_show_type` 自身影响）。
 
 ### 文章详情
@@ -346,6 +350,18 @@ GET /api/article/42
 - `content_status`：`ok` | `missing`（没抓过）| `empty` | `invalid`（解析失败）。
 - `content_fetch_diagnostic`：非 `ok` 时给出抓取失败诊断（`last_error`、`error_type`、`retryable`、`attempts`），否则 `null`。
 - `images` 只含 `article_images` 的元数据；`kind` 目前是 `cover` 或 `inline`。
+
+### 已读状态
+
+```
+PUT /api/article/42/read
+{ "read": true }
+→ 200 { "article_id": 42, "read_at": "2026-05-02T11:00:00+00:00" }
+```
+
+`read` 缺省为 `true`，只接受布尔值（否则 `400`）。重复标记已读**不会**刷新 `read_at`，
+首次已读时间会一直保留；标记未读（`read: false`）返回 `read_at: null`。
+文章不属于调用者的订阅时返回 `404`。
 
 ### 重新抓取
 

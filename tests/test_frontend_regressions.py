@@ -17,11 +17,11 @@ I18N_ZH = ROOT / 'frontend' / 'src' / 'i18n' / 'zh-CN.json'
 
 
 class FrontendRegressionTest(unittest.TestCase):
-    def test_app_shell_refreshes_daemon_and_sync_meta(self) -> None:
+    def test_app_shell_refreshes_sync_status_and_meta(self) -> None:
         source = APP_SHELL.read_text(encoding='utf-8')
 
-        # daemon 在线状态替代了已消失的「上次登录」
-        self.assertIn("setDaemonStatus(t('login.daemon.online'", source)
+        # 同步服务状态是语义化的 state，文案由 TopBar 负责渲染
+        self.assertIn("setSyncStatus('online');", source)
         self.assertNotIn('lastLoginAt', source)
         self.assertIn("else {\n        setLastSyncAt('');", source)
 

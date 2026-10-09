@@ -147,6 +147,19 @@ def _tokenize_query(text: str) -> list[str]:
 #: before every WHERE parameter because the join appears first in the SQL.
 SUBSCRIPTION_JOIN = ' JOIN subscription sub ON sub.biz = a.biz AND sub.user_id = %s AND NOT sub.is_disabled'
 
+#: Read state is per reader, so it hangs off a side table joined by (user, article).
+#: It follows the subscription join, so its ``user_id`` is bound second.
+READ_STATE_JOIN = ' LEFT JOIN article_read ar ON ar.article_pk = a.id AND ar.user_id = %s'
+
+
+def _normalize_read_filter(value: str | None) -> bool:
+    """``read=unread`` is the only read filter today; anything else is a bug."""
+    if value in (None, ''):
+        return False
+    if value == 'unread':
+        return True
+    raise ApiError('Invalid read filter', status=400)
+
 
 def _build_article_where_clause(
     *,
@@ -158,6 +171,7 @@ def _build_article_where_clause(
     since_ts: int | None,
     until_ts: int | None,
     article_id: str | None = None,
+    unread_only: bool = False,
 ) -> tuple[str, list[Any], str, list[str]]:
     where: list[str] = []
     params: list[Any] = []
@@ -190,6 +204,8 @@ def _build_article_where_clause(
     if until_ts is not None:
         where.append('a.publish_at <= %s')
         params.append(until_ts)
+    if unread_only:
+        where.append('ar.read_at IS NULL')
 
     where_sql = f'WHERE {" AND ".join(where)}' if where else ''
     return where_sql, params, query_tsquery_sql, query_tsquery_params
@@ -210,6 +226,7 @@ def _build_article_query(
     limit: int,
     offset: int,
     article_id: str | None = None,
+    unread_only: bool = False,
 ) -> tuple[str, list[Any]]:
     select_params: list[Any] = []
     rank_select = ''
@@ -224,6 +241,7 @@ def _build_article_query(
         since_ts=since_ts,
         until_ts=until_ts,
         article_id=article_id,
+        unread_only=unread_only,
     )
 
     if sort_mode == ARTICLE_SORT_RELEVANCE_DESC and query_tsquery_sql:
@@ -245,7 +263,7 @@ def _build_article_query(
 
     query_sql = (
         'SELECT a.id, a.biz, a.article_id, a.title, a.item_show_type, a.author, a.digest, a.cover, a.link,'
-        ' a.source_url, a.publish_at, a.created_at,'
+        ' a.source_url, a.publish_at, a.created_at, ar.read_at,'
         ' acc.nickname AS account_nickname, acc.alias AS account_alias,'
         ' acc.round_head_img AS account_avatar,'
         ' sub.group_id, g.name AS group_name,'
@@ -254,13 +272,14 @@ def _build_article_query(
         ' FROM articles a'
         ' JOIN accounts acc ON acc.biz = a.biz'
         f'{SUBSCRIPTION_JOIN}'
+        f'{READ_STATE_JOIN}'
         ' LEFT JOIN account_groups g ON g.id = sub.group_id'
         f' {image_sql}'
         f' {where_sql}'
         f' {order_sql}'
         f' {limit_sql}'
     )
-    params = [*select_params, user_id, *params, limit, offset]
+    params = [*select_params, user_id, user_id, *params, limit, offset]
     return query_sql, params
 
 
@@ -276,6 +295,7 @@ async def _count_articles(
     since_ts: int | None,
     until_ts: int | None,
     article_id: str | None = None,
+    unread_only: bool = False,
 ) -> int:
     where_sql, params, _tsquery_sql, _tsquery_params = _build_article_where_clause(
         group_ids=group_ids,
@@ -286,11 +306,15 @@ async def _count_articles(
         since_ts=since_ts,
         until_ts=until_ts,
         article_id=article_id,
+        unread_only=unread_only,
     )
+    # The read join is only worth its cost when the predicate actually uses it.
+    read_join = READ_STATE_JOIN if unread_only else ''
+    read_params = [user_id] if unread_only else []
     row = await fetchone_row(
         storage,
-        (f'SELECT COUNT(*) AS total FROM articles a{SUBSCRIPTION_JOIN} {where_sql}'),
-        [user_id, *params],
+        (f'SELECT COUNT(*) AS total FROM articles a{SUBSCRIPTION_JOIN}{read_join} {where_sql}'),
+        [user_id, *read_params, *params],
         normalize=_normalize_record,
     )
     return int(row.get('total') or 0) if row else 0
@@ -307,6 +331,7 @@ async def _count_article_item_show_type_facets(
     since_ts: int | None,
     until_ts: int | None,
     article_id: str | None = None,
+    unread_only: bool = False,
 ) -> list[dict[str, int]]:
     where_sql, params, _tsquery_sql, _tsquery_params = _build_article_where_clause(
         group_ids=group_ids,
@@ -317,18 +342,22 @@ async def _count_article_item_show_type_facets(
         since_ts=since_ts,
         until_ts=until_ts,
         article_id=article_id,
+        unread_only=unread_only,
     )
+    read_join = READ_STATE_JOIN if unread_only else ''
+    read_params = [user_id] if unread_only else []
     rows = await fetchall_rows(
         storage,
         (
             'SELECT COALESCE(a.item_show_type, 0) AS item_show_type, COUNT(*) AS total'
             ' FROM articles a'
             f'{SUBSCRIPTION_JOIN}'
+            f'{read_join}'
             f' {where_sql}'
             ' GROUP BY COALESCE(a.item_show_type, 0)'
             ' ORDER BY COALESCE(a.item_show_type, 0) ASC'
         ),
-        [user_id, *params],
+        [user_id, *read_params, *params],
         normalize=_normalize_record,
     )
     order_map = {value: index for index, value in enumerate(sorted(_ITEM_SHOW_TYPE_VALUES))}
@@ -402,6 +431,7 @@ async def _list_articles(
     page: int,
     page_size: int,
     article_id: str | None = None,
+    unread_only: bool = False,
 ) -> dict[str, Any]:
     offset = max(page - 1, 0) * page_size
     query_sql, params = _build_article_query(
@@ -418,13 +448,15 @@ async def _list_articles(
         limit=page_size,
         offset=offset,
         article_id=article_id,
+        unread_only=unread_only,
     )
     rows = await fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
     for row in rows:
         row['item_show_type'] = _coalesce_item_show_type(row.get('item_show_type'))
         row['account_avatar_url'] = f'/api/account/{row["biz"]}/avatar'
     has_active_filters = (
-        article_id not in (None, '')
+        unread_only
+        or article_id not in (None, '')
         or item_show_type is not None
         or bool(query)
         or since_ts is not None
@@ -443,6 +475,7 @@ async def _list_articles(
             since_ts=since_ts,
             until_ts=until_ts,
             article_id=article_id,
+            unread_only=unread_only,
         )
     else:
         total = await _get_cached_article_total(storage, user_id=user_id, group_ids=group_ids, biz=biz)
@@ -456,6 +489,7 @@ async def _list_articles(
         since_ts=since_ts,
         until_ts=until_ts,
         article_id=article_id,
+        unread_only=unread_only,
     )
     return {
         'articles': rows,
