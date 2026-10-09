@@ -66,6 +66,38 @@ hippo 只通过 RPC 使用 daemon，不接触微信协议细节：
 
 daemon 掉线或会话失效时，同步会整体暂停（不把这种错记成文章失败），页面顶部会提示需要在设置页重新扫码。
 
+## 数据来源与多源扩展
+
+目前只有微信一个来源，但数据模型与界面都是按「多来源」建的。新增来源（如哔哩哔哩、YouTube）时按下面几条走，不需要改查
+询与阅读器：
+
+- **区分来源靠 `accounts.source` 列**，不是路由前缀。`source` 是开放的标识符（不是枚举），目前只有 `weixin`。
+  现有的 `accounts.biz` 仍然是主键，但语义改为「该来源内的频道标识」（YouTube 是 channel id，B 站是 mid）：
+  改主键会连带 `subscription`/`annotation`/`article_read`/日报一起迁移，代价与收益不成比例。
+- **写入端必须显式设置 `source`。** 列上的 `DEFAULT 'weixin'` 只是为了让已有数据与现有同步链路继续工作；
+  新来源如果依赖默认值，会被静默标成微信。
+- **接口不加前缀。** 列表用 `GET /api/article?source=a,b` 过滤，每条文章响应都带 `source`；
+  只有来源**特有的能力**才用独立路由（例：微信专属的 `POST /api/article/{id}/refetch`）。
+- **前端不做来源分支。** 来源的名称与配色集中在 `frontend/src/utils/source.ts` 的 `SOURCE_META` 表里，
+  未登记的来源会原样显示而不是消失；组件里不应出现 `if (source === '…')` 这类布局判断。
+- **后端同步适配器是唯一的改造点。** `hippo/sync_worker.py` 目前直接构造 `WeixinSource` + `WeixinArticleSync`，
+  接入第二个来源时把这一步换成 `按 account.source 选适配器` 的注册表即可；
+  `weixin_worker.py` 的职责（列表入队 → 正文落库）就是适配器要实现的契约。
+- **卡片与阅读器不假设内容是段落流。** 视频类条目可能整篇只有一个媒体块，
+  目录（`buildOutline`）在无小标题时必须整列隐藏，排版设置也必须能在这种情况下正常退化。
+
+### 已读状态
+
+已读是**按用户**的，存在 `article_read` 边表里（`(user_id, article_pk)` 主键），不写回共享的 `articles`。
+读文章即标记已读（`PUT /api/article/{id}/read`）；重复标记不会再刷新 `read_at`；
+列表的 `read=unread` 走同一张表。
+
+### 文章计数
+
+`accounts.article_count` / `account_groups.article_count` 是**派生的缓存**，由触发器维护，
+供分组页展示；文章列表的 `total` 不走它，而是和分面统计一起实时统计，避免同一个响应里出现两个口径。
+缓存漂移（例如批量导入绕过了触发器）可以用 `SELECT hippo_rebuild_article_counts();` 重建。
+
 ## 功能
 
 - **多用户**：注册 + 邮箱验证 + 找回密码（可关闭注册）、管理员后台、审计日志；分组与订阅按用户隔离。
@@ -74,6 +106,7 @@ daemon 掉线或会话失效时，同步会整体暂停（不把这种错记成�
   派生内容（markdown + JSON blocks）存 `article_content`；图片按独立队列回填到对象存储；
   支持历史回填、失败重试与逐条失败诊断（`content_fetch_diagnostic`）。
 - **阅读器**：`pg_jieba` 中文分词全文检索、相关度排序、按版式（图文/视频/图片消息…）分面筛选、
+  正文目录（TOC）、排版设置（宽度 / 字号 / 行高 / 字距 / 衬线）、未读箱与已读标记、
   高亮标注、按内容哈希全局屏蔽图片。
 - **日报**：按用户时区生成当天摘要并邮件发送；投递台账保证同一天同一渠道只发一次（`POST /api/report/{date}/send` 幂等）。
 - **AI 对话**：对单篇文章提问或走预设（摘要 / 要点）；模型供应商在管理台配置，密钥只以末四位回显。
