@@ -411,7 +411,7 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
                     result=None,
                 )
             return True
-        tracker.set_report(result)
+        await tracker.set_report(result)
         was_cancelled = await storage.sync_jobs.is_cancelling(job.task_id)
         final_status = 'cancelled' if was_cancelled else str(result.status.get('status') or 'success')
         final_error = 'Cancelled by user' if was_cancelled else result.error

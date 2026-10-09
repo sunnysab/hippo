@@ -287,6 +287,8 @@ class SyncJobQueueTest(unittest.TestCase):
         self.assertEqual(report['downloaded'], 3)
         self.assertEqual(report['summary'], [('Demo', 5)])
         self.assertEqual(report['failed_accounts'], 0)
+        # 结束前的进度行就先带上整份报告，管理页不用等任务结束才看得到明细
+        self.assertEqual(storage.sync_jobs.progress_updates[-1]['report']['total_saved'], 5)
 
     def test_sync_job_repository_uses_statement_timestamp_for_running_and_finished(self) -> None:
         from hippo.sync_jobs import SyncJobRepository
