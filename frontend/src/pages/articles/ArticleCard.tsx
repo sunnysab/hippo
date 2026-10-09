@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { escapeHtml, formatDate } from '../../utils/format';
 import type { Article } from '../../store/articles';
 import { ItemShowTypeBadge } from './ItemShowTypeBadge';
@@ -18,7 +18,8 @@ export const ArticleCard = memo(function ArticleCard({
   onContextMenu,
   onAccountClick,
 }: ArticleCardProps) {
-  const thumb = article.image_id ? `/api/image/${article.image_id}` : '';
+  const [thumbFailed, setThumbFailed] = useState(false);
+  const thumb = article.image_id && !thumbFailed ? `/api/image/${article.image_id}` : '';
   const avatar = article.account_avatar_url || '';
   const digest = article.digest || '';
 
@@ -37,7 +38,7 @@ export const ArticleCard = memo(function ArticleCard({
       }}
     >
       {thumb ? (
-        <img className="article-thumb" src={thumb} alt="" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+        <img className="article-thumb" src={thumb} alt="" onError={() => setThumbFailed(true)} />
       ) : (
         <div className="article-thumb placeholder"></div>
       )}
