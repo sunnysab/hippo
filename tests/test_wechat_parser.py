@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 from pathlib import Path
 
 from hippo.downloader import _parse_markdown_blocks
 from hippo.wechat_parser import extract_cgi_data, parse_wechat_article
 
-_SAMPLES_ROOT = Path('/home/sab/wechat-article-exporter/samples')
+# 真实页面样本有 12MB，留在采集机上不入库；本机没有就跳过，用 HIPPO_WECHAT_SAMPLES
+# 指过去（或在那台机器上跑）才会真正执行。
+_SAMPLES_ROOT = Path(os.environ.get('HIPPO_WECHAT_SAMPLES', '/home/sab/wechat-article-exporter/samples'))
 _ARTICLE_URL = 'https://mp.weixin.qq.com/s/test?__biz=fake&mid=1&idx=1'
 
 
