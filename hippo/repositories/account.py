@@ -255,7 +255,7 @@ class AccountRepository:
             'WITH filtered_accounts AS ('
             ' SELECT a.biz, a.nickname, a.alias, a.round_head_img, s.group_id,'
             ' s.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days,'
-            ' s.sync_interval_days, a.article_count'
+            ' s.sync_interval_days, a.article_count, a.backfill_state'
             ' FROM accounts a'
             ' JOIN subscription s ON s.biz = a.biz AND s.user_id = %s'
             f' {where_sql}'
@@ -266,7 +266,13 @@ class AccountRepository:
             ' a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,'
             ' a.sync_interval_days,'
             ' COALESCE(a.article_count, 0) AS article_count,'
-            ' (ai.data IS NOT NULL) AS avatar_ready'
+            ' (ai.data IS NOT NULL) AS avatar_ready,'
+            " (a.backfill_state = 'pending') AS backfill_pending,"
+            ' EXISTS ('
+            '   SELECT 1 FROM sync_jobs j'
+            "   WHERE j.status = 'running' AND j.trigger_type = 'backfill'"
+            '     AND j.biz_list @> jsonb_build_array(a.biz)'
+            ' ) AS backfill_running'
             ' FROM filtered_accounts a'
             ' LEFT JOIN account_groups g ON g.id = a.group_id'
             ' LEFT JOIN avatar_images ai ON ai.biz = a.biz'
@@ -295,7 +301,13 @@ class AccountRepository:
                 ' s.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days,'
                 ' s.sync_interval_days, g.name AS group_name,'
                 ' COALESCE(a.article_count, 0) AS article_count,'
-                ' (ai.data IS NOT NULL) AS avatar_ready'
+                ' (ai.data IS NOT NULL) AS avatar_ready,'
+                " (a.backfill_state = 'pending') AS backfill_pending,"
+                ' EXISTS ('
+                '   SELECT 1 FROM sync_jobs j'
+                "   WHERE j.status = 'running' AND j.trigger_type = 'backfill'"
+                '     AND j.biz_list @> jsonb_build_array(a.biz)'
+                ' ) AS backfill_running'
                 ' FROM accounts a'
                 ' JOIN subscription s ON s.biz = a.biz AND s.user_id = %s'
                 ' LEFT JOIN account_groups g ON g.id = s.group_id'

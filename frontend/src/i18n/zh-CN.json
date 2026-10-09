@@ -70,6 +70,8 @@
   "accounts.syncInterval14": "每两周",
   "accounts.syncInterval30": "每月",
   "accounts.syncSaved": "更新策略已保存",
+  "accounts.syncing": "同步中",
+  "accounts.syncQueued": "排队中",
   "accounts.syncFailed": "更新策略保存失败",
   "accounts.batchSyncApply": "批量设置",
   "accounts.groupSync": "同步已选",

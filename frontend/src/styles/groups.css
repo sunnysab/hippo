@@ -382,6 +382,29 @@
   font-weight: 700;
 }
 
+/* 回填是过程态，用中性色，别跟「已停用」那种警吉色抢眼 */
+.account-tag-live,
+.account-tag-quiet {
+  background: var(--surface-item-active);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.sync-dot {
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: sync-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes sync-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
 .account-toggle {
   border: none;
   background: var(--surface-panel-strong);

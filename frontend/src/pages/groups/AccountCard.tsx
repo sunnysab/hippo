@@ -107,6 +107,15 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
           <div className="account-sub account-stats">
             <span className="account-stat">{lastUpdatedText}</span>
             <span className="account-stat">{articleCountText}</span>
+            {account.backfill_running && (
+              <span className="account-tag account-tag-live">
+                <span className="sync-dot" aria-hidden="true" />
+                {t('accounts.syncing', '同步中')}
+              </span>
+            )}
+            {!account.backfill_running && account.backfill_pending && (
+              <span className="account-tag account-tag-quiet">{t('accounts.syncQueued', '排队中')}</span>
+            )}
             {account.is_disabled && (
               <span className="account-tag">{t('accounts.syncDisabled', 'Sync disabled')}</span>
             )}

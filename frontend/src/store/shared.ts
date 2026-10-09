@@ -17,4 +17,6 @@ export interface Account {
   last_synced_at: string | null;
   sync_interval_days: number | null;
   article_count: number;
+  backfill_pending: boolean;
+  backfill_running: boolean;
 }
