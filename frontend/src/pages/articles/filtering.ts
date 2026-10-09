@@ -9,6 +9,8 @@ export interface ArticleFiltersState {
   itemShowType: string;
   /** '' for every article, `unread` for the unread box. */
   read: string;
+  /** 'true' keeps only starred articles. */
+  starred: string;
   search: string;
   sort: string;
 }
@@ -32,6 +34,7 @@ export const areArticleFiltersEqual = (
   left.accountBiz === right.accountBiz &&
   left.itemShowType === right.itemShowType &&
   left.read === right.read &&
+  left.starred === right.starred &&
   left.search === right.search &&
   left.sort === right.sort
 );
@@ -50,6 +53,7 @@ export const buildArticleRouteStateFromSearchParams = (
       accountBiz: searchParams.get('account') || '',
       itemShowType: searchParams.get('type') || '',
       read: searchParams.get('read') || '',
+      starred: searchParams.get('starred') || '',
       search,
       sort: searchParams.get('sort') || getDefaultArticleSort(search),
     },
@@ -67,6 +71,7 @@ export const buildArticleSearchParams = (
   if (filters.accountBiz) params.set('account', filters.accountBiz);
   if (filters.itemShowType) params.set('type', filters.itemShowType);
   if (filters.read) params.set('read', filters.read);
+  if (filters.starred) params.set('starred', filters.starred);
   if (filters.search.trim()) params.set('q', filters.search.trim());
   if (routeTarget?.articleId) params.set('article', routeTarget.articleId);
   if (routeTarget?.itemId) params.set('item_id', routeTarget.itemId);

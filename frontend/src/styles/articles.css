@@ -74,9 +74,9 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-/* View switch, search, sort: the input takes whatever is left. */
+/* View switch plus search: the input takes whatever is left. */
 .article-filter-grid-middle {
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
 }
 
@@ -275,10 +275,29 @@
   background: var(--info);
 }
 
-.article-card-action {
+.article-card-actions {
   position: absolute;
   top: 8px;
   right: 8px;
+  display: inline-flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.18s ease-out;
+}
+
+.article-card:hover .article-card-actions,
+.article-card:focus-within .article-card-actions,
+.article-card.is-active .article-card-actions {
+  opacity: 1;
+}
+
+/* A starred article keeps its control on screen: the star is state the reader
+   put there, not a hover affordance. */
+.article-card.is-starred .article-card-actions {
+  opacity: 1;
+}
+
+.article-card-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -288,21 +307,21 @@
   border: none;
   border-radius: var(--radius-tight);
   background: var(--surface-strong);
-  color: var(--text);
+  color: var(--muted);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.18s ease-out;
+}
+
+.article-card-action:hover {
+  color: var(--text);
+}
+
+.article-card-action.is-on {
+  color: var(--warning);
 }
 
 .article-card-action .icon {
   width: 14px;
   height: 14px;
-}
-
-.article-card:hover .article-card-action,
-.article-card:focus-within .article-card-action,
-.article-card.is-active .article-card-action {
-  opacity: 1;
 }
 
 .article-thumb {

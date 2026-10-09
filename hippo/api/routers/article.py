@@ -19,6 +19,7 @@ from ...article_queries import (
     _normalize_item_show_type,
     _normalize_read_filter,
     _normalize_source_filter,
+    _normalize_starred_filter,
     _parse_date,
     _split_article_exclude_keywords,
 )
@@ -48,6 +49,7 @@ async def list_articles(
     exclude_keywords: str | None = None,
     sort: str | None = None,
     read: str | None = None,
+    starred: str | None = None,
     source: str | None = None,
     page: int = 1,
     page_size: int = 20,
@@ -66,6 +68,7 @@ async def list_articles(
         article_id (str | None): 按具体文章 ID 筛选 (微信原始 article_id)。
         q (str | None): 搜索文章内容/标题。
         read (str | None): 传 `unread` 只返回未读文章。
+        starred (str | None): 传 `true` 只返回已收藏文章。
         source (str | None): 按来源筛选，逗号分隔（如 "weixin"）。
         page (int): 页码。
         page_size (int): 每页数量。
@@ -102,6 +105,7 @@ async def list_articles(
         page_size=min(max(page_size, 1), 200),
         article_id=article_id or None,
         unread_only=_normalize_read_filter(read),
+        starred_only=_normalize_starred_filter(starred),
         sources=_normalize_source_filter(source),
     )
 
@@ -150,6 +154,31 @@ async def set_article_read(
         raise ApiError('read must be a boolean', status=400)
     read_at = await storage.reads.set_read(user_id=user.id, article_pk=article_id, read=read)
     return {'article_id': article_id, 'read_at': read_at}
+
+
+@router.put('/article/{article_id}/star')
+async def set_article_star(
+    article_id: int,
+    body: dict[str, Any] = Body(default={}),
+    storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
+) -> dict[str, Any]:
+    """
+    收藏 / 取消收藏单篇文章。
+
+    Args:
+        article_id (int): 文章 ID。
+        body (dict): `{"starred": true}` 收藏，`false` 取消（默认 true）。
+
+    Returns:
+        dict: 文章 ID 与收藏时间（未收藏时为 null）。
+    """
+    await _assert_article_visible(storage, user.id, article_id)
+    starred = body.get('starred', True)
+    if not isinstance(starred, bool):
+        raise ApiError('starred must be a boolean', status=400)
+    starred_at = await storage.stars.set_starred(user_id=user.id, article_pk=article_id, starred=starred)
+    return {'article_id': article_id, 'starred_at': starred_at}
 
 
 @router.get('/article/{article_id}/image')

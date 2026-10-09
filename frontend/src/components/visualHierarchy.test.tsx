@@ -154,6 +154,7 @@ describe('visual hierarchy semantics', () => {
           accountBiz: '',
           itemShowType: '',
           read: '',
+          starred: '',
           search: '',
           sort: '',
         }}

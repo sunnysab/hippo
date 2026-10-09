@@ -31,6 +31,7 @@ const article = (id: number, read_at: string | null = null): Article => ({
   image_id: null,
   source: 'weixin',
   read_at,
+  starred_at: null,
 });
 
 const payload = (record: Article): ArticlePayload => ({
@@ -85,6 +86,18 @@ describe('read state in the articles store', () => {
     expect(state.articles[0].read_at).toBeNull();
     expect(state.articles[1].read_at).toBe('2026-05-02T11:00:00+00:00');
     expect(state.currentArticlePayload?.article.read_at).toBe('2026-05-02T11:00:00+00:00');
+  });
+
+  it('patches star state on the row and the open payload', () => {
+    const api = mount();
+
+    act(() => {
+      api.current!.dispatch({ type: 'SET_ARTICLE_STAR', id: 2, starredAt: '2026-05-02T10:00:00+00:00' });
+    });
+
+    const state = api.current!.state();
+    expect(state.articles[1].starred_at).toBe('2026-05-02T10:00:00+00:00');
+    expect(state.currentArticlePayload?.article.starred_at).toBe('2026-05-02T10:00:00+00:00');
   });
 
   it('keeps the open payload when another row is toggled', () => {

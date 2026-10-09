@@ -533,6 +533,14 @@ CREATE TABLE IF NOT EXISTS article_read (
     PRIMARY KEY (user_id, article_pk)
 );
 
+-- 收藏与已读一样是按用户的边表：同一篇文章对不同读者可以有不同的收藏状态。
+CREATE TABLE IF NOT EXISTS article_star (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    article_pk INTEGER NOT NULL,
+    starred_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, article_pk)
+);
+
 -- ============================================================
 -- 划线（quote + prefix/suffix 锚定，不用 offset）
 -- ============================================================

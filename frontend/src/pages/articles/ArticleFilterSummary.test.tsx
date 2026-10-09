@@ -11,6 +11,7 @@ describe('ArticleFilterSummary', () => {
       accountBiz: '',
       itemShowType: '',
       read: '',
+      starred: '',
       search: 'ai%20%E6%8A%95%E8%B5%84',
       sort: '',
     };

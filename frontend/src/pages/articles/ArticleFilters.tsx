@@ -27,7 +27,7 @@ export function ArticleFilters({
 }: ArticleFiltersProps) {
   const { state, dispatch } = useArticlesState();
   const { t } = useI18n();
-  const unreadView = filters.read === 'unread';
+  const view = filters.starred ? 'starred' : filters.read === 'unread' ? 'unread' : 'all';
 
   return (
     <div className="article-filter-shell" id="article-filter-shell">
@@ -35,22 +35,31 @@ export function ArticleFilters({
         <div className="toolbar article-filter-grid article-filter-grid-middle">
           <div className="article-view-switch" role="group" aria-label={t('articles.view', '视图')}>
             <button
-              className={`article-view-option${unreadView ? '' : ' is-active'}`}
+              className={`article-view-option${view === 'all' ? ' is-active' : ''}`}
               id="btn-article-view-all"
               type="button"
-              aria-pressed={!unreadView}
-              onClick={() => onChange({ read: '' })}
+              aria-pressed={view === 'all'}
+              onClick={() => onChange({ read: '', starred: '' })}
             >
               {t('articles.viewAll', '全部')}
             </button>
             <button
-              className={`article-view-option${unreadView ? ' is-active' : ''}`}
+              className={`article-view-option${view === 'unread' ? ' is-active' : ''}`}
               id="btn-article-view-unread"
               type="button"
-              aria-pressed={unreadView}
-              onClick={() => onChange({ read: 'unread' })}
+              aria-pressed={view === 'unread'}
+              onClick={() => onChange({ read: 'unread', starred: '' })}
             >
               {t('articles.viewUnread', '未读')}
+            </button>
+            <button
+              className={`article-view-option${view === 'starred' ? ' is-active' : ''}`}
+              id="btn-article-view-starred"
+              type="button"
+              aria-pressed={view === 'starred'}
+              onClick={() => onChange({ read: '', starred: 'true' })}
+            >
+              {t('articles.viewStarred', '收藏')}
             </button>
           </div>
           <div className="input article-search-input">
@@ -65,14 +74,6 @@ export function ArticleFilters({
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6 6 0 1 0 14 15.5l.27.28v.79L20 21.5 21.5 20l-6-6zm-5.5 0a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>
             </span>
           </div>
-          <select
-            id="article-sort"
-            value={filters.sort}
-            onChange={(event) => onChange({ sort: event.target.value })}
-          >
-            <option value='publish_at_desc'>{t('filters.sortPublishedDesc', 'Published (Newest)')}</option>
-            <option value='relevance_desc'>{t('filters.sortRelevanceDesc', 'Relevance')}</option>
-          </select>
         </div>
         <div
           className={`article-filter-drawer${state.filtersCollapsed ? '' : ' is-open'}`}
@@ -88,6 +89,14 @@ export function ArticleFilters({
               {groupOptions.map((group) => (
                 <option key={group.value} value={group.value}>{group.label}</option>
               ))}
+            </select>
+            <select
+              id="article-sort"
+              value={filters.sort}
+              onChange={(event) => onChange({ sort: event.target.value })}
+            >
+              <option value='publish_at_desc'>{t('filters.sortPublishedDesc', 'Published (Newest)')}</option>
+              <option value='relevance_desc'>{t('filters.sortRelevanceDesc', 'Relevance')}</option>
             </select>
             <select
               id="article-account-filter"

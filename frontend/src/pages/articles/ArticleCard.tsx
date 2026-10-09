@@ -10,6 +10,7 @@ interface ArticleCardProps {
   onClick: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
   onToggleRead?: (article: Article) => void;
+  onToggleStar?: (article: Article) => void;
   onAccountClick?: (biz: string) => void;
 }
 
@@ -19,6 +20,7 @@ export const ArticleCard = memo(function ArticleCard({
   onClick,
   onContextMenu,
   onToggleRead,
+  onToggleStar,
   onAccountClick,
 }: ArticleCardProps) {
   const { t } = useI18n();
@@ -27,10 +29,11 @@ export const ArticleCard = memo(function ArticleCard({
   const avatar = article.account_avatar_url || '';
   const digest = article.digest || '';
   const isRead = Boolean(article.read_at);
+  const isStarred = Boolean(article.starred_at);
 
   return (
     <div
-      className={`article-card${isActive ? ' is-active' : ''}${isRead ? ' is-read' : ''}`}
+      className={`article-card${isActive ? ' is-active' : ''}${isRead ? ' is-read' : ''}${isStarred ? ' is-starred' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onClick}
@@ -69,19 +72,38 @@ export const ArticleCard = memo(function ArticleCard({
         </div>
         <div className="article-digest" title={digest}>{digest}</div>
       </div>
-      {onToggleRead ? (
-        <button
-          className="article-card-action"
-          type="button"
-          title={isRead ? t('articles.markUnread', '标记未读') : t('articles.markRead', '标记已读')}
-          aria-label={isRead ? t('articles.markUnread', '标记未读') : t('articles.markRead', '标记已读')}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleRead(article);
-          }}
-        >
-          <span className="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5c-5 0-9 4.5-9 7s4 7 9 7 9-4.5 9-7-4-7-9-7zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm0-2a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg></span>
-        </button>
+      {onToggleStar || onToggleRead ? (
+        <div className="article-card-actions">
+          {onToggleStar ? (
+            <button
+              className={`article-card-action${isStarred ? ' is-on' : ''}`}
+              type="button"
+              title={isStarred ? t('articles.unstar', '取消收藏') : t('articles.star', '收藏')}
+              aria-label={isStarred ? t('articles.unstar', '取消收藏') : t('articles.star', '收藏')}
+              aria-pressed={isStarred}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleStar(article);
+              }}
+            >
+              <span className="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.95 6.1 6.7.86-4.9 4.63 1.24 6.66L12 17.6l-5.99 3.15L7.25 14.1 2.35 9.46l6.7-.86z"/></svg></span>
+            </button>
+          ) : null}
+          {onToggleRead ? (
+            <button
+              className="article-card-action"
+              type="button"
+              title={isRead ? t('articles.markUnread', '标记未读') : t('articles.markRead', '标记已读')}
+              aria-label={isRead ? t('articles.markUnread', '标记未读') : t('articles.markRead', '标记已读')}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleRead(article);
+              }}
+            >
+              <span className="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5c-5 0-9 4.5-9 7s4 7 9 7 9-4.5 9-7-4-7-9-7zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm0-2a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg></span>
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

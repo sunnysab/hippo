@@ -80,12 +80,12 @@ class ReadJoinParamsTest(unittest.TestCase):
         self.assertIn('ar.read_at', sql)
         self.assertIn('LEFT JOIN article_read ar ON ar.article_pk = a.id AND ar.user_id = %s', sql)
 
-    def test_both_joins_bind_the_caller_id_before_the_where_clause(self) -> None:
+    def test_the_state_joins_bind_the_caller_id_before_the_where_clause(self) -> None:
         sql, params = self._query(unread_only=True)
 
-        # The subscription join binds first, the read join second, then the
-        # WHERE values, then LIMIT/OFFSET.
-        self.assertEqual([42, 42, 20, 0], params)
+        # subscription, then read state, then star state, then the WHERE values,
+        # then LIMIT/OFFSET.
+        self.assertEqual([42, 42, 42, 20, 0], params)
         self.assertLess(sql.index('subscription sub'), sql.index('article_read ar'))
         self.assertLess(sql.index('article_read ar'), sql.index('ar.read_at IS NULL'))
 
@@ -227,4 +227,92 @@ class SourceFilterTest(unittest.TestCase):
         self.assertIn('acc.source', sql)
         self.assertIn('acc.source = ANY(%s)', sql)
         # accounts join binds nothing, so the caller id stays first.
-        self.assertEqual([42, 42, ['weixin'], 20, 0], params)
+        self.assertEqual([42, 42, 42, ['weixin'], 20, 0], params)
+
+
+class StarFilterTest(unittest.TestCase):
+    def test_starred_accepts_the_two_spellings_a_client_sends(self) -> None:
+        from hippo.article_queries import _normalize_starred_filter
+
+        self.assertTrue(_normalize_starred_filter('true'))
+        self.assertTrue(_normalize_starred_filter('1'))
+        self.assertFalse(_normalize_starred_filter(None))
+        self.assertFalse(_normalize_starred_filter(''))
+
+    def test_an_unknown_starred_value_is_rejected(self) -> None:
+        from hippo.article_queries import _normalize_starred_filter
+
+        with self.assertRaises(ApiError):
+            _normalize_starred_filter('yes')
+
+    def test_the_star_predicate_joins_the_star_table(self) -> None:
+        sql, params = _build_article_query(
+            storage=SimpleNamespace(),
+            user_id=42,
+            group_ids=None,
+            biz=None,
+            item_show_type=None,
+            query=None,
+            exclude_keywords=None,
+            since_ts=None,
+            until_ts=None,
+            sort_mode='publish_at_desc',
+            limit=20,
+            offset=0,
+            starred_only=True,
+        )
+
+        self.assertIn('LEFT JOIN article_star st ON st.article_pk = a.id AND st.user_id = %s', sql)
+        self.assertIn('st.starred_at IS NOT NULL', sql)
+        self.assertIn('st.starred_at,', sql)
+        self.assertEqual([42, 42, 42, 20, 0], params)
+
+
+class SetStarEndpointTest(unittest.IsolatedAsyncioTestCase):
+    async def test_starring_reports_the_star_time(self) -> None:
+        storage = SimpleNamespace(
+            stars=SimpleNamespace(set_starred=AsyncMock(return_value='2026-05-02T11:00:00+00:00'))
+        )
+
+        with patch.object(article_api, '_assert_article_visible', AsyncMock()):
+            result = await article_api.set_article_star(
+                article_id=5, body={'starred': True}, storage=storage, user=_user()
+            )
+
+        storage.stars.set_starred.assert_awaited_once_with(user_id=7, article_pk=5, starred=True)
+        self.assertEqual({'article_id': 5, 'starred_at': '2026-05-02T11:00:00+00:00'}, result)
+
+    async def test_a_non_boolean_starred_is_rejected(self) -> None:
+        storage = SimpleNamespace(stars=SimpleNamespace(set_starred=AsyncMock()))
+
+        with patch.object(article_api, '_assert_article_visible', AsyncMock()), self.assertRaises(ApiError):
+            await article_api.set_article_star(article_id=5, body={'starred': 'yes'}, storage=storage, user=_user())
+
+        storage.stars.set_starred.assert_not_awaited()
+
+
+class StarRepositoryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_unstarring_deletes_instead_of_flagging(self) -> None:
+        executed: list[str] = []
+
+        class _Cursor:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def execute(self, sql, params=None):
+                executed.append(' '.join(sql.split()))
+
+            async def fetchone(self):
+                return None
+
+        from hippo.repositories.star import ArticleStarRepository
+
+        repository = ArticleStarRepository(SimpleNamespace(cursor=lambda **kwargs: _Cursor()))
+
+        result = await repository.set_starred(user_id=1, article_pk=2, starred=False)
+
+        self.assertIsNone(result)
+        self.assertEqual(['DELETE FROM article_star WHERE user_id = %s AND article_pk = %s'], executed)

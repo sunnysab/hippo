@@ -22,6 +22,7 @@ from .meta import MetaRepository
 from .queue import ArticleQueueRepository
 from .read import ArticleReadRepository
 from .session import UserSessionRepository
+from .star import ArticleStarRepository
 from .subscription import SubscriptionRepository
 from .token import UserTokenRepository
 from .user import UserRepository
@@ -35,6 +36,7 @@ __all__ = [
     'ArticleQueueRepository',
     'ArticleReadRepository',
     'ArticleRepository',
+    'ArticleStarRepository',
     'AuditRepository',
     'ChatRepository',
     'DownloadAttemptRepository',

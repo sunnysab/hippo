@@ -24,6 +24,7 @@ export function useArticleFilters() {
     accountBiz: routeAccountBiz,
     itemShowType: routeItemShowType,
     read: routeRead,
+    starred: routeStarred,
     search: routeSearch,
     sort: routeSort,
   } = routeState.filters;
@@ -110,6 +111,7 @@ export function useArticleFilters() {
       if (nextFilters.accountBiz) url.searchParams.set('biz', nextFilters.accountBiz);
       if (nextFilters.itemShowType) url.searchParams.set('item_show_type', nextFilters.itemShowType);
       if (nextFilters.read) url.searchParams.set('read', nextFilters.read);
+      if (nextFilters.starred) url.searchParams.set('starred', nextFilters.starred);
       if (nextFilters.search) url.searchParams.set('q', nextFilters.search);
       url.searchParams.set('sort', sort);
       url.searchParams.set('page', String(page));
@@ -223,6 +225,7 @@ export function useArticleFilters() {
       accountBiz: '',
       itemShowType: '',
       read: '',
+      starred: '',
       search: '',
       sort: ARTICLE_SORT_PUBLISH_AT_DESC,
     });
@@ -301,6 +304,7 @@ export function useArticleFilters() {
         accountBiz: routeAccountBiz,
         itemShowType: routeItemShowType,
         read: routeRead,
+    starred: routeStarred,
         search: routeSearch,
         sort: routeSort,
       };
@@ -325,6 +329,7 @@ export function useArticleFilters() {
     routeGroupId,
     routeItemShowType,
     routeRead,
+    routeStarred,
     routeSearch,
     routeSort,
     routeState.itemId,
@@ -353,6 +358,7 @@ export function useArticleFilters() {
       accountBiz: filters.accountBiz,
       itemShowType: filters.itemShowType,
       read: filters.read,
+      starred: filters.starred,
       search: deferredSearch,
       sort: filters.sort,
     };
@@ -363,6 +369,7 @@ export function useArticleFilters() {
     filters.groupId,
     filters.itemShowType,
     filters.read,
+    filters.starred,
     filters.sort,
     loadArticles,
   ]);

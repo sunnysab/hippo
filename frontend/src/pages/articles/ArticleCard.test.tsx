@@ -25,6 +25,7 @@ const article: Article = {
   image_id: 9,
   source: 'weixin',
   read_at: null,
+  starred_at: null,
 };
 
 describe('ArticleCard', () => {
@@ -62,6 +63,40 @@ describe('ArticleCard', () => {
 
     expect(container.querySelector('.article-unread-dot')).toBeNull();
     expect(container.querySelector('.article-card')!.className).toContain('is-read');
+  });
+
+  it('keeps the star control on screen for a starred article', () => {
+    const { container } = render(
+      <ArticleCard
+        article={{ ...article, starred_at: '2026-05-02T10:00:00+00:00' }}
+        isActive={false}
+        onClick={vi.fn()}
+        onContextMenu={vi.fn()}
+        onToggleStar={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector('.article-card')!.className).toContain('is-starred');
+    expect(container.querySelector('.article-card-action.is-on')).not.toBeNull();
+  });
+
+  it('stars an article without opening it', () => {
+    const onToggleStar = vi.fn();
+    const onClick = vi.fn();
+    const { container } = render(
+      <ArticleCard
+        article={article}
+        isActive={false}
+        onClick={onClick}
+        onContextMenu={vi.fn()}
+        onToggleStar={onToggleStar}
+      />,
+    );
+
+    fireEvent.click(container.querySelector('.article-card-action')!);
+
+    expect(onToggleStar).toHaveBeenCalledWith(article);
+    expect(onClick).not.toHaveBeenCalled();
   });
 
   it('toggles read state without opening the article', () => {

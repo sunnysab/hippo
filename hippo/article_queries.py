@@ -151,6 +151,9 @@ SUBSCRIPTION_JOIN = ' JOIN subscription sub ON sub.biz = a.biz AND sub.user_id =
 #: It follows the subscription join, so its ``user_id`` is bound second.
 READ_STATE_JOIN = ' LEFT JOIN article_read ar ON ar.article_pk = a.id AND ar.user_id = %s'
 
+#: Stars are per reader, like read state, and follow the read join.
+STAR_JOIN = ' LEFT JOIN article_star st ON st.article_pk = a.id AND st.user_id = %s'
+
 #: The source predicate reads ``acc.source``, so callers that filter by source
 #: must join accounts. The join itself binds no parameter.
 ACCOUNTS_JOIN = ' JOIN accounts acc ON acc.biz = a.biz'
@@ -189,6 +192,15 @@ def _normalize_read_filter(value: str | None) -> bool:
     raise ApiError('Invalid read filter', status=400)
 
 
+def _normalize_starred_filter(value: str | None) -> bool:
+    """``starred=true`` (or ``1``) keeps only starred articles."""
+    if value in (None, ''):
+        return False
+    if value in ('true', '1'):
+        return True
+    raise ApiError('Invalid starred filter', status=400)
+
+
 def _build_article_where_clause(
     *,
     group_ids: list[int] | None,
@@ -200,6 +212,7 @@ def _build_article_where_clause(
     until_ts: int | None,
     article_id: str | None = None,
     unread_only: bool = False,
+    starred_only: bool = False,
     sources: list[str] | None = None,
 ) -> tuple[str, list[Any], str, list[str]]:
     where: list[str] = []
@@ -238,6 +251,8 @@ def _build_article_where_clause(
         params.append(until_ts)
     if unread_only:
         where.append('ar.read_at IS NULL')
+    if starred_only:
+        where.append('st.starred_at IS NOT NULL')
 
     where_sql = f'WHERE {" AND ".join(where)}' if where else ''
     return where_sql, params, query_tsquery_sql, query_tsquery_params
@@ -259,6 +274,7 @@ def _build_article_query(
     offset: int,
     article_id: str | None = None,
     unread_only: bool = False,
+    starred_only: bool = False,
     sources: list[str] | None = None,
 ) -> tuple[str, list[Any]]:
     select_params: list[Any] = []
@@ -275,6 +291,7 @@ def _build_article_query(
         until_ts=until_ts,
         article_id=article_id,
         unread_only=unread_only,
+        starred_only=starred_only,
         sources=sources,
     )
 
@@ -297,7 +314,7 @@ def _build_article_query(
 
     query_sql = (
         'SELECT a.id, a.biz, a.article_id, a.title, a.item_show_type, a.author, a.digest, a.cover, a.link,'
-        ' a.source_url, a.publish_at, a.created_at, ar.read_at, acc.source,'
+        ' a.source_url, a.publish_at, a.created_at, ar.read_at, st.starred_at, acc.source,'
         ' acc.nickname AS account_nickname, acc.alias AS account_alias,'
         ' acc.round_head_img AS account_avatar,'
         ' sub.group_id, g.name AS group_name,'
@@ -307,13 +324,14 @@ def _build_article_query(
         f'{ACCOUNTS_JOIN}'
         f'{SUBSCRIPTION_JOIN}'
         f'{READ_STATE_JOIN}'
+        f'{STAR_JOIN}'
         ' LEFT JOIN account_groups g ON g.id = sub.group_id'
         f' {image_sql}'
         f' {where_sql}'
         f' {order_sql}'
         f' {limit_sql}'
     )
-    params = [*select_params, user_id, user_id, *params, limit, offset]
+    params = [*select_params, user_id, user_id, user_id, *params, limit, offset]
     return query_sql, params
 
 
@@ -330,6 +348,7 @@ async def _count_articles(
     until_ts: int | None,
     article_id: str | None = None,
     unread_only: bool = False,
+    starred_only: bool = False,
     sources: list[str] | None = None,
 ) -> int:
     where_sql, params, _tsquery_sql, _tsquery_params = _build_article_where_clause(
@@ -342,16 +361,17 @@ async def _count_articles(
         until_ts=until_ts,
         article_id=article_id,
         unread_only=unread_only,
+        starred_only=starred_only,
         sources=sources,
     )
     # The extra joins are only worth their cost when a predicate uses them.
-    read_join = READ_STATE_JOIN if unread_only else ''
-    read_params = [user_id] if unread_only else []
+    state_join = f'{READ_STATE_JOIN if unread_only else ""}{STAR_JOIN if starred_only else ""}'
+    state_params = [user_id] * ((1 if unread_only else 0) + (1 if starred_only else 0))
     accounts_join = ACCOUNTS_JOIN if sources else ''
     row = await fetchone_row(
         storage,
-        (f'SELECT COUNT(*) AS total FROM articles a{accounts_join}{SUBSCRIPTION_JOIN}{read_join} {where_sql}'),
-        [user_id, *read_params, *params],
+        (f'SELECT COUNT(*) AS total FROM articles a{accounts_join}{SUBSCRIPTION_JOIN}{state_join} {where_sql}'),
+        [user_id, *state_params, *params],
         normalize=_normalize_record,
     )
     return int(row.get('total') or 0) if row else 0
@@ -369,6 +389,7 @@ async def _count_article_item_show_type_facets(
     until_ts: int | None,
     article_id: str | None = None,
     unread_only: bool = False,
+    starred_only: bool = False,
     sources: list[str] | None = None,
 ) -> list[dict[str, int]]:
     where_sql, params, _tsquery_sql, _tsquery_params = _build_article_where_clause(
@@ -381,10 +402,11 @@ async def _count_article_item_show_type_facets(
         until_ts=until_ts,
         article_id=article_id,
         unread_only=unread_only,
+        starred_only=starred_only,
         sources=sources,
     )
-    read_join = READ_STATE_JOIN if unread_only else ''
-    read_params = [user_id] if unread_only else []
+    state_join = f'{READ_STATE_JOIN if unread_only else ""}{STAR_JOIN if starred_only else ""}'
+    state_params = [user_id] * ((1 if unread_only else 0) + (1 if starred_only else 0))
     accounts_join = ACCOUNTS_JOIN if sources else ''
     rows = await fetchall_rows(
         storage,
@@ -393,12 +415,12 @@ async def _count_article_item_show_type_facets(
             ' FROM articles a'
             f'{accounts_join}'
             f'{SUBSCRIPTION_JOIN}'
-            f'{read_join}'
+            f'{state_join}'
             f' {where_sql}'
             ' GROUP BY COALESCE(a.item_show_type, 0)'
             ' ORDER BY COALESCE(a.item_show_type, 0) ASC'
         ),
-        [user_id, *read_params, *params],
+        [user_id, *state_params, *params],
         normalize=_normalize_record,
     )
     order_map = {value: index for index, value in enumerate(sorted(_ITEM_SHOW_TYPE_VALUES))}
@@ -437,6 +459,7 @@ async def _list_articles(
     page_size: int,
     article_id: str | None = None,
     unread_only: bool = False,
+    starred_only: bool = False,
     sources: list[str] | None = None,
 ) -> dict[str, Any]:
     offset = max(page - 1, 0) * page_size
@@ -455,6 +478,7 @@ async def _list_articles(
         offset=offset,
         article_id=article_id,
         unread_only=unread_only,
+        starred_only=starred_only,
         sources=sources,
     )
     rows = await fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
@@ -476,6 +500,7 @@ async def _list_articles(
         until_ts=until_ts,
         article_id=article_id,
         unread_only=unread_only,
+        starred_only=starred_only,
         sources=sources,
     )
     item_show_type_facets = await _count_article_item_show_type_facets(
@@ -489,6 +514,7 @@ async def _list_articles(
         until_ts=until_ts,
         article_id=article_id,
         unread_only=unread_only,
+        starred_only=starred_only,
         sources=sources,
     )
     return {
@@ -506,6 +532,10 @@ async def _get_article(storage: PostgresStorage, user_id: int, article_id: int) 
         (
             'SELECT a.id, a.biz, a.article_id, a.title, a.item_show_type, a.author, a.digest, a.cover, a.link,'
             ' a.source_url, a.publish_at, a.created_at, acc.source,'
+            ' (SELECT st.starred_at FROM article_star st'
+            '   WHERE st.article_pk = a.id AND st.user_id = %s) AS starred_at,'
+            ' (SELECT ar.read_at FROM article_read ar'
+            '   WHERE ar.article_pk = a.id AND ar.user_id = %s) AS read_at,'
             ' acc.nickname AS account_nickname, acc.alias AS account_alias,'
             ' acc.round_head_img AS account_avatar, sub.group_id, g.name AS group_name'
             ' FROM articles a'
@@ -514,7 +544,7 @@ async def _get_article(storage: PostgresStorage, user_id: int, article_id: int) 
             ' LEFT JOIN account_groups g ON g.id = sub.group_id'
             ' WHERE a.id = %s'
         ),
-        [user_id, article_id],
+        [user_id, user_id, user_id, article_id],
         normalize=_normalize_record,
     )
     if not article:

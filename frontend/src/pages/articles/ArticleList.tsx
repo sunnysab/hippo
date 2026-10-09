@@ -24,6 +24,21 @@ export function ArticleList({ onSelect, onLoadMore, onFilterByAccount }: Article
   const [refetchingId, setRefetchingId] = useState<number | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const handleToggleStar = useCallback(async (article: Article) => {
+    const starred = !article.starred_at;
+    try {
+      const result = await apiSend(`/api/article/${article.id}/star`, 'PUT', { starred }) as { starred_at?: string | null };
+      dispatch({
+        type: 'SET_ARTICLE_STAR',
+        id: article.id,
+        starredAt: starred ? result.starred_at ?? new Date().toISOString() : null,
+      });
+    } catch (err) {
+      if (isAuthError(err)) return;
+      showToast((err as Error)?.message || t('articles.starFailed', 'Failed to update star.'));
+    }
+  }, [dispatch, showToast, t]);
+
   const handleToggleRead = useCallback(async (article: Article) => {
     const read = !article.read_at;
     try {
@@ -133,6 +148,7 @@ export function ArticleList({ onSelect, onLoadMore, onFilterByAccount }: Article
             isActive={state.selectedArticleId === article.id}
             onClick={() => { void onSelect(article.id); }}
             onToggleRead={(target) => { void handleToggleRead(target); }}
+            onToggleStar={(target) => { void handleToggleStar(target); }}
             onContextMenu={(e) => {
               e.preventDefault();
               setContextMenu({ article, x: e.clientX, y: e.clientY });

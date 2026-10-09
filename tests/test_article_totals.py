@@ -33,7 +33,7 @@ def _list_kwargs(**overrides):
 
 class TotalMatchesFacetsTest(unittest.IsolatedAsyncioTestCase):
     async def test_the_total_is_the_sum_of_the_facets(self) -> None:
-        rows = [{'id': 1, 'biz': 'gh_1', 'item_show_type': 0, 'read_at': None}]
+        rows = [{'id': 1, 'biz': 'gh_1', 'item_show_type': 0, 'read_at': None, 'starred_at': None}]
         facet_rows = [
             {'item_show_type': 0, 'total': 2},
             {'item_show_type': 5, 'total': 1},

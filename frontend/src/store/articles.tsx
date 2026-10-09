@@ -24,6 +24,8 @@ export interface Article {
   source: string;
   /** When this user read it; null means unread. */
   read_at: string | null;
+  /** When this user starred it; null means not starred. */
+  starred_at: string | null;
 }
 
 export interface ArticleContentBlock {
@@ -81,6 +83,7 @@ export type ArticlesAction =
   | { type: 'SET_MOBILE_READING'; reading: boolean }
   | { type: 'SET_TYPE_FACETS_EXPANDED'; expanded: boolean }
   | { type: 'SET_ARTICLE_READ'; id: number; readAt: string | null }
+  | { type: 'SET_ARTICLE_STAR'; id: number; starredAt: string | null }
   | { type: 'SET_FACET_PAYLOAD'; payload: FacetPayload | null };
 
 const initialState: ArticlesState = {
@@ -131,6 +134,19 @@ function reducer(state: ArticlesState, action: ArticlesAction): ArticlesState {
           ? {
             ...state.currentArticlePayload,
             article: { ...state.currentArticlePayload.article, read_at: action.readAt },
+          }
+          : state.currentArticlePayload,
+      };
+    case 'SET_ARTICLE_STAR':
+      return {
+        ...state,
+        articles: state.articles.map((article) => (
+          article.id === action.id ? { ...article, starred_at: action.starredAt } : article
+        )),
+        currentArticlePayload: state.currentArticlePayload?.article.id === action.id
+          ? {
+            ...state.currentArticlePayload,
+            article: { ...state.currentArticlePayload.article, starred_at: action.starredAt },
           }
           : state.currentArticlePayload,
       };
