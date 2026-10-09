@@ -531,6 +531,14 @@
   letter-spacing: var(--reader-letter);
   text-align: justify;
   text-align-last: left;
+  /* Native CJK/Latin spacing; the renderer only injects .cjk-spacer when the
+     engine ignores this declaration. */
+  text-autospace: normal;
+}
+
+.reader .cjk-spacer {
+  display: inline-block;
+  width: 0.25em;
 }
 
 .article-preview-body.is-empty {

@@ -21,4 +21,18 @@ describe('renderInlineNodes', () => {
     expect(link.getAttribute('href')).toBe('https://example.com/');
     expect(screen.getByText('this').tagName).toBe('STRONG');
   });
+
+  it('splits CJK and Latin boundaries with spacer elements', () => {
+    const { container } = render(<Probe text={'中文English布局12月'} />);
+
+    expect(container.querySelectorAll('.cjk-spacer')).toHaveLength(4);
+    expect(container.textContent).toBe('中文English布局12月');
+  });
+
+  it('keeps inline code free of spacer elements', () => {
+    const { container } = render(<Probe text={'运行 `git commit` 成功'} />);
+
+    expect(container.querySelectorAll('.cjk-spacer')).toHaveLength(0);
+    expect(container.querySelector('code')?.textContent).toBe('git commit');
+  });
 });

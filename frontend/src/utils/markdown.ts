@@ -30,6 +30,43 @@ const normalizeSafeUrl = (urlStr: string) => {
   }
 };
 
+// text-autospace is not implemented everywhere yet, so plain text is split on
+// CJK/Latin boundaries as well. Engines that do implement it keep native
+// spacing rules and get no injected spacer.
+const AUTOSPACE_SUPPORTED =
+  typeof CSS !== 'undefined' && CSS.supports?.('text-autospace', 'normal') === true;
+
+const CJK_RANGE =
+  '\u1100-\u11ff\u2e80-\u303f\u3040-\u30ff\u3130-\u318f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef';
+const CJK_BOUNDARY = new RegExp(`([${CJK_RANGE}])([A-Za-z0-9])|([A-Za-z0-9])([${CJK_RANGE}])`, 'g');
+
+/** Split CJK<->Latin/digit boundaries so `.cjk-spacer` can supply the gap. */
+const withCjkSpacing = (text: string, key: string): ReactNode[] => {
+  if (AUTOSPACE_SUPPORTED || !text) return [text];
+
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  let index = 0;
+
+  for (const match of text.matchAll(CJK_BOUNDARY)) {
+    const start = match.index ?? 0;
+    nodes.push(
+      text.slice(cursor, start + 1),
+      createElement('span', {
+        key: `${key}-space-${index}`,
+        className: 'cjk-spacer',
+        'aria-hidden': true,
+      }),
+    );
+    cursor = start + 1;
+    index += 1;
+  }
+
+  if (!nodes.length) return [text];
+  nodes.push(text.slice(cursor));
+  return nodes;
+};
+
 const renderLineNodes = (line: string, lineIndex: number): ReactNode[] => {
   const normalizedLine = line.replace(/\\\|/g, '|');
   const nodes: ReactNode[] = [];
@@ -40,7 +77,7 @@ const renderLineNodes = (line: string, lineIndex: number): ReactNode[] => {
   for (const match of normalizedLine.matchAll(pattern)) {
     const start = match.index ?? 0;
     if (start > cursor) {
-      nodes.push(normalizedLine.slice(cursor, start));
+      nodes.push(...withCjkSpacing(normalizedLine.slice(cursor, start), `text-${lineIndex}-${matchIndex}`));
     }
 
     if (match[1] && match[2]) {
@@ -59,16 +96,16 @@ const renderLineNodes = (line: string, lineIndex: number): ReactNode[] => {
           'data-hippo-biz': meta?.biz,
           'data-hippo-mid': meta?.mid,
           'data-hippo-idx': meta?.idx,
-        }, label));
+        }, withCjkSpacing(label, `link-${lineIndex}-${matchIndex}`)));
       }
     } else if (match[3]) {
-      nodes.push(createElement('strong', { key: `strong-${lineIndex}-${matchIndex}` }, match[3]));
+      nodes.push(createElement('strong', { key: `strong-${lineIndex}-${matchIndex}` }, withCjkSpacing(match[3], `strong-${lineIndex}-${matchIndex}`)));
     } else if (match[4]) {
-      nodes.push(createElement('em', { key: `em-${lineIndex}-${matchIndex}` }, match[4]));
+      nodes.push(createElement('em', { key: `em-${lineIndex}-${matchIndex}` }, withCjkSpacing(match[4], `em-${lineIndex}-${matchIndex}`)));
     } else if (match[5]) {
       nodes.push(createElement('code', { key: `code-${lineIndex}-${matchIndex}` }, match[5]));
     } else {
-      nodes.push(match[0]);
+      nodes.push(...withCjkSpacing(match[0], `raw-${lineIndex}-${matchIndex}`));
     }
 
     cursor = start + match[0].length;
@@ -76,7 +113,7 @@ const renderLineNodes = (line: string, lineIndex: number): ReactNode[] => {
   }
 
   if (cursor < normalizedLine.length) {
-    nodes.push(normalizedLine.slice(cursor));
+    nodes.push(...withCjkSpacing(normalizedLine.slice(cursor), `tail-${lineIndex}`));
   }
 
   return nodes;
