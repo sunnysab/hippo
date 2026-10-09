@@ -7,6 +7,8 @@ export interface ArticleFiltersState {
   groupId: string;
   accountBiz: string;
   itemShowType: string;
+  /** '' for every article, `unread` for the unread box. */
+  read: string;
   search: string;
   sort: string;
 }
@@ -29,6 +31,7 @@ export const areArticleFiltersEqual = (
   left.groupId === right.groupId &&
   left.accountBiz === right.accountBiz &&
   left.itemShowType === right.itemShowType &&
+  left.read === right.read &&
   left.search === right.search &&
   left.sort === right.sort
 );
@@ -46,6 +49,7 @@ export const buildArticleRouteStateFromSearchParams = (
       groupId: searchParams.get('group') || '',
       accountBiz: searchParams.get('account') || '',
       itemShowType: searchParams.get('type') || '',
+      read: searchParams.get('read') || '',
       search,
       sort: searchParams.get('sort') || getDefaultArticleSort(search),
     },
@@ -62,6 +66,7 @@ export const buildArticleSearchParams = (
   if (filters.groupId) params.set('group', filters.groupId);
   if (filters.accountBiz) params.set('account', filters.accountBiz);
   if (filters.itemShowType) params.set('type', filters.itemShowType);
+  if (filters.read) params.set('read', filters.read);
   if (filters.search.trim()) params.set('q', filters.search.trim());
   if (routeTarget?.articleId) params.set('article', routeTarget.articleId);
   if (routeTarget?.wxArticleId) params.set('wx_article', routeTarget.wxArticleId);

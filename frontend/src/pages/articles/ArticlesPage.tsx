@@ -66,14 +66,6 @@ export function ArticlesPage() {
               >
                 {t('articles.toggleFilters', 'Filters')}
               </button>
-              <button
-                className="btn ghost article-reset-btn"
-                id="btn-article-reset"
-                type="button"
-                onClick={() => { void resetFilters(); }}
-              >
-                {t('articles.resetFilters', 'Reset Filters')}
-              </button>
             </div>
           </div>
           <ArticleFilters
@@ -81,6 +73,7 @@ export function ArticlesPage() {
             groupOptions={groupOptions}
             accountOptions={accountOptions}
             onChange={updateFilters}
+            onReset={() => { void resetFilters(); }}
           />
           <LoadingIndicator isLoading={state.isArticleLoading} id="article-search-loading" />
           <ArticleList

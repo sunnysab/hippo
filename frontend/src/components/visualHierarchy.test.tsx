@@ -153,6 +153,7 @@ describe('visual hierarchy semantics', () => {
           groupId: '1',
           accountBiz: '',
           itemShowType: '',
+          read: '',
           search: '',
           sort: '',
         }}

@@ -70,9 +70,44 @@
   gap: 8px;
 }
 
-.article-filter-grid-top,
-.article-filter-grid-middle {
+.article-filter-grid-top {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* View switch, search, sort: the input takes whatever is left. */
+.article-filter-grid-middle {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.article-view-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-control);
+  background: var(--surface-chip-soft);
+}
+
+.article-view-option {
+  min-height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-tight);
+  background: none;
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.article-view-option:hover {
+  color: var(--text);
+}
+
+.article-view-option.is-active {
+  background: var(--surface-panel);
+  color: var(--text);
 }
 
 /* The scope selects and type facets are set once and then left alone, so they

@@ -11,20 +11,48 @@ interface ArticleFiltersProps {
   groupOptions: ArticleSelectOption[];
   accountOptions: ArticleSelectOption[];
   onChange: (patch: Partial<ArticleFiltersState>) => void;
+  onReset: () => void;
 }
 
 /**
- * Search and sort stay on screen; the scope selects and the type facets live in
- * a drawer, because they are set once and then left alone.
+ * The view switch and search stay on screen; the scope selects and the type
+ * facets live in a drawer, because they are set once and then left alone.
  */
-export function ArticleFilters({ filters, groupOptions, accountOptions, onChange }: ArticleFiltersProps) {
+export function ArticleFilters({
+  filters,
+  groupOptions,
+  accountOptions,
+  onChange,
+  onReset,
+}: ArticleFiltersProps) {
   const { state, dispatch } = useArticlesState();
   const { t } = useI18n();
+  const unreadView = filters.read === 'unread';
 
   return (
     <div className="article-filter-shell" id="article-filter-shell">
       <div className="article-filter-stack">
         <div className="toolbar article-filter-grid article-filter-grid-middle">
+          <div className="article-view-switch" role="group" aria-label={t('articles.view', '视图')}>
+            <button
+              className={`article-view-option${unreadView ? '' : ' is-active'}`}
+              id="btn-article-view-all"
+              type="button"
+              aria-pressed={!unreadView}
+              onClick={() => onChange({ read: '' })}
+            >
+              {t('articles.viewAll', '全部')}
+            </button>
+            <button
+              className={`article-view-option${unreadView ? ' is-active' : ''}`}
+              id="btn-article-view-unread"
+              type="button"
+              aria-pressed={unreadView}
+              onClick={() => onChange({ read: 'unread' })}
+            >
+              {t('articles.viewUnread', '未读')}
+            </button>
+          </div>
           <div className="input article-search-input">
             <input
               type='search'
@@ -79,6 +107,14 @@ export function ArticleFilters({ filters, groupOptions, accountOptions, onChange
               onChange({ itemShowType });
             }}
           />
+          <button
+            className="btn ghost article-reset-btn"
+            id="btn-article-reset"
+            type="button"
+            onClick={onReset}
+          >
+            {t('articles.resetFilters', 'Reset Filters')}
+          </button>
         </div>
       </div>
     </div>

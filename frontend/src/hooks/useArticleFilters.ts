@@ -23,6 +23,7 @@ export function useArticleFilters() {
     groupId: routeGroupId,
     accountBiz: routeAccountBiz,
     itemShowType: routeItemShowType,
+    read: routeRead,
     search: routeSearch,
     sort: routeSort,
   } = routeState.filters;
@@ -94,6 +95,7 @@ export function useArticleFilters() {
       if (nextFilters.groupId) url.searchParams.set('group_id', nextFilters.groupId);
       if (nextFilters.accountBiz) url.searchParams.set('biz', nextFilters.accountBiz);
       if (nextFilters.itemShowType) url.searchParams.set('item_show_type', nextFilters.itemShowType);
+      if (nextFilters.read) url.searchParams.set('read', nextFilters.read);
       if (nextFilters.search) url.searchParams.set('q', nextFilters.search);
       url.searchParams.set('sort', sort);
       url.searchParams.set('page', String(page));
@@ -206,6 +208,7 @@ export function useArticleFilters() {
       groupId: '',
       accountBiz: '',
       itemShowType: '',
+      read: '',
       search: '',
       sort: ARTICLE_SORT_PUBLISH_AT_DESC,
     });
@@ -283,6 +286,7 @@ export function useArticleFilters() {
         groupId: routeGroupId,
         accountBiz: routeAccountBiz,
         itemShowType: routeItemShowType,
+        read: routeRead,
         search: routeSearch,
         sort: routeSort,
       };
@@ -306,6 +310,7 @@ export function useArticleFilters() {
     routeState.articleId,
     routeGroupId,
     routeItemShowType,
+    routeRead,
     routeSearch,
     routeSort,
     routeState.wxArticleId,
@@ -333,6 +338,7 @@ export function useArticleFilters() {
       groupId: filters.groupId,
       accountBiz: filters.accountBiz,
       itemShowType: filters.itemShowType,
+      read: filters.read,
       search: deferredSearch,
       sort: filters.sort,
     };
@@ -342,6 +348,7 @@ export function useArticleFilters() {
     filters.accountBiz,
     filters.groupId,
     filters.itemShowType,
+    filters.read,
     filters.sort,
     loadArticles,
   ]);
