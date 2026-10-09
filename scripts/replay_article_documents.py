@@ -197,6 +197,8 @@ async def main() -> int:
             # 先把正文渲染出来（不带图片 id），好知道缺哪些图
             parsed: list[tuple[int, str, list[dict], str]] = []
             pending_images: list[tuple[int, int, str]] = []
+            # 同一篇里同一张图可能出现多次（分隔图、二维码），行只建一条。
+            seen_pending: set[tuple[int, str]] = set()
             for article_pk, raw_html, stored_markdown, stored_json in rows:
                 article_pk = int(article_pk)
                 try:
@@ -222,8 +224,13 @@ async def main() -> int:
                         block for block in attached if block.get('type') == 'image'
                     ):
                         url = block.get('orig_url')
-                        if url and block.get('image_id') is None:
-                            pending_images.append((article_pk, position, str(url)))
+                        if not url or block.get('image_id') is not None:
+                            continue
+                        key = (article_pk, str(url))
+                        if key in seen_pending:
+                            continue
+                        seen_pending.add(key)
+                        pending_images.append((article_pk, position, str(url)))
                     parsed.append((article_pk, body_markdown, blocks, raw_html))
                     continue
                 parsed.append((article_pk, body_markdown, blocks, raw_html))
