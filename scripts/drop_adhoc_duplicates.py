@@ -20,7 +20,6 @@ import asyncio
 import os
 import re
 import sys
-from typing import Any
 
 from hippo.file_storage import S3FileStorage
 from hippo.storage import PostgresStorage
@@ -108,9 +107,8 @@ async def main() -> int:
             return 0
 
         deleted_objects = await asyncio.to_thread(S3FileStorage().delete_objects, keys)
-        async with storage.transaction():
-            async with storage.conn.cursor() as cur:
-                await cur.execute('DELETE FROM articles WHERE id = ANY(%s)', [ids])
+        async with storage.transaction(), storage.conn.cursor() as cur:
+            await cur.execute('DELETE FROM articles WHERE id = ANY(%s)', [ids])
         log(f'已删除 {len(rows)} 篇重复文章、{deleted_objects}/{len(keys)} 个对象（图片/正文/文档随行级联）')
     return 0
 
