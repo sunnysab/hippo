@@ -104,9 +104,11 @@
   --app-width: 1600px;
   /* Keeps the fixed top bar aligned with the column above. */
   --app-inset: max(12px, calc((100vw - var(--app-width)) / 2 + 12px));
-  --reader-width: 860px;
+  /* 760px at 17px is ~44 CJK characters per line; the reader is justified, so
+     a wider column both tires the eye and amplifies stretched word gaps. */
+  --reader-width: 760px;
   --reader-font: 17px;
-  --reader-line: 1.75;
+  --reader-line: 1.8;
   --reader-letter: 0.2px;
   --reader-family: var(--font-sans);
   --article-list-width: 28%;

@@ -1,5 +1,9 @@
 import { useI18n } from '../../i18n';
-import type { ReaderConfig } from '../../hooks/useReaderSettings';
+import {
+  READER_LETTER_RANGE,
+  READER_WIDTH_RANGE,
+  type ReaderConfig,
+} from '../../hooks/useReaderSettings';
 
 interface ReaderControlsProps {
   isOpen: boolean;
@@ -19,7 +23,7 @@ export function ReaderControls({ isOpen, controlsRef, config, updateConfig }: Re
     >
       <label>
         <span>{t('reader.width', 'Width')}</span>
-        <input id="reader-width" type="range" min="400" max="1200" step="10" value={config.width} onChange={(e) => updateConfig({ width: e.target.value })} />
+        <input id="reader-width" type="range" min={READER_WIDTH_RANGE.min} max={READER_WIDTH_RANGE.max} step="10" value={config.width} onChange={(e) => updateConfig({ width: e.target.value })} />
       </label>
       <label>
         <span>{t('reader.font', 'Font Size')}</span>
@@ -31,7 +35,7 @@ export function ReaderControls({ isOpen, controlsRef, config, updateConfig }: Re
       </label>
       <label>
         <span>{t('reader.letter', 'Letter Spacing')}</span>
-        <input id="reader-letter" type="range" min="0" max="4" step="0.1" value={config.letter} onChange={(e) => updateConfig({ letter: e.target.value })} />
+        <input id="reader-letter" type="range" min={READER_LETTER_RANGE.min} max={READER_LETTER_RANGE.max} step="0.05" value={config.letter} onChange={(e) => updateConfig({ letter: e.target.value })} />
       </label>
       <label className="switch">
         <input id="reader-serif" type="checkbox" checked={config.serif} onChange={(e) => updateConfig({ serif: e.target.checked })} />
