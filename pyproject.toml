@@ -49,9 +49,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["ruff>=0.15.0"]
 # weixin-rs daemon 数据源：SDK 走 WEIXIN_SDK_PATH，这里只补它的 msgpack 依赖
 weixin = ["msgpack>=1.0.0"]
+
+[dependency-groups]
+# 测试与 lint 工具走 uv 的 dev 组：`uv run pytest` / `uv run ruff` 直接可用，
+# 且不参与部署（deploy.sh 用 --no-dev --extra weixin）。
+dev = ["pytest>=8", "ruff>=0.15.0"]
 
 [project.scripts]
 hippo = "hippo.cli:app"
