@@ -278,13 +278,15 @@ class ArticleFetcher:
         *,
         persist: Callable[[ArticleRecord, str], Awaitable[DownloadResult]],
         title: str | None = None,
+        biz: str = 'adhoc',
+        article_id: str | None = None,
     ) -> DownloadResult:
         raw_html = await self.fetch_article_html(url)
         inferred_title = title or _extract_title(raw_html) or 'WeChat Article'
         token = _extract_url_token(url)
         stub = ArticleRecord(
-            biz='adhoc',
-            article_id=token or slugify(inferred_title),
+            biz=biz,
+            article_id=article_id or token or slugify(inferred_title),
             title=inferred_title,
             item_show_type=None,
             author=None,
@@ -798,8 +800,15 @@ class ArticleDownloader(AbstractAsyncContextManager):
         with_images: bool = True,
         record_images_only: bool = False,
         title: str | None = None,
+        biz: str = 'adhoc',
+        article_id: str | None = None,
     ) -> DownloadResult:
-        await self._ensure_adhoc_account('adhoc')
+        """抓单篇 URL。
+
+        ``biz``/``article_id`` 决定落在谁名下：默认落 ``adhoc``（手贴的链接没有归属），
+        重新抓取已有文章时传原文的 biz + article_id，就让 upsert 命中同一行而不再多出一份副本。
+        """
+        await self._ensure_adhoc_account(biz)
         return await self._fetcher.download_from_url(
             url,
             persist=lambda article, raw_html: self._persist_article(
@@ -809,6 +818,8 @@ class ArticleDownloader(AbstractAsyncContextManager):
                 record_images_only=record_images_only,
             ),
             title=title,
+            biz=biz,
+            article_id=article_id,
         )
 
     async def _ensure_adhoc_account(self, biz: str) -> None:

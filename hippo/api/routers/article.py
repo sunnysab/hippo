@@ -206,7 +206,7 @@ async def refetch_article(
 ) -> dict[str, Any]:
     row = await fetchone_row(
         storage,
-        'SELECT link FROM articles WHERE id = %s',
+        'SELECT biz, article_id, link FROM articles WHERE id = %s',
         [article_id],
     )
     if not row:
@@ -214,6 +214,10 @@ async def refetch_article(
     link = row.get('link')
     if not link:
         raise ApiError('Article has no source URL', status=400)
+    # 重新抓取要落回原行：传原文的 biz + article_id，让 upsert 命中同一行
+    # （默认的 adhoc 只适用于手贴的、没有归属的链接）。
+    owner_biz = str(row.get('biz') or '')
+    owner_article_id = str(row.get('article_id') or '')
 
     task_id = uuid.uuid4().hex
     started_at = time_module.monotonic()
@@ -238,7 +242,12 @@ async def refetch_article(
                     downloader = app.downloader
                     if not downloader:
                         raise RuntimeError('Downloader not initialized')
-                    await downloader.download_from_url(str(link), with_images=True)
+                    await downloader.download_from_url(
+                        str(link),
+                        with_images=True,
+                        biz=owner_biz,
+                        article_id=owner_article_id,
+                    )
             with _refetch_lock:
                 _refetch_tasks[task_id]['status'] = 'done'
                 _refetch_tasks[task_id]['phase'] = 'done'

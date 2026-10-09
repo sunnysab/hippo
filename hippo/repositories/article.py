@@ -142,11 +142,11 @@ class ArticleRepository:
             ON CONFLICT (biz, article_id) DO UPDATE SET
                 title=EXCLUDED.title,
                 item_show_type=COALESCE(EXCLUDED.item_show_type, articles.item_show_type),
-                author=EXCLUDED.author,
-                digest=EXCLUDED.digest,
+                author=COALESCE(EXCLUDED.author, articles.author),
+                digest=COALESCE(EXCLUDED.digest, articles.digest),
                 link=EXCLUDED.link,
                 source_url=EXCLUDED.source_url,
-                publish_at=EXCLUDED.publish_at,
+                publish_at=COALESCE(EXCLUDED.publish_at, articles.publish_at),
                 raw_json=EXCLUDED.raw_json,
                 updated_at=EXCLUDED.updated_at
             RETURNING id"""
