@@ -1,5 +1,6 @@
 import { useI18n } from '../../i18n';
 import { formatDateTime } from '../../utils/format';
+import { getSourceLabel, getSourceTone } from '../../utils/source';
 import type { Article } from '../../store/articles';
 import { getItemShowTypeLabel } from './itemShowType';
 
@@ -11,6 +12,7 @@ export function ArticleHeader({ article }: ArticleHeaderProps) {
   const { t } = useI18n();
 
   const avatarUrl = article.account_avatar_url || '';
+  const sourceLabel = getSourceLabel(article.source, t);
 
   return (
     <div className="article-header">
@@ -27,6 +29,11 @@ export function ArticleHeader({ article }: ArticleHeaderProps) {
           </span>
         </div>
         <div className="article-preview-items">
+          {sourceLabel ? (
+            <span className={`item-show-type-badge item-show-type-${getSourceTone(article.source)}`}>
+              {sourceLabel}
+            </span>
+          ) : null}
           <div className="article-preview-item">
             <span className="article-preview-label">{t('articles.meta.author', 'Author')}</span>
             <span className="article-preview-value">{article.author || t('articles.meta.unknown', 'Unknown')}</span>

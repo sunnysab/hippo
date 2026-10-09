@@ -29,6 +29,7 @@ const article = (id: number, read_at: string | null = null): Article => ({
   group_id: 1,
   group_name: '',
   image_id: null,
+  source: 'weixin',
   read_at,
 });
 

@@ -30,7 +30,7 @@ export function useArticleFilters() {
 
   const [filters, setFilters] = useState<ArticleFiltersState>(() => routeState.filters);
   const [articleIdParam, setArticleIdParam] = useState(routeState.articleId);
-  const [wxArticleIdParam, setWxArticleIdParam] = useState(routeState.wxArticleId);
+  const [itemIdParam, setItemIdParam] = useState(routeState.itemId);
   const [groupOptions, setGroupOptions] = useState<ArticleSelectOption[]>([]);
   const [accountOptions, setAccountOptions] = useState<ArticleSelectOption[]>([]);
 
@@ -56,10 +56,10 @@ export function useArticleFilters() {
   const articlesRef = useRef(state.articles);
   const filtersRef = useRef(filters);
   const articleIdParamRef = useRef(articleIdParam);
-  const wxArticleIdParamRef = useRef(wxArticleIdParam);
+  const itemIdParamRef = useRef(itemIdParam);
   const deferredSearchRef = useRef(deferredSearch);
   const skipNextArticleTargetResolveRef = useRef(false);
-  const pendingRouteTargetRef = useRef<{ articleId: string; wxArticleId: string } | null>(null);
+  const pendingRouteTargetRef = useRef<{ articleId: string; itemId: string } | null>(null);
   const latestArticleDetailRef = useRef(createLatestOnly<{
     id: number;
     payload: ArticlePayload;
@@ -79,7 +79,7 @@ export function useArticleFilters() {
     articlesRef.current = state.articles;
     filtersRef.current = filters;
     articleIdParamRef.current = articleIdParam;
-    wxArticleIdParamRef.current = wxArticleIdParam;
+    itemIdParamRef.current = itemIdParam;
     deferredSearchRef.current = deferredSearch;
   }, [
     articleIdParam,
@@ -89,7 +89,7 @@ export function useArticleFilters() {
     state.articlePageSize,
     state.articles,
     state.isArticleLoading,
-    wxArticleIdParam,
+    itemIdParam,
   ]);
 
   const loadArticles = useCallback(async (
@@ -146,17 +146,17 @@ export function useArticleFilters() {
   const syncUrlParams = useCallback((nextFilters: ArticleFiltersState) => {
     setSearchParams(buildArticleSearchParams(nextFilters, {
       articleId: articleIdParam,
-      wxArticleId: wxArticleIdParam,
+      itemId: itemIdParam,
     }), { replace: true });
-  }, [articleIdParam, setSearchParams, wxArticleIdParam]);
+  }, [articleIdParam, setSearchParams, itemIdParam]);
 
   const updateFilters = useCallback((patch: Partial<ArticleFiltersState>) => {
     if (patch.groupId !== undefined) {
       setAccountOptions([]);
     }
-    pendingRouteTargetRef.current = { articleId: '', wxArticleId: '' };
+    pendingRouteTargetRef.current = { articleId: '', itemId: '' };
     setArticleIdParam('');
-    setWxArticleIdParam('');
+    setItemIdParam('');
     setFilters((prev) => {
       const groupChanged = patch.groupId !== undefined && patch.groupId !== prev.groupId;
       return {
@@ -206,9 +206,9 @@ export function useArticleFilters() {
 
   const selectArticle = useCallback(async (id: number) => {
     skipNextArticleTargetResolveRef.current = true;
-    pendingRouteTargetRef.current = { articleId: String(id), wxArticleId: '' };
+    pendingRouteTargetRef.current = { articleId: String(id), itemId: '' };
     setArticleIdParam(String(id));
-    setWxArticleIdParam('');
+    setItemIdParam('');
     dispatch({ type: 'SELECT_ARTICLE', id, payload: null });
     await latestArticleDetailRef.current(async () => ({
       id,
@@ -227,9 +227,9 @@ export function useArticleFilters() {
       sort: ARTICLE_SORT_PUBLISH_AT_DESC,
     });
     setAccountOptions([]);
-    pendingRouteTargetRef.current = { articleId: '', wxArticleId: '' };
+    pendingRouteTargetRef.current = { articleId: '', itemId: '' };
     setArticleIdParam('');
-    setWxArticleIdParam('');
+    setItemIdParam('');
     dispatch({ type: 'SELECT_ARTICLE', id: null, payload: null });
   }, [dispatch]);
 
@@ -240,7 +240,7 @@ export function useArticleFilters() {
     }
 
     const articleId = articleIdParam.trim();
-    const wxArticleId = wxArticleIdParam.trim();
+    const itemId = itemIdParam.trim();
 
     if (articleId) {
       if (!/^\d+$/.test(articleId)) {
@@ -257,13 +257,13 @@ export function useArticleFilters() {
       return;
     }
 
-    if (!wxArticleId) {
+    if (!itemId) {
       dispatch({ type: 'SELECT_ARTICLE', id: null, payload: null });
       return;
     }
 
     const url = new URL('/api/article', window.location.origin);
-    url.searchParams.set('article_id', wxArticleId);
+    url.searchParams.set('article_id', itemId);
     url.searchParams.set('page', '1');
     url.searchParams.set('page_size', '1');
     url.searchParams.set('sort', ARTICLE_SORT_PUBLISH_AT_DESC);
@@ -280,7 +280,7 @@ export function useArticleFilters() {
       payload: await apiGet(`/api/article/${article.id}`) as unknown as ArticlePayload,
       openMobileReader: isNarrowViewport,
     }));
-  }, [articleIdParam, dispatch, isNarrowViewport, wxArticleIdParam]);
+  }, [articleIdParam, dispatch, isNarrowViewport, itemIdParam]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -288,7 +288,7 @@ export function useArticleFilters() {
       if (pendingRouteTarget) {
         const routeMatchesPending = (
           routeState.articleId === pendingRouteTarget.articleId &&
-          routeState.wxArticleId === pendingRouteTarget.wxArticleId
+          routeState.itemId === pendingRouteTarget.itemId
         );
         if (!routeMatchesPending) {
           return;
@@ -314,8 +314,8 @@ export function useArticleFilters() {
       if (articleIdParamRef.current !== routeState.articleId) {
         setArticleIdParam(routeState.articleId);
       }
-      if (wxArticleIdParamRef.current !== routeState.wxArticleId) {
-        setWxArticleIdParam(routeState.wxArticleId);
+      if (itemIdParamRef.current !== routeState.itemId) {
+        setItemIdParam(routeState.itemId);
       }
     }, 0);
     return () => window.clearTimeout(timer);
@@ -327,7 +327,7 @@ export function useArticleFilters() {
     routeRead,
     routeSearch,
     routeSort,
-    routeState.wxArticleId,
+    routeState.itemId,
   ]);
 
   useEffect(() => {

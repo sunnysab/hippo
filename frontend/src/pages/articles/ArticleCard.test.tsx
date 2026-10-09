@@ -23,6 +23,7 @@ const article: Article = {
   group_id: 1,
   group_name: '',
   image_id: 9,
+  source: 'weixin',
   read_at: null,
 };
 

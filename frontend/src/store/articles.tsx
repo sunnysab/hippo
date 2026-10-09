@@ -20,6 +20,8 @@ export interface Article {
   group_id: number;
   group_name: string;
   image_id: number | null;
+  /** Source discriminator, e.g. `weixin`. Labels live in `utils/source`. */
+  source: string;
   /** When this user read it; null means unread. */
   read_at: string | null;
 }

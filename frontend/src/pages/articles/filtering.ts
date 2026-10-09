@@ -16,7 +16,7 @@ export interface ArticleFiltersState {
 export interface ArticleRouteState {
   filters: ArticleFiltersState;
   articleId: string;
-  wxArticleId: string;
+  itemId: string;
 }
 
 export interface ArticleSelectOption {
@@ -54,13 +54,13 @@ export const buildArticleRouteStateFromSearchParams = (
       sort: searchParams.get('sort') || getDefaultArticleSort(search),
     },
     articleId: searchParams.get('article') || '',
-    wxArticleId: searchParams.get('wx_article') || '',
+    itemId: searchParams.get('item_id') || '',
   };
 };
 
 export const buildArticleSearchParams = (
   filters: ArticleFiltersState,
-  routeTarget?: { articleId?: string; wxArticleId?: string },
+  routeTarget?: { articleId?: string; itemId?: string },
 ): URLSearchParams => {
   const params = new URLSearchParams();
   if (filters.groupId) params.set('group', filters.groupId);
@@ -69,7 +69,7 @@ export const buildArticleSearchParams = (
   if (filters.read) params.set('read', filters.read);
   if (filters.search.trim()) params.set('q', filters.search.trim());
   if (routeTarget?.articleId) params.set('article', routeTarget.articleId);
-  if (routeTarget?.wxArticleId) params.set('wx_article', routeTarget.wxArticleId);
+  if (routeTarget?.itemId) params.set('item_id', routeTarget.itemId);
 
   const defaultSort = getDefaultArticleSort(filters.search);
   if (filters.sort && filters.sort !== defaultSort) {

@@ -23,6 +23,7 @@ const payload = (content: ArticlePayload['content']): ArticlePayload => ({
     group_id: 1,
     group_name: '',
     image_id: null,
+  source: 'weixin',
     read_at: null,
   },
   content,
