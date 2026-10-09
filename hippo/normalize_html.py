@@ -192,6 +192,28 @@ def _postprocess_markdown(markdown: str) -> str:
     return text.strip()
 
 
+def promote_lazy_image_srcs(html: str) -> str:
+    """Copy every image's lazy source into ``src``.
+
+    WeChat's client-protocol HTML ships images with ``data-src`` only; a browser
+    fills ``src`` in when the image scrolls into view. Anything that renders that
+    HTML offline — Markdown conversion in particular — has to do it first, or the
+    image comes out with an empty URL and is dropped. Images that keep an empty
+    ``src`` are left alone so a placeholder is never promoted.
+    """
+    soup = BeautifulSoup(html, 'html.parser')
+    changed = False
+    for img in soup.find_all('img'):
+        if img.get('src'):
+            continue
+        src = (img.get('data-src') or '').strip()
+        if not src:
+            continue
+        img['src'] = src
+        changed = True
+    return str(soup) if changed else html
+
+
 def _swap_markdown_image_urls(markdown: str, url_map: dict[str, str]) -> str:
     if not url_map:
         return markdown

@@ -18,6 +18,7 @@ from .http import ArticleContentUnavailableError, MPClient
 from .image_store import ArticleImageStore
 from .logger import get_logger
 from .models import AccountCredential, ArticleRecord, DownloadResult
+from .normalize_html import promote_lazy_image_srcs
 from .storage import PostgresStorage
 from .utils import is_http_url, slugify
 from .wechat_parser import _postprocess_markdown, parse_wechat_article
@@ -89,6 +90,24 @@ def _resolve_asset_url(url: str, *, base: str) -> str | None:
     return resolved
 
 
+def _image_url(value: str | None) -> str | None:
+    """Keep only values that can be an image source.
+
+    A Markdown image may carry a title (`![alt](URL "title")`); anything that is
+    not a URL-shaped string — a bare filename, a quoted title, an empty group —
+    is rejected here rather than resolved against the article link later, where
+    it would become a plausible-looking URL for a page that is not an image.
+    """
+    candidate = (value or '').strip()
+    if not candidate or candidate.startswith('data:'):
+        return None
+    if any(character in candidate for character in ' 	"\''):
+        return None
+    if candidate.startswith(('http://', 'https://', '//', '/')):
+        return candidate
+    return None
+
+
 def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[dict], str]:
     lines = markdown.splitlines()
     title: str | None = None
@@ -96,7 +115,9 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
     blocks: list[dict] = []
     body_lines: list[str] = []
     paragraph: list[str] = []
-    image_pattern = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
+    # The URL group stops at whitespace: `![alt](url "title")` is valid Markdown,
+    # and swallowing the title here is how a filename once became an image URL.
+    image_pattern = re.compile(r'!\[(?P<alt>[^\]]*)\]\(\s*(?P<url>[^\s)]*)(?:\s+".*?")?\s*\)')
     heading_pattern = re.compile(r'^(#{1,6})\s+(.*)$')
     link_pattern = re.compile(r'^[*-]\s+(https?://\S+)$')
     linked_image_closing_pattern = re.compile(r'^\]\(([^)]+)\)$')
@@ -137,7 +158,7 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
                         closing_match = None
                     if closing_match:
                         flush_paragraph()
-                        alt, url = image_match.groups()
+                        alt, url = image_match.group('alt'), _image_url(image_match.group('url'))
                         href = closing_match.group(1).strip()
                         normalized_markdown = f'[![{alt}]({url})]({href})'
                         if cover_local is None and not blocks and not body_lines and title is None:
@@ -153,7 +174,7 @@ def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[
         image_match = image_pattern.fullmatch(stripped)
         if image_match:
             flush_paragraph()
-            alt, url = image_match.groups()
+            alt, url = image_match.group('alt'), _image_url(image_match.group('url'))
             if cover_local is None and not blocks and not body_lines and title is None:
                 cover_local = url
             else:
@@ -932,7 +953,9 @@ class ArticleDownloader(AbstractAsyncContextManager):
         返回 ``articles.id``（写 ``article_document`` 要用）。
         """
         referer = referer or article.link or 'https://mp.weixin.qq.com/'
-        markdown = _postprocess_markdown(markdownify(html, heading_style='ATX'))
+        # Images arrive with `data-src` only; promote it before Markdown, which
+        # reads `src`, or every image in the body is lost.
+        markdown = _postprocess_markdown(markdownify(promote_lazy_image_srcs(html), heading_style='ATX'))
         # 图片 URL 始终收集：`article_images`（s3_key 为空）就是图片的持久队列。
         # `with_images` 只决定要不要顺带塞进内存队列马上抓；正文链路默认不抓，
         # 交给独立的图片回填循环，两条链路各有各的节奏。
