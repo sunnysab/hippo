@@ -138,6 +138,31 @@ class AccountApiTest(unittest.IsolatedAsyncioTestCase):
         # 微信没给头像时留空，让前端走灰色占位块而不是一个必然 404 的代理地址。
         self.assertEqual('', payload['results'][1]['avatar_url'])
 
+    async def test_account_avatar_falls_back_to_the_search_cache(self) -> None:
+        # 搜索接口把头像缓存在 gh_id 键下，目录头像接口拿到的是 fakeid。
+        storage = SimpleNamespace()
+        rows = {
+            'Mz123': None,
+            'gh_abc123': {'avatar_url': None, 'content_type': 'image/jpeg', 'data': b'jpeg-bytes'},
+        }
+
+        async def get_avatar_row(_storage, biz: str):
+            return rows.get(biz)
+
+        with (
+            patch('hippo.api.routers.account._get_avatar_row', get_avatar_row),
+            patch(
+                'hippo.api.routers.account.fetchone_row',
+                AsyncMock(return_value={'gh_id': 'gh_abc123', 'round_head_img': None}),
+            ),
+            patch('hippo.api.routers.account._fetch_and_cache_avatar', AsyncMock()) as fetch,
+        ):
+            response = await account_api.get_account_avatar(biz='Mz123', storage=storage)
+
+        self.assertEqual(b'jpeg-bytes', response.body)
+        self.assertEqual('image/jpeg', response.media_type)
+        fetch.assert_not_awaited()
+
     async def test_an_image_from_an_unsubscribed_account_is_a_404(self) -> None:
         # No subscription row matches, so the lookup comes back empty.
         storage = SimpleNamespace(

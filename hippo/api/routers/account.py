@@ -612,26 +612,34 @@ async def get_account_avatar(
     """
     avatar = await _get_avatar_row(storage, biz)
     data = avatar.get('data') if avatar else None
-    if not data:
-        url = avatar.get('avatar_url') if avatar else None
-        if not url:
-            row = await fetchone_row(
-                storage,
-                'SELECT round_head_img FROM accounts WHERE biz = %s',
-                [biz],
-                normalize=_normalize_record,
-            )
-            if not row:
-                raise ApiError('Account not found', status=404)
-            url = row.get('round_head_img')
-            if url:
-                await _upsert_avatar_url(storage, biz, url)
-        if url:
-            cached = await _fetch_and_cache_avatar(storage, biz, url)
-            if cached:
-                payload, content_type = cached
-                return binary_response(payload, content_type)
-        raise ApiError('Avatar not found', status=404)
-    payload = data.tobytes() if isinstance(data, memoryview) else bytes(data)
-    content_type = avatar.get('content_type') or 'application/octet-stream'
-    return binary_response(payload, content_type)
+    if data:
+        payload = data.tobytes() if isinstance(data, memoryview) else bytes(data)
+        content_type = avatar.get('content_type') or 'application/octet-stream'
+        return binary_response(payload, content_type)
+
+    row = await fetchone_row(
+        storage,
+        'SELECT gh_id, round_head_img FROM accounts WHERE biz = %s',
+        [biz],
+        normalize=_normalize_record,
+    )
+    if not row:
+        raise ApiError('Account not found', status=404)
+    url = avatar.get('avatar_url') if avatar else None
+    gh_id = str(row.get('gh_id') or '')
+    if not url and gh_id and gh_id != biz:
+        # 搜索接口按 gh_id 缓存了同一个号的头像，而目录里的 biz 是 fakeid，这里借来用。
+        shared = await _get_avatar_row(storage, gh_id)
+        shared_data = shared.get('data') if shared else None
+        if shared_data:
+            payload = shared_data.tobytes() if isinstance(shared_data, memoryview) else bytes(shared_data)
+            return binary_response(payload, shared.get('content_type') or 'application/octet-stream')
+        url = shared.get('avatar_url') if shared else None
+    url = url or row.get('round_head_img')
+    if url:
+        await _upsert_avatar_url(storage, biz, url)
+        cached = await _fetch_and_cache_avatar(storage, biz, url)
+        if cached:
+            payload, content_type = cached
+            return binary_response(payload, content_type)
+    raise ApiError('Avatar not found', status=404)
