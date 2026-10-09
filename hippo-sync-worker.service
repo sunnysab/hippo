@@ -7,6 +7,7 @@ Type=simple
 User=sab
 WorkingDirectory=/home/sab/hippo
 EnvironmentFile=/home/sab/hippo/.env
+Environment=WEIXIN_SDK_PATH=/home/sab/Code/weixin-rs/sdk/python
 ExecStart=/home/sab/hippo/.venv/bin/python -m hippo sync-worker
 Environment=HIPPO_LOG_FILE=/home/sab/hippo/logs/hippo-sync-worker.log
 Environment=PYTHONUNBUFFERED=1
