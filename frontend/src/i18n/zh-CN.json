@@ -133,7 +133,6 @@
   "articles.meta.author": "作者",
   "articles.meta.type": "类型",
   "articles.meta.publishedAt": "发表时间",
-  "articles.meta.source": "来源",
   "articles.meta.unknown": "未知",
   "articles.type.0": "普通图文",
   "articles.type.5": "视频分享",
