@@ -497,8 +497,11 @@ class ImageDownloadManager:
         await self._mark_total(len(urls))
         async with asyncio.TaskGroup() as tg:
             for resolved in urls:
+                # 交的是协程不是结果：await 在这里会把并发退化成一条一条下，
+                # 而且 create_task(None) 会直接抛 TypeError（整个重抓就报
+                # “unhandled errors in a TaskGroup”）。并发上限由 _download_one 里的信号量控制。
                 tg.create_task(
-                    await self._download_one(
+                    self._download_one(
                         article=article,
                         resolved_url=resolved,
                         orig_url=resolved,
