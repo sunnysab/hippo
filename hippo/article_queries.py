@@ -151,6 +151,34 @@ SUBSCRIPTION_JOIN = ' JOIN subscription sub ON sub.biz = a.biz AND sub.user_id =
 #: It follows the subscription join, so its ``user_id`` is bound second.
 READ_STATE_JOIN = ' LEFT JOIN article_read ar ON ar.article_pk = a.id AND ar.user_id = %s'
 
+#: The source predicate reads ``acc.source``, so callers that filter by source
+#: must join accounts. The join itself binds no parameter.
+ACCOUNTS_JOIN = ' JOIN accounts acc ON acc.biz = a.biz'
+
+
+#: Sources are an open set — the column is a discriminator, not an enum — so the
+#: filter is parsed, not validated against a registry.
+MAX_SOURCE_FILTER_LENGTH = 64
+
+
+def _normalize_source_filter(value: str | None) -> list[str] | None:
+    """`source=weixin,bilibili` becomes a list. Blank entries are skipped, so a
+    trailing comma or an empty parameter simply means "no filter"."""
+    if not value:
+        return None
+    if len(value) > MAX_SOURCE_FILTER_LENGTH:
+        raise ApiError('Invalid source filter', status=400)
+    sources: list[str] = []
+    for raw in value.split(','):
+        source = raw.strip()
+        if not source:
+            continue
+        if not source.isascii():
+            raise ApiError('Invalid source filter', status=400)
+        if source not in sources:
+            sources.append(source)
+    return sources or None
+
 
 def _normalize_read_filter(value: str | None) -> bool:
     """``read=unread`` is the only read filter today; anything else is a bug."""
@@ -172,6 +200,7 @@ def _build_article_where_clause(
     until_ts: int | None,
     article_id: str | None = None,
     unread_only: bool = False,
+    sources: list[str] | None = None,
 ) -> tuple[str, list[Any], str, list[str]]:
     where: list[str] = []
     params: list[Any] = []
@@ -187,6 +216,9 @@ def _build_article_where_clause(
     if biz:
         where.append('a.biz = %s')
         params.append(biz)
+    if sources:
+        where.append('acc.source = ANY(%s)')
+        params.append(sources)
     if item_show_type is not None:
         clause, clause_params = _build_item_show_type_where_clause(item_show_type)
         where.append(clause)
@@ -227,6 +259,7 @@ def _build_article_query(
     offset: int,
     article_id: str | None = None,
     unread_only: bool = False,
+    sources: list[str] | None = None,
 ) -> tuple[str, list[Any]]:
     select_params: list[Any] = []
     rank_select = ''
@@ -242,6 +275,7 @@ def _build_article_query(
         until_ts=until_ts,
         article_id=article_id,
         unread_only=unread_only,
+        sources=sources,
     )
 
     if sort_mode == ARTICLE_SORT_RELEVANCE_DESC and query_tsquery_sql:
@@ -263,14 +297,14 @@ def _build_article_query(
 
     query_sql = (
         'SELECT a.id, a.biz, a.article_id, a.title, a.item_show_type, a.author, a.digest, a.cover, a.link,'
-        ' a.source_url, a.publish_at, a.created_at, ar.read_at,'
+        ' a.source_url, a.publish_at, a.created_at, ar.read_at, acc.source,'
         ' acc.nickname AS account_nickname, acc.alias AS account_alias,'
         ' acc.round_head_img AS account_avatar,'
         ' sub.group_id, g.name AS group_name,'
         f' {image_select}'
         f'{rank_select}'
         ' FROM articles a'
-        ' JOIN accounts acc ON acc.biz = a.biz'
+        f'{ACCOUNTS_JOIN}'
         f'{SUBSCRIPTION_JOIN}'
         f'{READ_STATE_JOIN}'
         ' LEFT JOIN account_groups g ON g.id = sub.group_id'
@@ -296,6 +330,7 @@ async def _count_articles(
     until_ts: int | None,
     article_id: str | None = None,
     unread_only: bool = False,
+    sources: list[str] | None = None,
 ) -> int:
     where_sql, params, _tsquery_sql, _tsquery_params = _build_article_where_clause(
         group_ids=group_ids,
@@ -307,13 +342,15 @@ async def _count_articles(
         until_ts=until_ts,
         article_id=article_id,
         unread_only=unread_only,
+        sources=sources,
     )
-    # The read join is only worth its cost when the predicate actually uses it.
+    # The extra joins are only worth their cost when a predicate uses them.
     read_join = READ_STATE_JOIN if unread_only else ''
     read_params = [user_id] if unread_only else []
+    accounts_join = ACCOUNTS_JOIN if sources else ''
     row = await fetchone_row(
         storage,
-        (f'SELECT COUNT(*) AS total FROM articles a{SUBSCRIPTION_JOIN}{read_join} {where_sql}'),
+        (f'SELECT COUNT(*) AS total FROM articles a{accounts_join}{SUBSCRIPTION_JOIN}{read_join} {where_sql}'),
         [user_id, *read_params, *params],
         normalize=_normalize_record,
     )
@@ -332,6 +369,7 @@ async def _count_article_item_show_type_facets(
     until_ts: int | None,
     article_id: str | None = None,
     unread_only: bool = False,
+    sources: list[str] | None = None,
 ) -> list[dict[str, int]]:
     where_sql, params, _tsquery_sql, _tsquery_params = _build_article_where_clause(
         group_ids=group_ids,
@@ -343,14 +381,17 @@ async def _count_article_item_show_type_facets(
         until_ts=until_ts,
         article_id=article_id,
         unread_only=unread_only,
+        sources=sources,
     )
     read_join = READ_STATE_JOIN if unread_only else ''
     read_params = [user_id] if unread_only else []
+    accounts_join = ACCOUNTS_JOIN if sources else ''
     rows = await fetchall_rows(
         storage,
         (
             'SELECT COALESCE(a.item_show_type, 0) AS item_show_type, COUNT(*) AS total'
             ' FROM articles a'
+            f'{accounts_join}'
             f'{SUBSCRIPTION_JOIN}'
             f'{read_join}'
             f' {where_sql}'
@@ -396,6 +437,7 @@ async def _list_articles(
     page_size: int,
     article_id: str | None = None,
     unread_only: bool = False,
+    sources: list[str] | None = None,
 ) -> dict[str, Any]:
     offset = max(page - 1, 0) * page_size
     query_sql, params = _build_article_query(
@@ -413,6 +455,7 @@ async def _list_articles(
         offset=offset,
         article_id=article_id,
         unread_only=unread_only,
+        sources=sources,
     )
     rows = await fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
     for row in rows:
@@ -433,6 +476,7 @@ async def _list_articles(
         until_ts=until_ts,
         article_id=article_id,
         unread_only=unread_only,
+        sources=sources,
     )
     item_show_type_facets = await _count_article_item_show_type_facets(
         storage=storage,
@@ -445,6 +489,7 @@ async def _list_articles(
         until_ts=until_ts,
         article_id=article_id,
         unread_only=unread_only,
+        sources=sources,
     )
     return {
         'articles': rows,
@@ -460,11 +505,11 @@ async def _get_article(storage: PostgresStorage, user_id: int, article_id: int) 
         storage,
         (
             'SELECT a.id, a.biz, a.article_id, a.title, a.item_show_type, a.author, a.digest, a.cover, a.link,'
-            ' a.source_url, a.publish_at, a.created_at,'
+            ' a.source_url, a.publish_at, a.created_at, acc.source,'
             ' acc.nickname AS account_nickname, acc.alias AS account_alias,'
             ' acc.round_head_img AS account_avatar, sub.group_id, g.name AS group_name'
             ' FROM articles a'
-            ' JOIN accounts acc ON acc.biz = a.biz'
+            f'{ACCOUNTS_JOIN}'
             f'{SUBSCRIPTION_JOIN}'
             ' LEFT JOIN account_groups g ON g.id = sub.group_id'
             ' WHERE a.id = %s'

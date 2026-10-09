@@ -18,6 +18,7 @@ from ...article_queries import (
     _normalize_article_sort,
     _normalize_item_show_type,
     _normalize_read_filter,
+    _normalize_source_filter,
     _parse_date,
     _split_article_exclude_keywords,
 )
@@ -47,6 +48,7 @@ async def list_articles(
     exclude_keywords: str | None = None,
     sort: str | None = None,
     read: str | None = None,
+    source: str | None = None,
     page: int = 1,
     page_size: int = 20,
     since: str | None = None,
@@ -64,6 +66,7 @@ async def list_articles(
         article_id (str | None): 按具体文章 ID 筛选 (微信原始 article_id)。
         q (str | None): 搜索文章内容/标题。
         read (str | None): 传 `unread` 只返回未读文章。
+        source (str | None): 按来源筛选，逗号分隔（如 "weixin"）。
         page (int): 页码。
         page_size (int): 每页数量。
         since (str | None): 起始日期筛选 (ISO 格式)。
@@ -99,6 +102,7 @@ async def list_articles(
         page_size=min(max(page_size, 1), 200),
         article_id=article_id or None,
         unread_only=_normalize_read_filter(read),
+        sources=_normalize_source_filter(source),
     )
 
 

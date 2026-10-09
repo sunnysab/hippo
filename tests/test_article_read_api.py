@@ -191,3 +191,40 @@ class ReadRepositoryTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SourceFilterTest(unittest.TestCase):
+    def test_a_comma_separated_filter_is_split_and_deduped(self) -> None:
+        from hippo.article_queries import _normalize_source_filter
+
+        self.assertEqual(['weixin', 'bilibili'], _normalize_source_filter('weixin, bilibili, weixin'))
+        self.assertIsNone(_normalize_source_filter(None))
+        self.assertIsNone(_normalize_source_filter('  '))
+
+    def test_a_non_ascii_filter_is_rejected(self) -> None:
+        from hippo.article_queries import _normalize_source_filter
+
+        with self.assertRaises(ApiError):
+            _normalize_source_filter('微信')
+
+    def test_the_source_predicate_joins_accounts(self) -> None:
+        sql, params = _build_article_query(
+            storage=SimpleNamespace(),
+            user_id=42,
+            group_ids=None,
+            biz=None,
+            item_show_type=None,
+            query=None,
+            exclude_keywords=None,
+            since_ts=None,
+            until_ts=None,
+            sort_mode='publish_at_desc',
+            limit=20,
+            offset=0,
+            sources=['weixin'],
+        )
+
+        self.assertIn('acc.source', sql)
+        self.assertIn('acc.source = ANY(%s)', sql)
+        # accounts join binds nothing, so the caller id stays first.
+        self.assertEqual([42, 42, ['weixin'], 20, 0], params)

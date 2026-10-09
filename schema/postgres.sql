@@ -45,6 +45,14 @@ ALTER TABLE accounts ADD COLUMN IF NOT EXISTS gh_id TEXT;
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS backfill_state TEXT NOT NULL DEFAULT 'done';
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS backfill_cursor TEXT;
 
+-- Source discriminator: 'weixin' for every row that exists today, other
+-- platforms later. The default keeps the current sync path working; a new
+-- source must set it explicitly rather than inherit it.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'weixin';
+
+CREATE INDEX IF NOT EXISTS idx_accounts_source
+ON accounts (source);
+
 CREATE TABLE IF NOT EXISTS articles (
     id SERIAL PRIMARY KEY,
     biz TEXT NOT NULL REFERENCES accounts(biz) ON DELETE CASCADE,

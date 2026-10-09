@@ -280,6 +280,7 @@ GET /api/article
 | `biz` | str | 按公众号筛选 |
 | `article_id` | str | 按微信原始 article_id 精确匹配 |
 | `read` | str | 传 `unread` 只返回未读文章；不传即全部 |
+| `source` | str | 按来源筛选，逗号分隔（如 `weixin,bilibili`），不传即全部 |
 | `item_show_type` | int | 版式类型，见下表 |
 | `since` / `until` | str | 发布时间范围 |
 | `exclude_keywords` | str | 排除关键词（逗号/分号/换行分隔），命中标题、摘要或作者即过滤；不传则用个人设置里的 `article_exclude_keywords` |
@@ -310,6 +311,7 @@ GET /api/article
       "group_id": 1,
       "group_name": "经济&金融",
       "image_id": 4488748,
+      "source": "weixin",
       "read_at": null
     }
   ],
@@ -326,6 +328,8 @@ GET /api/article
 - `image_id` 是「优先封面、否则第一张已落 S3 的图」，可直接当缩略图用；没有可用图时为 `null`。
 - `account_avatar` 是原始腾讯 CDN 地址，仅作信息保留；前端应使用 `account_avatar_url` 代理路径。
 - `read_at` 是**当前用户**的已读时间（ISO 8601），未读为 `null`。已读状态按用户隔离，不影响他人。
+- `source` 是数据来源标识（`accounts.source`），目前只有 `weixin`；新来源接入后列表与详情都会带上它。
+  来源取值是开放集合，不是枚举：服务端只做长度与 ASCII 校验，不做白名单。
 - `item_show_type_facets` 是按当前筛选条件统计的版式分布（不受 `item_show_type` 自身影响）。
 
 ### 文章详情
