@@ -7,18 +7,21 @@ import { ArticleHeader } from './ArticleHeader';
 import { ArticleContent } from './ArticleContent';
 import { HighlightToolbar } from './HighlightToolbar';
 import { ReadingSidebar } from './ReadingSidebar';
+import { TableOfContents } from './TableOfContents';
+import { buildOutline } from './outline';
 import { useHighlights } from './useHighlights';
 import { EmptyState } from '../../components/EmptyState';
 import { useToast } from '../../hooks/useToast';
 import { apiGet, apiSend, isAuthError } from '../../api';
+import type { ReadingPanel } from '../../hooks/useArticleReader';
 
 interface ArticlePreviewProps {
   previewRef: RefObject<HTMLDivElement | null>;
-  aiOpen: boolean;
-  onAiToggle: () => void;
+  sidePanel: ReadingPanel;
+  onSidePanelToggle: (panel: Exclude<ReadingPanel, ''>) => void;
 }
 
-export function ArticlePreview({ previewRef, aiOpen, onAiToggle }: ArticlePreviewProps) {
+export function ArticlePreview({ previewRef, sidePanel, onSidePanelToggle }: ArticlePreviewProps) {
   const { state, dispatch } = useArticlesState();
   const { t } = useI18n();
   const { showToast } = useToast();
@@ -32,6 +35,7 @@ export function ArticlePreview({ previewRef, aiOpen, onAiToggle }: ArticlePrevie
   const readerRef = useRef<HTMLDivElement>(null);
 
   const payload = state.currentArticlePayload;
+  const outline = buildOutline(payload?.content);
   // The content key changes whenever the loaded article does, which is when the
   // rendered nodes are replaced and the marks must be rebuilt.
   const contentKey = String(state.selectedArticleId ?? '');
@@ -70,7 +74,7 @@ export function ArticlePreview({ previewRef, aiOpen, onAiToggle }: ArticlePrevie
 
   return (
     <div
-      className={`article-preview-body${payload ? '' : ' is-empty'}${aiOpen && payload ? ' with-ai' : ''}`}
+      className={`article-preview-body${payload ? '' : ' is-empty'}${sidePanel && payload ? ' with-panel' : ''}`}
       id="article-preview"
       ref={previewRef}
     >
@@ -105,11 +109,15 @@ export function ArticlePreview({ previewRef, aiOpen, onAiToggle }: ArticlePrevie
       {payload ? (
         <>
           <HighlightToolbar containerRef={readerRef} onCreate={create} />
-          <ReadingSidebar
-            articleId={state.selectedArticleId ?? null}
-            open={aiOpen}
-            onToggle={onAiToggle}
-          />
+          {sidePanel === 'toc' ? (
+            <TableOfContents items={outline} containerRef={previewRef} />
+          ) : (
+            <ReadingSidebar
+              articleId={state.selectedArticleId ?? null}
+              open={sidePanel === 'ai'}
+              onToggle={() => onSidePanelToggle('ai')}
+            />
+          )}
         </>
       ) : null}
       <ContextMenu

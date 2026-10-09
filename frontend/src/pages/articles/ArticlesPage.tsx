@@ -13,6 +13,7 @@ import { Popover } from '../../components/Popover';
 import { LoadingIndicator } from '../../components/LoadingIndicator';
 import { copyToClipboard } from '../../utils/clipboard';
 import { articleToMarkdown } from './exportMarkdown';
+import { buildOutline } from './outline';
 
 export function ArticlesPage() {
   const { state, dispatch } = useArticlesState();
@@ -31,8 +32,8 @@ export function ArticlesPage() {
   const {
     config,
     updateConfig,
-    aiOpen,
-    setAiOpen,
+    sidePanel,
+    setSidePanel,
     previewRef,
     listCollapsed,
     setListCollapsed,
@@ -40,6 +41,8 @@ export function ArticlesPage() {
     mobileReading,
     getSelectedArticleLink,
   } = useArticleReader();
+  // The outline button is only meaningful when the article has headings.
+  const outline = buildOutline(state.currentArticlePayload?.content);
 
   return (
     <section id="view-articles" className="view is-active">
@@ -159,12 +162,26 @@ export function ArticlesPage() {
                 <ReaderControls config={config} updateConfig={updateConfig} />
               </Popover>
               <button
+                className={`btn ghost article-toolbar-btn${sidePanel === 'toc' ? ' is-active' : ''}`}
+                id="btn-article-toc-toggle"
+                type="button"
+                disabled={!state.currentArticlePayload || outline.length === 0}
+                aria-pressed={sidePanel === 'toc'}
+                title={outline.length === 0
+                  ? t('articles.tocEmpty', '本文没有可跳转的小标题')
+                  : t('articles.toc', '目录')}
+                onClick={() => setSidePanel((current) => (current === 'toc' ? '' : 'toc'))}
+              >
+                {t('articles.toc', '目录')}
+              </button>
+              <button
                 className="btn article-toolbar-btn"
                 id="btn-article-ai-toggle"
                 type="button"
                 disabled={!state.currentArticlePayload}
+                aria-pressed={sidePanel === 'ai'}
                 title={t('articles.ai.open', '解读')}
-                onClick={() => setAiOpen((value) => !value)}
+                onClick={() => setSidePanel((current) => (current === 'ai' ? '' : 'ai'))}
               >
                 {t('articles.ai.open', '解读')}
               </button>
@@ -186,7 +203,11 @@ export function ArticlesPage() {
               </button>
             </div>
           </div>
-          <ArticlePreview previewRef={previewRef} aiOpen={aiOpen} onAiToggle={() => setAiOpen((value) => !value)} />
+          <ArticlePreview
+            previewRef={previewRef}
+            sidePanel={sidePanel}
+            onSidePanelToggle={(panel) => setSidePanel((current) => (current === panel ? '' : panel))}
+          />
         </div>
       </div>
     </section>

@@ -4,6 +4,7 @@ import { renderInlineNodes } from '../../utils/markdown';
 import { EmptyState } from '../../components/EmptyState';
 import type { ArticlePayload, ArticleContentBlock } from '../../store/articles';
 import { buildContentBlockKeys } from './contentKeys';
+import { headingAnchorId } from './outline';
 
 interface ArticleContentProps {
   payload: ArticlePayload;
@@ -16,6 +17,11 @@ interface ContentBlockProps {
   images: ArticlePayload['images'];
   hideSmall: boolean;
   onImageContextMenu: (detail: { imageId: number; x: number; y: number }) => void;
+}
+
+/** Only headings need to know where they sit, for the outline anchor. */
+interface AnchorableBlockProps extends ContentBlockProps {
+  index: number;
 }
 
 const ArticleImageBlock = memo(function ArticleImageBlock({
@@ -89,23 +95,26 @@ const ArticleImageBlock = memo(function ArticleImageBlock({
 
 const ContentBlock = memo(function ContentBlock({
   block,
+  index,
   images,
   hideSmall,
   onImageContextMenu,
-}: ContentBlockProps) {
+}: AnchorableBlockProps) {
   if (block.type === 'paragraph') {
     return <p>{renderInlineNodes(block.text || '')}</p>;
   }
 
   if (block.type === 'heading') {
+    // The id is what the outline links to; it must match `buildOutline`.
+    const id = headingAnchorId(index);
     const level = Math.min(Math.max(Number(block.level) || 2, 2), 4);
     if (level === 2) {
-      return <h2>{renderInlineNodes(block.text || '')}</h2>;
+      return <h2 id={id}>{renderInlineNodes(block.text || '')}</h2>;
     }
     if (level === 3) {
-      return <h3>{renderInlineNodes(block.text || '')}</h3>;
+      return <h3 id={id}>{renderInlineNodes(block.text || '')}</h3>;
     }
-    return <h4>{renderInlineNodes(block.text || '')}</h4>;
+    return <h4 id={id}>{renderInlineNodes(block.text || '')}</h4>;
   }
 
   if (block.type === 'image') {
@@ -166,6 +175,7 @@ export function ArticleContent({ payload, hideSmall, onImageContextMenu }: Artic
         <ContentBlock
           key={contentKeys[i]}
           block={block}
+          index={i}
           images={payload.images}
           hideSmall={hideSmall}
           onImageContextMenu={onImageContextMenu}

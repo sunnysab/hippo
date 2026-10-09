@@ -444,6 +444,8 @@
   "articles.staleHighlights": "以下划线已无法定位（原文可能已变更）",
   "nav.chat": "对话",
   "articles.ai.title": "文章解读",
+  "articles.toc": "目录",
+  "articles.tocEmpty": "本文没有可跳转的小标题",
   "articles.ai.open": "解读",
   "articles.ai.close": "收起",
   "articles.ai.summary": "摘要",

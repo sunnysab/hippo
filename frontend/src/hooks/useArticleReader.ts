@@ -3,10 +3,13 @@ import { useArticlesState } from '../store/articles';
 import { useReaderSettings } from './useReaderSettings';
 import { useMediaQuery } from './useMediaQuery';
 
+/** The reading pane shares one column: outline and interpretation take turns. */
+export type ReadingPanel = '' | 'toc' | 'ai';
+
 export function useArticleReader() {
   const { state } = useArticlesState();
   const { config, updateConfig } = useReaderSettings();
-  const [aiOpen, setAiOpen] = useState(false);
+  const [sidePanel, setSidePanel] = useState<ReadingPanel>('');
   const [listCollapsed, setListCollapsed] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
   const isNarrowViewport = useMediaQuery('(max-width: 720px)');
@@ -20,8 +23,8 @@ export function useArticleReader() {
   return {
     config,
     updateConfig,
-    aiOpen,
-    setAiOpen,
+    sidePanel,
+    setSidePanel,
     previewRef,
     listCollapsed,
     setListCollapsed,
