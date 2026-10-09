@@ -6,21 +6,15 @@ import {
 } from '../../hooks/useReaderSettings';
 
 interface ReaderControlsProps {
-  isOpen: boolean;
-  controlsRef: React.RefObject<HTMLDivElement | null>;
   config: ReaderConfig;
   updateConfig: (patch: Partial<ReaderConfig>) => void;
 }
 
-export function ReaderControls({ isOpen, controlsRef, config, updateConfig }: ReaderControlsProps) {
+export function ReaderControls({ config, updateConfig }: ReaderControlsProps) {
   const { t } = useI18n();
 
   return (
-    <div
-      className={`reader-controls${isOpen ? ' is-open' : ''}`}
-      id="reader-controls"
-      ref={controlsRef}
-    >
+    <div className="reader-controls" id="reader-controls-panel">
       <label>
         <span>{t('reader.width', 'Width')}</span>
         <input id="reader-width" type="range" min={READER_WIDTH_RANGE.min} max={READER_WIDTH_RANGE.max} step="10" value={config.width} onChange={(e) => updateConfig({ width: e.target.value })} />

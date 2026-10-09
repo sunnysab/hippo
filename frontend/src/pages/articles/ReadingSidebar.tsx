@@ -154,13 +154,7 @@ export function ReadingSidebar({ articleId, open, onToggle }: ReadingSidebarProp
     }
   }, [ensureSession, question, showToast]);
 
-  if (!open) {
-    return (
-      <button className="reader-ai-toggle" type="button" onClick={onToggle}>
-        {t('articles.ai.open', '解读')}
-      </button>
-    );
-  }
+  if (!open) return null;
 
   const hasSummary = messages.some((item) => item.preset === 'summary');
   const hasPoints = messages.some((item) => item.preset === 'points');

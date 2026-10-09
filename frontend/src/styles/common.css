@@ -238,6 +238,32 @@ body {
   fill: currentColor;
 }
 
+/* Text glyph for controls with no unambiguous symbol, e.g. typography. */
+.icon-btn.is-text {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* An icon button plus a panel anchored under it. The panel is a flat surface
+   like the rest of the app: a border, no shadow. */
+.popover {
+  position: relative;
+  display: inline-flex;
+}
+
+.popover-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  min-width: 148px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel);
+}
+
 .content {
   flex: 1;
   display: flex;

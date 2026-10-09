@@ -8,8 +8,10 @@ import { ArticleList } from './ArticleList';
 import { ArticlePreview } from './ArticlePreview';
 import { ArticleResizer } from './ArticleResizer';
 import { ReaderControls } from './ReaderControls';
+import { Popover } from '../../components/Popover';
 import { LoadingIndicator } from '../../components/LoadingIndicator';
 import { copyToClipboard } from '../../utils/clipboard';
+import { articleToMarkdown } from './exportMarkdown';
 
 export function ArticlesPage() {
   const { state, dispatch } = useArticlesState();
@@ -28,10 +30,8 @@ export function ArticlesPage() {
   const {
     config,
     updateConfig,
-    readerControlsOpen,
-    setReaderControlsOpen,
-    readerControlsRef,
-    readerToggleRef,
+    aiOpen,
+    setAiOpen,
     previewRef,
     listCollapsed,
     setListCollapsed,
@@ -109,39 +109,64 @@ export function ArticlesPage() {
               >
                 {t('articles.menu.openOriginal', 'Open original')}
               </button>
-              <button
-                className="btn ghost article-toolbar-btn"
-                id="btn-article-copy-link"
-                type="button"
-                disabled={!getSelectedArticleLink()}
-                onClick={async () => {
-                  const link = getSelectedArticleLink();
-                  if (!link) return;
-                  await copyToClipboard(link);
-                  showToast(t('articles.linkCopied', 'Link copied.'));
-                }}
+              <Popover
+                id="article-copy-menu"
+                label={t('articles.copy', '复制')}
+                triggerClassName="icon-btn"
+                trigger={<span className="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></span>}
               >
-                {t('articles.menu.copyLink', 'Copy link')}
-              </button>
-              <button className="icon-btn" id="reader-copy" type="button" aria-label={t('articles.copyText', 'Copy article text')} title={t('articles.copyText', 'Copy article text')} onClick={async () => {
-                const content = previewRef.current?.querySelector('.reader');
-                if (content) {
-                  const text = (content as HTMLElement).innerText;
-                  try { await copyToClipboard(text); showToast(t('articles.copied', '全文已复制')); } catch { showToast(t('articles.copyFailed', '复制失败')); }
-                }
-              }}>
-                <span className="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></span>
-              </button>
-              <button
-                className="icon-btn"
-                id="reader-toggle"
-                type="button"
-                ref={readerToggleRef}
-                aria-label={t('articles.typography', 'Typography settings')}
-                title={t('articles.typography', 'Typography settings')}
-                onClick={() => setReaderControlsOpen((prev) => !prev)}
+                {(close) => (
+                  <>
+                    <button
+                      className="context-item"
+                      id="article-copy-plain"
+                      type="button"
+                      disabled={!state.currentArticlePayload}
+                      onClick={async () => {
+                        const content = previewRef.current?.querySelector('.reader');
+                        if (content) {
+                          try { await copyToClipboard((content as HTMLElement).innerText); showToast(t('articles.copied', '全文已复制')); } catch { showToast(t('articles.copyFailed', '复制失败')); }
+                        }
+                        close();
+                      }}
+                    >
+                      {t('articles.copyPlain', '纯文本')}
+                    </button>
+                    <button
+                      className="context-item"
+                      id="article-copy-markdown"
+                      type="button"
+                      disabled={!state.currentArticlePayload}
+                      onClick={async () => {
+                        const payload = state.currentArticlePayload;
+                        if (payload) {
+                          try { await copyToClipboard(articleToMarkdown(payload)); showToast(t('articles.copied', '全文已复制')); } catch { showToast(t('articles.copyFailed', '复制失败')); }
+                        }
+                        close();
+                      }}
+                    >
+                      {t('articles.copyMarkdown', 'Markdown')}
+                    </button>
+                  </>
+                )}
+              </Popover>
+              <Popover
+                id="reader-controls"
+                label={t('articles.typography', 'Typography settings')}
+                triggerClassName="icon-btn is-text"
+                trigger={<span aria-hidden="true">Aa</span>}
               >
-                <span className="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4zM4 11h16v2H4zM4 16h16v2H4z"/></svg></span>
+                <ReaderControls config={config} updateConfig={updateConfig} />
+              </Popover>
+              <button
+                className="btn article-toolbar-btn"
+                id="btn-article-ai-toggle"
+                type="button"
+                disabled={!state.currentArticlePayload}
+                title={t('articles.ai.open', '解读')}
+                onClick={() => setAiOpen((value) => !value)}
+              >
+                {t('articles.ai.open', '解读')}
               </button>
               <button
                 className="icon-btn"
@@ -157,17 +182,11 @@ export function ArticlesPage() {
                   setListCollapsed((prev) => !prev);
                 }}
               >
-                <span className="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4zM4 11h10v2H4zM4 16h16v2H4z"/></svg></span>
+                <span className="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path fillRule="evenodd" d="M3 5h18v14H3zM9 5v14H6V5z"/></svg></span>
               </button>
             </div>
           </div>
-          <ReaderControls
-            isOpen={readerControlsOpen}
-            controlsRef={readerControlsRef}
-            config={config}
-            updateConfig={updateConfig}
-          />
-          <ArticlePreview previewRef={previewRef} />
+          <ArticlePreview previewRef={previewRef} aiOpen={aiOpen} onAiToggle={() => setAiOpen((value) => !value)} />
         </div>
       </div>
     </section>

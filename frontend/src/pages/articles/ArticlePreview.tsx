@@ -14,9 +14,11 @@ import { apiGet, apiSend, isAuthError } from '../../api';
 
 interface ArticlePreviewProps {
   previewRef: RefObject<HTMLDivElement | null>;
+  aiOpen: boolean;
+  onAiToggle: () => void;
 }
 
-export function ArticlePreview({ previewRef }: ArticlePreviewProps) {
+export function ArticlePreview({ previewRef, aiOpen, onAiToggle }: ArticlePreviewProps) {
   const { state, dispatch } = useArticlesState();
   const { t } = useI18n();
   const { showToast } = useToast();
@@ -27,7 +29,6 @@ export function ArticlePreview({ previewRef }: ArticlePreviewProps) {
     y: number;
   } | null>(null);
   const [isBlockingImage, setIsBlockingImage] = useState(false);
-  const [aiOpen, setAiOpen] = useState(false);
   const readerRef = useRef<HTMLDivElement>(null);
 
   const payload = state.currentArticlePayload;
@@ -107,7 +108,7 @@ export function ArticlePreview({ previewRef }: ArticlePreviewProps) {
           <ReadingSidebar
             articleId={state.selectedArticleId ?? null}
             open={aiOpen}
-            onToggle={() => setAiOpen((value) => !value)}
+            onToggle={onAiToggle}
           />
         </>
       ) : null}
