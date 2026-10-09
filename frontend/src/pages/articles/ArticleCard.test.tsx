@@ -23,6 +23,7 @@ const article: Article = {
   group_id: 1,
   group_name: '',
   image_id: 9,
+  read_at: null,
 };
 
 describe('ArticleCard', () => {
@@ -37,5 +38,48 @@ describe('ArticleCard', () => {
     const thumb = container.querySelector('.article-thumb')!;
     expect(thumb.tagName).toBe('DIV');
     expect(thumb.className).toContain('placeholder');
+  });
+
+  it('marks an unread article with a dot and no read class', () => {
+    const { container } = render(
+      <ArticleCard article={article} isActive={false} onClick={vi.fn()} onContextMenu={vi.fn()} />,
+    );
+
+    expect(container.querySelector('.article-unread-dot')).not.toBeNull();
+    expect(container.querySelector('.article-card')!.className).not.toContain('is-read');
+  });
+
+  it('drops the dot once the article has been read', () => {
+    const { container } = render(
+      <ArticleCard
+        article={{ ...article, read_at: '2026-05-02T11:00:00+00:00' }}
+        isActive={false}
+        onClick={vi.fn()}
+        onContextMenu={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector('.article-unread-dot')).toBeNull();
+    expect(container.querySelector('.article-card')!.className).toContain('is-read');
+  });
+
+  it('toggles read state without opening the article', () => {
+    const onToggleRead = vi.fn();
+    const onClick = vi.fn();
+    const { container } = render(
+      <ArticleCard
+        article={article}
+        isActive={false}
+        onClick={onClick}
+        onContextMenu={vi.fn()}
+        onToggleRead={onToggleRead}
+      />,
+    );
+
+    fireEvent.click(container.querySelector('.article-card-action')!);
+
+    expect(onToggleRead).toHaveBeenCalledWith(article);
+    // The row's own click must not also fire, or the reader jumps to the article.
+    expect(onClick).not.toHaveBeenCalled();
   });
 });

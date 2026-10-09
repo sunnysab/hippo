@@ -483,5 +483,9 @@
   "report.sendHour": "发送时间（{tz} 的整点）",
   "report.recipients": "收件人（逗号分隔）",
   "report.includeRead": "包含已读文章",
-  "report.scope": "默认包含的分组（留空为全部）"
+  "report.scope": "默认包含的分组（留空为全部）",
+  "articles.unread": "未读",
+  "articles.markRead": "标记已读",
+  "articles.markUnread": "标记未读",
+  "articles.readFailed": "更新已读状态失败"
 }

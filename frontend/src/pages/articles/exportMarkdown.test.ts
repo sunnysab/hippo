@@ -23,6 +23,7 @@ const payload = (content: ArticlePayload['content']): ArticlePayload => ({
     group_id: 1,
     group_name: '',
     image_id: null,
+    read_at: null,
   },
   content,
   content_status: 'ok',

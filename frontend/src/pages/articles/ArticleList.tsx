@@ -16,13 +16,28 @@ interface ArticleListProps {
 }
 
 export function ArticleList({ onSelect, onLoadMore, onFilterByAccount }: ArticleListProps) {
-  const { state } = useArticlesState();
+  const { state, dispatch } = useArticlesState();
   const { t } = useI18n();
   const { showToast } = useToast();
   const listRef = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<{ article: Article; x: number; y: number } | null>(null);
   const [refetchingId, setRefetchingId] = useState<number | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleToggleRead = useCallback(async (article: Article) => {
+    const read = !article.read_at;
+    try {
+      const result = await apiSend(`/api/article/${article.id}/read`, 'PUT', { read }) as { read_at?: string | null };
+      dispatch({
+        type: 'SET_ARTICLE_READ',
+        id: article.id,
+        readAt: read ? result.read_at ?? new Date().toISOString() : null,
+      });
+    } catch (err) {
+      if (isAuthError(err)) return;
+      showToast((err as Error)?.message || t('articles.readFailed', 'Failed to update read state.'));
+    }
+  }, [dispatch, showToast, t]);
 
   const handleRefetch = useCallback(async (article: Article) => {
     const articleId = article.id;
@@ -117,6 +132,7 @@ export function ArticleList({ onSelect, onLoadMore, onFilterByAccount }: Article
             article={article}
             isActive={state.selectedArticleId === article.id}
             onClick={() => { void onSelect(article.id); }}
+            onToggleRead={(target) => { void handleToggleRead(target); }}
             onContextMenu={(e) => {
               e.preventDefault();
               setContextMenu({ article, x: e.clientX, y: e.clientY });

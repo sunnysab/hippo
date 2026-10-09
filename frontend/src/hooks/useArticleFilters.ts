@@ -2,7 +2,7 @@ import { useDeferredValue, useEffect, useCallback, useRef, useState } from 'reac
 import { useSearchParams } from 'react-router-dom';
 import { useArticlesState } from '../store/articles';
 import { useMediaQuery } from './useMediaQuery';
-import { apiGet } from '../api';
+import { apiGet, apiSend } from '../api';
 import { ARTICLE_SORT_PUBLISH_AT_DESC } from '../utils/constants';
 import { createLatestOnly } from '../utils/latest';
 import { onRefresh } from '../utils/events';
@@ -37,6 +37,19 @@ export function useArticleFilters() {
   const deferredSearch = useDeferredValue(filters.search.trim());
   const isNarrowViewport = useMediaQuery('(max-width: 720px)');
 
+  // Opening an article is reading it. Failure stays quiet: the read flag is
+  // bookkeeping, not something worth interrupting a reader for.
+  const markArticleRead = useCallback(async (id: number) => {
+    try {
+      const result = await apiSend(`/api/article/${id}/read`, 'PUT', { read: true }) as {
+        read_at?: string | null;
+      };
+      dispatch({ type: 'SET_ARTICLE_READ', id, readAt: result.read_at ?? new Date().toISOString() });
+    } catch {
+      /* ignore */
+    }
+  }, [dispatch]);
+
   const isArticleLoadingRef = useRef(state.isArticleLoading);
   const articlePageRef = useRef(state.articlePage);
   const articlePageSizeRef = useRef(state.articlePageSize);
@@ -56,6 +69,7 @@ export function useArticleFilters() {
     if (openMobileReader) {
       dispatch({ type: 'SET_MOBILE_READING', reading: true });
     }
+    void markArticleRead(id);
   }));
 
   useEffect(() => {

@@ -20,6 +20,8 @@ export interface Article {
   group_id: number;
   group_name: string;
   image_id: number | null;
+  /** When this user read it; null means unread. */
+  read_at: string | null;
 }
 
 export interface ArticleContentBlock {
@@ -68,7 +70,7 @@ interface ArticlesState {
   lastFacetPayload: FacetPayload | null;
 }
 
-type ArticlesAction =
+export type ArticlesAction =
   | { type: 'SET_ARTICLES'; articles: Article[]; reset: boolean }
   | { type: 'SET_PAGE'; page: number; hasMore: boolean }
   | { type: 'SET_LOADING'; loading: boolean }
@@ -76,6 +78,7 @@ type ArticlesAction =
   | { type: 'SET_FILTERS_COLLAPSED'; collapsed: boolean }
   | { type: 'SET_MOBILE_READING'; reading: boolean }
   | { type: 'SET_TYPE_FACETS_EXPANDED'; expanded: boolean }
+  | { type: 'SET_ARTICLE_READ'; id: number; readAt: string | null }
   | { type: 'SET_FACET_PAYLOAD'; payload: FacetPayload | null };
 
 const initialState: ArticlesState = {
@@ -115,6 +118,20 @@ function reducer(state: ArticlesState, action: ArticlesAction): ArticlesState {
       return { ...state, mobileReading: action.reading };
     case 'SET_TYPE_FACETS_EXPANDED':
       return { ...state, typeFacetsExpanded: action.expanded };
+    case 'SET_ARTICLE_READ':
+      // The open article and its row must agree, so both are patched here.
+      return {
+        ...state,
+        articles: state.articles.map((article) => (
+          article.id === action.id ? { ...article, read_at: action.readAt } : article
+        )),
+        currentArticlePayload: state.currentArticlePayload?.article.id === action.id
+          ? {
+            ...state.currentArticlePayload,
+            article: { ...state.currentArticlePayload.article, read_at: action.readAt },
+          }
+          : state.currentArticlePayload,
+      };
     case 'SET_FACET_PAYLOAD':
       return { ...state, lastFacetPayload: action.payload };
     default:
