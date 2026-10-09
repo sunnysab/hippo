@@ -1,7 +1,5 @@
 import { useArticlesState } from '../../store/articles';
 import { useI18n } from '../../i18n';
-import { useMediaQuery } from '../../hooks/useMediaQuery';
-import { ArticleFilterSummary } from './ArticleFilterSummary';
 import { ArticleTypeFacets } from './ArticleTypeFacets';
 import type {
   ArticleFiltersState,
@@ -12,46 +10,20 @@ interface ArticleFiltersProps {
   filters: ArticleFiltersState;
   groupOptions: ArticleSelectOption[];
   accountOptions: ArticleSelectOption[];
-  total: number;
   onChange: (patch: Partial<ArticleFiltersState>) => void;
 }
 
-export function ArticleFilters({
-  filters,
-  groupOptions,
-  accountOptions,
-  total,
-  onChange,
-}: ArticleFiltersProps) {
+/**
+ * Search and sort stay on screen; the scope selects and the type facets live in
+ * a drawer, because they are set once and then left alone.
+ */
+export function ArticleFilters({ filters, groupOptions, accountOptions, onChange }: ArticleFiltersProps) {
   const { state, dispatch } = useArticlesState();
   const { t } = useI18n();
-  const isNarrow = useMediaQuery('(max-width: 720px)');
 
   return (
-    <div className={`article-filter-shell${isNarrow && state.filtersCollapsed ? ' is-mobile-collapsed' : ''}`} id="article-filter-shell">
+    <div className="article-filter-shell" id="article-filter-shell">
       <div className="article-filter-stack">
-        <div className="toolbar article-filter-grid article-filter-grid-top">
-          <select
-            id="article-group-filter"
-            value={filters.groupId}
-            onChange={(event) => onChange({ groupId: event.target.value, accountBiz: '' })}
-          >
-            <option value=''>{t('filters.allGroups', 'All Groups')}</option>
-            {groupOptions.map((group) => (
-              <option key={group.value} value={group.value}>{group.label}</option>
-            ))}
-          </select>
-          <select
-            id="article-account-filter"
-            value={filters.accountBiz}
-            onChange={(event) => onChange({ accountBiz: event.target.value })}
-          >
-            <option value=''>{t('filters.allAccounts', 'All Accounts')}</option>
-            {accountOptions.map((account) => (
-              <option key={account.value} value={account.value}>{account.label}</option>
-            ))}
-          </select>
-        </div>
         <div className="toolbar article-filter-grid article-filter-grid-middle">
           <div className="input article-search-input">
             <input
@@ -74,21 +46,40 @@ export function ArticleFilters({
             <option value='relevance_desc'>{t('filters.sortRelevanceDesc', 'Relevance')}</option>
           </select>
         </div>
-        <div className="toolbar article-filter-grid article-filter-grid-bottom">
-          <ArticleFilterSummary
-            filters={filters}
-            groupOptions={groupOptions}
-            accountOptions={accountOptions}
-            total={total}
+        <div
+          className={`article-filter-drawer${state.filtersCollapsed ? '' : ' is-open'}`}
+          id="article-filter-drawer"
+        >
+          <div className="toolbar article-filter-grid article-filter-grid-top">
+            <select
+              id="article-group-filter"
+              value={filters.groupId}
+              onChange={(event) => onChange({ groupId: event.target.value, accountBiz: '' })}
+            >
+              <option value=''>{t('filters.allGroups', 'All Groups')}</option>
+              {groupOptions.map((group) => (
+                <option key={group.value} value={group.value}>{group.label}</option>
+              ))}
+            </select>
+            <select
+              id="article-account-filter"
+              value={filters.accountBiz}
+              onChange={(event) => onChange({ accountBiz: event.target.value })}
+            >
+              <option value=''>{t('filters.allAccounts', 'All Accounts')}</option>
+              {accountOptions.map((account) => (
+                <option key={account.value} value={account.value}>{account.label}</option>
+              ))}
+            </select>
+          </div>
+          <ArticleTypeFacets
+            activeType={filters.itemShowType}
+            onChange={(itemShowType) => {
+              dispatch({ type: 'SET_TYPE_FACETS_EXPANDED', expanded: false });
+              onChange({ itemShowType });
+            }}
           />
         </div>
-        <ArticleTypeFacets
-          activeType={filters.itemShowType}
-          onChange={(itemShowType) => {
-            dispatch({ type: 'SET_TYPE_FACETS_EXPANDED', expanded: false });
-            onChange({ itemShowType });
-          }}
-        />
       </div>
     </div>
   );

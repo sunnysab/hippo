@@ -57,9 +57,9 @@ export const ArticleCard = memo(function ArticleCard({
             }}
           >{escapeHtml(article.account_nickname || '')}</span>
           <span>{escapeHtml(formatDate(article.publish_at))}</span>
+          <ItemShowTypeBadge value={article.item_show_type} compact />
         </div>
         <div className="article-digest" title={digest}>{digest}</div>
-        <ItemShowTypeBadge value={article.item_show_type} compact />
       </div>
     </div>
   );

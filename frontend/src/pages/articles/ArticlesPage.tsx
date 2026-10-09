@@ -4,6 +4,7 @@ import { useToast } from '../../hooks/useToast';
 import { useArticleFilters } from '../../hooks/useArticleFilters';
 import { useArticleReader } from '../../hooks/useArticleReader';
 import { ArticleFilters } from './ArticleFilters';
+import { ArticleFilterSummary } from './ArticleFilterSummary';
 import { ArticleList } from './ArticleList';
 import { ArticlePreview } from './ArticlePreview';
 import { ArticleResizer } from './ArticleResizer';
@@ -47,16 +48,23 @@ export function ArticlesPage() {
           <div className="panel-header article-sidebar-header">
             <div>
               <h2>{t('articles.title', 'Articles')}</h2>
-              <p className="muted">{t('articles.librarySubtitle', 'Filter, scan, and open synced articles.')}</p>
+              <ArticleFilterSummary
+                filters={filters}
+                groupOptions={groupOptions}
+                accountOptions={accountOptions}
+                total={Number(state.lastFacetPayload?.total || 0)}
+              />
             </div>
             <div className="toolbar article-sidebar-actions">
               <button
-                className="btn ghost article-mobile-toggle"
+                className={`btn ghost article-filter-toggle${state.filtersCollapsed ? '' : ' is-active'}`}
                 id="btn-article-filter-toggle"
                 type="button"
+                aria-expanded={!state.filtersCollapsed}
+                aria-controls="article-filter-drawer"
                 onClick={() => dispatch({ type: 'SET_FILTERS_COLLAPSED', collapsed: !state.filtersCollapsed })}
               >
-                {state.filtersCollapsed ? t('articles.showFilters', 'Expand Filters') : t('articles.hideFilters', 'Collapse Filters')}
+                {t('articles.toggleFilters', 'Filters')}
               </button>
               <button
                 className="btn ghost article-reset-btn"
@@ -72,7 +80,6 @@ export function ArticlesPage() {
             filters={filters}
             groupOptions={groupOptions}
             accountOptions={accountOptions}
-            total={Number(state.lastFacetPayload?.total || 0)}
             onChange={updateFilters}
           />
           <LoadingIndicator isLoading={state.isArticleLoading} id="article-search-loading" />

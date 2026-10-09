@@ -31,12 +31,22 @@
   margin-bottom: 12px;
 }
 
+/* In the list header the summary replaces the decorative subtitle, so it must
+   not add a row of its own. */
+.article-sidebar-header .article-filter-summary {
+  min-height: 0;
+}
+
 .article-sidebar-actions {
   justify-content: flex-end;
 }
 
-.article-mobile-toggle {
-  display: none;
+.article-filter-toggle {
+  display: inline-flex;
+}
+
+.article-filter-toggle.is-active {
+  background: var(--surface-item-active);
 }
 
 .article-mobile-back {
@@ -55,7 +65,6 @@
   display: grid;
   gap: 10px;
 }
-
 .article-filter-grid {
   display: grid;
   gap: 8px;
@@ -66,9 +75,15 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.article-filter-grid-bottom {
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
+/* The scope selects and type facets are set once and then left alone, so they
+   start hidden and give the list back the vertical space. */
+.article-filter-drawer {
+  display: none;
+}
+
+.article-filter-drawer.is-open {
+  display: grid;
+  gap: 10px;
 }
 
 .article-search-input {
@@ -175,7 +190,7 @@
   display: grid;
   grid-template-columns: 120px minmax(0, 1fr);
   gap: 12px;
-  padding: 11px;
+  padding: 9px;
   border-radius: var(--radius-lg);
   background: none;
   cursor: pointer;
@@ -223,7 +238,8 @@
 
 .article-info {
   display: grid;
-  gap: 6px;
+  /* Tight, because the list is the screen most of the time here. */
+  gap: 5px;
   min-width: 0;
 }
 
@@ -233,31 +249,28 @@
   line-height: 1.35;
 }
 
-/* The type badge gets its own row so it never eats into the title, and fades in
-   on hover, selection or focus. The row stays laid out while hidden, which is
-   what keeps the list from reflowing on hover. */
+/* The type badge rides along the meta line now, so the card no longer spends a
+   whole row on it. The account name yields first, which keeps the badge and the
+   date on screen. */
 .article-card .item-show-type-badge {
-  justify-self: start;
-  min-height: 18px;
-  padding: 1px 7px;
+  flex: 0 0 auto;
+  min-height: 0;
+  padding: 1px 6px;
   font-size: 10px;
-  opacity: 0;
-  transition: opacity 0.18s ease-out;
-}
-
-.article-card:hover .item-show-type-badge,
-.article-card:focus-within .item-show-type-badge,
-.article-card.is-active .item-show-type-badge {
-  opacity: 1;
 }
 
 .article-meta {
   display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
   color: var(--muted);
   font-size: 11px;
+  min-width: 0;
+}
+
+.article-meta > span {
+  white-space: nowrap;
 }
 
 .article-avatar {
@@ -270,6 +283,10 @@
 
 .article-account-name {
   cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .article-account-name:hover {
@@ -614,8 +631,7 @@
   }
 
   .article-filter-grid-top,
-  .article-filter-grid-middle,
-  .article-filter-grid-bottom {
+  .article-filter-grid-middle {
     grid-template-columns: 1fr;
   }
 
@@ -654,10 +670,6 @@
     width: 100%;
   }
 
-  .article-mobile-toggle {
-    display: inline-flex;
-  }
-
   .article-mobile-back {
     display: inline-flex;
     flex: 1 1 100%;
@@ -692,10 +704,6 @@
     padding: 12px;
   }
 
-  .article-filter-shell.is-mobile-collapsed {
-    display: none;
-  }
-
   .article-card {
     grid-template-columns: 104px minmax(0, 1fr);
   }
@@ -707,7 +715,7 @@
 
   .article-toolbar-btn,
   .article-reset-btn,
-  .article-mobile-toggle {
+  .article-filter-toggle {
     flex: 1 1 calc(50% - 6px);
     min-width: 0;
   }
