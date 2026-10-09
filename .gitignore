@@ -15,7 +15,12 @@ dist/
 .ruff_cache/
 .idea/
 .vscode/
+# Agent scratch directories (plans, notes) never belong in the repo
 .opencode/
+.codex/
+.omo/
+.mimocode/
+.claude/
 AGENTS.md
 CLAUDE.md
 docs/superpowers/
