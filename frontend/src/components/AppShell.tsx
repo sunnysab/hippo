@@ -1,6 +1,6 @@
 import { type ReactNode, useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { TopBar } from './TopBar';
+import { TopBar, type SyncStatus } from './TopBar';
 import { apiGet } from '../api';
 import { useI18n } from '../i18n';
 import { useAuth } from '../hooks/useAuth';
@@ -16,7 +16,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { showToast } = useToast();
   const appRef = useRef<HTMLDivElement>(null);
   const topbarRef = useRef<HTMLElement>(null);
-  const [daemonStatus, setDaemonStatus] = useState('');
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('');
   const [lastSyncAt, setLastSyncAt] = useState('');
   const [bannerVisible, setBannerVisible] = useState(false);
   const [bannerText, setBannerText] = useState('');
@@ -30,11 +30,11 @@ export function AppShell({ children }: { children: ReactNode }) {
       const loggedIn = Boolean(loginPayload.logged_in);
       const loginStatus = String(loginPayload.status || '');
       if (loggedIn) {
-        setDaemonStatus(t('login.daemon.online', 'daemon online'));
+        setSyncStatus('online');
       } else if (loginStatus === 'unreachable') {
-        setDaemonStatus(t('login.daemon.unreachable', 'daemon unreachable'));
+        setSyncStatus('unreachable');
       } else {
-        setDaemonStatus(t('login.daemon.offline', 'daemon not signed in'));
+        setSyncStatus('offline');
       }
 
       const syncPayload = await apiGet('/api/settings/status');
@@ -122,7 +122,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <TopBar
         topbarRef={topbarRef}
         currentTab={currentTab}
-        daemonStatus={daemonStatus}
+        syncStatus={syncStatus}
         lastSyncAt={lastSyncAt}
       />
       <main className="content">

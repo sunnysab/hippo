@@ -163,6 +163,35 @@ body {
   white-space: nowrap;
 }
 
+/* The sync service is a state, not a log line: a dot plus a plain-language
+   label, tinted by the role colour like every other status in the app. */
+.top-sync-status {
+  gap: 6px;
+}
+
+.top-sync-status.is-online {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.top-sync-status.is-offline {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.top-sync-status.is-unreachable {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
 .btn,
 .icon-btn {
   min-height: 34px;

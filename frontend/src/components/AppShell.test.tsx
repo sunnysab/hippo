@@ -56,7 +56,7 @@ describe('AppShell', () => {
       await vi.advanceTimersByTimeAsync(0);
     });
 
-    expect(screen.getByText('daemon 在线')).toBeTruthy();
+    expect(screen.getByText('同步服务运行中')).toBeTruthy();
     expect(screen.getByText('上次同步于 2 分钟前')).toBeTruthy();
 
     await act(async () => {
@@ -138,7 +138,7 @@ describe('AppShell', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(screen.getByText('daemon 未登录')).toBeTruthy();
+    expect(screen.getByText('同步服务未登录')).toBeTruthy();
     expect(screen.getByText('登录失效，请重新登录。')).toBeTruthy();
   });
 });
