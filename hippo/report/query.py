@@ -198,6 +198,24 @@ class ReportRepository:
             )
             return cur.rowcount > 0
 
+    async def mark_delivery(
+        self,
+        user_id: int,
+        report_date: date,
+        channel: str,
+        status: str,
+        error: str | None = None,
+    ) -> None:
+        """Rewrite the outcome of a claimed delivery (caller commits)."""
+        async with self._conn.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE report_delivery SET status = %s, error = %s
+                WHERE user_id = %s AND report_date = %s AND channel = %s
+                """,
+                (status, error, user_id, report_date, channel),
+            )
+
     async def delivery_exists(self, user_id: int, report_date: date, channel: str) -> bool:
         async with self._conn.cursor() as cur:
             await cur.execute(

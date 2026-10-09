@@ -150,20 +150,14 @@ class RenderTest(unittest.TestCase):
         ).strftime('%H:%M')
         self.assertEqual(expected, rendered)
 
-
-if __name__ == '__main__':
-    unittest.main()
-
-
 class DeliveryIdempotencyTest(unittest.IsolatedAsyncioTestCase):
     """The ledger, not the scheduler, is what prevents a duplicate send."""
 
     async def test_the_second_claim_for_the_same_day_is_refused(self) -> None:
-        from hippo.report.delivery import deliver_once
-
         class _Reports:
             def __init__(self) -> None:
                 self.claims: set[tuple] = set()
+                self.statuses: dict[tuple, str] = {}
 
             async def record_delivery(self, user_id, report_date, channel, status, error=None):
                 key = (user_id, report_date, channel)
@@ -171,6 +165,9 @@ class DeliveryIdempotencyTest(unittest.IsolatedAsyncioTestCase):
                     return False
                 self.claims.add(key)
                 return True
+
+            async def mark_delivery(self, user_id, report_date, channel, status, error=None):
+                self.statuses[(user_id, report_date, channel)] = status
 
         reports = _Reports()
         storage = SimpleNamespace(reports=reports, transaction=lambda: _NullTransaction())
@@ -202,13 +199,22 @@ class DeliveryIdempotencyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('smtp_not_configured', first['reason'])
         self.assertEqual('already_delivered', second['reason'])
         self.assertIn((1, date(2026, 3, 1), CHANNEL_EMAIL), reports.claims)
+        # The outcome is written through the caller's storage, never a second connection.
+        self.assertEqual('skipped', reports.statuses[(1, date(2026, 3, 1), CHANNEL_EMAIL)])
 
     async def test_a_different_day_is_not_blocked(self) -> None:
         class _Reports:
+            def __init__(self) -> None:
+                self.statuses: dict[tuple, str] = {}
+
             async def record_delivery(self, *args, **kwargs):
                 return True
 
-        storage = SimpleNamespace(reports=_Reports(), transaction=lambda: _NullTransaction())
+            async def mark_delivery(self, user_id, report_date, channel, status, error=None):
+                self.statuses[(user_id, report_date, channel)] = status
+
+        reports = _Reports()
+        storage = SimpleNamespace(reports=reports, transaction=lambda: _NullTransaction())
 
         async def fake_email_settings(_):
             return {}
@@ -225,6 +231,7 @@ class DeliveryIdempotencyTest(unittest.IsolatedAsyncioTestCase):
             )
         self.assertFalse(result['sent'])
         self.assertEqual('smtp_not_configured', result['reason'])
+        self.assertEqual('skipped', reports.statuses[(1, date(2026, 3, 2), CHANNEL_EMAIL)])
 
 
 class _NullTransaction:

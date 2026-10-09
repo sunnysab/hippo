@@ -12,7 +12,7 @@ from datetime import date
 from typing import Any
 
 from ..logger import get_logger
-from ..storage import PostgresStorage, open_storage
+from ..storage import PostgresStorage
 
 logger = get_logger(__name__)
 
@@ -33,11 +33,12 @@ async def deliver_once(
 ) -> dict[str, Any]:
     """Send the report unless it was already delivered today.
 
-    The ledger row is claimed *before* the send: claiming after would let two
-    concurrent callers both send, and a failed claim is cheaper to explain than
-    a duplicate e-mail.
+    The ledger row is claimed *and committed* before the send: claiming after would
+    let two concurrent callers both send, and a failed claim is cheaper to explain
+    than a duplicate e-mail.
     """
-    claimed = await storage.reports.record_delivery(user_id, report_date, CHANNEL_EMAIL, 'pending')
+    async with storage.transaction():
+        claimed = await storage.reports.record_delivery(user_id, report_date, CHANNEL_EMAIL, 'pending')
     if not claimed:
         logger.debug('Report already delivered: user=%s date=%s', user_id, report_date.isoformat())
         return {'sent': False, 'reason': 'already_delivered'}
@@ -79,24 +80,14 @@ async def _mark(
     status: str,
     error: str | None,
 ) -> None:
-    """Update the claimed row in its own connection.
+    """Update the claimed row's outcome.
 
-    The claim ran in the caller's transaction; the outcome must survive even if
-    that transaction rolls back, so it goes through a fresh connection.
+    Goes through the caller's connection: the claim was committed before the
+    send, so this is a plain UPDATE and no second connection is involved.
     """
     try:
-        async with (
-            open_storage() as fresh,
-            fresh.transaction(),
-            fresh.conn.cursor() as cur,  # type: ignore[union-attr]
-        ):
-            await cur.execute(
-                """
-                UPDATE report_delivery SET status = %s, error = %s
-                WHERE user_id = %s AND report_date = %s AND channel = %s
-                """,
-                (status, error, user_id, report_date, CHANNEL_EMAIL),
-            )
+        async with storage.transaction():
+            await storage.reports.mark_delivery(user_id, report_date, CHANNEL_EMAIL, status, error)
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning('Failed to record report delivery status: %s', exc)
 
