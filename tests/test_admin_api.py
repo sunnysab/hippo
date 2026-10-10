@@ -185,5 +185,30 @@ class AdminGuardTest(unittest.IsolatedAsyncioTestCase):
             )
 
 
+class AdminCreateUserTest(unittest.IsolatedAsyncioTestCase):
+    async def test_a_new_account_is_verified_so_it_can_log_in(self) -> None:
+        create = AsyncMock(return_value=SimpleNamespace(id=5, username='u5', role='user'))
+        storage = SimpleNamespace(
+            transaction=lambda: _NullTransaction(),
+            users=SimpleNamespace(
+                count=AsyncMock(return_value=3),
+                get_with_password=AsyncMock(return_value=None),
+                get_by_email=AsyncMock(return_value=None),
+                create=create,
+            ),
+            audit=SimpleNamespace(record=AsyncMock()),
+        )
+        request = SimpleNamespace(headers={}, client=SimpleNamespace(host='10.0.0.1'))
+
+        await admin_api.create_user(
+            request,
+            body={'username': 'u5', 'password': 'a-good-password'},
+            actor=_user(1),
+            storage=storage,
+        )
+
+        self.assertTrue(create.await_args.kwargs['email_verified'])
+
+
 if __name__ == '__main__':
     unittest.main()

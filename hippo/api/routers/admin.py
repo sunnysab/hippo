@@ -63,7 +63,9 @@ async def create_user(
     password = str(body.get('password') or '')
     email = str(body.get('email') or '').strip() or None
     role = str(body.get('role') or 'user')
-    email_verified = bool(body.get('email_verified', email is not None and False))
+    # The admin vouches for the account and no verification mail is sent here,
+    # so a fresh account has to be usable right away.
+    email_verified = bool(body.get('email_verified', True))
 
     if not username:
         raise ApiError('用户名不能为空', status=400)

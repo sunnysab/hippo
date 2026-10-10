@@ -157,6 +157,15 @@ export function AdminPage() {
                       <td>{row.session_count}</td>
                       <td>{formatTime(row.last_login_at)}</td>
                       <td className="admin-actions">
+                        {row.email && !row.email_verified ? (
+                          <button
+                            className="btn ghost"
+                            type="button"
+                            onClick={() => void patchUser(row, { email_verified: true })}
+                          >
+                            {t('admin.user.verify', '标记已验证')}
+                          </button>
+                        ) : null}
                         <button
                           className="btn ghost"
                           type="button"

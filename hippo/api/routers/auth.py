@@ -70,7 +70,8 @@ async def login(
         password_ok = await asyncio.to_thread(verify_password, password, password_hash)
         if password_ok and candidate.is_disabled:
             raise ApiError('账号已被禁用', status=403)
-        if password_ok and not candidate.email_verified:
+        # Only addresses can be unverified; an account without one is never blocked.
+        if password_ok and candidate.email and not candidate.email_verified:
             raise ApiError('邮箱尚未验证，请先完成邮箱验证', status=403)
         authenticated = password_ok
 
