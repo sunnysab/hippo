@@ -44,6 +44,21 @@ class SyncStats:
         self.failed += other.failed
 
 
+def _split_batch_error(message: str) -> dict[str, str]:
+    """拆开 daemon 的整批错误：``<url>: <原因>; <url>: <原因>``。
+
+    ``fetch_bodies`` 整体报错时，每行都会拿到同一段拼接文本；从里面认出自己的
+    URL，才能把「这篇文章怎么了」记到对应队列项上，而不是整批共用一条（还容易被
+    1000 字符截断丢掉尾部）。格式对不上就返回空字典，调用方退回整段文本。
+    """
+    reasons: dict[str, str] = {}
+    for part in message.split('; '):
+        url, sep, reason = part.partition(': ')
+        if sep and url.startswith('http'):
+            reasons[url] = reason
+    return reasons
+
+
 class WeixinArticleSync:
     """列表入队 + 正文落库；一个实例复用一个 daemon 连接。"""
 
@@ -124,21 +139,23 @@ class WeixinArticleSync:
     async def _process_batch_inner(self, batch: list[dict[str, Any]], stats: SyncStats) -> None:
         urls = [str(row['long_link']) for row in batch]
         try:
-            bodies = await self._source.fetch_bodies(urls)
+            await self._source.fetch_bodies(urls)
         except Exception as exc:
-            await self._fail(batch, exc)
+            message = str(exc)
+            if classify_daemon_error(message) == 'session':
+                await self._fail(batch, exc)
+                return
+            reasons = _split_batch_error(message)
+            for row in batch:
+                await self._fail([row], RuntimeError(reasons.get(str(row['long_link'])) or message))
             stats.failed += len(batch)
             return
-        by_url = {body.url: body for body in bodies}
         for row in batch:
             url = str(row['long_link'])
-            body = by_url.get(url)
+            body = self._source.body_for(url)
             if body is None or not body.html:
-                diagnostic = self._source.body_error_for(url)
-                await self._fail(
-                    [row],
-                    RuntimeError(diagnostic or f'daemon response omitted body for {url}'),
-                )
+                diagnostic = self._source.body_error_for(url) or self._missing_body_reason(url, body)
+                await self._fail([row], RuntimeError(diagnostic))
                 stats.failed += 1
                 continue
             try:
@@ -151,6 +168,16 @@ class WeixinArticleSync:
                 await self._fail([row], exc)
                 stats.failed += 1
         await self._storage.commit()
+
+    @staticmethod
+    def _missing_body_reason(url: str, body: FetchedArticle | None) -> str:
+        """daemon 既没给 html 也没报错时，把能确定的事实写清楚，便于事后判因。"""
+        if body is None:
+            return f'daemon returned no article entry for {url}'
+        return (
+            f'daemon returned an empty body for {body.short_link or url}'
+            f' (title={body.title!r}, slug={body.slug!r}, images={len(body.images)})'
+        )
 
     async def _fail(self, rows: list[dict[str, Any]], exc: Exception) -> None:
         message = str(exc)

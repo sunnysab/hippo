@@ -144,6 +144,7 @@ class WeixinSource:
         self._auto_login = auto_login
         self._bot: Any = None
         self._body_errors: dict[str, str] = {}
+        self._bodies_by_key: dict[str, FetchedArticle] = {}
 
     async def __aenter__(self) -> WeixinSource:
         bot_class = load_bot_class()
@@ -238,6 +239,7 @@ class WeixinSource:
     async def fetch_bodies(self, urls: list[str]) -> list[FetchedArticle]:
         """批量抓正文（短链优先；daemon 负责节流与降级），保留每 URL 的 daemon 诊断。"""
         self._body_errors = {}
+        self._bodies_by_key = {}
         res = await self._bot.call(
             'get_article_bodies',
             {'urls': list(urls)},
@@ -249,11 +251,21 @@ class WeixinSource:
             message = str(error.get('error') or 'daemon returned an unspecified body error')
             for url in error.get('urls') or []:
                 self._body_errors[str(url)] = message
-        return [FetchedArticle.from_dict(body) for body in res.get('articles') or []]
+        articles = [FetchedArticle.from_dict(body) for body in res.get('articles') or []]
+        for article in articles:
+            # daemon 回答时可能已经把长链归一化成短链，两个身份都建索引
+            for key in (article.url, article.short_link, article.slug, query_param(article.url, 'sn')):
+                if key:
+                    self._bodies_by_key.setdefault(key, article)
+        return articles
 
     def body_error_for(self, url: str) -> str | None:
         """返回 daemon 对这条 URL 的原始诊断文本；不从错误串推断微信侧原因。"""
         return self._body_errors.get(url)
+
+    def body_for(self, url: str) -> FetchedArticle | None:
+        """按任一身份取回正文，避免把 daemon 归一化过的 URL 误判成「没给正文」。"""
+        return self._bodies_by_key.get(url) or self._bodies_by_key.get(query_param(url, 'sn') or '')
 
     async def search_public_accounts(self, keyword: str, offset: int = 0) -> list[dict[str, Any]]:
         """搜公众号（daemon `search_biz`）：返回 H5 搜索结果里的 ``gh_`` 对象列表。"""
