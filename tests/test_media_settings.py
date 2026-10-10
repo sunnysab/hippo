@@ -78,7 +78,8 @@ class MediaSettingsNormalizeTest(unittest.TestCase):
         settings = normalize_media_settings({'chunk_seconds': 120, 'min_tail_seconds': 300, 'max_chunk_seconds': 60})
 
         self.assertEqual(120, settings['min_tail_seconds'])
-        self.assertEqual(120, settings['max_chunk_seconds'])
+        # 上限必须给「把短尾并入前一片」留出空间（media/audio.py）。
+        self.assertEqual(240, settings['max_chunk_seconds'])
 
     def test_secrets_are_stripped_but_kept(self) -> None:
         settings = normalize_media_settings({'asr_api_key': '  secret  ', 'bilibili_cookie': None})

@@ -37,6 +37,9 @@ _DEFAULT_ENDPOINTS: dict[str, str] = {
 #: Bounds keep a typo in the console from turning into a request that can never
 #: finish, or an upload we would have to keep alive forever.
 _CHUNK_SECONDS_RANGE = (30, 600)
+#: A join of the last two chunks must fit, so this ceiling is allowed past the
+#: chunk range; see `split()` in media/audio.py.
+_MAX_CHUNK_SECONDS_RANGE = (30, 1200)
 _TAIL_SECONDS_RANGE = (0, 300)
 _CONCURRENCY_RANGE = (1, 4)
 _ITEMS_PER_SYNC_RANGE = (1, 50)
@@ -161,7 +164,7 @@ def normalize_media_settings(values: Any, *, current: dict[str, Any] | None = No
     base['asr_max_new_tokens'] = _as_int(base['asr_max_new_tokens'], 2048, (128, 32768))
     base['chunk_seconds'] = _as_int(base['chunk_seconds'], 300, _CHUNK_SECONDS_RANGE)
     base['min_tail_seconds'] = _as_int(base['min_tail_seconds'], 60, _TAIL_SECONDS_RANGE)
-    base['max_chunk_seconds'] = _as_int(base['max_chunk_seconds'], 500, _CHUNK_SECONDS_RANGE)
+    base['max_chunk_seconds'] = _as_int(base['max_chunk_seconds'], 500, _MAX_CHUNK_SECONDS_RANGE)
     base['concurrency'] = _as_int(base['concurrency'], 1, _CONCURRENCY_RANGE)
     base['items_per_sync'] = _as_int(base['items_per_sync'], 5, _ITEMS_PER_SYNC_RANGE)
     base['max_duration_seconds'] = _as_int(base['max_duration_seconds'], 14400, _MAX_DURATION_SECONDS_RANGE)
@@ -171,9 +174,10 @@ def normalize_media_settings(values: Any, *, current: dict[str, Any] | None = No
     base['bilibili_cc_subtitle'] = _as_bool(base['bilibili_cc_subtitle'], True)
     for key in (*_SECRETS, *_PROXIES, 'youtube_cookies_file'):
         base[key] = _as_text(base[key])
-    # A chunk cannot be longer than the ceiling that protects the token budget.
+    # A short tail is joined onto the previous chunk rather than submitted on
+    # its own, so the ceiling has to leave room for that join (media/audio.py).
     base['min_tail_seconds'] = min(base['min_tail_seconds'], base['chunk_seconds'])
-    base['max_chunk_seconds'] = max(base['max_chunk_seconds'], base['chunk_seconds'])
+    base['max_chunk_seconds'] = max(base['max_chunk_seconds'], base['chunk_seconds'] + base['min_tail_seconds'])
     return base
 
 
