@@ -135,3 +135,40 @@
   line-height: 1.5;
   white-space: pre-wrap;
 }
+
+/* Per-tier reachability from the media page's "test connection" button. */
+.admin-probe-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.admin-probe-list li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.admin-probe-list li.is-ok strong {
+  color: var(--success);
+}
+
+.admin-probe-list li.is-failed strong {
+  color: var(--danger);
+}
+
+.admin-probe-list li strong {
+  min-width: 72px;
+}
+
+.admin-probe-list li span {
+  color: var(--muted);
+  word-break: break-all;
+}

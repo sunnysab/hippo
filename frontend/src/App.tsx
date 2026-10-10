@@ -20,6 +20,7 @@ import { AccountPanel } from './pages/settings/AccountPanel';
 import { AdminPage } from './pages/admin/AdminPage';
 import { AdminLayout } from './pages/admin/AdminLayout';
 import { AdminLlmPage } from './pages/admin/AdminLlmPage';
+import { AdminMediaPage } from './pages/admin/AdminMediaPage';
 import { AdminSitePage } from './pages/admin/AdminSitePage';
 import { AdminLogPage } from './pages/admin/AdminLogPage';
 import { AdminSyncPage } from './pages/admin/AdminSyncPage';
@@ -96,6 +97,7 @@ function AppRoutes() {
                     <Route path="sync" element={<AdminSyncPage />} />
                     <Route path="login" element={<AdminLoginPage />} />
                     <Route path="llm" element={<AdminLlmPage />} />
+                    <Route path="media" element={<AdminMediaPage />} />
                     <Route path="site" element={<AdminSitePage />} />
                     <Route path="log" element={<AdminLogPage />} />
                   </Route>

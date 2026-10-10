@@ -13,11 +13,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Body, Depends, Query, Request, status
 
 from ...config import LOG_TAIL_LINES, SIGNOZ_URL
 from ...exceptions import ApiError
+from ...media_settings import ASR_TIERS, get_media_settings, set_media_settings
 from ...models import User
+from ...repositories.llm import mask_key
 from ...security import hash_password
 from ...site_settings import get_site_settings, set_site_settings
 from ...storage import PostgresStorage
@@ -245,6 +248,111 @@ async def update_site_settings(
                 ip=client_ip(request),
             )
     return settings
+
+
+#: Characters a masked secret is rendered with. A submitted value containing one
+#: is the round-tripped mask, not a new secret, and must not overwrite the stored
+#: value with bullets.
+_MASK_CHARACTERS = '•'
+
+
+def _public_media_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    """Serialisable form: secrets are masked, never echoed whole."""
+    public = dict(settings)
+    for key in ('asr_api_key', 'bilibili_cookie'):
+        public[key] = mask_key(str(settings.get(key) or ''))
+        public[f'{key}_set'] = bool(str(settings.get(key) or '').strip())
+    public['asr_endpoints'] = dict(settings.get('asr_endpoints') or {})
+    return public
+
+
+def _without_round_tripped_masks(body: dict[str, Any]) -> dict[str, Any]:
+    """Drop secret fields that still hold the mask the console displayed."""
+    cleaned: dict[str, Any] = {}
+    for key, value in body.items():
+        if isinstance(value, str) and _MASK_CHARACTERS in value:
+            continue
+        cleaned[key] = value
+    return cleaned
+
+
+@router.get('/admin/media')
+async def read_media_settings(
+    _: User = Depends(require_admin),
+    storage: PostgresStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Media sources and transcription backend, with secrets masked."""
+    return _public_media_settings(await get_media_settings(storage))
+
+
+@router.patch('/admin/media')
+async def update_media_settings(
+    request: Request,
+    body: dict[str, Any] = Body(default={}),
+    actor: User = Depends(require_admin),
+    storage: PostgresStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Merge media settings; a field left at its mask keeps the stored value."""
+    before = _public_media_settings(await get_media_settings(storage))
+    settings = await set_media_settings(storage, _without_round_tripped_masks(body))
+    after = _public_media_settings(settings)
+    changed = {key: value for key, value in after.items() if before.get(key) != value}
+    if changed:
+        async with storage.transaction():
+            await storage.audit.record(
+                actor.id,
+                'admin.media_settings_updated',
+                detail=changed,
+                ip=client_ip(request),
+            )
+    return after
+
+
+#: Probe budget. The console wants a fast answer, not the slowest upstream.
+_PROBE_TIMEOUT = 5.0
+
+
+def _health_url(endpoint: str) -> str:
+    """``…:8317/v1`` → ``…:8317/health`` (what the CrispASR server exposes)."""
+    base = endpoint.strip().rstrip('/')
+    if base.endswith('/v1'):
+        base = base[: -len('/v1')]
+    return f'{base}/health'
+
+
+async def _probe_asr_tier(tier: str, settings: dict[str, Any]) -> dict[str, Any]:
+    endpoint = str((settings.get('asr_endpoints') or {}).get(tier) or '').strip()
+    if not endpoint:
+        return {'tier': tier, 'ok': False, 'detail': '未配置端点'}
+    url = _health_url(endpoint)
+    try:
+        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
+            response = await client.get(url)
+    except httpx.HTTPError as exc:
+        return {'tier': tier, 'ok': False, 'detail': f'无法连接 {url}：{exc}'}
+    if response.status_code != 200:
+        return {'tier': tier, 'ok': False, 'detail': f'{url} 返回 HTTP {response.status_code}'}
+    try:
+        payload = response.json()
+    except ValueError:
+        return {'tier': tier, 'ok': False, 'detail': f'{url} 没返回 JSON'}
+    backend = str((payload or {}).get('backend') or '')
+    return {'tier': tier, 'ok': True, 'detail': f'backend={backend}' if backend else 'ok'}
+
+
+@router.post('/admin/media/test')
+async def test_media_settings(
+    _: User = Depends(require_admin),
+    storage: PostgresStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Probe every configured ASR tier so the console can show what is reachable.
+
+    Source-specific probes (B站 / YouTube / feed) are added by the source
+    commits, which is where the clients for them live.
+    """
+    settings = await get_media_settings(storage)
+    probes = await asyncio.gather(*(_probe_asr_tier(tier, settings) for tier in ASR_TIERS))
+    return {'asr': list(probes), 'ok': all(probe['ok'] for probe in probes)}
 
 
 #: Default audit page size. Bounded above so one request cannot scan the table.
