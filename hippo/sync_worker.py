@@ -17,6 +17,7 @@ from .models import AccountCredential
 from .observability.logging import shutdown_logging
 from .observability.metrics import instrument as metric
 from .observability.otel import init_telemetry
+from .sources import body_adapters
 from .storage import PostgresStorage, open_storage, save_meta_json
 from .sync_core import request_sync_cancel
 from .sync_service import (
@@ -35,7 +36,7 @@ from .sync_types import AccountProgress, SyncAccountResult, SyncObserver, SyncRe
 from .utils import utc_now_iso
 from .weixin_source import SessionExpiredError, WeixinSource
 from .weixin_watch import watch_article_push
-from .weixin_worker import WeixinArticleSync
+from .weixin_worker import SyncStats, WeixinArticleSync
 
 logger = get_logger(__name__)
 SERVICE_NAME = 'hippo-sync-worker'
@@ -451,7 +452,9 @@ async def drain_bodies_once(storage: PostgresStorage, *, limit: int = BODY_BATCH
         enable_images=bool(settings.get('download_images')),
     )
     async with container as app:
-        result = await app.weixin_sync.drain(limit=limit)
+        result = SyncStats()
+        for adapter in body_adapters(app.adapters):
+            result.merge(await adapter.drain(limit=limit))
         if settings.get('download_images') and app.downloader:
             with contextlib.suppress(Exception):
                 await app.downloader.wait_for_images()

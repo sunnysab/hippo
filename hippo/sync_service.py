@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -13,6 +13,7 @@ from .exceptions import SyncInterrupted
 from .file_storage import FileStorageError
 from .logger import get_logger
 from .models import AccountCredential
+from .sources import SourceAdapter, UnsupportedSource, adapter_for, body_adapters
 from .storage import PostgresStorage, open_storage
 from .sync_core import _get_cancel_event, reset_sync_cancel
 from .sync_settings import (
@@ -37,7 +38,6 @@ from .utils import (
     should_skip_by_time,
     utc_now_iso,
 )
-from .weixin_worker import WeixinArticleSync
 
 logger = get_logger(__name__)
 
@@ -71,10 +71,10 @@ class ArticleSyncService:
         self,
         *,
         storage: PostgresStorage,
-        weixin_sync: WeixinArticleSync,
+        adapters: Mapping[str, SourceAdapter],
     ) -> None:
         self._storage = storage
-        self._weixin_sync = weixin_sync
+        self._adapters = adapters
 
     async def sync_account(
         self,
@@ -147,10 +147,25 @@ class ArticleSyncService:
             )
 
         try:
-            stats = await self._weixin_sync.sync_account(
+            adapter = adapter_for(self._adapters, account.source or 'weixin')
+            stats = await adapter.sync_account(
                 biz=account.biz,
                 source_key=source_key,
                 pages=config.max_pages or 1,
+            )
+        except UnsupportedSource as exc:
+            # 没有适配器是配置问题，不是这篇的失败：跳过并说明原因，别把整轮同步拖垮。
+            return (
+                SyncAccountResult(
+                    biz=account.biz,
+                    nickname=account.nickname or account.biz,
+                    saved=0,
+                    completed=False,
+                    skipped=True,
+                    skip_reason='unsupported_source',
+                    error=str(exc),
+                ),
+                None,
             )
         except SyncInterrupted:
             raise
@@ -358,7 +373,7 @@ async def run_sync_job(
                     config = _build_sync_config(settings)
                     service = ArticleSyncService(
                         storage=storage,
-                        weixin_sync=app.weixin_sync,
+                        adapters=app.adapters,
                     )
                     try:
                         report = await service.sync_accounts(
@@ -377,9 +392,10 @@ async def run_sync_job(
                     # 列表入队完，接着把正文抓下来（节流在 daemon 侧）
                     if error is None and settings.get('download_content'):
                         job_observer.on_log('正文阶段：处理待抓队列')
-                        drained = await app.weixin_sync.drain(limit=settings.get('content_limit') or JOB_BODY_BATCH)
-                        job_observer.on_log(f'正文落库 {drained.ingested} 篇，失败 {drained.failed} 篇')
-                        report = replace(report, downloaded=report.downloaded + drained.ingested)
+                        for adapter in body_adapters(app.adapters):
+                            drained = await adapter.drain(limit=settings.get('content_limit') or JOB_BODY_BATCH)
+                            job_observer.on_log(f'正文落库 {drained.ingested} 篇，失败 {drained.failed} 篇')
+                            report = replace(report, downloaded=report.downloaded + drained.ingested)
                     if _get_cancel_event().is_set() and not error:
                         error = 'Cancelled by user'
                     if settings.get('download_images') and app.downloader:

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .downloader import ArticleDownloader
 from .file_storage import S3FileStorage
 from .http import MPClient
 from .image_store import ArticleImageService
+from .sources import SourceAdapter
+from .sources.weixin import WeixinSourceAdapter
 from .storage import PostgresStorage
 from .weixin_source import WeixinSource
 from .weixin_worker import WeixinArticleSync
@@ -23,6 +25,8 @@ class AppContainer:
     # weixin-rs 数据源：列表入队 + 正文落库（替代微信读书来源）
     weixin_source: WeixinSource | None = None
     weixin_sync: WeixinArticleSync | None = None
+    #: 按 ``accounts.source`` 选适配器。新增来源就是往这里加一项，不改同步流程。
+    adapters: dict[str, SourceAdapter] = field(default_factory=dict)
 
     async def __aenter__(self) -> AppContainer:
         await self.client.__aenter__()
@@ -75,6 +79,7 @@ def build_sync_container(
         downloader=downloader,
         weixin_source=weixin_source,
         weixin_sync=weixin_sync,
+        adapters={'weixin': WeixinSourceAdapter(weixin_sync)},
     )
 
 

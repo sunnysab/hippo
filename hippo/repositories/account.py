@@ -25,10 +25,10 @@ class AccountRepository:
         async with self._conn.cursor() as cur:
             await cur.execute(
                 """
-                INSERT INTO accounts (biz, nickname, alias, gh_id, round_head_img,
+                INSERT INTO accounts (biz, nickname, source, alias, gh_id, round_head_img,
                                       group_id, is_disabled, sync_mode, sync_recent_days,
                                       sync_interval_days, last_synced_at, backfill_state, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s)
                 ON CONFLICT (biz) DO UPDATE SET
                     nickname=EXCLUDED.nickname,
                     alias=EXCLUDED.alias,
@@ -39,6 +39,7 @@ class AccountRepository:
                 (
                     account.biz,
                     account.nickname,
+                    account.source,
                     account.alias,
                     account.gh_id,
                     account.round_head_img,

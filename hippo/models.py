@@ -15,6 +15,9 @@ class HippoBaseModel(BaseModel):
 class AccountCredential(HippoBaseModel):
     biz: str
     nickname: str
+    #: 该 biz 属于哪个来源。默认 weixin 只为让既有数据与测试继续工作：新来源必须显式给值，
+    #: 否则会被静默标成微信（见 README「数据来源与多源扩展」）。
+    source: str = 'weixin'
     alias: str | None = None
     gh_id: str | None = None
     round_head_img: str | None = None

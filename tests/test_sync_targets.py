@@ -6,6 +6,7 @@ import asyncio
 import unittest
 from types import SimpleNamespace
 
+from hippo.sources.weixin import WeixinSourceAdapter
 from hippo.sync_service import ArticleSyncService
 from hippo.sync_types import NullSyncObserver, SyncConfig
 from hippo.weixin_source import ListedArticles, QueuedArticle
@@ -78,8 +79,8 @@ class _FakeWeixinSync:
         self._stats = stats
         self.calls: list[dict] = []
 
-    async def sync_account(self, *, biz: str, source_key: str, pages: int = 1) -> SyncStats:
-        self.calls.append({'biz': biz, 'source_key': source_key, 'pages': pages})
+    async def sync_account(self, *, biz: str, source_key: str, pages: int = 1, **kwargs) -> SyncStats:
+        self.calls.append({'biz': biz, 'source_key': source_key, 'pages': pages, **kwargs})
         return self._stats
 
 
@@ -126,10 +127,11 @@ class LastSyncedTest(unittest.TestCase):
     def test_listing_writes_last_synced_at(self) -> None:
         storage = _FakeStorage()
         weixin_sync = _FakeWeixinSync(SyncStats(listed=3, enqueued=2))
-        service = ArticleSyncService(storage=storage, weixin_sync=weixin_sync)
+        service = ArticleSyncService(storage=storage, adapters={'weixin': WeixinSourceAdapter(weixin_sync)})
         account = SimpleNamespace(
             biz='MzA==',
             nickname='Demo',
+            source='weixin',
             is_disabled=False,
             last_synced_at=None,
             gh_id='gh_demo',
@@ -160,10 +162,11 @@ class LastSyncedTest(unittest.TestCase):
             async def sync_account(self, **_kwargs):
                 raise RuntimeError('daemon down')
 
-        service = ArticleSyncService(storage=storage, weixin_sync=_FailingSync())
+        service = ArticleSyncService(storage=storage, adapters={'weixin': WeixinSourceAdapter(_FailingSync())})
         account = SimpleNamespace(
             biz='MzA==',
             nickname='Demo',
+            source='weixin',
             is_disabled=False,
             last_synced_at=None,
             gh_id='gh_demo',
