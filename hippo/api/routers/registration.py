@@ -6,7 +6,6 @@ These endpoints are deliberately public: they run before a session exists.
 from __future__ import annotations
 
 import asyncio
-import re
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Request, status
@@ -18,6 +17,7 @@ from ...repositories.token import RESET_PASSWORD, RESET_TTL, VERIFY_EMAIL, VERIF
 from ...security import hash_password
 from ...site_settings import get_site_settings
 from ...storage import PostgresStorage
+from ...utils import EMAIL_RE
 from ..deps import client_ip, get_storage
 from ..ratelimit import SlidingWindowLimiter
 
@@ -28,7 +28,6 @@ router = APIRouter()
 _send_limiter = SlidingWindowLimiter(limit=5, window_seconds=900)
 
 _MIN_PASSWORD_LENGTH = 8
-_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
 
 def _public_base_url(request: Request) -> str:
@@ -93,7 +92,7 @@ async def register(
 
     if not username:
         raise ApiError('用户名不能为空', status=400)
-    if not _EMAIL_RE.match(email):
+    if not EMAIL_RE.match(email):
         raise ApiError('邮箱格式不正确', status=400)
     if len(password) < _MIN_PASSWORD_LENGTH:
         raise ApiError(f'密码至少 {_MIN_PASSWORD_LENGTH} 位', status=400)
@@ -153,7 +152,7 @@ async def reset_request(
     ip = client_ip(request)
     if not _send_limiter.allow(ip or 'unknown'):
         raise ApiError('请求过于频繁，请稍后再试', status=429)
-    if not _EMAIL_RE.match(email):
+    if not EMAIL_RE.match(email):
         raise ApiError('邮箱格式不正确', status=400)
 
     user = await storage.users.get_by_email(email)

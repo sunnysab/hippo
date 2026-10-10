@@ -167,6 +167,13 @@ class UserRepository:
                 (verified, utc_now_dt(), user_id),
             )
 
+    async def set_email(self, user_id: int, email: str | None, *, verified: bool) -> None:
+        async with self._conn.cursor() as cur:
+            await cur.execute(
+                'UPDATE users SET email = %s, email_verified = %s, updated_at = %s WHERE id = %s',
+                (email, verified, utc_now_dt(), user_id),
+            )
+
     async def set_timezone(self, user_id: int, timezone: str) -> None:
         async with self._conn.cursor() as cur:
             await cur.execute(

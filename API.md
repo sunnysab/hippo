@@ -137,10 +137,16 @@ GET  /api/auth/me      → {id, username, email, email_verified, role, timezone}
 GET  /api/auth/session → { "sessions": [ {id, created_at, expires_at, user_agent, ip}, … ] }
 POST /api/auth/session/revoke → 204，注销本账号全部会话
 POST /api/auth/password { "current_password": "…", "new_password": "…" }
+PATCH /api/auth/email  { "current_password": "…", "email": "u@example.com" }
 ```
 
 `/api/auth/password` 成功返回 `204` 并**换发新 Cookie**：改密码会吊销所有会话（包括其他设备），
 但当前这次请求会拿到一张新会话，不会被踢下线。响应里不会出现令牌哈希。
+
+`/api/auth/email` 修改接收系统邮件的地址，返回 `204`。`email` 传空串则清空邮箱。
+需要当前密码（`400`）、邮箱格式错误（`400`）、邮箱已被他人使用（`409`）。
+调用者已登录并用密码自我证明，所以新地址直接记为已验证，不会重置登录门禁（`email_verified`）；
+改动写审计（`auth.email_changed`）。
 
 ## 2. 微信登录（daemon）`/api/login`
 

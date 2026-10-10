@@ -13,6 +13,7 @@ from ...logger import get_logger
 from ...models import User
 from ...security import hash_password, verify_password
 from ...storage import PostgresStorage
+from ...utils import EMAIL_RE
 from ..deps import SESSION_COOKIE, client_ip, current_user, get_storage
 from ..ratelimit import SlidingWindowLimiter
 
@@ -150,6 +151,46 @@ async def change_password(
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     _set_session_cookie(response, token)
     return response
+
+
+@router.patch('/auth/email', status_code=status.HTTP_204_NO_CONTENT)
+async def change_email(
+    request: Request,
+    body: dict[str, Any] = Body(default={}),
+    user: User = Depends(current_user),
+    storage: PostgresStorage = Depends(get_storage),
+) -> None:
+    """Change the address this account's mail goes to.
+
+    The caller is signed in and re-confirms their password, so the new address
+    counts as verified: verification gates account activation, which is long
+    past by the time this runs, and a mistyped address must not lock anyone out.
+    """
+    email = str(body.get('email') or '').strip()
+    password = str(body.get('current_password') or '')
+
+    credentials = await storage.users.get_with_password(user.username)
+    if credentials is None or not await asyncio.to_thread(verify_password, password, credentials[1]):
+        raise ApiError('当前密码不正确', status=400)
+    if email and not EMAIL_RE.match(email):
+        raise ApiError('邮箱格式不正确', status=400)
+
+    existing = await storage.users.get_by_email(email) if email else None
+    if existing is not None and existing.id != user.id:
+        raise ApiError('邮箱已被使用', status=409)
+
+    if (email or None) == user.email:
+        return
+
+    async with storage.transaction():
+        await storage.users.set_email(user.id, email or None, verified=bool(email))
+        await storage.audit.record(
+            user.id,
+            'auth.email_changed',
+            target=user.username,
+            detail={'email': email or None},
+            ip=client_ip(request),
+        )
 
 
 @router.get('/auth/session')

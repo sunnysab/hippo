@@ -16,6 +16,7 @@ import { ArticlesPage } from './pages/articles/ArticlesPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 import { SettingsEmailRoute } from './pages/settings/SettingsEmailRoute';
 import { SettingsFilterRoute } from './pages/settings/SettingsFilterRoute';
+import { AccountPanel } from './pages/settings/AccountPanel';
 import { AdminPage } from './pages/admin/AdminPage';
 import { AdminLayout } from './pages/admin/AdminLayout';
 import { AdminLlmPage } from './pages/admin/AdminLlmPage';
@@ -79,6 +80,7 @@ function AppRoutes() {
                   <Route path="/report" element={<ReportPage />} />
                   <Route path="/settings" element={<SettingsPage />}>
                     <Route index element={<Navigate to="filter" replace />} />
+                    <Route path="account" element={<AccountPanel />} />
                     <Route path="filter" element={<SettingsFilterRoute />} />
                     <Route path="email" element={<SettingsEmailRoute />} />
                   </Route>

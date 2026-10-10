@@ -65,6 +65,12 @@ function SettingsPageContent({ initialFormState }: SettingsPageContentProps) {
 
   const navItems = [
     {
+      key: 'account',
+      path: '/settings/account',
+      title: t('settings.navAccount', '账号'),
+      summary: t('settings.navAccountSummary', '修改接收邮件的邮箱地址。'),
+    },
+    {
       key: 'filter',
       path: '/settings/filter',
       title: t('settings.navFilter', 'Filter'),

@@ -13,6 +13,9 @@ if TYPE_CHECKING:
 
 _slug_pattern = re.compile(r'[^a-z0-9-]+')
 
+#: Deliberately loose: only rejects what is obviously not an address.
+EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+
 
 def strip_nul(value: Any) -> Any:
     """去掉 NUL（``\\u0000``）：PG 的 text/jsonb 拒收，而微信的 title/digest 偶尔带一个。"""
