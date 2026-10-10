@@ -5,7 +5,6 @@ import { useToast } from '../../hooks/useToast';
 
 interface MediaSettings {
   enabled: boolean;
-  asr_protocol: string;
   asr_tier: string;
   asr_endpoints: Record<string, string>;
   asr_api_key: string;
@@ -39,7 +38,6 @@ interface ProbeResult {
 
 const EMPTY: MediaSettings = {
   enabled: true,
-  asr_protocol: 'crispasr-server',
   asr_tier: 'accurate',
   asr_endpoints: { accurate: '', fast: '' },
   asr_api_key: '',
@@ -66,7 +64,6 @@ const EMPTY: MediaSettings = {
 };
 
 const BITRATES = ['original', '64k', '96k', '128k', '192k', '256k'];
-const PROTOCOLS = ['crispasr-server', 'openai'];
 const TIERS = ['accurate', 'fast'];
 
 /** Normalise the payload so a missing key from the API cannot blank a field. */
@@ -170,18 +167,6 @@ export function AdminMediaPage() {
         </label>
 
         <div className="form-grid">
-          <label className="auth-field">
-            <span>{t('admin.media.protocol', '协议')}</span>
-            <select
-              className="input"
-              value={settings.asr_protocol}
-              onChange={(event) => void save({ asr_protocol: event.target.value })}
-            >
-              {PROTOCOLS.map((value) => (
-                <option key={value} value={value}>{value}</option>
-              ))}
-            </select>
-          </label>
           <label className="auth-field">
             <span>{t('admin.media.tier', '默认档位')}</span>
             <select

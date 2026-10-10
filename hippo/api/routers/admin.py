@@ -18,6 +18,7 @@ from fastapi import APIRouter, Body, Depends, Query, Request, status
 
 from ...config import LOG_TAIL_LINES, SIGNOZ_URL
 from ...exceptions import ApiError
+from ...media.asr import health_url
 from ...media_settings import ASR_TIERS, get_media_settings, set_media_settings
 from ...models import User
 from ...repositories.llm import mask_key
@@ -312,19 +313,11 @@ async def update_media_settings(
 _PROBE_TIMEOUT = 5.0
 
 
-def _health_url(endpoint: str) -> str:
-    """``…:8317/v1`` → ``…:8317/health`` (what the CrispASR server exposes)."""
-    base = endpoint.strip().rstrip('/')
-    if base.endswith('/v1'):
-        base = base[: -len('/v1')]
-    return f'{base}/health'
-
-
 async def _probe_asr_tier(tier: str, settings: dict[str, Any]) -> dict[str, Any]:
     endpoint = str((settings.get('asr_endpoints') or {}).get(tier) or '').strip()
     if not endpoint:
         return {'tier': tier, 'ok': False, 'detail': '未配置端点'}
-    url = _health_url(endpoint)
+    url = health_url(endpoint)
     try:
         async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
             response = await client.get(url)

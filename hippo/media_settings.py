@@ -19,10 +19,6 @@ from .storage import PostgresStorage, load_meta_json, save_meta_json
 
 MEDIA_SETTINGS_KEY = 'media:settings'
 
-#: Wire protocols hippo knows how to call. ``crispasr-server`` is what we run in
-#: production; plain ``openai`` is kept for pointing at any compatible endpoint.
-ASR_PROTOCOLS = ('crispasr-server', 'openai')
-
 #: Tier names, cheapest-to-trust first. `accurate` is the default.
 ASR_TIERS = ('accurate', 'fast')
 
@@ -58,7 +54,6 @@ _SECRETS = ('asr_api_key', 'bilibili_cookie')
 def default_media_settings() -> dict[str, Any]:
     return {
         'enabled': True,
-        'asr_protocol': 'crispasr-server',
         'asr_tier': TIER_ACCURATE,
         'asr_endpoints': dict(_DEFAULT_ENDPOINTS),
         'asr_api_key': '',
@@ -153,7 +148,6 @@ def normalize_media_settings(values: Any, *, current: dict[str, Any] | None = No
             base[key] = value
 
     base['enabled'] = _as_bool(base['enabled'], True)
-    base['asr_protocol'] = _as_choice(base['asr_protocol'], ASR_PROTOCOLS, 'crispasr-server')
     base['asr_tier'] = _as_choice(base['asr_tier'], ASR_TIERS, TIER_ACCURATE)
     endpoints = _normalize_endpoints(base['asr_endpoints'], current=dict(_DEFAULT_ENDPOINTS))
     if 'asr_endpoints' in stored:
@@ -205,7 +199,6 @@ def asr_endpoint(settings: dict[str, Any], tier: str) -> str:
 
 
 __all__ = [
-    'ASR_PROTOCOLS',
     'ASR_TIERS',
     'BITRATES',
     'MEDIA_SETTINGS_KEY',

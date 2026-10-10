@@ -97,20 +97,6 @@ class MediaSettingsEndpointTest(unittest.IsolatedAsyncioTestCase):
         storage.audit.record.assert_not_awaited()
 
 
-class HealthUrlTest(unittest.TestCase):
-    def test_v1_is_stripped_before_health(self) -> None:
-        self.assertEqual(
-            'http://192.168.130.202:8317/health',
-            admin_api._health_url('http://192.168.130.202:8317/v1/'),
-        )
-
-    def test_an_endpoint_without_v1_is_kept(self) -> None:
-        self.assertEqual(
-            'http://asr.internal:9000/health',
-            admin_api._health_url('http://asr.internal:9000'),
-        )
-
-
 class _FakeResponse:
     def __init__(self, status_code: int, payload):
         self.status_code = status_code

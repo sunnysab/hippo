@@ -19,7 +19,6 @@ class MediaSettingsDefaultsTest(unittest.TestCase):
         settings = default_media_settings()
 
         self.assertTrue(settings['enabled'])
-        self.assertEqual('crispasr-server', settings['asr_protocol'])
         # Accuracy is the default: a wrong transcript costs more than a slow one.
         self.assertEqual('accurate', settings['asr_tier'])
         self.assertEqual(

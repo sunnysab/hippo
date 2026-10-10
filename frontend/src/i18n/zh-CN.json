@@ -469,7 +469,6 @@
   "admin.media.test": "测试连接",
   "admin.media.testing": "测试中…",
   "admin.media.enabled": "启用媒体来源与转写",
-  "admin.media.protocol": "协议",
   "admin.media.tier": "默认档位",
   "admin.media.endpoint": "端点",
   "admin.media.apiKey": "API Key",
