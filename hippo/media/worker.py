@@ -16,11 +16,11 @@ from typing import Any
 
 from ..logger import get_logger
 from ..media_settings import get_media_settings
+from ..sources.registry import build_media_sources
 from ..storage import PostgresStorage
 from .asr import AsrError, client_for
 from .audio import AudioError
 from .pipeline import (
-    DirectMediaResolver,
     MediaJobFailure,
     MediaJobSkipped,
     MediaResolver,
@@ -139,14 +139,24 @@ async def drain_media_once(
 
 
 async def run_media_once(*, storage: PostgresStorage, limit: int = 1) -> MediaBatchResult:
-    """One round with the settings and resolver the worker would use."""
+    """One round with the settings and resolver the worker would use.
+
+    The sources are rebuilt every round so a changed cookie or endpoint takes
+    effect without restarting the worker.
+    """
     settings = await get_media_settings(storage)
-    return await drain_media_once(
-        storage=storage,
-        settings=settings,
-        resolver=DirectMediaResolver(),
-        limit=limit,
-    )
+    if not settings.get('enabled'):
+        return MediaBatchResult()
+    sources = await build_media_sources(storage=storage, settings=settings)
+    try:
+        return await drain_media_once(
+            storage=storage,
+            settings=settings,
+            resolver=sources.resolver_registry(),
+            limit=limit,
+        )
+    finally:
+        await sources.aclose()
 
 
 __all__ = ['MAX_CONSECUTIVE_INFRA_FAILURES', 'MediaBatchResult', 'drain_media_once', 'run_media_once']

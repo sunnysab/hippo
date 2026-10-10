@@ -12,6 +12,7 @@ from .container import build_sync_container
 from .exceptions import SyncInterrupted
 from .file_storage import FileStorageError
 from .logger import get_logger
+from .media_settings import get_media_settings
 from .models import AccountCredential
 from .sources import SourceAdapter, UnsupportedSource, adapter_for, body_adapters
 from .storage import PostgresStorage, open_storage
@@ -352,6 +353,7 @@ async def run_sync_job(
         accounts: list[AccountCredential] = []
         try:
             # 抓取由订阅驱动：账号只要还有人关注就继续拉，没人订阅就停抓、保留数据。
+            media_settings = await get_media_settings(storage)
             accounts = await storage.accounts.list_syncable_accounts(
                 group_ids=[group_id] if group_id is not None else None,
                 biz_list=biz_list,
@@ -364,6 +366,7 @@ async def run_sync_job(
                     storage=storage,
                     enable_download=bool(settings.get('download_content')),
                     enable_images=bool(settings.get('download_images')),
+                    media_settings=media_settings,
                 )
             except FileStorageError as exc:
                 error = str(exc)

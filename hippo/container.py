@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -10,6 +11,7 @@ from .file_storage import S3FileStorage
 from .http import MPClient
 from .image_store import ArticleImageService
 from .sources import SourceAdapter
+from .sources.registry import MediaSources
 from .sources.weixin import WeixinSourceAdapter
 from .storage import PostgresStorage
 from .weixin_source import WeixinSource
@@ -27,9 +29,13 @@ class AppContainer:
     weixin_sync: WeixinArticleSync | None = None
     #: 按 ``accounts.source`` 选适配器。新增来源就是往这里加一项，不改同步流程。
     adapters: dict[str, SourceAdapter] = field(default_factory=dict)
+    #: 媒体来源的 HTTP 客户端（B站等），随容器一起关闭。
+    media_sources: MediaSources | None = None
 
     async def __aenter__(self) -> AppContainer:
         await self.client.__aenter__()
+        if self.media_sources:
+            pass
         if self.weixin_source:
             await self.weixin_source.__aenter__()
         if self.downloader:
@@ -37,6 +43,8 @@ class AppContainer:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+        if self.media_sources:
+            await self.media_sources.aclose()
         if self.downloader:
             await self.downloader.__aexit__(exc_type, exc, tb)
         if self.weixin_source:
@@ -49,6 +57,7 @@ def build_sync_container(
     storage: PostgresStorage,
     enable_download: bool,
     enable_images: bool,
+    media_settings: Mapping[str, Any] | None = None,
 ) -> AppContainer:
     client = MPClient()
     weixin_source = WeixinSource()
@@ -72,6 +81,13 @@ def build_sync_container(
         source=weixin_source,
         downloader=downloader,
     )
+    media_sources = MediaSources(storage=storage, settings=media_settings or {})
+    adapters: dict[str, SourceAdapter] = {'weixin': WeixinSourceAdapter(weixin_sync)}
+    if media_settings and not media_settings.get('enabled', True):
+        # 总开关关掉时连适配器都不注册：订阅里的媒体账号会被报成「没有适配器」。
+        media_sources = None
+    elif media_sources:
+        adapters.update(media_sources.adapters)
     return AppContainer(
         storage=storage,
         client=client,
@@ -79,7 +95,8 @@ def build_sync_container(
         downloader=downloader,
         weixin_source=weixin_source,
         weixin_sync=weixin_sync,
-        adapters={'weixin': WeixinSourceAdapter(weixin_sync)},
+        adapters=adapters,
+        media_sources=media_sources,
     )
 
 

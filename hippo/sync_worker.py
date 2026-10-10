@@ -13,6 +13,7 @@ from typing import Any
 
 from .container import build_sync_container
 from .logger import get_logger
+from .media_settings import get_media_settings
 from .models import AccountCredential
 from .observability.logging import shutdown_logging
 from .observability.metrics import instrument as metric
@@ -450,6 +451,7 @@ async def drain_bodies_once(storage: PostgresStorage, *, limit: int = BODY_BATCH
         storage=storage,
         enable_download=False,
         enable_images=bool(settings.get('download_images')),
+        media_settings=await get_media_settings(storage),
     )
     async with container as app:
         result = SyncStats()
