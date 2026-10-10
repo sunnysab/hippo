@@ -37,7 +37,6 @@ _CHUNK_SECONDS_RANGE = (30, 600)
 #: chunk range; see `split()` in media/audio.py.
 _MAX_CHUNK_SECONDS_RANGE = (30, 1200)
 _TAIL_SECONDS_RANGE = (0, 300)
-_CONCURRENCY_RANGE = (1, 4)
 _ITEMS_PER_SYNC_RANGE = (1, 50)
 _TIMEOUT_SECONDS_RANGE = (30, 3600)
 _MAX_DURATION_SECONDS_RANGE = (60, 86400)
@@ -67,7 +66,8 @@ def default_media_settings() -> dict[str, Any]:
         #: into the previous chunk instead (PLAN §5.3).
         'min_tail_seconds': 60,
         'max_chunk_seconds': 500,
-        'concurrency': 1,
+        #: The queue is drained one job at a time (the ASR server serialises inference
+        #: anyway), so there is no concurrency setting to get wrong.
         #: Cost gate: how many new items one channel may enqueue per sync.
         'items_per_sync': 5,
         'max_duration_seconds': 14400,
@@ -159,7 +159,6 @@ def normalize_media_settings(values: Any, *, current: dict[str, Any] | None = No
     base['chunk_seconds'] = _as_int(base['chunk_seconds'], 300, _CHUNK_SECONDS_RANGE)
     base['min_tail_seconds'] = _as_int(base['min_tail_seconds'], 60, _TAIL_SECONDS_RANGE)
     base['max_chunk_seconds'] = _as_int(base['max_chunk_seconds'], 500, _MAX_CHUNK_SECONDS_RANGE)
-    base['concurrency'] = _as_int(base['concurrency'], 1, _CONCURRENCY_RANGE)
     base['items_per_sync'] = _as_int(base['items_per_sync'], 5, _ITEMS_PER_SYNC_RANGE)
     base['max_duration_seconds'] = _as_int(base['max_duration_seconds'], 14400, _MAX_DURATION_SECONDS_RANGE)
     base['transcribe_max_attempts'] = _as_int(base['transcribe_max_attempts'], 3, _ATTEMPTS_RANGE)

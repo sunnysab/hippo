@@ -15,7 +15,6 @@ interface MediaSettings {
   chunk_seconds: number;
   min_tail_seconds: number;
   max_chunk_seconds: number;
-  concurrency: number;
   items_per_sync: number;
   max_duration_seconds: number;
   transcribe_max_attempts: number;
@@ -48,7 +47,6 @@ const EMPTY: MediaSettings = {
   chunk_seconds: 300,
   min_tail_seconds: 60,
   max_chunk_seconds: 500,
-  concurrency: 1,
   items_per_sync: 5,
   max_duration_seconds: 14400,
   transcribe_max_attempts: 3,
@@ -273,15 +271,6 @@ export function AdminMediaPage() {
               type="number"
               defaultValue={settings.max_duration_seconds}
               onBlur={(event) => saveNumber('max_duration_seconds', event.target.value)}
-            />
-          </label>
-          <label className="auth-field">
-            <span>{t('admin.media.concurrency', '转写并发')}</span>
-            <input
-              className="input"
-              type="number"
-              defaultValue={settings.concurrency}
-              onBlur={(event) => saveNumber('concurrency', event.target.value)}
             />
           </label>
           <label className="auth-field">

@@ -51,6 +51,11 @@ BACKFILL_PAGE_PAUSE_SECONDS = 1.5
 # 图片走普通 HTTPS CDN，和正文的客户端协议不是同一个风控池，但同样不能无节制抓。
 IMAGE_BATCH = 30
 IMAGE_WORKERS = 2
+
+#: 一轮转写接活的条数。一条 20 分钟的视频在 80 线程上要跑十几分钟，所以批量恒为 1；
+#: 真正的节流来自这里 —— 空闲时每 MEDIA_POLL_SECONDS 醒一次，忙时根本走不到 sleep。
+MEDIA_BATCH = 1
+MEDIA_POLL_SECONDS = 30.0
 IMAGE_POLL_SECONDS = 120.0
 
 # 心跳/队列水位的进程内写库节流（多个循环都会调）
@@ -498,6 +503,40 @@ async def _image_backfill_loop(
         await asyncio.sleep(max(float(poll_interval), 5.0))
 
 
+async def transcribe_media_once(storage: PostgresStorage, *, limit: int = MEDIA_BATCH) -> int:
+    """转写一批待办，返回本轮处理的条数（含失败与跳过）。
+
+    媒体转写的排队与节流都在 media 包里，这里只负责在常驻循环里定期叫它一次。
+    """
+    from .media.worker import run_media_once
+
+    result = await run_media_once(storage=storage, limit=limit)
+    if result.done:
+        metric('counter', 'hippo.media.transcribed', unit='{article}').add(result.done)
+    if result.failed:
+        metric('counter', 'hippo.media.transcribe_failed', unit='{article}').add(result.failed)
+    if result.unavailable:
+        logger.warning('转写服务不可用，本轮暂停：%s', result.unavailable)
+    return result.handled
+
+
+async def _media_job_loop(
+    batch: int = MEDIA_BATCH,
+    poll_interval: float = MEDIA_POLL_SECONDS,
+) -> None:
+    """常驻转写循环：与正文抓取、图片回填并行，慢但不阻塞它们。"""
+    while True:
+        try:
+            async with open_storage() as storage:
+                await publish_worker_state(storage)
+                await transcribe_media_once(storage, limit=batch)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('转写轮次失败')
+        await asyncio.sleep(max(float(poll_interval), 5.0))
+
+
 async def wait_for_daemon_login(poll: float = 30.0) -> None:
     """轮询 daemon `get_status`（过期态也可查），登录回来才返回。"""
     while True:
@@ -543,6 +582,7 @@ async def run_sync_worker(
     # 不能拖住主循环里「入队新文章 / 执行同步 job」的响应。
     drain_task = asyncio.create_task(_body_drain_loop(drain_interval))
     image_task = asyncio.create_task(_image_backfill_loop())
+    media_task = asyncio.create_task(_media_job_loop())
     # 实时通道：daemon 推 article_push 时立刻入队（列表轮询仍然是兜底）
     watch_task = asyncio.create_task(watch_article_push())
     try:
@@ -567,7 +607,7 @@ async def run_sync_worker(
                 continue
             await asyncio.sleep(max(float(poll_interval), 0.2))
     finally:
-        for task in (drain_task, image_task, watch_task):
+        for task in (drain_task, image_task, media_task, watch_task):
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task

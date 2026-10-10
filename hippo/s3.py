@@ -86,6 +86,9 @@ def guess_extension(content_type: str | None) -> str:
         'image/webp': 'webp',
         'image/bmp': 'bmp',
         'image/svg+xml': 'svg',
+        'audio/mpeg': 'mp3',
+        'audio/mp4': 'm4a',
+        'audio/x-m4a': 'm4a',
     }
     return mapping.get(trimmed, 'bin')
 

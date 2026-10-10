@@ -1,0 +1,263 @@
+"""The transcription pipeline, with the network, ffmpeg, S3 and the model faked out.
+
+What is worth pinning down: the two paths (ready-made subtitle vs ASR), the
+skips that must not become failures, and that a bad transcript is retried on
+*different* input rather than the same audio again.
+"""
+
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import AsyncMock, patch
+
+from hippo.media import audio as audio_module
+from hippo.media import pipeline as pipeline_module
+from hippo.media.asr import Transcript
+from hippo.media.pipeline import (
+    MediaJobFailure,
+    MediaJobSkipped,
+    ResolvedMedia,
+    Subtitle,
+    transcribe_job,
+)
+from hippo.media_settings import default_media_settings
+
+_ARTICLE = {
+    'biz': 'podcast:abc',
+    'article_id': 'ep1',
+    'title': '一期播客',
+    'item_show_type': None,
+    'author': '某人',
+    'digest': None,
+    'cover': None,
+    'link': 'https://example.test/ep1',
+    'source_url': None,
+    'publish_at': 1,
+    'raw': {},
+}
+
+_SENTENCE = '这是一段用于校验切分的中文句子，长度适中。'
+
+
+def _text(chars: int) -> str:
+    return (_SENTENCE * (chars // len(_SENTENCE) + 1))[:chars]
+
+
+class _FakeStorage:
+    def __init__(self) -> None:
+        self.progress: list[dict] = []
+        self.saved: list[dict] = []
+        self.commits = 0
+        self.media_jobs = AsyncMock()
+        self.media_jobs.update_progress = AsyncMock(side_effect=lambda *a, **k: self.progress.append(k))
+        self.media_assets = AsyncMock()
+        self.articles = AsyncMock()
+        self.articles.save_article_content = AsyncMock(side_effect=self._save)
+
+    async def _save(self, article, **kwargs):
+        self.saved.append(kwargs)
+        return 1
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+
+class _FakeTranscriber:
+    def __init__(self, responses: list[str]) -> None:
+        self._responses = list(responses)
+        self.calls = 0
+        self.max_new_tokens = 2048
+
+    async def transcribe(self, path, **_kwargs) -> Transcript:
+        self.calls += 1
+        text = self._responses.pop(0) if self._responses else ''
+        return Transcript(text=text, segments=[], language='zh')
+
+    async def aclose(self) -> None:
+        return None
+
+
+class _Resolver:
+    def __init__(self, media: ResolvedMedia) -> None:
+        self._media = media
+
+    async def resolve(self, job) -> ResolvedMedia:
+        return self._media
+
+
+def _run(storage, media, *, transcriber=None, settings=None, chunk_seconds=300.0):
+    settings = settings or default_media_settings()
+    return transcribe_job(
+        storage=storage,
+        job={'id': 1, 'article_pk': 7, 'source': 'podcast', 'media_url': 'https://host/ep.mp3'},
+        settings=settings,
+        resolver=_Resolver(media),
+        transcriber=transcriber,
+    )
+
+
+class SplitParagraphsTest(unittest.TestCase):
+    def test_sentences_are_grouped_and_timed_proportionally(self) -> None:
+        paragraphs = pipeline_module.split_paragraphs(_text(600), 300.0)
+
+        self.assertGreater(len(paragraphs), 1)
+        self.assertEqual(0.0, paragraphs[0][0])
+        # Timestamps increase and stay inside the chunk.
+        starts = [start for start, _ in paragraphs]
+        self.assertEqual(sorted(starts), starts)
+        self.assertLess(starts[-1], 300.0)
+        # 分组只会在「加上下一句会超长」时断开，所以最多超出一句。
+        self.assertLessEqual(
+            max(len(text) for _, text in paragraphs),
+            pipeline_module.TARGET_PARAGRAPH_CHARS + len(_SENTENCE),
+        )
+
+    def test_empty_text_has_no_paragraphs(self) -> None:
+        self.assertEqual([], pipeline_module.split_paragraphs('   ', 300.0))
+
+
+class TranscribeJobTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self._dir = TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.workdir = Path(self._dir.name)
+        self.chunk = self.workdir / 'part-000.mp3'
+        self.chunk.write_bytes(b'audio')
+        self.storage = _FakeStorage()
+        self.article = patch(
+            'hippo.media.pipeline._load_article',
+            new=AsyncMock(return_value=pipeline_module.ArticleRecord(**_ARTICLE)),
+        )
+        self.load = self.article.start()
+        self.addCleanup(self.article.stop)
+
+    def _patch_audio(self, chunks=None):
+        return patch.multiple(
+            pipeline_module.audio_module,
+            prepare=lambda *a, **k: (
+                chunks
+                if chunks is not None
+                else [audio_module.Chunk(index=0, path=self.chunk, start_seconds=0.0, duration_seconds=300.0)]
+            ),
+            probe_duration=lambda path: 300.0,
+            # 下载被 patch 掉了，source 文件不存在，归档用的 ffmpeg 也得跟着假掉。
+            archive=lambda *a, **k: None,
+        )
+
+    async def test_a_chunk_becomes_timestamped_paragraphs(self) -> None:
+        transcriber = _FakeTranscriber([_text(1900)])
+        with (
+            self._patch_audio(),
+            patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1234)),
+            patch('hippo.media.pipeline.archive_module.store_audio', new=lambda **k: ('media/audio/7.mp3', 10)),
+        ):
+            outcome = await _run(self.storage, ResolvedMedia(audio_url='https://host/ep.mp3'), transcriber=transcriber)
+
+        self.assertEqual(7, outcome['article_pk'])
+        self.assertTrue(outcome['archived'])
+        blocks = self.storage.saved[0]['content_blocks']
+        self.assertEqual('audio', blocks[0]['type'])
+        self.assertEqual('/api/media/7/audio', blocks[0]['url'])
+        self.assertEqual('paragraph', blocks[1]['type'])
+        self.assertIn('t', blocks[1])
+        # Markdown is what search sees, so it stays free of timestamps.
+        self.assertNotIn('**[', self.storage.saved[0]['content_markdown'])
+        self.assertFalse(self.storage.saved[0]['replace_images'])
+
+    async def test_a_ready_made_subtitle_skips_the_asr(self) -> None:
+        transcriber = _FakeTranscriber([])
+        media = ResolvedMedia(
+            subtitle=Subtitle(blocks=[{'type': 'paragraph', 'text': '字幕', 't': 0}], markdown='字幕'),
+        )
+        with patch('hippo.media.pipeline._download', new=AsyncMock()) as download:
+            await _run(self.storage, media, transcriber=transcriber)
+
+        download.assert_not_awaited()
+        self.assertEqual(0, transcriber.calls)
+        self.assertEqual([{'type': 'paragraph', 'text': '字幕', 't': 0}], self.storage.saved[0]['content_blocks'])
+
+    async def test_an_entry_without_audio_is_skipped(self) -> None:
+        with self.assertRaises(MediaJobSkipped):
+            await _run(self.storage, ResolvedMedia())
+
+    async def test_a_too_long_recording_is_skipped_after_the_duration_is_known(self) -> None:
+        settings = default_media_settings()
+        settings['max_duration_seconds'] = 60
+        with (
+            self._patch_audio(),
+            patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1)),
+            self.assertRaises(MediaJobSkipped),
+        ):
+            await _run(self.storage, ResolvedMedia(audio_url='https://host/long.mp3'), settings=settings)
+
+    async def test_a_repetition_loop_is_retried_as_two_halves(self) -> None:
+        halves = [
+            audio_module.Chunk(index=0, path=self.chunk, start_seconds=0.0, duration_seconds=150.0),
+            audio_module.Chunk(index=1, path=self.chunk, start_seconds=150.0, duration_seconds=150.0),
+        ]
+        transcriber = _FakeTranscriber(['!' * 2048, _text(900), _text(900)])
+        with (
+            self._patch_audio(),
+            patch('hippo.media.pipeline.audio_module.split', return_value=halves),
+            patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1)),
+            patch('hippo.media.pipeline.archive_module.store_audio', new=lambda **k: ('k', 1)),
+        ):
+            outcome = await _run(self.storage, ResolvedMedia(audio_url='https://host/ep.mp3'), transcriber=transcriber)
+
+        self.assertEqual(3, transcriber.calls)
+        self.assertGreater(outcome['segments'], 1)
+
+    async def test_a_silent_chunk_is_not_a_failure(self) -> None:
+        transcriber = _FakeTranscriber(['', _text(900)])
+        with (
+            self._patch_audio(
+                chunks=[
+                    audio_module.Chunk(index=0, path=self.chunk, start_seconds=0.0, duration_seconds=300.0),
+                    audio_module.Chunk(index=1, path=self.chunk, start_seconds=300.0, duration_seconds=300.0),
+                ]
+            ),
+            patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1)),
+            patch('hippo.media.pipeline.archive_module.store_audio', new=lambda **k: ('k', 1)),
+        ):
+            outcome = await _run(self.storage, ResolvedMedia(audio_url='https://host/ep.mp3'), transcriber=transcriber)
+
+        self.assertTrue(outcome['segments'] > 0)
+
+    async def test_a_recording_that_produces_nothing_is_skipped(self) -> None:
+        transcriber = _FakeTranscriber([''])
+        with (
+            self._patch_audio(),
+            patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1)),
+            patch('hippo.media.pipeline.archive_module.store_audio', new=lambda **k: ('k', 1)),
+            self.assertRaises(MediaJobSkipped),
+        ):
+            await _run(self.storage, ResolvedMedia(audio_url='https://host/ep.mp3'), transcriber=transcriber)
+
+    async def test_a_failed_archive_does_not_fail_the_transcription(self) -> None:
+        transcriber = _FakeTranscriber([_text(1900)])
+
+        def explode(**_kwargs):
+            raise RuntimeError('no object store')
+
+        with (
+            self._patch_audio(),
+            patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1)),
+            patch('hippo.media.pipeline.archive_module.store_audio', new=explode),
+        ):
+            outcome = await _run(self.storage, ResolvedMedia(audio_url='https://host/ep.mp3'), transcriber=transcriber)
+
+        self.assertFalse(outcome['archived'])
+        # The player falls back to the original URL rather than to a missing endpoint.
+        self.assertEqual('https://host/ep.mp3', self.storage.saved[0]['content_blocks'][0]['url'])
+        self.storage.media_assets.mark_failed.assert_awaited()
+
+    async def test_a_download_failure_is_an_article_failure(self) -> None:
+        with (
+            patch('hippo.media.pipeline._download', new=AsyncMock(side_effect=MediaJobFailure('HTTP 404'))),
+            self.assertRaises(MediaJobFailure),
+        ):
+            await _run(self.storage, ResolvedMedia(audio_url='https://host/gone.mp3'))
+
+
+if __name__ == '__main__':
+    unittest.main()

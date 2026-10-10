@@ -151,9 +151,11 @@ export function ArticleContent({ payload, hideSmall, onImageContextMenu }: Artic
     return (
       <div className="reader">
         <EmptyState message={
-          status === 'invalid'
-            ? t('articles.contentInvalid', 'Failed to parse article content. Please try syncing again.')
-            : t('articles.contentMissing', 'Article content is not available yet. Please wait for sync to finish or sync again.')
+          status === 'processing'
+            ? t('articles.contentProcessing', '正在转写这份音视频，稍后回来看。')
+            : status === 'invalid'
+              ? t('articles.contentInvalid', 'Failed to parse article content. Please try syncing again.')
+              : t('articles.contentMissing', 'Article content is not available yet. Please wait for sync to finish or sync again.')
         } />
       </div>
     );

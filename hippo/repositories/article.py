@@ -220,8 +220,13 @@ class ArticleRepository:
         content_blocks: list[dict],
         cover_url: str | None,
         images: list[dict],
+        replace_images: bool = True,
     ) -> int:
-        """写入正文（markdown + blocks）；返回 ``articles.id``（写文档表要用）。"""
+        """写入正文（markdown + blocks）；返回 ``articles.id``（写文档表要用）。
+
+        ``replace_images=False`` 给只补正文的调用方（媒体转写）：正文之外的东西一概
+        不动，否则会把列表阶段登记好的封面删掉。
+        """
         now = utc_now_dt()
         normalized_cover: str | None = None
         async with self._conn.cursor() as cur:
@@ -268,38 +273,39 @@ class ArticleRepository:
                 now=now,
             )
 
-            await cur.execute('DELETE FROM article_images WHERE article_pk = %s', (article_pk,))
             image_id_map: dict[str, int] = {}
-            seen_orig_urls: set[str] = set()
             cover_id: int | None = None
-            for image in images:
-                orig_url = image.get('orig_url')
-                if orig_url:
-                    orig_url = str(orig_url)
-                    if orig_url in seen_orig_urls:
-                        continue
-                    seen_orig_urls.add(orig_url)
-                await cur.execute(
-                    """
-                    INSERT INTO article_images
-                        (article_pk, position, kind, orig_url, content_type, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    RETURNING id
-                    """,
-                    (
-                        article_pk,
-                        image.get('position', 0),
-                        image.get('kind', 'inline'),
-                        orig_url,
-                        image.get('content_type'),
-                        now,
-                    ),
-                )
-                image_id = (await cur.fetchone())[0]
-                if orig_url:
-                    image_id_map[orig_url] = image_id
-                if image.get('kind') == 'cover' and cover_id is None:
-                    cover_id = int(image_id)
+            if replace_images:
+                await cur.execute('DELETE FROM article_images WHERE article_pk = %s', (article_pk,))
+                seen_orig_urls: set[str] = set()
+                for image in images:
+                    orig_url = image.get('orig_url')
+                    if orig_url:
+                        orig_url = str(orig_url)
+                        if orig_url in seen_orig_urls:
+                            continue
+                        seen_orig_urls.add(orig_url)
+                    await cur.execute(
+                        """
+                        INSERT INTO article_images
+                            (article_pk, position, kind, orig_url, content_type, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        (
+                            article_pk,
+                            image.get('position', 0),
+                            image.get('kind', 'inline'),
+                            orig_url,
+                            image.get('content_type'),
+                            now,
+                        ),
+                    )
+                    image_id = (await cur.fetchone())[0]
+                    if orig_url:
+                        image_id_map[orig_url] = image_id
+                    if image.get('kind') == 'cover' and cover_id is None:
+                        cover_id = int(image_id)
 
             updated_blocks: list[dict] = []
             for block in content_blocks:
@@ -333,16 +339,17 @@ class ArticleRepository:
                     now,
                 ),
             )
-            if cover_id is not None:
-                await cur.execute(
-                    'UPDATE articles SET cover = %s, updated_at = %s WHERE id = %s',
-                    (cover_id, now, article_pk),
-                )
-            else:
-                await cur.execute(
-                    'UPDATE articles SET cover = NULL, updated_at = %s WHERE id = %s',
-                    (now, article_pk),
-                )
+            if replace_images:
+                if cover_id is not None:
+                    await cur.execute(
+                        'UPDATE articles SET cover = %s, updated_at = %s WHERE id = %s',
+                        (cover_id, now, article_pk),
+                    )
+                else:
+                    await cur.execute(
+                        'UPDATE articles SET cover = NULL, updated_at = %s WHERE id = %s',
+                        (now, article_pk),
+                    )
         return article_pk
 
     async def has_article_content(self, biz: str, article_id: str) -> bool:

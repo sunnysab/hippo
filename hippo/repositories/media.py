@@ -87,6 +87,26 @@ class MediaJobRepository:
             )
             return cur.rowcount
 
+    async def requeue(self, job_ids: Iterable[int], *, error: str) -> int:
+        """Infrastructure failure: back to pending **without** spending an attempt.
+
+        Only ``processing`` rows move, so a batch that already finished is not
+        pulled back in.
+        """
+        ids = [int(job_id) for job_id in job_ids]
+        if not ids:
+            return 0
+        async with self._conn.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE media_job
+                   SET state = 'pending', last_error = %s, updated_at = NOW()
+                 WHERE id = ANY(%s) AND state = 'processing'
+                """,
+                (error[:1000], ids),
+            )
+            return cur.rowcount
+
     async def update_progress(self, job_id: int, *, stage: str, progress: int) -> None:
         """Keep the reader's "转写中" line moving."""
         async with self._conn.cursor() as cur:

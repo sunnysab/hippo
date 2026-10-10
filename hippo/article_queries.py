@@ -593,6 +593,12 @@ async def _get_article(storage: PostgresStorage, user_id: int, article_id: int) 
     else:
         content_status = 'invalid'
 
+    if content_status == 'missing':
+        # 视频/播客的正文由转写补，别让读者以为「没同步」是坏了。
+        media_state = (await storage.media_jobs.states_for_articles([article_id])).get(article_id)
+        if media_state in ('pending', 'processing'):
+            content_status = 'processing'
+
     images, blocked_image_ids = await _get_visible_article_images(storage, article_id)
     if isinstance(content_json, list) and blocked_image_ids:
         content_json = _filter_blocked_content_blocks(content_json, blocked_image_ids)
