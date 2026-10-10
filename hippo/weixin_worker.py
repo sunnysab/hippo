@@ -45,11 +45,12 @@ class SyncStats:
 
 
 def _split_batch_error(message: str) -> dict[str, str]:
-    """拆开 daemon 的整批错误：``<url>: <原因>; <url>: <原因>``。
+    """拆开老 daemon 的整批错误：``<url>: <原因>; <url>: <原因>``。
 
-    ``fetch_bodies`` 整体报错时，每行都会拿到同一段拼接文本；从里面认出自己的
-    URL，才能把「这篇文章怎么了」记到对应队列项上，而不是整批共用一条（还容易被
-    1000 字符截断丢掉尾部）。格式对不上就返回空字典，调用方退回整段文本。
+    daemon 现在每条 error 只挂一个 URL，这里已经用不上了；留着是为了兼容还没升级的
+    daemon——那时 ``fetch_bodies`` 整体报错、每行拿到同一段拼接文本，从里面认出自己的
+    URL 才能把原因记到对应队列项上（否则整批共用一条，还被 1000 字符截断丢掉尾部）。
+    格式对不上就返回空字典，调用方退回整段文本。
     """
     reasons: dict[str, str] = {}
     for part in message.split('; '):
