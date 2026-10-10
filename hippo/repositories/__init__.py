@@ -18,6 +18,7 @@ from .audit import AuditRepository
 from .chat import ChatRepository
 from .image import ArticleImageTarget, ImageRepository
 from .llm import LlmProviderRepository, mask_key
+from .media import ArticleMediaRepository, MediaJobRepository, UserCredentialRepository
 from .meta import MetaRepository
 from .queue import ArticleQueueRepository
 from .read import ArticleReadRepository
@@ -33,6 +34,7 @@ __all__ = [
     'AnnotationRepository',
     'ArticleDocumentRepository',
     'ArticleImageTarget',
+    'ArticleMediaRepository',
     'ArticleQueueRepository',
     'ArticleReadRepository',
     'ArticleRepository',
@@ -43,8 +45,10 @@ __all__ = [
     'GroupRepository',
     'ImageRepository',
     'LlmProviderRepository',
+    'MediaJobRepository',
     'MetaRepository',
     'SubscriptionRepository',
+    'UserCredentialRepository',
     'UserRepository',
     'UserSessionRepository',
     'UserTokenRepository',

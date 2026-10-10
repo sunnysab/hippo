@@ -23,6 +23,7 @@ from .repositories import (
     AccountRepository,
     AnnotationRepository,
     ArticleDocumentRepository,
+    ArticleMediaRepository,
     ArticleQueueRepository,
     ArticleReadRepository,
     ArticleRepository,
@@ -33,15 +34,17 @@ from .repositories import (
     GroupRepository,
     ImageRepository,
     LlmProviderRepository,
+    MediaJobRepository,
     MetaRepository,
     SubscriptionRepository,
+    UserCredentialRepository,
     UserRepository,
     UserSessionRepository,
     UserTokenRepository,
 )
 from .sync_jobs import SyncJobRepository
 
-SCHEMA_VERSION = '24'
+SCHEMA_VERSION = '25'
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'schema' / 'postgres.sql'
 
@@ -230,8 +233,10 @@ class PostgresStorage(AbstractAsyncContextManager):
         self.groups = GroupRepository(self.conn)
         self.accounts = AccountRepository(self.conn)
         self.articles = ArticleRepository(self.conn)
+        self.media_assets = ArticleMediaRepository(self.conn)
         self.documents = ArticleDocumentRepository(self.conn)
         self.article_queue = ArticleQueueRepository(self.conn)
+        self.media_jobs = MediaJobRepository(self.conn)
         self.images = ImageRepository(self.conn)
         self.download_attempts = DownloadAttemptRepository(self.conn)
         self.sync_jobs = SyncJobRepository(self.conn)
@@ -239,6 +244,7 @@ class PostgresStorage(AbstractAsyncContextManager):
         self.sessions = UserSessionRepository(self.conn)
         self.tokens = UserTokenRepository(self.conn)
         self.subscriptions = SubscriptionRepository(self.conn)
+        self.credentials = UserCredentialRepository(self.conn)
         self.audit = AuditRepository(self.conn)
         self.llm = LlmProviderRepository(self.conn)
         self.annotations = AnnotationRepository(self.conn)

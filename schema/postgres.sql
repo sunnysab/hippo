@@ -665,3 +665,58 @@ ON account_groups (user_id, name);
 -- 每个用户自己的阅读偏好（过滤词等）。全局同步节奏、SMTP、站点设置仍留在 meta，
 -- 由管理员维护。
 ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- ============================================================
+-- 媒体来源：转写队列、音频留档、用户级来源凭证
+-- ============================================================
+
+-- 一篇文章一个转写任务。与 article_queue 的区别：视频/播客在列表阶段就拿到了
+-- 永久链接，所以 articles 行先建、正文后补，任务因此以 article_pk 为主键。
+CREATE TABLE IF NOT EXISTS media_job (
+    id BIGSERIAL PRIMARY KEY,
+    article_pk INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    media_url TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending',
+    stage TEXT,
+    progress SMALLINT NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (article_pk)
+);
+
+CREATE INDEX IF NOT EXISTS idx_media_job_state
+ON media_job (state, id);
+
+-- 音频留档。不复用 article_images：图片回填循环按 s3_key IS NULL 扫全表，
+-- 音频行会被当成待下载的图片。
+CREATE TABLE IF NOT EXISTS article_media (
+    id SERIAL PRIMARY KEY,
+    article_pk INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    orig_url TEXT,
+    content_type TEXT,
+    size_bytes BIGINT,
+    duration_seconds INTEGER,
+    s3_key TEXT,
+    state TEXT NOT NULL DEFAULT 'pending',
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (article_pk, kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_article_media_pending
+ON article_media (id)
+WHERE s3_key IS NULL AND state = 'pending';
+
+-- 用户级来源凭证（B站 Cookie 等）。接口只回显「是否已配置」，永远不回显明文。
+CREATE TABLE IF NOT EXISTS user_credential (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    secret TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, source)
+);
