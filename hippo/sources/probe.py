@@ -18,10 +18,13 @@ from .youtube import YoutubeError, parse_json_lines, run_ytdlp
 
 logger = get_logger(__name__)
 
-#: The first video ever uploaded to YouTube, 19 seconds long and about as likely to
-#: disappear as YouTube itself. Only its metadata is fetched.
-YOUTUBE_PROBE_URL = 'https://www.youtube.com/watch?v=jNQXAC9IVRw'
-PROBE_TIMEOUT = 60.0
+#: A logged-in-only page. Fetching a video says nothing about the cookie — YouTube
+#: answers anonymous callers happily until it decides they are a bot, so an invalid
+#: cookie looks the same as a valid one. The subscription feed does not: measured on
+#: the real proxies, an anonymous session gets an *empty* list with exit code 0,
+#: while a live login gets its subscriptions.
+YOUTUBE_PROBE_URL = 'https://www.youtube.com/feed/subscriptions'
+PROBE_TIMEOUT = 90.0
 
 #: How YouTube words the refusal. Matched loosely: the message arrives from yt-dlp's
 #: stderr and its exact wording changes between releases.
@@ -81,7 +84,14 @@ async def _probe_bilibili(*, cookie: str, proxy: str) -> CredentialProbe:
 async def _probe_youtube(*, cookie: str, proxy: str) -> CredentialProbe:
     try:
         output = await run_ytdlp(
-            ['--dump-json', '--no-playlist', '--skip-download', YOUTUBE_PROBE_URL],
+            [
+                '--flat-playlist',
+                '--dump-json',
+                # 只问第一条：只要列表不是空的，登录态就已经被认了。
+                '-I',
+                '1:1',
+                YOUTUBE_PROBE_URL,
+            ],
             proxy=proxy,
             timeout=PROBE_TIMEOUT,
             cookies=cookie,
@@ -98,12 +108,18 @@ async def _probe_youtube(*, cookie: str, proxy: str) -> CredentialProbe:
 
     entries = parse_json_lines(output)
     if not entries:
-        return CredentialProbe(source='youtube', ok=False, detail='yt-dlp 没有返回视频信息')
+        # 实测：未登录时 YouTube 不回错误，只给一个空列表。账号本身没有订阅时也是这样，
+        # 所以把看到的东西原样说出来，别让它看起来像是「cookie 一定坏了」。
+        return CredentialProbe(
+            source='youtube',
+            ok=False,
+            detail='YouTube 没把这份登录态当回事（订阅列表是空的；账号确实没有订阅时也会如此）',
+        )
     return CredentialProbe(
         source='youtube',
         ok=True,
-        detail='能取到视频元数据，不需要登录确认',
-        account=str(entries[0].get('title') or ''),
+        detail='登录态被认可：能读到你自己的订阅',
+        account=str(entries[0].get('playlist_title') or entries[0].get('title') or '订阅列表'),
     )
 
 

@@ -67,11 +67,26 @@ class YoutubeProbeTest(unittest.IsolatedAsyncioTestCase):
         with patch('hippo.sources.probe.run_ytdlp', new=AsyncMock(side_effect=run)):
             return await probe_credential(source='youtube', cookie=SENTINEL)
 
-    async def test_metadata_means_the_credential_is_good_enough(self) -> None:
-        probe = await self._probe(lambda *a, **k: '{"title": "Me at the zoo", "id": "jNQXAC9IVRw"}')
+    async def test_a_non_empty_subscription_list_means_the_login_works(self) -> None:
+        probe = await self._probe(lambda *a, **k: '{"id": "abc", "title": "某人的订阅"}')
 
         self.assertTrue(probe.ok)
-        self.assertEqual('Me at the zoo', probe.account)
+        self.assertIn('订阅', probe.detail)
+
+    async def test_an_empty_list_is_a_refusal_not_a_success(self) -> None:
+        # 未登录时 YouTube 不回错误，只给一个空列表——这就是它说「我不认识你」的方式。
+        probe = await self._probe(lambda *a, **k: '')
+
+        self.assertFalse(probe.ok)
+        self.assertIn('空的', probe.detail)
+
+    async def test_the_probe_asks_a_page_that_needs_a_login(self) -> None:
+        run = AsyncMock(return_value='{"id": "abc"}')
+
+        with patch('hippo.sources.probe.run_ytdlp', new=run):
+            await probe_credential(source='youtube', cookie=SENTINEL)
+
+        self.assertIn('/feed/subscriptions', run.call_args.args[0][-1])
 
     async def test_the_bot_check_is_reported_as_a_login_problem(self) -> None:
         error = YoutubeError(
