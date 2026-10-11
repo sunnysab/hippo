@@ -8,6 +8,7 @@ interface GroupHeaderProps {
   accountQuery: string;
   onAccountQueryChange: (value: string) => void;
   onOpenAccountSearch: () => void;
+  onOpenSubscription: () => void;
   onOpenRename: (groupId: number, name: string) => void;
   onOpenDelete: (groupId: number) => void;
 }
@@ -16,6 +17,7 @@ export function GroupHeader({
   accountQuery,
   onAccountQueryChange,
   onOpenAccountSearch,
+  onOpenSubscription,
   onOpenRename,
   onOpenDelete,
 }: GroupHeaderProps) {
@@ -103,6 +105,12 @@ export function GroupHeader({
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v14h-2zM5 11h14v2H5z"/></svg>
           </span>
           <span>{t('accounts.add', 'Add Account')}</span>
+        </button>
+        <button className="btn ghost" id="btn-source-add" type="button" onClick={onOpenSubscription}>
+          <span className="icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v14h-2zM5 11h14v2H5z"/></svg>
+          </span>
+          <span>{t('sources.add', '添加订阅')}</span>
         </button>
         <button className="btn ghost" id="btn-group-rename" type="button" onClick={() => onOpenRename(group.id, group.name)}>
           {t('groups.rename', 'Rename')}

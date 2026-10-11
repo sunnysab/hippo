@@ -18,6 +18,7 @@ import { SettingsEmailRoute } from './pages/settings/SettingsEmailRoute';
 import { SettingsFilterRoute } from './pages/settings/SettingsFilterRoute';
 import { AccountPanel } from './pages/settings/AccountPanel';
 import { ApiKeysPanel } from './pages/settings/ApiKeysPanel';
+import { SourcesPanel } from './pages/settings/SourcesPanel';
 import { AdminPage } from './pages/admin/AdminPage';
 import { AdminLayout } from './pages/admin/AdminLayout';
 import { AdminLlmPage } from './pages/admin/AdminLlmPage';
@@ -84,6 +85,7 @@ function AppRoutes() {
                     <Route index element={<Navigate to="filter" replace />} />
                     <Route path="account" element={<AccountPanel />} />
                     <Route path="apikey" element={<ApiKeysPanel />} />
+                    <Route path="source" element={<SourcesPanel />} />
                     <Route path="filter" element={<SettingsFilterRoute />} />
                     <Route path="email" element={<SettingsEmailRoute />} />
                   </Route>

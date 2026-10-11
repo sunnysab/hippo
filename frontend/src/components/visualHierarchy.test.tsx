@@ -186,6 +186,7 @@ describe('visual hierarchy semantics', () => {
         accountQuery=""
         onAccountQueryChange={vi.fn()}
         onOpenAccountSearch={vi.fn()}
+        onOpenSubscription={vi.fn()}
         onOpenRename={vi.fn()}
         onOpenDelete={vi.fn()}
       />,

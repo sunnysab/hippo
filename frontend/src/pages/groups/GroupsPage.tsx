@@ -6,6 +6,7 @@ import { GroupHeader } from './GroupHeader';
 import { AccountCardGrid } from './AccountCardGrid';
 import { BatchActions } from './BatchActions';
 import { AccountSearchModal } from './AccountSearchModal';
+import { AddSubscriptionModal } from './AddSubscriptionModal';
 import { GroupNameModal } from './GroupNameModal';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { useI18n } from '../../i18n';
@@ -39,6 +40,7 @@ export function GroupsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [accountQuery, setAccountQuery] = useState('');
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
+  const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
   const [groupNameDialog, setGroupNameDialog] = useState<GroupNameDialogState | null>(null);
   const [groupDeleteDialog, setGroupDeleteDialog] = useState<GroupDeleteDialogState | null>(null);
   const routeGroupId = parseRouteGroupId(searchParams.get('group'));
@@ -160,6 +162,7 @@ export function GroupsPage() {
             accountQuery={accountQuery}
             onAccountQueryChange={setAccountQuery}
             onOpenAccountSearch={() => setIsSearchModalOpen(true)}
+            onOpenSubscription={() => setIsSubscriptionModalOpen(true)}
             onOpenRename={(groupId, name) => setGroupNameDialog({ mode: 'rename', groupId, initialName: name })}
             onOpenDelete={(groupId) => setGroupDeleteDialog({ groupId })}
           />
@@ -171,6 +174,11 @@ export function GroupsPage() {
       <AccountSearchModal
         isOpen={isSearchModalOpen}
         onClose={() => setIsSearchModalOpen(false)}
+      />
+      <AddSubscriptionModal
+        isOpen={isSubscriptionModalOpen}
+        onClose={() => setIsSubscriptionModalOpen(false)}
+        onSubscribed={() => { void loadGroups(); }}
       />
       {groupNameDialog && (
         <GroupNameModal

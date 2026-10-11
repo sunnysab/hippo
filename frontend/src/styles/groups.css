@@ -656,3 +656,23 @@
     width: 100%;
   }
 }
+
+/* The resolved subscription, before it is written: who it is, and where from. */
+.source-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-chip-soft);
+}
+
+.source-preview-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
