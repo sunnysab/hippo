@@ -11,8 +11,8 @@ import io
 import sqlite3
 import tempfile
 import unittest
-from unittest import mock
 from pathlib import Path
+from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parent.parent / 'scripts' / 'submit_firefox_cookies.py'
 
