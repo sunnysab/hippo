@@ -1229,3 +1229,91 @@ mark.hippo-highlight:hover {
     max-height: 35vh;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Video and podcast articles: a player above the transcript, and the timestamp
+   anchors the transcript is read with. Anchors are plain text until the reader
+   has something to seek (see RenderedContent).
+--------------------------------------------------------------------------- */
+
+.reader-video {
+  position: relative;
+  margin: 0 0 20px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-chip);
+}
+
+.reader-video iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.reader-video-poster {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.reader-video-poster img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.reader-video-placeholder {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--surface-chip);
+}
+
+.reader-video-play {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 26px;
+  text-shadow: 0 1px 6px rgb(0 0 0 / 55%);
+}
+
+.reader-audio {
+  margin: 0 0 20px;
+}
+
+.reader-audio audio {
+  display: block;
+  width: 100%;
+}
+
+.reader-anchor {
+  margin-right: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.reader-anchor.is-action {
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-chip-soft);
+  color: var(--info);
+  cursor: pointer;
+}
+
+.reader-anchor.is-action:hover {
+  background: var(--surface-item-active);
+}

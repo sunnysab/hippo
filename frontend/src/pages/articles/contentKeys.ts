@@ -8,9 +8,13 @@ const buildContentBlockSignature = (block: ArticleContentBlock): string => {
       return `image:${String(block.image_id || '')}:${block.alt || ''}`;
     case 'code':
       return `code:${block.text || ''}`;
+    case 'video':
+      return `video:${block.provider || ''}:${block.video_id || block.embed_url || ''}`;
+    case 'audio':
+      return `audio:${block.url || ''}`;
     case 'paragraph':
     default:
-      return `paragraph:${block.text || ''}`;
+      return `paragraph:${String(block.t ?? '')}:${block.text || ''}`;
   }
 };
 

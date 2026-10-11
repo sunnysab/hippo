@@ -122,6 +122,8 @@
   "articles.empty": "请选择文章开始预览。",
   "articles.contentMissing": "正文尚未同步或仍在下载中，请稍后刷新或重新同步。",
   "articles.contentProcessing": "正在转写这份音视频，稍后回来看。",
+  "articles.playVideo": "播放视频",
+  "articles.video": "视频",
   "articles.contentInvalid": "正文解析失败，请重新同步后重试。",
   "articles.contentEmpty": "该文章正文为空。",
   "articles.emptyList": "暂无文章。",

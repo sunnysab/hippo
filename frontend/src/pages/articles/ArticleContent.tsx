@@ -1,10 +1,24 @@
-import { memo, useEffect, useRef } from 'react';
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../i18n';
 import { renderInlineNodes } from '../../utils/markdown';
 import { EmptyState } from '../../components/EmptyState';
 import type { ArticlePayload, ArticleContentBlock } from '../../store/articles';
 import { buildContentBlockKeys } from './contentKeys';
+import { anchorLabel } from './exportMarkdown';
 import { headingAnchorId } from './outline';
+
+/**
+ * A transcript is navigated by clicking an anchor in front of a paragraph, which
+ * has to reach the player — and the player may be several blocks above. The reader
+ * holds that little bit of state here instead of threading it through every block.
+ */
+interface PlayerControls {
+  /** False when the article has no player, which is when anchors are plain text. */
+  canSeek: boolean;
+  seek: (seconds: number) => void;
+}
+
+const PlayerContext = createContext<PlayerControls>({ canSeek: false, seek: () => {} });
 
 interface ArticleContentProps {
   payload: ArticlePayload;
@@ -93,15 +107,103 @@ const ArticleImageBlock = memo(function ArticleImageBlock({
   );
 });
 
+const ArticleVideoBlock = memo(function ArticleVideoBlock({ block }: { block: ArticleContentBlock }) {
+  const { t } = useI18n();
+  const [playing, setPlaying] = useState(false);
+
+  if (!block.embed_url) return null;
+
+  // The poster stays until the reader asks for the video: loading a third-party
+  // player for every article would be a lot of JavaScript nobody watched.
+  if (!playing) {
+    return (
+      <div className="reader-video" data-provider={block.provider || ''}>
+        <button
+          className="reader-video-poster"
+          type="button"
+          onClick={() => setPlaying(true)}
+          aria-label={t('articles.playVideo', '播放视频')}
+        >
+          {block.cover_url ? <img src={block.cover_url} alt="" loading="lazy" /> : <span className="reader-video-placeholder" />}
+          <span className="reader-video-play" aria-hidden="true">▶</span>
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="reader-video">
+      <iframe
+        src={block.embed_url}
+        title={block.video_id || t('articles.video', '视频')}
+        allowFullScreen
+        referrerPolicy="no-referrer"
+        loading="lazy"
+      />
+    </div>
+  );
+});
+
+const ArticleAudioBlock = memo(function ArticleAudioBlock({
+  block,
+  audioRef,
+}: {
+  block: ArticleContentBlock;
+  audioRef: React.RefObject<HTMLAudioElement | null>;
+}) {
+  if (!block.url) return null;
+  return (
+    <div className="reader-audio">
+      {/* No <track>: for a podcast the transcript below the player *is* the
+          caption, and the feed does not ship one in a caption format. */}
+      <audio ref={audioRef} controls preload='metadata' src={block.url} />
+    </div>
+  );
+});
+
 const ContentBlock = memo(function ContentBlock({
   block,
   index,
   images,
   hideSmall,
   onImageContextMenu,
-}: AnchorableBlockProps) {
+  audioRef,
+}: AnchorableBlockProps & { audioRef: React.RefObject<HTMLAudioElement | null> }) {
+  const player = useContext(PlayerContext);
+
   if (block.type === 'paragraph') {
-    return <p>{renderInlineNodes(block.text || '')}</p>;
+    const label = anchorLabel(block.t);
+    const text = renderInlineNodes(block.text || '');
+    if (!label) return <p>{text}</p>;
+    if (!player.canSeek) {
+      return (
+        <p>
+          <span className="reader-anchor" title={label}>{label}</span>
+          {text}
+        </p>
+      );
+    }
+    return (
+      <p>
+        <button
+          className="reader-anchor is-action"
+          type="button"
+          onClick={() => player.seek(block.t || 0)}
+          title={label}
+        >
+          {label}
+        </button>
+        {text}
+      </p>
+    );
+  }
+
+  if (block.type === 'video') {
+    return <ArticleVideoBlock block={block} />;
+  }
+
+  if (block.type === 'audio') {
+    return <ArticleAudioBlock block={block} audioRef={audioRef} />;
   }
 
   if (block.type === 'heading') {
@@ -169,20 +271,58 @@ export function ArticleContent({ payload, hideSmall, onImageContextMenu }: Artic
     );
   }
 
+  return (
+    <RenderedContent
+      payload={payload}
+      content={content}
+      hideSmall={hideSmall}
+      onImageContextMenu={onImageContextMenu}
+    />
+  );
+}
+
+interface RenderedContentProps extends ArticleContentProps {
+  content: ArticleContentBlock[];
+}
+
+/**
+ * Renders the blocks and owns the one piece of cross-block state: the player the
+ * transcript anchors seek. Audio seeks in place; a video has no timeline to touch
+ * from here, so its anchors stay plain text until a provider-specific offset
+ * parameter has been verified.
+ */
+function RenderedContent({ payload, content, hideSmall, onImageContextMenu }: RenderedContentProps) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const canSeek = content.some((block) => block.type === 'audio' && Boolean(block.url));
+  const controls = useMemo<PlayerControls>(
+    () => ({
+      canSeek,
+      seek: (seconds: number) => {
+        const audio = audioRef.current;
+        if (!audio) return;
+        audio.currentTime = seconds;
+        void audio.play().catch(() => {
+          // 浏览器可能拒绝自动播放；位置已经设好，读者自己按播放键即可。
+        });
+      },
+    }),
+    [canSeek],
+  );
   const contentKeys = buildContentBlockKeys(content);
 
   return (
-    <>
-      {content.map((block, i) => (
+    <PlayerContext.Provider value={controls}>
+      {content.map((block, index) => (
         <ContentBlock
-          key={contentKeys[i]}
+          key={contentKeys[index]}
           block={block}
-          index={i}
+          index={index}
           images={payload.images}
           hideSmall={hideSmall}
           onImageContextMenu={onImageContextMenu}
+          audioRef={audioRef}
         />
       ))}
-    </>
+    </PlayerContext.Provider>
   );
 }

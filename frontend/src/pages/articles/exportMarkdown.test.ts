@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { articleToMarkdown } from './exportMarkdown';
+import { anchorLabel, articleToMarkdown } from './exportMarkdown';
 import type { ArticlePayload } from '../../store/articles';
 
 const payload = (content: ArticlePayload['content']): ArticlePayload => ({
@@ -53,5 +53,35 @@ describe('articleToMarkdown', () => {
 
   it('produces just the title when content is missing', () => {
     expect(articleToMarkdown(payload(null))).toBe('# 标题');
+  });
+
+  it('keeps the transcript anchors and the players in an export', () => {
+    const markdown = articleToMarkdown(payload([
+      { type: 'audio', url: '/api/media/7/audio' },
+      { type: 'paragraph', text: '开场', t: 0 },
+      { type: 'paragraph', text: '正题', t: 3723 },
+      { type: 'video', provider: 'youtube', video_id: 'abc', embed_url: 'https://www.youtube.com/embed/abc' },
+    ]));
+
+    expect(markdown).toBe([
+      '# 标题',
+      '[音频](/api/media/7/audio)',
+      '**[00:00]** 开场',
+      '**[1:02:03]** 正题',
+      '[视频](https://www.youtube.com/embed/abc)',
+    ].join('\n\n'));
+  });
+});
+
+describe('anchorLabel', () => {
+  it('formats minutes and seconds, and only adds hours when there are any', () => {
+    expect(anchorLabel(0)).toBe('00:00');
+    expect(anchorLabel(62.9)).toBe('01:02');
+    expect(anchorLabel(3723)).toBe('1:02:03');
+  });
+
+  it('has no label when the block has no timestamp', () => {
+    expect(anchorLabel(undefined)).toBe('');
+    expect(anchorLabel(Number.NaN)).toBe('');
   });
 });

@@ -29,11 +29,24 @@ export interface Article {
 }
 
 export interface ArticleContentBlock {
-  type: 'paragraph' | 'heading' | 'image' | 'code';
+  type: 'paragraph' | 'heading' | 'image' | 'code' | 'video' | 'audio';
   text?: string;
   level?: number;
   image_id?: number;
   alt?: string;
+  /**
+   * Seconds into the recording this paragraph starts at. Video and podcast
+   * articles carry it, which is what the anchor in front of a paragraph seeks to.
+   */
+  t?: number;
+  /** Player to embed for a video block. The provider is the backend's business. */
+  embed_url?: string;
+  video_id?: string;
+  provider?: string;
+  cover_url?: string;
+  /** Where an audio block plays from (the archived file, or the original). */
+  url?: string;
+  duration?: number;
 }
 
 export interface ArticleImageMeta {
