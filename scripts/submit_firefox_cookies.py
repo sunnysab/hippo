@@ -302,6 +302,19 @@ def describe(rows: list[dict[str, Any]], source: str) -> str:
     return '，'.join(parts)
 
 
+def _ask_password(username: str, server: str) -> str:
+    """Prompt without echo. No terminal (a script, a CI job) needs the env var."""
+    if not sys.stdin.isatty():
+        # 直接说清楚：getpass 在这种情况下会退化成明文读，还先打一句吓人的警告。
+        raise ScriptError('这里没有终端可以输入密码；改用环境变量 HIPPO_PASSWORD=… 或 --password 提供')
+    try:
+        return getpass.getpass(f'{username}@{server} 的密码（不回显、不落盘）：')
+    except (EOFError, OSError) as exc:
+        raise ScriptError(
+            '这里没有终端可以输入密码；改用环境变量 HIPPO_PASSWORD=… 或 --password 提供'
+        ) from exc
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--server', required=True, help='hippo 服务地址，如 https://hippo.example.com')
@@ -373,7 +386,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     session = Session(args.server, insecure=args.insecure)
-    password = args.password or getpass.getpass(f'{args.user}@{args.server} 的密码（不回显、不落盘）：')
+    password = args.password or _ask_password(args.user, args.server)
     role = session.login(args.user, password)
     print(f'已登录 {args.user}{f"（{role}）" if role else ""}')
     if args.scope == 'instance' and role and role != 'admin':

@@ -138,6 +138,18 @@ class PrivacyTest(unittest.TestCase):
         self.assertIn('SESSDATA', printed)  # 名字可以出现，值不行
         self.assertIn('dry-run', printed)
 
+    def test_no_terminal_says_how_to_pass_the_password(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _profile(directory, _rows())
+            with mock.patch.object(submitter.getpass, 'getpass', side_effect=EOFError):
+                printed, code = self._run(
+                    ['--server', 'http://127.0.0.1:9', '--profile', str(Path(directory) / 'abc.default-release')]
+                )
+
+        self.assertEqual(1, code)
+        self.assertIn('HIPPO_PASSWORD', printed)
+        self.assertNotIn(SENTINEL, printed)
+
     def test_a_failed_login_does_not_leak_the_cookie(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             _profile(directory, _rows())
