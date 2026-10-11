@@ -41,6 +41,16 @@ logger = get_logger(__name__)
 #: only exists to stop a wrong URL from filling the disk.
 MAX_DOWNLOAD_BYTES = 2 * 1024**3
 
+#: Audio is fetched in ranged blocks, which is not cosmetic: googlevideo throttles a
+#: plain GET from a flagged exit IP to ~10 KB/s while serving ranged requests at
+#: 3-7 MB/s (measured on the production proxy). The block is also the retry unit, so
+#: a connection that dies halfway costs one block instead of the whole episode.
+DOWNLOAD_BLOCK_BYTES = 8 * 1024**2
+#: Attempts per block before the job fails and the retry ceiling takes over.
+DOWNLOAD_ATTEMPTS = 3
+#: Pause before re-requesting a block that failed, growing with the attempt.
+DOWNLOAD_RETRY_BACKOFF_SECONDS = 2.0
+
 #: How the transcript is split for reading. One 300 s chunk is ~1900 characters,
 #: which is a wall of text; grouped sentences of about this size read better and
 #: give the reader a timestamp to jump to every ~20 seconds.
@@ -181,6 +191,24 @@ async def _load_article(storage: PostgresStorage, article_pk: int) -> ArticleRec
     )
 
 
+def _total_bytes(response: httpx.Response, current: int | None) -> int | None:
+    """Learn the full size from a response, when it says so.
+
+    A 206 answers with ``content-range: bytes 0-1023/45243468``; a 200 without range
+    support only carries ``content-length``, which is the whole body by definition.
+    """
+    content_range = response.headers.get('content-range') or ''
+    if '/' in content_range:
+        tail = content_range.rsplit('/', 1)[1].strip()
+        if tail.isdigit():
+            return int(tail)
+    if response.status_code == 200:
+        length = response.headers.get('content-length') or ''
+        if length.isdigit():
+            return int(length)
+    return current
+
+
 async def _download(
     url: str,
     target: Path,
@@ -190,25 +218,59 @@ async def _download(
     proxy: str | None = None,
     max_bytes: int = MAX_DOWNLOAD_BYTES,
 ) -> int:
-    written = 0
-    try:
-        async with (
-            httpx.AsyncClient(timeout=timeout, follow_redirects=True, proxy=proxy or None) as client,
-            client.stream('GET', url, headers=dict(headers)) as response,
-        ):
-            if response.status_code != 200:
-                raise MediaJobFailure(f'音频下载失败：HTTP {response.status_code}')
-            with target.open('wb') as handle:
-                async for piece in response.aiter_bytes(1 << 16):
-                    written += len(piece)
-                    if written > max_bytes:
-                        raise MediaJobFailure(f'音频超过 {max_bytes // 1024**3} GiB 上限')
-                    handle.write(piece)
-    except httpx.HTTPError as exc:
-        raise MediaJobFailure(f'音频下载失败：{exc}') from exc
+    """Fetch ``url`` into ``target`` in ranged blocks, keeping what arrived.
+
+    A partial file is picked up where it stopped, so a block that fails after 7 MiB
+    is re-requested for its last byte rather than for the whole episode.
+    """
+    written = target.stat().st_size if target.is_file() else 0
+    total: int | None = None
+    blocks = max_bytes // DOWNLOAD_BLOCK_BYTES + 2
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, proxy=proxy or None) as client:
+        for _ in range(blocks):
+            appended = 0
+            for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+                # 每次尝试都按当前进度重算区间：上一次传到一半断掉时，续的是断点而不是重来。
+                request_headers = dict(headers)
+                request_headers['Range'] = f'bytes={written}-{written + DOWNLOAD_BLOCK_BYTES - 1}'
+                appended = 0
+                try:
+                    async with client.stream('GET', url, headers=request_headers) as response:
+                        if response.status_code == 416:
+                            # 请求越界 = 已经下完了，这是正常收尾而不是错误。
+                            if not written:
+                                raise MediaJobFailure('音频下载得到了空文件')
+                            return written
+                        if response.status_code not in (200, 206):
+                            raise MediaJobFailure(f'音频下载失败：HTTP {response.status_code}')
+                        if response.status_code == 200 and written:
+                            # 服务器不支持 Range，把半截文件丢掉重来，免得两段接在一起。
+                            written = 0
+                        total = _total_bytes(response, total)
+                        with target.open('ab' if written else 'wb') as handle:
+                            async for piece in response.aiter_bytes(1 << 16):
+                                written += len(piece)
+                                appended += len(piece)
+                                if written > max_bytes:
+                                    raise MediaJobFailure(f'音频超过 {max_bytes // 1024**3} GiB 上限')
+                                handle.write(piece)
+                    break
+                except MediaJobFailure:
+                    raise
+                except httpx.HTTPError as exc:
+                    if attempt >= DOWNLOAD_ATTEMPTS:
+                        raise MediaJobFailure(f'音频下载失败：{exc}') from exc
+                    logger.warning('音频第 %d 字节起的分片第 %d 次失败：%s', written, attempt, exc)
+                    await asyncio.sleep(DOWNLOAD_RETRY_BACKOFF_SECONDS * attempt)
+            if total is not None and written >= total:
+                break
+            if not appended:
+                # 没有进度也问不出总数：再要下去只会是空转。
+                break
     if not written:
         raise MediaJobFailure('音频下载得到了空文件')
     return written
+
 
 
 async def _transcribe_chunk(
@@ -420,6 +482,8 @@ async def _archive(
 
 
 __all__ = [
+    'DOWNLOAD_ATTEMPTS',
+    'DOWNLOAD_BLOCK_BYTES',
     'MAX_DOWNLOAD_BYTES',
     'TARGET_PARAGRAPH_CHARS',
     'DirectMediaResolver',
