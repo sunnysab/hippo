@@ -1,6 +1,7 @@
 import { useArticlesState } from '../../store/articles';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
+import { apiSend } from '../../api';
 import { useArticleFilters } from '../../hooks/useArticleFilters';
 import { useArticleReader } from '../../hooks/useArticleReader';
 import { ArticleFilters } from './ArticleFilters';
@@ -47,6 +48,22 @@ export function ArticlesPage() {
   } = useArticleReader();
   // The outline button is only meaningful when the article has headings.
   const outline = buildOutline(state.currentArticlePayload?.content);
+  // Media entries are the ones with a transcription queue behind them; the button
+  // is gated on the kind rather than the source, so a new source needs no change.
+  const isMediaArticle = ['video', 'audio'].includes(
+    String(state.currentArticlePayload?.article.content_kind || ''),
+  );
+
+  const transcribeArticle = async (forceAsr: boolean) => {
+    const article = state.currentArticlePayload?.article;
+    if (!article) return;
+    try {
+      await apiSend(`/api/article/${article.id}/transcribe${forceAsr ? '?force_asr=true' : ''}`, 'POST', {});
+      showToast(t('articles.transcribeQueued', '已加入转写队列。'));
+    } catch (error) {
+      showToast((error as Error)?.message || t('articles.transcribeFailed', '加入队列失败。'));
+    }
+  };
 
   return (
     <section id="view-articles" className="view is-active">
@@ -172,6 +189,36 @@ export function ArticlesPage() {
               >
                 <ReaderControls config={config} updateConfig={updateConfig} />
               </Popover>
+              {isMediaArticle ? (
+                <Popover
+                  id='article-transcribe-menu'
+                  label={t('articles.transcribe', '转写')}
+                  triggerClassName='btn ghost article-toolbar-btn'
+                  trigger={t('articles.transcribe', '转写')}
+                >
+                  {(close) => (
+                    <>
+                      <button
+                        className='context-item'
+                        id='article-transcribe'
+                        type='button'
+                        onClick={async () => { await transcribeArticle(false); close(); }}
+                      >
+                        {t('articles.transcribeNow', '转写这篇')}
+                      </button>
+                      <button
+                        className='context-item'
+                        id='article-transcribe-force'
+                        type='button'
+                        title={t('articles.transcribeForceHint', '忽略现成的字幕或转录稿，改用 ASR 重转')}
+                        onClick={async () => { await transcribeArticle(true); close(); }}
+                      >
+                        {t('articles.transcribeForce', '跳过字幕，用 ASR 重转')}
+                      </button>
+                    </>
+                  )}
+                </Popover>
+              ) : null}
               <button
                 className={`btn ghost article-toolbar-btn${sidePanel === 'toc' ? ' is-active' : ''}`}
                 id="btn-article-toc-toggle"
