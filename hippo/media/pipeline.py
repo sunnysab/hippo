@@ -73,6 +73,8 @@ class ResolvedMedia:
     audio_url: str | None = None
     #: Request headers the host needs (Bilibili wants a Referer).
     headers: dict[str, str] = field(default_factory=dict)
+    #: Proxy the download must go through (YouTube's CDN is unreachable without one).
+    proxy: str | None = None
     duration_seconds: int | None = None
     #: Player block for the reader: an iframe for video, a URL for a podcast.
     embed_block: dict[str, Any] | None = None
@@ -184,12 +186,13 @@ async def _download(
     *,
     headers: Mapping[str, str],
     timeout: float,
+    proxy: str | None = None,
     max_bytes: int = MAX_DOWNLOAD_BYTES,
 ) -> int:
     written = 0
     try:
         async with (
-            httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client,
+            httpx.AsyncClient(timeout=timeout, follow_redirects=True, proxy=proxy or None) as client,
             client.stream('GET', url, headers=dict(headers)) as response,
         ):
             if response.status_code != 200:
@@ -324,6 +327,7 @@ async def transcribe_job(
             str(resolved.audio_url),
             source,
             headers=resolved.headers,
+            proxy=resolved.proxy,
             timeout=float(settings.get('asr_timeout_seconds') or 900),
         )
         duration = float(resolved.duration_seconds or await asyncio.to_thread(audio_module.probe_duration, source))

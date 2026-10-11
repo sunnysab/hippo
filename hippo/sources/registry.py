@@ -18,6 +18,8 @@ from . import SourceAdapter
 from .bilibili import SOURCE as BILIBILI_SOURCE
 from .bilibili import BilibiliClient, BilibiliResolver, BilibiliSource
 from .ingest import MediaResolverRegistry, MediaSync
+from .youtube import SOURCE as YOUTUBE_SOURCE
+from .youtube import YoutubeResolver, YoutubeSource
 
 
 class MediaSources:
@@ -39,6 +41,14 @@ class MediaSources:
             bilibili,
             use_cc_subtitle=bool(settings.get('bilibili_cc_subtitle')),
         )
+
+        # yt-dlp 是子进程，没有客户端要管，只需要代理设置。
+        youtube_proxy = str(settings.get('proxy_youtube') or '')
+        self.adapters[YOUTUBE_SOURCE] = MediaSync(
+            storage=storage,
+            source=YoutubeSource(proxy=youtube_proxy),
+        )
+        self.resolvers[YOUTUBE_SOURCE] = YoutubeResolver(proxy=youtube_proxy)
 
     def _client(self, client: Any) -> Any:
         self._closers.append(client.aclose)
