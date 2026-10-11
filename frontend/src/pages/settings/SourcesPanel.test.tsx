@@ -12,53 +12,96 @@ vi.mock('../../api', () => ({
 }));
 vi.mock('../../hooks/useToast', () => ({ useToast: () => ({ showToast: vi.fn() }) }));
 
+const field = (id: string) => document.querySelector(`#${id}`) as HTMLInputElement | HTMLTextAreaElement;
+
 describe('SourcesPanel', () => {
   beforeEach(() => {
     apiGetMock.mockReset();
     apiSendMock.mockReset();
+    apiGetMock.mockResolvedValue({ bilibili: { configured: true }, youtube: { configured: false } });
   });
 
-  it('shows whether a credential is already configured, never the value', async () => {
-    apiGetMock.mockResolvedValue({ bilibili: { configured: true } });
-
-    const { container } = render(<SourcesPanel />);
-
-    await waitFor(() => expect(screen.getByText(/已配置/)).toBeTruthy());
-    expect((container.querySelector('#source-credential') as HTMLInputElement).value).toBe('');
-  });
-
-  it('saves the pasted cookie', async () => {
-    apiGetMock.mockResolvedValue({ bilibili: { configured: false } });
-    apiSendMock.mockResolvedValue({});
-
+  it('reports whether each source is configured, never the value', async () => {
     render(<SourcesPanel />);
-    await waitFor(() => expect(screen.getByText('保存')).toBeTruthy());
 
-    fireEvent.change(document.querySelector('#source-credential')!, { target: { value: 'SESSDATA=abc' } });
-    fireEvent.click(screen.getByText('保存'));
+    await waitFor(() => expect(screen.getByText(/哔哩哔哩 · 已配置/)).toBeTruthy());
+    expect(screen.getByText(/YouTube · 未配置/)).toBeTruthy();
+    // 两个输入框都是空的：值不回显。
+    expect(field('source-credential-bilibili').value).toBe('');
+    expect(field('source-credential-youtube').value).toBe('');
+  });
+
+  it('saves a pasted bilibili cookie', async () => {
+    apiSendMock.mockResolvedValue({});
+    render(<SourcesPanel />);
+    await waitFor(() => expect(field('source-credential-bilibili')).toBeTruthy());
+
+    fireEvent.change(field('source-credential-bilibili'), { target: { value: 'SESSDATA=abc' } });
+    fireEvent.click(document.querySelector('#source-credential-save-bilibili')!);
 
     await waitFor(() => expect(apiSendMock).toHaveBeenCalledWith('/api/source/credential/bilibili', 'PUT', {
       secret: 'SESSDATA=abc',
     }));
   });
 
-  it('clears a configured cookie', async () => {
-    apiGetMock.mockResolvedValue({ bilibili: { configured: true } });
+  it('offers a youtube field for the cookies.txt the script submits', async () => {
     apiSendMock.mockResolvedValue({});
-
     render(<SourcesPanel />);
-    await waitFor(() => expect(screen.getByText('清除')).toBeTruthy());
-    fireEvent.click(screen.getByText('清除'));
+    await waitFor(() => expect(field('source-credential-youtube')).toBeTruthy());
 
-    await waitFor(() => expect(apiSendMock).toHaveBeenCalledWith('/api/source/credential/bilibili', 'DELETE', {}));
+    fireEvent.change(field('source-credential-youtube'), {
+      target: { value: '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tabc\n' },
+    });
+    fireEvent.click(document.querySelector('#source-credential-save-youtube')!);
+
+    // 前后空白会被去掉（结尾换行由服务端写文件时补回来）。
+    await waitFor(() => expect(apiSendMock).toHaveBeenCalledWith('/api/source/credential/youtube', 'PUT', {
+      secret: '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tabc',
+    }));
   });
 
-  it('offers nothing to clear when nothing is configured', async () => {
-    apiGetMock.mockResolvedValue({ bilibili: { configured: false } });
-
+  it('tests a credential and shows the account it was accepted as', async () => {
+    apiSendMock.mockResolvedValue({
+      source: 'bilibili',
+      credential: 'user',
+      ok: true,
+      detail: '已登录，投稿列表接口不会再被风控挡下',
+      account: '某位观众',
+    });
     render(<SourcesPanel />);
+    await waitFor(() => expect(field('source-credential-bilibili')).toBeTruthy());
 
-    await waitFor(() => expect(screen.getByText(/B站 Cookie/)).toBeTruthy());
-    expect(screen.queryByText('清除')).toBeNull();
+    fireEvent.click(document.querySelector('#source-credential-test-bilibili')!);
+
+    await waitFor(() => expect(screen.getByText(/可用（某位观众）/)).toBeTruthy());
+    expect(apiSendMock).toHaveBeenCalledWith('/api/source/credential/bilibili/test?scope=user', 'POST', {});
+  });
+
+  it('shows why a credential was refused', async () => {
+    apiSendMock.mockResolvedValue({
+      source: 'youtube',
+      credential: 'instance',
+      ok: false,
+      detail: 'YouTube 要求登录（bot 检查）：这个出口需要一份有效 Cookie',
+      account: '',
+    });
+    render(<SourcesPanel />);
+    await waitFor(() => expect(field('source-credential-youtube')).toBeTruthy());
+
+    fireEvent.click(document.querySelector('#source-credential-test-youtube')!);
+
+    await waitFor(() => expect(screen.getByText(/不可用.*bot 检查/)).toBeTruthy());
+  });
+
+  it('clears only the source that has a credential', async () => {
+    apiSendMock.mockResolvedValue({});
+    render(<SourcesPanel />);
+    await waitFor(() => expect(field('source-credential-bilibili')).toBeTruthy());
+
+    expect(document.querySelector('#source-credential-clear-bilibili')).not.toBeNull();
+    expect(document.querySelector('#source-credential-clear-youtube')).toBeNull();
+    fireEvent.click(document.querySelector('#source-credential-clear-bilibili')!);
+
+    await waitFor(() => expect(apiSendMock).toHaveBeenCalledWith('/api/source/credential/bilibili', 'DELETE', {}));
   });
 });

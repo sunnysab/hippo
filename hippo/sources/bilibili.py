@@ -285,11 +285,18 @@ class BilibiliClient:
             raise BilibiliError(f'B站接口返回 {code}：{message}')
         return payload
 
+    async def nav(self) -> dict[str, Any]:
+        """The session's own view of itself: logged in, and as whom.
+
+        ``-101`` is not an error here — an anonymous session still gets its WBI keys,
+        it just cannot list anyone's uploads.
+        """
+        return await self._get_json('/x/web-interface/nav', allow_codes={-101})
+
     async def wbi_keys(self) -> tuple[str, str]:
         if self._wbi:
             return self._wbi
-        # 未登录（-101）是正常情况：WBI 密钥仍然会下发，只是拿不到账号信息。
-        payload = await self._get_json('/x/web-interface/nav', allow_codes={-101})
+        payload = await self.nav()
         images = ((payload.get('data') or {}).get('wbi_img')) or {}
         img_url = str(images.get('img_url') or '')
         sub_url = str(images.get('sub_url') or '')

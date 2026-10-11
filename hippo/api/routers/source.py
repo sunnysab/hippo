@@ -15,13 +15,14 @@ from fastapi import APIRouter, Body, Depends, Query, Request, status
 from ...config import DEFAULT_GROUP_NAME
 from ...exceptions import ApiError
 from ...logger import get_logger
-from ...media_settings import get_media_settings
+from ...media_settings import get_media_settings, instance_credential, resolve_proxy
 from ...models import AccountCredential, User
 from ...sources import UnsupportedSource
 from ...sources.credentials import SOURCES as CREDENTIAL_SOURCES
 from ...sources.credentials import CredentialError
 from ...sources.credentials import clean as clean_credential
 from ...sources.detect import detect_source
+from ...sources.probe import probe_credential
 from ...sources.registry import MediaSources
 from ...storage import PostgresStorage, ensure_default_group
 from ..deps import client_ip, current_user, get_storage
@@ -202,6 +203,50 @@ async def set_credential(
         raise ApiError(str(exc), status=400) from exc
     async with storage.transaction():
         await storage.credentials.set(user.id, source, secret)
+
+
+@router.post('/source/credential/{source}/test')
+async def test_credential(
+    source: str,
+    scope: str = Query('user', pattern='^(user|instance)$'),
+    user: User = Depends(current_user),
+    storage: PostgresStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Ask the source whether a credential actually works.
+
+    ``user`` tests the caller's own cookie, falling back to the instance one and
+    saying which answered; ``instance`` asks about the shared one and is admin-only.
+    Neither ever returns the credential, only the account it was accepted as.
+    """
+    if source not in CREDENTIAL_SOURCES:
+        raise ApiError(f'不支持测试 {source} 的凭证', status=400)
+    if scope == 'instance' and getattr(user, 'role', '') != 'admin':
+        raise ApiError('只有管理员能测试实例凭证', status=403)
+    settings = await get_media_settings(storage)
+    used = scope
+    cookie = ''
+    if scope == 'user':
+        cookie = await storage.credentials.get(user.id, source) or ''
+        if not cookie:
+            used = 'instance'
+    if not cookie:
+        cookie = instance_credential(dict(settings), source)
+    if not cookie:
+        return {
+            'source': source,
+            'credential': 'none',
+            'ok': False,
+            'detail': '没有可测试的凭证：先提交一份，或在管理台配置实例凭证',
+            'account': '',
+        }
+    probe = await probe_credential(source=source, cookie=cookie, proxy=resolve_proxy(dict(settings), source))
+    return {
+        'source': source,
+        'credential': used,
+        'ok': probe.ok,
+        'detail': probe.detail,
+        'account': probe.account,
+    }
 
 
 @router.delete('/source/credential/{source}', status_code=status.HTTP_204_NO_CONTENT)

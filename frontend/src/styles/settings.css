@@ -466,3 +466,25 @@
   flex: 1 1 auto;
   min-width: 0;
 }
+
+/* One source's credential: the field, its buttons, and the verdict they produce. */
+.credential-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.credential-verdict {
+  margin: 0;
+  font-size: 13px;
+}
+
+.credential-verdict.is-ok {
+  color: var(--success);
+}
+
+.credential-verdict.is-bad {
+  color: var(--danger);
+}

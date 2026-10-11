@@ -50,6 +50,10 @@ BITRATES = ('original', '64k', '96k', '128k', '192k', '256k')
 
 _SECRETS = ('asr_api_key', 'bilibili_cookie', 'youtube_cookies')
 
+#: Where each source's instance-wide credential lives. Both are secrets: masked on
+#: the way out, and never echoed back.
+INSTANCE_CREDENTIALS = {'bilibili': 'bilibili_cookie', 'youtube': 'youtube_cookies'}
+
 #: Sources that open their own network connections, each with a proxy field. The
 #: daemon-backed weixin source is not here: it is reached over the local socket.
 PROXY_SOURCES = ('bilibili', 'youtube', 'podcast')
@@ -236,6 +240,12 @@ async def set_media_settings(storage: PostgresStorage, updates: dict[str, Any]) 
     return settings
 
 
+def instance_credential(settings: Mapping[str, Any], source: str) -> str:
+    """The instance-wide cookie for ``source``, or ``''`` when there is none."""
+    field = INSTANCE_CREDENTIALS.get(source)
+    return _as_text(settings.get(field)) if field else ''
+
+
 def resolve_proxy(settings: Mapping[str, Any], source: str) -> str:
     """The proxy to use for ``source``: its own, the instance default, or none.
 
@@ -261,6 +271,7 @@ def asr_endpoint(settings: dict[str, Any], tier: str) -> str:
 __all__ = [
     'ASR_TIERS',
     'BITRATES',
+    'INSTANCE_CREDENTIALS',
     'MEDIA_SETTINGS_KEY',
     'PROXY_DIRECT',
     'PROXY_FOLLOW',
@@ -270,6 +281,7 @@ __all__ = [
     'asr_endpoint',
     'default_media_settings',
     'get_media_settings',
+    'instance_credential',
     'normalize_media_settings',
     'resolve_proxy',
     'set_media_settings',

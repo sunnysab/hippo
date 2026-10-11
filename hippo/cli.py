@@ -1266,6 +1266,47 @@ async def set_source_cookie(
     typer.echo(f'已保存 {source} 凭证')
 
 
+@sources_app.command('test')
+@coro
+async def test_source_credential(
+    source: str = typer.Option('bilibili', help='哪个来源的凭证'),
+    scope: str = typer.Option('user', help='user = 该用户自己的（缺省用实例的）；instance = 实例凭证'),
+    user_name: str | None = typer.Option(None, '--user', help='按哪个用户操作（默认首个管理员）'),
+) -> None:
+    """Ask the source whether a credential actually works, and as whom.
+
+    A cookie that has quietly expired fails the same way as one that never existed,
+    so this asks instead of guessing: Bilibili answers whether the session is logged
+    in, and YouTube whether it still gets metadata or the bot check. The credential
+    itself is never printed — only the account it was accepted as.
+    """
+    from .media_settings import get_media_settings, instance_credential, resolve_proxy
+    from .sources.probe import probe_credential
+
+    if scope not in ('user', 'instance'):
+        typer.echo('scope 只能是 user 或 instance', err=True)
+        raise typer.Exit(code=2)
+    async with open_storage() as storage:
+        user = await _cli_user(storage, user_name)
+        settings = await get_media_settings(storage)
+        used = scope
+        cookie = await storage.credentials.get(user.id, source) if scope == 'user' else ''
+        if not cookie:
+            cookie = instance_credential(settings, source)
+            used = 'instance'
+        if not cookie:
+            typer.echo(f'{source}: 没有可测试的凭证（先提交一份，或在管理台配置实例凭证）', err=True)
+            raise typer.Exit(code=1)
+        proxy = resolve_proxy(settings, source)
+        probe = await probe_credential(source=source, cookie=cookie, proxy=proxy)
+
+    verdict = '可用' if probe.ok else '不可用'
+    who = f'（{probe.account}）' if probe.account else ''
+    typer.echo(f'{source} [{used} 凭证]：{verdict}{who} — {probe.detail}')
+    if not probe.ok:
+        raise typer.Exit(code=1)
+
+
 @articles_app.command('list')
 @coro
 async def list_articles(
