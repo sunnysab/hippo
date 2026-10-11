@@ -191,6 +191,45 @@ class SourceListingTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn('风控', str(ctx.exception))
 
+    async def test_a_video_subscription_lists_that_one_video(self) -> None:
+        # 订阅单个视频时 source_key 是 bvid，不是 mid：以前按空间查，B站 回 -400。
+        client = _FakeClient(
+            video={
+                'bvid': 'BV1gHps6yEHL',
+                'title': '影视飓风的直升机',
+                'duration': 823,
+                'pubdate': 1790000000,
+                'pic': 'https://i0.hdslb.com/x.jpg',
+                'desc': '简介',
+                'owner': {'name': '影视飓风'},
+                'aid': 123,
+            }
+        )
+        source = BilibiliSource(client)
+
+        listing = await source.list_items(source_key='BV1gHps6yEHL', limit=5)
+
+        self.assertEqual(1, len(listing.items))
+        self.assertTrue(listing.is_end)
+        self.assertIsNone(listing.next_cursor)
+        item = listing.items[0]
+        self.assertEqual('BV1gHps6yEHL', item.article_id)
+        self.assertEqual('影视飓风的直升机', item.title)
+        self.assertEqual('https://www.bilibili.com/video/BV1gHps6yEHL', item.link)
+        self.assertEqual(823, item.duration_seconds)
+        self.assertEqual('影视飓风', item.author)
+        self.assertEqual(1790000000, item.publish_at)
+        # 空间列表接口不该被调用。
+        client.space_videos.assert_not_awaited()
+
+    async def test_a_video_subscription_that_is_gone_says_so(self) -> None:
+        source = BilibiliSource(_FakeClient(video={}))
+
+        with self.assertRaises(BilibiliError) as ctx:
+            await source.list_items(source_key='BV1gHps6yEHL', limit=5)
+
+        self.assertIn('不可见', str(ctx.exception))
+
     async def test_preview_of_a_space_falls_back_to_the_mid(self) -> None:
         client = _FakeClient(space_info=AsyncMock(side_effect=BilibiliError('风控')))
 

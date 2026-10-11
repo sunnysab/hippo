@@ -132,7 +132,7 @@ class SessionHostTest(unittest.TestCase):
         self.assertEqual([], submitter.session_names([_row(row) for row in rows], 'youtube'))
 
     def test_a_youtube_login_cookie_does_count(self) -> None:
-        rows = _rows() + [('.youtube.com', 'LOGIN_INFO', 'x', '/', 4102444800, 1, 1)]
+        rows = [*_rows(), ('.youtube.com', 'LOGIN_INFO', 'x', '/', 4102444800, 1, 1)]
         described = submitter.describe([_row(row) for row in rows], 'youtube')
 
         self.assertIn('youtube.com 上的登录项', described)

@@ -140,6 +140,12 @@ def sign_wbi(params: dict[str, Any], img_key: str, sub_key: str, *, wts: int | N
     return signed
 
 
+#: A stored source key is what ``preview`` returned, not a URL: an UP's mid, or the
+#: id of the one video someone subscribed to.
+_BARE_BVID_RE = re.compile(r'^BV[0-9A-Za-z]{10}$')
+_BARE_AID_RE = re.compile(r'^av(\d+)$', re.IGNORECASE)
+
+
 def parse_ref(value: str) -> tuple[str, str]:
     """Accept a video URL or an UP's space URL.
 
@@ -393,6 +399,10 @@ class BilibiliSource:
         )
 
     async def list_items(self, *, source_key: str, limit: int, cursor: str | None = None) -> Listing:
+        if _BARE_BVID_RE.match(source_key) or _BARE_AID_RE.match(source_key):
+            # 订阅单个视频：列表就是那一条，没有下一页。以前这里按 mid 去查空间，
+            # B站 回 -400，整条同步因此失败。
+            return await self._single_video(source_key)
         page = int(cursor) if cursor and cursor.isdigit() else 1
         data = await self._client.space_videos(source_key, page=page, size=max(limit, 1))
         rows = ((data.get('list') or {}).get('vlist')) or []
@@ -420,6 +430,32 @@ class BilibiliSource:
         consumed = page * max(limit, 1)
         has_more = bool(total) and consumed < total
         return Listing(items=items, next_cursor=str(page + 1) if has_more else None, is_end=not has_more)
+
+    async def _single_video(self, identity: str) -> Listing:
+        """The one item a video subscription is about."""
+        video = await self._client.video(identity)
+        if not video:
+            raise BilibiliError(f'视频 {identity} 已不可见')
+        bvid = str(video.get('bvid') or identity)
+        owner = video.get('owner') or {}
+        return Listing(
+            items=[
+                Item(
+                    article_id=bvid,
+                    title=str(video.get('title') or bvid),
+                    link=f'{WEB_BASE}/video/{bvid}',
+                    media_url=f'{WEB_BASE}/video/{bvid}',
+                    publish_at=int(video.get('pubdate') or 0) or None,
+                    cover=str(video.get('pic') or '') or None,
+                    digest=str(video.get('desc') or '') or None,
+                    author=str(owner.get('name') or '') or None,
+                    duration_seconds=int(video.get('duration') or 0) or None,
+                    raw={'bvid': bvid, 'aid': video.get('aid')},
+                )
+            ],
+            next_cursor=None,
+            is_end=True,
+        )
 
 
 class BilibiliResolver:
