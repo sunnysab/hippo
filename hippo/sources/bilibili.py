@@ -452,22 +452,39 @@ class BilibiliResolver:
         if self._use_cc_subtitle and not skip_subtitle:
             subtitle = await self._cc_subtitle(bvid, cid)
             if subtitle is not None:
-                return ResolvedMedia(embed_block=embed, subtitle=subtitle, duration_seconds=duration)
+                audio = await self._audio(identity=bvid, cid=cid)
+                if audio is None:
+                    # 音频拿不到也不该丢掉现成的 CC 字幕。
+                    return ResolvedMedia(embed_block=embed, subtitle=subtitle, duration_seconds=duration)
+                return ResolvedMedia(
+                    audio_url=audio[0],
+                    headers=audio[1],
+                    # 有 CC 也不省留档：字幕来自平台，音频是我们唯一能留下来的东西。
+                    embed_block=embed,
+                    subtitle=subtitle,
+                    duration_seconds=duration,
+                )
 
-        data = await self._client.playurl(bvid, cid)
-        track = best_audio_track({'data': data})
-        if track is None:
-            raise MediaJobSkipped(f'视频 {bvid} 没有返回音频轨')
-        url = str(track.get('baseUrl') or track.get('base_url') or '')
-        if not url:
-            raise MediaJobSkipped(f'视频 {bvid} 的音频地址为空')
+        audio = await self._audio(identity=bvid, cid=cid)
+        if audio is None:
+            raise MediaJobSkipped(f'视频 {bvid} 没有可下载的音频轨')
         return ResolvedMedia(
-            audio_url=url,
-            # 没有 Referer 的话 CDN 会 403。
-            headers={'Referer': REFERER, 'User-Agent': USER_AGENT},
+            audio_url=audio[0],
+            headers=audio[1],
             duration_seconds=duration,
             embed_block=embed,
         )
+
+    async def _audio(self, *, identity: str, cid: int) -> tuple[str, dict[str, str]] | None:
+        """The audio track's URL and the headers its CDN demands."""
+        data = await self._client.playurl(identity, cid)
+        track = best_audio_track({'data': data})
+        url = str((track or {}).get('baseUrl') or (track or {}).get('base_url') or '')
+        if not url:
+            logger.info('视频 %s 没有可用的音频地址', identity)
+            return None
+        # 没有 Referer 的话 CDN 会 403。
+        return url, {'Referer': REFERER, 'User-Agent': USER_AGENT}
 
     async def _cc_subtitle(self, bvid: str, cid: int) -> Subtitle | None:
         """The cheap path: a subtitle the uploader already provided."""

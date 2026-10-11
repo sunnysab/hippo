@@ -246,7 +246,8 @@ class ResolverTest(unittest.IsolatedAsyncioTestCase):
 
         media = await PodcastResolver(client).resolve(job)
 
-        self.assertIsNone(media.audio_url)
+        # 现成转录稿只省掉 ASR：音频地址仍然带出来，让 pipeline 能照常留档。
+        self.assertEqual('https://cdn.example/ep1.mp3', media.audio_url)
         self.assertEqual(3557, media.duration_seconds)
         # 短句会被并成一段（合并是设计的一部分），锚点用该段首句的真实时间
         self.assertTrue(media.subtitle.blocks[0]['text'].startswith('开场白'))

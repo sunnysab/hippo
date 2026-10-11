@@ -368,7 +368,13 @@ class PodcastResolver:
         if transcript_url:
             subtitle = await self._transcript(transcript_url)
             if subtitle is not None:
-                return ResolvedMedia(subtitle=subtitle, duration_seconds=duration)
+                # 音频地址照样带上：现成转录稿只省掉 ASR，留档仍然要做（pipeline 决定用途）。
+                return ResolvedMedia(
+                    subtitle=subtitle,
+                    audio_url=str(job.get('media_url') or '') or None,
+                    proxy=self._proxy or None,
+                    duration_seconds=duration,
+                )
 
         audio_url = str(job.get('media_url') or '')
         if not audio_url:

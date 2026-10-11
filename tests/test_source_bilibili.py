@@ -218,18 +218,35 @@ class ResolverTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(800, media.duration_seconds)
         self.assertEqual('BV1gHps6yEHL', media.embed_block['video_id'])
 
-    async def test_a_cc_subtitle_skips_the_audio_entirely(self) -> None:
+    async def test_a_cc_subtitle_still_carries_the_audio_url(self) -> None:
+        # CC 只省 ASR，不省留档：音频地址与 CDN 需要的 Referer 一起带出来。
         client = _FakeClient(
             video={'bvid': 'BV1gHps6yEHL', 'duration': 800, 'pages': [{'cid': 42}]},
             player={'subtitle': {'subtitles': [{'subtitle_url': '//cdn/sub.json'}]}},
             fetch_json={'body': [{'from': 0.0, 'content': '字幕'}]},
+            playurl={'dash': {'audio': [{'id': 30216, 'bandwidth': 65685, 'baseUrl': 'https://cdn/a.m4s'}]}},
+        )
+
+        media = await BilibiliResolver(client).resolve(self._JOB)
+
+        self.assertEqual('https://cdn/a.m4s', media.audio_url)
+        self.assertIn('Referer', media.headers)
+        self.assertEqual('字幕', media.subtitle.blocks[0]['text'])
+        self.assertEqual('字幕', media.subtitle.markdown)
+
+    async def test_a_cc_subtitle_survives_a_failing_playurl(self) -> None:
+        # 音频接口挂了也不该把已经拿到的 CC 字幕一起丢掉。
+        client = _FakeClient(
+            video={'bvid': 'BV1gHps6yEHL', 'duration': 800, 'pages': [{'cid': 42}]},
+            player={'subtitle': {'subtitles': [{'subtitle_url': '//cdn/sub.json'}]}},
+            fetch_json={'body': [{'from': 0.0, 'content': '字幕'}]},
+            playurl={},
         )
 
         media = await BilibiliResolver(client).resolve(self._JOB)
 
         self.assertIsNone(media.audio_url)
         self.assertEqual('字幕', media.subtitle.blocks[0]['text'])
-        self.assertEqual('字幕', media.subtitle.markdown)
 
     async def test_cc_can_be_turned_off(self) -> None:
         client = _FakeClient(
