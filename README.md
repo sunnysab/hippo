@@ -66,25 +66,63 @@ hippo 只通过 RPC 使用 daemon，不接触微信协议细节：
 
 daemon 掉线或会话失效时，同步会整体暂停（不把这种错记成文章失败），页面顶部会提示需要在设置页重新扫码。
 
-## 数据来源与多源扩展
+## 数据来源
 
-目前只有微信一个来源，但数据模型与界面都是按「多来源」建的。新增来源（如哔哩哔哩、YouTube）时按下面几条走，不需要改查
-询与阅读器：
+四个来源共用一条流水线：**列表 → 建文章行（标题封面立刻可见）→ 转写队列 → 正文**。
+来源之间的差异只有两处：怎么列条目、音频从哪来，其余（分片、转写、时间戳、归档、播放）完全相同。
 
-- **区分来源靠 `accounts.source` 列**，不是路由前缀。`source` 是开放的标识符（不是枚举），目前只有 `weixin`。
-  现有的 `accounts.biz` 仍然是主键，但语义改为「该来源内的频道标识」（YouTube 是 channel id，B 站是 mid）：
-  改主键会连带 `subscription`/`annotation`/`article_read`/日报一起迁移，代价与收益不成比例。
-- **写入端必须显式设置 `source`。** 列上的 `DEFAULT 'weixin'` 只是为了让已有数据与现有同步链路继续工作；
-  新来源如果依赖默认值，会被静默标成微信。
+| 来源 | `accounts.source` | `biz` | 列表 | 正文 |
+|---|---|---|---|---|
+| 微信公众号 | `weixin` | `Mz…==`（fakeid） | weixin-rs daemon | daemon 取正文 → markdown |
+| 哔哩哔哩 | `bilibili` | `bilibili:<mid>` | `/x/space/wbi/arc/search`（**需要 SESSDATA**） | CC 字幕优先，否则下载音频转写 |
+| YouTube | `youtube` | `youtube:<UC…>` | yt-dlp | 下载音频转写 |
+| RSS 播客 | `podcast` | `podcast:<feed 的短哈希>` | feed 本身 | `podcast:transcript` 优先，否则转写 |
+
+订阅任意一个地址（视频、频道、feed 都行）：
+
+```bash
+uv run python -m hippo source add https://space.bilibili.com/946974/video
+uv run python -m hippo source add https://feeds.megaphone.fm/darknetdiaries
+uv run python -m hippo source list          # 只看媒体来源
+uv run python -m hippo source cookie        # 自己的 B站 Cookie（管理台也可设实例级的）
+```
+
+接口等价于 `GET /api/source/preview` + `POST /api/source/channel`；订阅会立刻投递一轮列表同步。
+
+### 转写
+
+一个 `media_job` 一条任务，由 `sync-worker` 里与正文抓取并行的常驻循环消费：
+
+1. **现成字幕优先**：播客的 `podcast:transcript`、B站的 CC 字幕。时间戳是真的，且不花算力。
+2. 否则**下载音频 → 留档（128k mp3，不设体积上限）→ 切片 → 逐片转写 → 校验 → 落 blocks**。
+3. 切片长度恒定（默认 300s）：太长的片会被模型截断，太短的尾片会让解码器输出乱码，两者都实测过；
+   短尾会并进前一片，输出再用字/秒与重复字符占比校验一次（`hippo/media/validate.py`）。
+
+转写服务是一个 **OpenAI 兼容的 `/v1/audio/transcriptions` 端点**，在管理台「媒体与转写」里配置两个档位：
+
+| 档 | 用途 | 实测 |
+|---|---|---|
+| `accurate`（默认） | 要精度 | `qwen3-asr-1.7b-q8_0`，与既有生产基线字级一致度 0.992 |
+| `fast` | 批量粗转，事后可按需重转 | `sensevoice-small`，快约 15 倍 |
+
+需要的外部组件：`ffmpeg`/`ffprobe`（切片、转码）、`yt-dlp`（仅 YouTube）、以及上面那个 ASR 端点
+（本实例跑在 archlinux31 上的 [CrispASR](https://github.com/CrispStrobe/CrispASR) `--server`）。
+`deploy.sh` 会在远端检查前两个。
+
+### 多源约定
+
+- **区分来源靠 `accounts.source` 列**，不是路由前缀。`source` 是开放的标识符（不是枚举）。
+  `accounts.biz` 是主键，语义是「该来源内的频道标识」（B站是 mid、YouTube 是 channel id、播客是 feed 哈希）。
+- **写入端必须显式设置 `source`。** 列上的 `DEFAULT 'weixin'` 只是为了让已有数据继续工作；
+  依赖默认值会被静默标成微信。
 - **接口不加前缀。** 列表用 `GET /api/article?source=a,b` 过滤，每条文章响应都带 `source`；
-  只有来源**特有的能力**才用独立路由（例：微信专属的 `POST /api/article/{id}/refetch`）。
-- **前端不做来源分支。** 来源的名称与配色集中在 `frontend/src/utils/source.ts` 的 `SOURCE_META` 表里，
-  未登记的来源会原样显示而不是消失；组件里不应出现 `if (source === '…')` 这类布局判断。
-- **后端同步适配器是唯一的改造点。** `hippo/sync_worker.py` 目前直接构造 `WeixinSource` + `WeixinArticleSync`，
-  接入第二个来源时把这一步换成 `按 account.source 选适配器` 的注册表即可；
-  `weixin_worker.py` 的职责（列表入队 → 正文落库）就是适配器要实现的契约。
-- **卡片与阅读器不假设内容是段落流。** 视频类条目可能整篇只有一个媒体块，
-  目录（`buildOutline`）在无小标题时必须整列隐藏，排版设置也必须能在这种情况下正常退化。
+  只有来源**特有的能力**才用独立路由（微信的 `POST /api/article/{id}/refetch`）。
+- **前端不做来源分支。** 来源的名称与配色在 `frontend/src/utils/source.ts` 的 `SOURCE_META`，
+  内容类型在 `CONTENT_KIND_META`（列表徽章读它，微信的 `item_show_type` 只留给分面筛选）。
+  未登记的来源会原样显示而不是消失。
+- **后端同步适配器是唯一的改造点。** `hippo/sources/` 里 `ADAPTERS` 按 `account.source` 选适配器；
+  新增来源 = 加一个 `MediaSource`（`preview` + `list_items`）与一个 `MediaResolver`（把队列里的条目变成音频或字幕）。
+- **卡片与阅读器不假设内容是段落流。** 视频条目可能整篇只有一个媒体块，目录在无小标题时整列隐藏。
 
 ### 已读状态
 
@@ -110,6 +148,9 @@ daemon 掉线或会话失效时，同步会整体暂停（不把这种错记成�
 - **同步**：列表阶段只入队（长链会失效），正文阶段拿到永久短链才落库；原始 HTML 存 `article_document`，
   派生内容（markdown + JSON blocks）存 `article_content`；图片按独立队列回填到对象存储；
   支持历史回填、失败重试与逐条失败诊断（`content_fetch_diagnostic`）。
+- **媒体来源**：B站 / YouTube / RSS 播客订阅（粘一个 URL 即可），音频转写、现成字幕优先、音频留档与播放、
+  转写稿导出（md/txt/srt）、单篇按需重转。
+- **公开 API**：只读 API Key，供脚本与阅读器读取文章、转写稿与留档音频。
 - **阅读器**：`pg_jieba` 中文分词全文检索、相关度排序、按版式（图文/视频/图片消息…）分面筛选、
   正文目录（TOC）、排版设置（宽度 / 字号 / 行高 / 字距 / 衬线）、未读箱、已读标记与收藏、
   高亮标注、按内容哈希全局屏蔽图片。

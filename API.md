@@ -1,6 +1,6 @@
 # Hippo API 参考
 
-面向 `hippo serve` 暴露的 HTTP 接口。文中所有端点都以 `/api` 开头，覆盖当前全部 **78** 个端点。
+面向 `hippo serve` 暴露的 HTTP 接口。文中所有端点都以 `/api` 开头，覆盖当前全部 **97** 个端点。
 服务同时提供框架自带的 OpenAPI 描述与交互界面：`GET /openapi.json`、`GET /docs`（Swagger UI）。
 本文件是它们的说明：约定、权限、参数语义与响应结构。
 
@@ -19,6 +19,8 @@
 - [10. AI 对话](#10-ai-对话apichat)
 - [11. LLM Provider](#11-llm-provider-apillm)
 - [12. 站点设置与管理](#12-站点设置与管理apiadmin)
+- [13. 媒体来源与转写](#13-媒体来源与转写apisource-apimedia)
+- [14. 公开 API Key](#14-公开-api-key-apiapikey)
 - [附录 A：端点总览](#附录-a端点总览)
 - [附录 B：状态码](#附录-b状态码)
 
@@ -662,6 +664,141 @@ GET /api/admin/audit?action=auth.login&user_id=1&since=2026-05-01&until=2026-05-
 未配置时返回 `{"available": false, "reason": "…", "lines": []}`（同样是 `200`）。
 `GET /api/admin/log/link?minutes=60` 未配置 `HIPPO_SIGNOZ_URL` 时返回 `{"available": false, "reason": "…"}`。
 
+## 13. 媒体来源与转写 `/api/source` `/api/media`
+
+B站视频、YouTube 视频与 RSS 播客都是「媒体来源」：它们的文章行建立时只有元数据，正文由 `media_job`
+队列转写而来（见 README「数据来源」）。订阅与转写的参数在管理台「媒体与转写」里配置。
+
+### 列出已订阅的来源
+
+```
+GET /api/source
+```
+
+只统计调用者**订阅的**来源，`channels` 是该来源下的频道数。左栏的「来源」列表用它。
+
+```json
+{"sources": [{"source": "bilibili", "channels": 3}, {"source": "weixin", "channels": 264}]}
+```
+
+### 解析一个链接
+
+```
+GET /api/source/preview?url=https://space.bilibili.com/946974/video
+```
+
+| 参数 | 类型 | 说明 |
+|---|---|---|
+| `url` | str | 视频 / 频道 / 订阅地址。来源按域名判断，其余 http(s) 一律当 feed 试 |
+
+不写任何东西，只回答「这是什么」。`subscribed` 表示目录里已经有了。
+
+```json
+{"source": "bilibili", "biz": "bilibili:946974", "nickname": "影视飓风", "avatar_url": null, "subscribed": false}
+```
+
+| 状态码 | 何时 |
+|---|---|
+| `400` | 不是 http(s) 地址 / 媒体来源未启用 / 该来源不接受这个链接 |
+| `502` | 上游失败（B站风控、feed 解析不出来） |
+
+### 订阅
+
+```
+POST /api/source/channel
+```
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `url` | str | 必填，同上 |
+| `group_id` | int | 可选，默认分组 |
+
+建账号 + 给调用者建订阅 + 投递一轮列表同步（`202`）。
+
+```json
+{"biz": "bilibili:946974", "nickname": "影视飓风", "source": "bilibili", "group_id": 1}
+```
+
+### 我的来源凭证
+
+B站投稿列表接口有风控，需要 SESSDATA。**实例级**的在管理台设，**用户级**的在这里设；
+调用者自己的优先，界面只回答「是否已配置」，永不回显明文。
+
+```
+GET    /api/source/credential                    -> {"bilibili": {"configured": true}}
+PUT    /api/source/credential/bilibili            {"secret": "SESSDATA=…"}  -> 204
+DELETE /api/source/credential/bilibili            -> 204
+```
+
+### 留档音频
+
+```
+GET /api/media/{article_pk}/audio
+```
+
+`200`（或带 `Range` 时的 `206`，浏览器拖动进度条靠它）。没有留档时 `302` 到原始地址，
+既没有留档也没有原始地址时 `404`，范围越界 `416`。
+
+### 转写稿
+
+```
+GET  /api/article/{article_id}/transcript?format=md|txt|srt
+POST /api/article/{article_id}/transcribe[?force_asr=true]
+```
+
+`format=md` 每段前带 `**[mm:ss]**` 锚点，`srt` 输出标准字幕。文章没有段落时 `404`。
+`transcribe` 把该文章已有的转写任务重新入队（`202`）；`force_asr=true` 让解析器**跳过现成字幕**
+（CC 字幕、播客转录稿）改用 ASR 重转，用于字幕质量不如模型的情况。
+
+### 管理台设置
+
+```
+GET   /api/admin/media          当前设置（API Key 与 Cookie 只回显末 4 位）
+PATCH /api/admin/media          合并更新；提交回显的掩码不会被写回
+POST  /api/admin/media/test     逐档探测 ASR 端点可达性
+```
+
+## 14. 公开 API Key `/api/apikey`
+
+给无法持 Cookie 的脚本与阅读器用。密钥只在**创建时**返回一次明文，库里存 sha256 与前缀，
+所以列表接口只能显示 `hippo_a1b2c3d4…`。
+
+### 认证与边界
+
+`Authorization: Bearer <key>` 或 `X-API-Key: <key>`。所有只读端点都接受它（认证解析在
+`current_user` 依赖里完成一处，路由无需逐个改动）。
+
+| 限制 | 说明 |
+|---|---|
+| 管理接口 | `/api/admin`、`/api/apikey`、`/api/auth`、`/api/login`、`/api/source/credential` 一律 `403`——一个泄露的 key 不能给自己签一个更大的 |
+| 写操作 | 非 `GET`/`HEAD` 需要 `write` scope，当前控制台只签发 `read` |
+| 使用记录 | `last_used_at` 每 5 分钟最多写一次，避免每次读都变成一次写 |
+
+### 端点
+
+```
+GET    /api/apikey                     我的密钥列表（不含明文）
+POST   /api/apikey                     创建，唯一的明文在这里
+DELETE /api/apikey/{key_id}            吊销
+GET    /api/whoami                     这个凭证是什么
+```
+
+`POST` 接受 `name`、`scopes`（默认 `["read"]`）、`expires_in_days`（不传则不过期）：
+
+```json
+{"id": 1, "name": "CI", "prefix": "a1b2c3d4", "scopes": ["read"], "secret": "hippo_…"}
+```
+
+`whoami` 同时适用于会话与密钥，脚本可以先探一下再干活：
+
+```json
+{"via": "api_key", "user": {"id": 1, "username": "admin", "role": "admin"}, "scopes": ["read"], "key": {"id": 1, "name": "CI"}}
+```
+
+```bash
+curl -H "Authorization: Bearer hippo_…" "https://hippo.example/api/article?source=podcast&page_size=5"
+```
+
 ## 附录 A：端点总览
 
 | 方法 | 路径 | 权限 |
@@ -672,14 +809,17 @@ GET /api/admin/audit?action=auth.login&user_id=1&since=2026-05-01&until=2026-05-
 | POST | `/api/account/move` | 登录 |
 | GET | `/api/account/search` | 登录 |
 | GET | `/api/account/search/{biz}/avatar` | 登录 |
+| DELETE | `/api/account/{biz}` | 登录 |
 | GET | `/api/account/{biz}` | 登录 |
 | PATCH | `/api/account/{biz}` | 登录 |
-| DELETE | `/api/account/{biz}` | 登录 |
 | GET | `/api/account/{biz}/avatar` | 登录 |
 | GET | `/api/admin/audit` | 管理员 |
 | GET | `/api/admin/audit/action` | 管理员 |
 | GET | `/api/admin/log/link` | 管理员 |
 | GET | `/api/admin/log/tail` | 管理员 |
+| GET | `/api/admin/media` | 管理员 |
+| PATCH | `/api/admin/media` | 管理员 |
+| POST | `/api/admin/media/test` | 管理员 |
 | GET | `/api/admin/site` | 管理员 |
 | PATCH | `/api/admin/site` | 管理员 |
 | GET | `/api/admin/user` | 管理员 |
@@ -687,6 +827,9 @@ GET /api/admin/audit?action=auth.login&user_id=1&since=2026-05-01&until=2026-05-
 | PATCH | `/api/admin/user/{user_id}` | 管理员 |
 | POST | `/api/admin/user/{user_id}/password` | 管理员 |
 | DELETE | `/api/admin/user/{user_id}/session` | 管理员 |
+| GET | `/api/apikey` | 登录 |
+| POST | `/api/apikey` | 登录 |
+| DELETE | `/api/apikey/{key_id}` | 登录 |
 | GET | `/api/article` | 登录 |
 | GET | `/api/article/refetch/{task_id}` | 登录 |
 | GET | `/api/article/{article_id}` | 登录 |
@@ -694,7 +837,12 @@ GET /api/admin/audit?action=auth.login&user_id=1&since=2026-05-01&until=2026-05-
 | POST | `/api/article/{article_id}/annotation` | 登录 |
 | DELETE | `/api/article/{article_id}/annotation/{annotation_id}` | 登录 |
 | GET | `/api/article/{article_id}/image` | 登录 |
+| PUT | `/api/article/{article_id}/read` | 登录 |
 | POST | `/api/article/{article_id}/refetch` | 登录 |
+| PUT | `/api/article/{article_id}/star` | 登录 |
+| POST | `/api/article/{article_id}/transcribe` | 登录 |
+| GET | `/api/article/{article_id}/transcript` | 登录 |
+| PATCH | `/api/auth/email` | 登录 |
 | POST | `/api/auth/login` | 公开 |
 | POST | `/api/auth/logout` | 公开 |
 | GET | `/api/auth/me` | 登录 |
@@ -707,28 +855,29 @@ GET /api/admin/audit?action=auth.login&user_id=1&since=2026-05-01&until=2026-05-
 | POST | `/api/auth/verify` | 公开 |
 | GET | `/api/chat/session` | 登录 |
 | POST | `/api/chat/session` | 登录 |
-| GET | `/api/chat/session/{session_id}` | 登录 |
 | DELETE | `/api/chat/session/{session_id}` | 登录 |
+| GET | `/api/chat/session/{session_id}` | 登录 |
 | POST | `/api/chat/session/{session_id}/message` | 登录 |
 | GET | `/api/chat/session/{session_id}/preset/{preset}` | 登录 |
 | POST | `/api/chat/session/{session_id}/rename` | 登录 |
 | GET | `/api/feed/mixed` | 登录或 `token` |
 | GET | `/api/group` | 登录 |
 | POST | `/api/group` | 登录 |
+| DELETE | `/api/group/{group_id}` | 登录 |
 | GET | `/api/group/{group_id}` | 登录 |
 | PATCH | `/api/group/{group_id}` | 登录 |
-| DELETE | `/api/group/{group_id}` | 登录 |
 | GET | `/api/image/{image_id}` | 登录 |
 | POST | `/api/image/{image_id}/block` | 登录 |
 | GET | `/api/llm/provider` | 管理员 |
 | POST | `/api/llm/provider` | 管理员 |
-| PATCH | `/api/llm/provider/{provider_id}` | 管理员 |
 | DELETE | `/api/llm/provider/{provider_id}` | 管理员 |
+| PATCH | `/api/llm/provider/{provider_id}` | 管理员 |
 | POST | `/api/llm/provider/{provider_id}/test` | 管理员 |
 | GET | `/api/login` | 登录 |
 | POST | `/api/login/auto` | 登录 |
 | POST | `/api/login/qr` | 登录 |
 | POST | `/api/login/wait` | 登录 |
+| GET | `/api/media/{article_pk}/audio` | 登录 |
 | GET | `/api/report/setting` | 登录 |
 | PATCH | `/api/report/setting` | 登录 |
 | GET | `/api/report/{date}` | 登录 |
@@ -744,6 +893,13 @@ GET /api/admin/audit?action=auth.login&user_id=1&since=2026-05-01&until=2026-05-
 | GET | `/api/settings/tasks/{task_id}` | 管理员 |
 | POST | `/api/settings/tasks/{task_id}/cancel` | 管理员 |
 | POST | `/api/settings/test-email` | 管理员 |
+| GET | `/api/source` | 登录 |
+| POST | `/api/source/channel` | 登录 |
+| GET | `/api/source/credential` | 登录 |
+| DELETE | `/api/source/credential/{source}` | 登录 |
+| PUT | `/api/source/credential/{source}` | 登录 |
+| GET | `/api/source/preview` | 登录 |
+| GET | `/api/whoami` | 登录 / API Key |
 
 ## 附录 B：状态码
 
