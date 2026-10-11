@@ -115,10 +115,16 @@ async def current_user_optional(
     return await api_key_user(request, storage)
 
 
+#: Said by every authenticated endpoint when the *hippo* session is missing. Spelled
+#: out because the shorter 「未登录」 reads like a statement about the source account
+#: (B站 / YouTube) to whoever just configured a credential there.
+NOT_SIGNED_IN = '未登录 hippo：请先登录（这里说的是 hippo 会话，与来源凭证无关）'
+
+
 async def current_user(user: User | None = Depends(current_user_optional)) -> User:
     """Require a signed-in, enabled user."""
     if user is None:
-        raise ApiError('未登录', status=401)
+        raise ApiError(NOT_SIGNED_IN, status=401)
     return user
 
 
@@ -143,6 +149,7 @@ def parse_group_ids(group_ids: str | None, group_id: int | None = None) -> list[
 
 
 __all__ = [
+    'NOT_SIGNED_IN',
     'SESSION_COOKIE',
     'client_ip',
     'current_user',

@@ -10,7 +10,7 @@ from ...exceptions import ApiError
 from ...models import User
 from ...rss import build_rss_xml, query_rss_items
 from ...storage import PostgresStorage, fetchall_rows
-from ..deps import current_user_optional, get_storage, parse_group_ids
+from ..deps import NOT_SIGNED_IN, current_user_optional, get_storage, parse_group_ids
 
 router = APIRouter()
 
@@ -57,7 +57,7 @@ async def list_feed(
     if resolved_user is None and token:
         resolved_user = await storage.sessions.resolve(token)
     if resolved_user is None:
-        raise ApiError('未登录', status=401)
+        raise ApiError(NOT_SIGNED_IN, status=401)
     user_id = resolved_user.id
 
     output_format = (format or '').lower()

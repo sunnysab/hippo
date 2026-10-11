@@ -50,9 +50,10 @@ PROFILE_ROOTS = (
     Path(os.environ.get('APPDATA', Path.home())) / 'Mozilla' / 'Firefox' / 'Profiles',
 )
 
-#: Which cookies each source needs, and what a session is called there. The names
-#: are only used to *report* what was found; nothing is filtered by name, because a
-#: missing name means the fix is to log in again, not to send a partial cookie.
+#: Which cookies each source needs, and what a session is called there. ``expected``
+#: is both what the output reports and what decides *which context* to read: a
+#: browser can hold several cookies with one name, and only one of them belongs to
+#: the session the person means.
 SOURCES: dict[str, dict[str, Any]] = {
     'bilibili': {
         'domains': ('bilibili.com',),
@@ -66,8 +67,30 @@ SOURCES: dict[str, dict[str, Any]] = {
     },
 }
 
+#: Firefox keeps several cookies with the same name apart in ``originAttributes``.
+#: Two kinds are not the person's own session and must never be mixed in:
+#:
+#: * ``^partitionKey=(https,site)`` — a CHIPS copy stored for an embedded Google
+#:   widget on *that* site. Every one of them is a different (and unrelated) session.
+#: * ``^userContextId=N`` — a container tab. Choosing the right one is fine; mixing
+#:   it with the default context is not.
+#:
+#: Getting this wrong is invisible: the header just carries two values for one name,
+#: and the server picks one. Measured on a real Firefox profile, that produced 64
+#: cookie pairs for 44 distinct names and YouTube answered ``LOGGED_IN: false``.
+_PARTITION_MARKER = 'partitionKey'
+_CONTAINER_MARKER = 'userContextId'
+
 #: The session cookie hippo issues on login.
 SESSION_COOKIE = 'hippo_session'
+
+#: Where each source's *login* actually lives. This matters more than it looks: a
+#: profile can hold a Google login and no YouTube login at all, and the two are not
+#: interchangeable — a browser (and yt-dlp's cookiejar) never sends google.com
+#: cookies to youtube.com. Measured against a real profile: 12 login cookies on
+#: .google.com and zero on .youtube.com, so YouTube answered LOGGED_IN: false while
+#: every name in the set looked present.
+SESSION_HOST = {'bilibili': 'bilibili.com', 'youtube': 'youtube.com'}
 
 #: A cookie value with a tab or newline would corrupt the Netscape file, and
 #: Firefox cannot store one anyway. Skipped rather than escaped.
@@ -129,7 +152,9 @@ def default_profile() -> Path:
     raise ScriptError(f'有多个 profile（{names}），用 --profile 指定其中一个')
 
 
-_SELECT_COOKIES = 'SELECT host, name, value, path, expiry, isSecure, isHttpOnly FROM moz_cookies'
+_SELECT_COOKIES = (
+    'SELECT host, name, value, path, expiry, isSecure, isHttpOnly, originAttributes FROM moz_cookies'
+)
 
 
 def _read(database: Path) -> list[dict[str, Any]]:
@@ -176,23 +201,68 @@ def read_cookies(profile: Path) -> list[dict[str, Any]]:
         raise ScriptError(f'读取 cookie 表失败（Firefox 正占着它？）：{exc}') from exc
 
 
-def cookies_for(rows: list[dict[str, Any]], source: str) -> list[dict[str, Any]]:
-    """The cookies a request to ``source`` would carry, still unexpired."""
+def _context(row: dict[str, Any]) -> str:
+    return str(row.get('originAttributes') or '')
+
+
+def _is_partitioned(context: str) -> bool:
+    """A third-party (CHIPS) copy: never the session the person is thinking of."""
+    return _PARTITION_MARKER in context
+
+
+def usable_contexts(rows: list[dict[str, Any]], source: str) -> dict[str, list[dict[str, Any]]]:
+    """Group ``rows`` by Firefox context, dropping partitions and dead rows."""
     domains = SOURCES[source]['domains']
     now = int(time.time())
-    selected = []
+    groups: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         host = str(row['host'] or '')
         bare = host.lstrip('.')
         if not any(bare == domain or bare.endswith(f'.{domain}') for domain in domains):
+            continue
+        if _is_partitioned(_context(row)):
             continue
         expiry = int(row['expiry'] or 0)
         if expiry and expiry < now:
             continue
         if any(char in str(row['value'] or '') for char in _FORBIDDEN_IN_VALUE):
             continue
-        selected.append(row)
-    return sorted(selected, key=lambda row: (str(row['host']), str(row['name'])))
+        groups.setdefault(_context(row), []).append(row)
+    return groups
+
+
+def pick_context(rows: list[dict[str, Any]], source: str) -> str:
+    """Which context holds the session: the default one, unless only a container does.
+
+    A browser used normally keeps everything in the default context, and that is what
+    is preferred even when a container also has a login. Falling back to a container
+    covers the person who logged in *inside* one.
+    """
+    groups = usable_contexts(rows, source)
+    if not groups:
+        return ''
+    expected = set(SOURCES[source]['expected'])
+
+    def has_session(context: str) -> bool:
+        return any(str(row['name']) in expected for row in groups[context])
+
+    if '' in groups and has_session(''):
+        return ''
+    containers = [context for context in groups if _CONTAINER_MARKER in context and has_session(context)]
+    if containers:
+        return sorted(containers)[0]
+    return '' if '' in groups else sorted(groups)[0]
+
+
+def cookies_for(rows: list[dict[str, Any]], source: str) -> list[dict[str, Any]]:
+    """The cookies a request to ``source`` would carry: one context, unexpired."""
+    context = pick_context(rows, source)
+    selected = usable_contexts(rows, source).get(context, [])
+    # 同名只留一个：同一上下文的重复（不同 path）取路径更长的那个。
+    by_name: dict[str, dict[str, Any]] = {}
+    for row in sorted(selected, key=lambda r: len(str(r['path'] or ''))):
+        by_name[str(row['name'])] = row
+    return sorted(by_name.values(), key=lambda row: (str(row['host']), str(row['name'])))
 
 
 def as_cookie_header(rows: list[dict[str, Any]]) -> str:
@@ -287,17 +357,36 @@ def submit(session: Session, source: str, value: str, scope: str) -> None:
 # --------------------------------------------------------------------------- #
 
 
+def session_names(rows: list[dict[str, Any]], source: str) -> list[str]:
+    """Login cookies this source would actually receive.
+
+    Only cookies on the source's own host count: the login cookies a profile keeps
+    for google.com are invisible to youtube.com, so counting them said "关键项 ✓"
+    for a profile that was not logged into YouTube at all.
+    """
+    host = SESSION_HOST[source]
+    expected = set(SOURCES[source]['expected'])
+    return sorted({
+        str(row['name'])
+        for row in rows
+        if str(row['host'] or '').lstrip('.').endswith(host) and str(row['name']) in expected
+    })
+
+
 def describe(rows: list[dict[str, Any]], source: str) -> str:
     """What was found, in names only — never a value."""
     names = [str(row['name']) for row in rows]
-    expected = [name for name in SOURCES[source]['expected'] if name in names]
-    missing = [name for name in SOURCES[source]['expected'] if name not in names]
+    found = session_names(rows, source)
     size = len(as_netscape_file(rows).encode('utf-8')) if source == 'youtube' else len(as_cookie_header(rows))
     parts = [f'{len(rows)} 个 cookie（{", ".join(sorted(names)[:6])}{"…" if len(names) > 6 else ""}）']
-    if expected:
-        parts.append(f'关键项 {", ".join(expected)} ✓')
-    if missing and len(rows):
-        parts.append(f'没看到 {", ".join(missing)}（可能只是这个账号没用上）')
+    if found:
+        parts.append(f'{SESSION_HOST[source]} 上的登录项 {", ".join(found)} ✓')
+    else:
+        parts.append(
+            f'⚠ {SESSION_HOST[source]} 上一个登录 cookie 都没有'
+            f'（{"、".join(SOURCES[source]["expected"][:4])}… 都不在）：这个 profile 大概没登录'
+            f' {SOURCES[source]["label"]}'
+        )
     parts.append(f'{size / 1024:.1f} KB')
     return '，'.join(parts)
 

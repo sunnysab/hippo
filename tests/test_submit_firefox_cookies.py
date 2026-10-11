@@ -41,12 +41,21 @@ def _profile(directory: str, rows) -> Path:
     connection = sqlite3.connect(profile / 'cookies.sqlite')
     connection.execute(
         'CREATE TABLE moz_cookies (host TEXT, name TEXT, value TEXT, path TEXT, '
-        'expiry INTEGER, isSecure INTEGER, isHttpOnly INTEGER)'
+        "expiry INTEGER, isSecure INTEGER, isHttpOnly INTEGER, originAttributes TEXT DEFAULT '')"
     )
-    connection.executemany('INSERT INTO moz_cookies VALUES (?, ?, ?, ?, ?, ?, ?)', rows)
+    connection.executemany('INSERT INTO moz_cookies VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                           [(*tuple(row), '') if len(row) == 7 else tuple(row) for row in rows])
     connection.commit()
     connection.close()
     return profile
+
+
+def _row(tuple_row) -> dict:
+    host, name, value, path, expiry, secure, http_only = tuple_row
+    return {
+        'host': host, 'name': name, 'value': value, 'path': path,
+        'expiry': expiry, 'isSecure': secure, 'isHttpOnly': http_only, 'originAttributes': '',
+    }
 
 
 def _rows():
@@ -106,6 +115,33 @@ class CookieSelectionTest(unittest.TestCase):
                 found = submitter.default_profile()
 
         self.assertEqual(profile, found)
+
+
+class SessionHostTest(unittest.TestCase):
+    """A login cookie counts only where the source would actually receive it."""
+
+    def test_google_login_cookies_do_not_count_as_a_youtube_login(self) -> None:
+        rows = [
+            *(row for row in _rows() if row[1] in ('SID', 'SAPISID') and row[0] == '.google.com'),
+            ('.youtube.com', 'PREF', 'x', '/', 4102444800, 0, 0),
+        ]
+        described = submitter.describe([_row(row) for row in rows], 'youtube')
+
+        self.assertIn('一个登录 cookie 都没有', described)
+        # 名字仍然报出来（它确实存在），但不会当成 YouTube 的登录项。
+        self.assertEqual([], submitter.session_names([_row(row) for row in rows], 'youtube'))
+
+    def test_a_youtube_login_cookie_does_count(self) -> None:
+        rows = _rows() + [('.youtube.com', 'LOGIN_INFO', 'x', '/', 4102444800, 1, 1)]
+        described = submitter.describe([_row(row) for row in rows], 'youtube')
+
+        self.assertIn('youtube.com 上的登录项', described)
+        self.assertNotIn('一个登录 cookie 都没有', described)
+
+    def test_bilibili_counts_only_its_own_host(self) -> None:
+        rows = [('.bilibili.com', 'SESSDATA', 'x', '/', 4102444800, 1, 1)]
+
+        self.assertEqual(['SESSDATA'], submitter.session_names([_row(row) for row in rows], 'bilibili'))
 
 
 class PrivacyTest(unittest.TestCase):
