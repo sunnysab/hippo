@@ -3,8 +3,11 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from hippo.media_settings import (
+    PROXY_DIRECT,
+    PROXY_FOLLOW,
     default_media_settings,
     normalize_media_settings,
+    resolve_proxy,
     set_media_settings,
 )
 
@@ -85,6 +88,61 @@ class MediaSettingsNormalizeTest(unittest.TestCase):
 
         self.assertEqual('secret', settings['asr_api_key'])
         self.assertEqual('', settings['bilibili_cookie'])
+
+
+class ProxySettingsTest(unittest.TestCase):
+    """Each source decides for itself whether to use the instance proxy."""
+
+    def test_defaults_keep_bilibili_direct_and_youtube_proxied(self) -> None:
+        settings = default_media_settings()
+
+        # B站 会把代理出口的 IP 拉黑（实测 412），所以它必须显式直连——这样即使管理员
+        # 之后配了默认代理，B站 也不会跟着走。
+        self.assertEqual(PROXY_DIRECT, settings['proxy_bilibili'])
+        self.assertEqual('', resolve_proxy(settings, 'bilibili'))
+        self.assertTrue(resolve_proxy(settings, 'youtube'))
+        # 播客默认跟随实例默认值，而默认值是空的，于是直连。
+        self.assertEqual(PROXY_FOLLOW, settings['proxy_podcast'])
+        self.assertEqual('', resolve_proxy(settings, 'podcast'))
+
+    def test_a_default_proxy_is_picked_up_by_the_sources_that_follow_it(self) -> None:
+        settings = normalize_media_settings({'proxy_default': 'http://proxy.example:8082'})
+
+        self.assertEqual('http://proxy.example:8082', resolve_proxy(settings, 'podcast'))
+        # 跟随默认的会被默认覆盖，显式直连/显式代理的不受影响。
+        self.assertEqual('', resolve_proxy(settings, 'bilibili'))
+        self.assertEqual('http://100.111.170.110:8082', resolve_proxy(settings, 'youtube'))
+
+    def test_a_source_can_override_the_default_with_its_own_proxy(self) -> None:
+        settings = normalize_media_settings(
+            {'proxy_default': 'http://proxy.example:8082', 'proxy_podcast': 'socks5://127.0.0.1:1080'}
+        )
+
+        self.assertEqual('socks5://127.0.0.1:1080', resolve_proxy(settings, 'podcast'))
+
+    def test_a_source_can_go_back_to_direct_with_the_sentinel(self) -> None:
+        settings = normalize_media_settings(
+            {'proxy_default': 'http://proxy.example:8082', 'proxy_podcast': 'direct'}, current=None
+        )
+
+        self.assertEqual('', resolve_proxy(settings, 'podcast'))
+
+    def test_a_missing_source_follows_the_default(self) -> None:
+        # 旧配置里没有 podcast 键时不应该是「直连」，而是「跟随默认」。
+        self.assertEqual('http://proxy.example:8082', resolve_proxy({'proxy_default': 'http://proxy.example:8082'}, 'podcast'))
+
+    def test_a_typo_keeps_the_previous_value_instead_of_going_direct(self) -> None:
+        current = normalize_media_settings({'proxy_podcast': 'http://proxy.example:8082'})
+
+        settings = normalize_media_settings({'proxy_podcast': 'htp://proxy.example:8082'}, current=current)
+
+        self.assertEqual('http://proxy.example:8082', settings['proxy_podcast'])
+
+    def test_the_default_proxy_is_never_a_sentinel(self) -> None:
+        settings = normalize_media_settings({'proxy_default': 'direct'})
+
+        self.assertEqual('', settings['proxy_default'])
+        self.assertEqual('', resolve_proxy(settings, 'podcast'))
 
 
 class MediaSettingsStorageTest(unittest.IsolatedAsyncioTestCase):

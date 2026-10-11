@@ -13,6 +13,7 @@ upgrade later with a re-transcribe.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from .storage import PostgresStorage, load_meta_json, save_meta_json
@@ -46,8 +47,16 @@ _ATTEMPTS_RANGE = (1, 10)
 #: audio bitrate used when archiving.
 BITRATES = ('original', '64k', '96k', '128k', '192k', '256k')
 
-_PROXIES = ('proxy_bilibili', 'proxy_youtube', 'proxy_podcast')
 _SECRETS = ('asr_api_key', 'bilibili_cookie')
+
+#: Sources that open their own network connections, each with a proxy field. The
+#: daemon-backed weixin source is not here: it is reached over the local socket.
+PROXY_SOURCES = ('bilibili', 'youtube', 'podcast')
+#: A per-source proxy field holds one of: `''`/`'default'` (follow
+#: `proxy_default`), `'direct'` (no proxy, overriding a default), or a URL.
+PROXY_FOLLOW = 'default'
+PROXY_DIRECT = 'direct'
+_PROXY_SCHEMES = ('http://', 'https://', 'socks5://', 'socks5h://')
 
 
 def default_media_settings() -> dict[str, Any]:
@@ -77,11 +86,13 @@ def default_media_settings() -> dict[str, Any]:
         'bilibili_cc_subtitle': True,
         'bilibili_cookie': '',
         'youtube_cookies_file': '',
-        # B站 必须直连（本机的出口代理已被 B站拉黑）；YouTube 必须走代理。这两个默认值
-        # 是本实例实测出来的，管理台可改。
-        'proxy_bilibili': '',
+        # 代理按来源分开配置，另有一个实例默认值：`direct` 是直连（用于覆盖默认代理），
+        # `default` 是跟随默认代理。下面三个默认值与本实例实测一致——B站 必须直连
+        # （出口代理的 IP 已被 B站拉黑，会 412），YouTube 必须走代理——管理台可改。
+        'proxy_default': '',
+        'proxy_bilibili': PROXY_DIRECT,
         'proxy_youtube': 'http://100.111.170.110:8082',
-        'proxy_podcast': '',
+        'proxy_podcast': PROXY_FOLLOW,
     }
 
 
@@ -117,6 +128,20 @@ def _as_text(value: Any, default: str = '') -> str:
     return str(value).strip()
 
 
+def _normalize_proxy(value: Any, *, current: str, allow_sentinel: bool) -> str:
+    """Accept a blank, a sentinel, or a proxy URL — and keep ``current`` otherwise.
+
+    Writing ``htp://…`` and silently getting a direct connection is a debugging
+    session nobody enjoys, so an unusable value is dropped rather than stored.
+    """
+    text = _as_text(value)
+    if not text:
+        return ''
+    if text in (PROXY_FOLLOW, PROXY_DIRECT):
+        return text if allow_sentinel else current
+    return text if text.startswith(_PROXY_SCHEMES) else current
+
+
 def _normalize_endpoints(value: Any, *, current: dict[str, str]) -> dict[str, str]:
     """Keep only known tiers, and only http(s) URLs.
 
@@ -144,6 +169,8 @@ def normalize_media_settings(values: Any, *, current: dict[str, Any] | None = No
     base = default_media_settings()
     if current:
         base.update(current)
+    # 提交前的值：写坏的代理 URL 会回退到它，而不是回退到硬编码的默认值。
+    previous = dict(base)
     stored = values if isinstance(values, dict) else {}
     for key, value in stored.items():
         if key in base:
@@ -167,8 +194,20 @@ def normalize_media_settings(values: Any, *, current: dict[str, Any] | None = No
     base['keep_media'] = _as_bool(base['keep_media'], True)
     base['keep_media_bitrate'] = _as_choice(base['keep_media_bitrate'], BITRATES, '128k')
     base['bilibili_cc_subtitle'] = _as_bool(base['bilibili_cc_subtitle'], True)
-    for key in (*_SECRETS, *_PROXIES, 'youtube_cookies_file'):
+    for key in (*_SECRETS, 'youtube_cookies_file'):
         base[key] = _as_text(base[key])
+    base['proxy_default'] = _normalize_proxy(
+        base['proxy_default'],
+        current=_as_text(previous.get('proxy_default')),
+        allow_sentinel=False,
+    )
+    for source in PROXY_SOURCES:
+        key = f'proxy_{source}'
+        base[key] = _normalize_proxy(
+            base[key],
+            current=_as_text(previous.get(key)),
+            allow_sentinel=True,
+        )
     # A short tail is joined onto the previous chunk rather than submitted on
     # its own, so the ceiling has to leave room for that join (media/audio.py).
     base['min_tail_seconds'] = min(base['min_tail_seconds'], base['chunk_seconds'])
@@ -190,6 +229,19 @@ async def set_media_settings(storage: PostgresStorage, updates: dict[str, Any]) 
     return settings
 
 
+def resolve_proxy(settings: Mapping[str, Any], source: str) -> str:
+    """The proxy to use for ``source``: its own, the instance default, or none.
+
+    ``''`` means "connect directly", which is also what an unset default gives.
+    """
+    value = _as_text(settings.get(f'proxy_{source}')) or PROXY_FOLLOW
+    if value == PROXY_DIRECT:
+        return ''
+    if value == PROXY_FOLLOW:
+        return _as_text(settings.get('proxy_default'))
+    return value
+
+
 def asr_endpoint(settings: dict[str, Any], tier: str) -> str:
     """Return the configured base URL for ``tier``, or raise when it is unset."""
     endpoints = settings.get('asr_endpoints') or {}
@@ -203,11 +255,15 @@ __all__ = [
     'ASR_TIERS',
     'BITRATES',
     'MEDIA_SETTINGS_KEY',
+    'PROXY_DIRECT',
+    'PROXY_FOLLOW',
+    'PROXY_SOURCES',
     'TIER_ACCURATE',
     'TIER_FAST',
     'asr_endpoint',
     'default_media_settings',
     'get_media_settings',
     'normalize_media_settings',
+    'resolve_proxy',
     'set_media_settings',
 ]

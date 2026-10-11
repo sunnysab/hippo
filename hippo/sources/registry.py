@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..media.pipeline import MediaResolver
-from ..media_settings import get_media_settings
+from ..media_settings import get_media_settings, resolve_proxy
 from ..storage import PostgresStorage
 from . import SourceAdapter, UnsupportedSource
 from .bilibili import SOURCE as BILIBILI_SOURCE
@@ -44,7 +44,7 @@ class MediaSources:
         bilibili = self._client(
             BilibiliClient(
                 cookie=cookie,
-                proxy=str(settings.get('proxy_bilibili') or ''),
+                proxy=resolve_proxy(settings, BILIBILI_SOURCE),
             )
         )
         bilibili_source = BilibiliSource(bilibili)
@@ -55,7 +55,7 @@ class MediaSources:
             use_cc_subtitle=bool(settings.get('bilibili_cc_subtitle')),
         )
 
-        podcast_proxy = str(settings.get('proxy_podcast') or '')
+        podcast_proxy = resolve_proxy(settings, PODCAST_SOURCE)
         podcast = self._client(PodcastClient(proxy=podcast_proxy))
         podcast_source = PodcastSource(podcast)
         self.sources[PODCAST_SOURCE] = podcast_source
@@ -63,7 +63,7 @@ class MediaSources:
         self.resolvers[PODCAST_SOURCE] = PodcastResolver(podcast, proxy=podcast_proxy)
 
         # yt-dlp 是子进程，没有客户端要管，只需要代理设置。
-        youtube_proxy = str(settings.get('proxy_youtube') or '')
+        youtube_proxy = resolve_proxy(settings, YOUTUBE_SOURCE)
         youtube_source = YoutubeSource(proxy=youtube_proxy)
         self.sources[YOUTUBE_SOURCE] = youtube_source
         self.adapters[YOUTUBE_SOURCE] = MediaSync(storage=storage, source=youtube_source)
