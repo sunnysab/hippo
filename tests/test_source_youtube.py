@@ -5,7 +5,9 @@ JSON is interpreted, which is the part that breaks when yt-dlp changes.
 """
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
@@ -19,6 +21,7 @@ from hippo.sources.youtube import (
     parse_json_lines,
     video_block,
     video_id_from_url,
+    ytdlp_bin,
 )
 
 CHANNEL = 'UCsBjURrPoezykLs9EqgamOA'
@@ -203,6 +206,35 @@ class RunYtdlpErrorTest(unittest.IsolatedAsyncioTestCase):
             await run_ytdlp(['--version'])
 
         self.assertIn('yt-dlp', str(ctx.exception))
+
+
+class YtdlpLocationTest(unittest.TestCase):
+    """Where ``yt-dlp`` comes from, before it is executed."""
+
+    def test_prefers_the_binary_on_path(self) -> None:
+        with patch('hippo.sources.youtube.shutil.which', return_value='/usr/bin/yt-dlp'):
+            self.assertEqual('/usr/bin/yt-dlp', ytdlp_bin())
+
+    def test_falls_back_to_the_interpreter_environment(self) -> None:
+        # systemd 启动的服务 PATH 里没有虚拟环境的 bin/，装在同一环境里的 yt-dlp
+        # 只有靠这个回退才找得到。
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / 'yt-dlp'
+            binary.write_text('#!/bin/sh', encoding='utf-8')
+            binary.chmod(0o755)
+            with (
+                patch('hippo.sources.youtube.shutil.which', return_value=None),
+                patch('hippo.sources.youtube.sys.executable', str(Path(tmp) / 'python')),
+            ):
+                self.assertEqual(str(binary), ytdlp_bin())
+
+    def test_the_bare_name_is_kept_when_it_is_nowhere(self) -> None:
+        # 保留裸名字：给用户的报错由 spawn 的 FileNotFoundError 给出。
+        with (
+            patch('hippo.sources.youtube.shutil.which', return_value=None),
+            patch('hippo.sources.youtube.sys.executable', '/nowhere/python'),
+        ):
+            self.assertEqual('yt-dlp', ytdlp_bin())
 
 
 if __name__ == '__main__':

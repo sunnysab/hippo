@@ -22,7 +22,10 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shutil
+import sys
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -33,7 +36,9 @@ from .ingest import ChannelInfo, Item, Listing
 logger = get_logger(__name__)
 
 SOURCE = 'youtube'
-YTDLP_BIN = 'yt-dlp'
+#: yt-dlp is a dependency, so the binary sits next to the interpreter, but a
+#: system-wide one (fresher, or the operator's own) wins when PATH has it.
+YTDLP_NAME = 'yt-dlp'
 WATCH_BASE = 'https://www.youtube.com/watch?v='
 
 #: One channel page per listing call. yt-dlp's channel tabs are continuable, so a
@@ -100,13 +105,26 @@ def best_audio_format(formats: Sequence[dict[str, Any]]) -> dict[str, Any] | Non
     return max(audio_only, key=lambda fmt: float(fmt.get('abr') or 0))
 
 
+def ytdlp_bin() -> str:
+    """Locate ``yt-dlp``: PATH first, then this interpreter's own environment.
+
+    The service is started by systemd, which never has the venv's ``bin/`` on PATH,
+    so the fallback is what makes a from-pyproject install usable.
+    """
+    found = shutil.which(YTDLP_NAME)
+    if found:
+        return found
+    sibling = Path(sys.executable).with_name(YTDLP_NAME)
+    return str(sibling) if sibling.is_file() else YTDLP_NAME
+
+
 async def run_ytdlp(args: Sequence[str], *, proxy: str = '', timeout: float = PROBE_TIMEOUT) -> str:
     """Run ``yt-dlp`` and return its stdout.
 
     stderr is kept in the error because that is where yt-dlp explains *why*
     (bot check, deleted video, geo-block), and an operator needs to read it.
     """
-    command = [YTDLP_BIN, '--no-warnings', '--no-progress']
+    command = [ytdlp_bin(), '--no-warnings', '--no-progress']
     if proxy:
         command += ['--proxy', proxy]
     command += list(args)
@@ -117,7 +135,7 @@ async def run_ytdlp(args: Sequence[str], *, proxy: str = '', timeout: float = PR
             stderr=asyncio.subprocess.PIPE,
         )
     except FileNotFoundError as exc:
-        raise YoutubeError('未找到 yt-dlp，请先安装并加入 PATH') from exc
+        raise YoutubeError('未找到 yt-dlp，请先安装（uv sync 会装进虚拟环境）') from exc
     except OSError as exc:  # pragma: no cover - defensive: exec failures only
         raise YoutubeError(f'无法启动 yt-dlp：{exc}') from exc
     try:
@@ -258,7 +276,7 @@ class YoutubeResolver:
 __all__ = [
     'PROBE_TIMEOUT',
     'SOURCE',
-    'YTDLP_BIN',
+    'YTDLP_NAME',
     'YoutubeError',
     'YoutubeResolver',
     'YoutubeSource',
@@ -269,4 +287,5 @@ __all__ = [
     'run_ytdlp',
     'video_block',
     'video_id_from_url',
+    'ytdlp_bin',
 ]
