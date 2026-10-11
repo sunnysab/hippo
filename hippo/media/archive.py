@@ -18,6 +18,17 @@ from ..s3 import get_s3_client, guess_extension, upload_object_bytes, with_prefi
 MEDIA_PREFIX = 'media'
 DEFAULT_CONTENT_TYPE = 'audio/mpeg'
 
+#: What ``article_media.kind`` may hold. `source` is the untouched download, `video`
+#: is the video itself (a file somebody already had), `audio` is the listenable copy.
+MEDIA_KINDS = ('audio', 'video', 'source')
+
+#: Content type per kind of object we store, used when the caller does not know better.
+CONTENT_TYPES = {
+    'audio': 'audio/mpeg',
+    'video': 'video/mp4',
+    'source': 'application/octet-stream',
+}
+
 
 class ArchiveError(RuntimeError):
     pass
@@ -27,7 +38,7 @@ def build_media_key(prefix: str, article_pk: int, kind: str, content_type: str |
     return f'{prefix}{kind}/{article_pk}.{guess_extension(content_type)}'
 
 
-def store_audio(
+def store_media(
     *,
     article_pk: int,
     path: Path,
@@ -35,7 +46,10 @@ def store_audio(
     kind: str = 'audio',
     prefix: str = MEDIA_PREFIX,
 ) -> tuple[str, int]:
-    """Upload the audited audio file and return ``(key, size)``.
+    """Upload one article's media file and return ``(key, size)``.
+
+    Audio and video are the same operation with a different key and content type, so
+    there is one function: the object store does not care which it is holding.
 
     A missing object store is an error the caller reports; it must not stop the
     transcription it was made for.
@@ -86,11 +100,36 @@ def parse_range(header: str | None, total: int | None) -> tuple[int | None, int 
     return start, end
 
 
+def fetch_object(key: str, target: Path) -> int:
+    """Copy an archived object back to disk. Used when a job's source is already stored.
+
+    The size is verified against what S3 reports, because a media file that arrives
+    half-written is worse than one that fails loudly.
+    """
+    bundle = get_s3_client()
+    if not bundle:
+        raise ArchiveError('未配置对象存储（HIPPO_S3_*），无法读取留档媒体')
+    config, client = bundle
+    try:
+        response = client.get_object(Bucket=config.bucket, Key=key)
+        expected = int(response.get('ContentLength') or 0)
+        written = 0
+        with target.open('wb') as handle:
+            for chunk in response['Body'].iter_chunks(1 << 16):
+                written += len(chunk)
+                handle.write(chunk)
+    except Exception as exc:
+        raise ArchiveError(f'读取留档媒体失败：{exc}') from exc
+    if not written or (expected and written != expected):
+        raise ArchiveError(f'留档媒体不完整：{written}/{expected} 字节')
+    return written
+
+
 def open_audio(key: str, *, start: int | None = None, end: int | None = None) -> AudioStream:
     """Open an archived object for reading.
 
     ``key`` is used verbatim: it already carries the prefix, because that is what
-    ``store_audio`` saved. The bucket comes from the shared S3 config.
+    ``store_media`` saved. The bucket comes from the shared S3 config.
     """
     bundle = get_s3_client()
     if not bundle:
@@ -119,12 +158,15 @@ def open_audio(key: str, *, start: int | None = None, end: int | None = None) ->
 
 
 __all__ = [
+    'CONTENT_TYPES',
     'DEFAULT_CONTENT_TYPE',
+    'MEDIA_KINDS',
     'MEDIA_PREFIX',
     'ArchiveError',
     'AudioStream',
     'build_media_key',
+    'fetch_object',
     'open_audio',
     'parse_range',
-    'store_audio',
+    'store_media',
 ]

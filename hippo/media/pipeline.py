@@ -451,13 +451,19 @@ async def transcribe_job(
         workdir = Path(temp_name)
         source = workdir / 'source.bin'
         await storage.media_jobs.update_progress(job_id, stage='download', progress=5)
-        size = await _download(
-            str(resolved.audio_url),
-            source,
-            headers=resolved.headers,
-            proxy=resolved.proxy,
-            timeout=float(settings.get('asr_timeout_seconds') or 900),
-        )
+        # 已经存在对象存储里的视频优先：那是别人手上就有的文件，不必再从网上下一遍。
+        stored = await storage.media_assets.get(article_pk, kind='video')
+        if stored and stored.get('state') == 'stored' and stored.get('s3_key'):
+            logger.info('用留档视频作为源（article_pk=%s，%s 字节）', article_pk, stored.get('size_bytes'))
+            size = await asyncio.to_thread(archive_module.fetch_object, str(stored['s3_key']), source)
+        else:
+            size = await _download(
+                str(resolved.audio_url),
+                source,
+                headers=resolved.headers,
+                proxy=resolved.proxy,
+                timeout=float(settings.get('asr_timeout_seconds') or 900),
+            )
         duration = float(resolved.duration_seconds or await asyncio.to_thread(audio_module.probe_duration, source))
         over_ceiling = bool(ceiling) and duration > ceiling
         if over_ceiling and subtitle is None:
@@ -529,7 +535,7 @@ async def _archive(
         await asyncio.to_thread(audio_module.archive, source, target, bitrate=bitrate)
         await storage.media_jobs.update_progress(int(job['id']), stage='archive', progress=20)
         key, size = await asyncio.to_thread(
-            archive_module.store_audio,
+            archive_module.store_media,
             article_pk=article_pk,
             path=target,
         )

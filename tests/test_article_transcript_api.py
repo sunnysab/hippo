@@ -163,8 +163,12 @@ class AudioStreamingTest(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
         ):
-            return await article_api.stream_archived_audio(
-                article_pk=7, request=_request(range_header), storage=storage, user=_user()
+            return await article_api.stream_archived_media(
+                kind='audio',
+                article_pk=7,
+                request=_request(range_header),
+                storage=storage,
+                user=_user(),
             )
 
     async def test_a_stored_asset_streams_with_range_support(self) -> None:
@@ -189,6 +193,41 @@ class AudioStreamingTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(302, response.status_code)
         self.assertEqual('https://cdn/ep.mp3', response.headers['location'])
+
+    async def test_the_same_handler_serves_video(self) -> None:
+        # 音频和视频只差一个 kind：都是对象存储里的一个对象 + 一个 content type。
+        storage = _storage(asset={'state': 'stored', 's3_key': 'media/video/7.mp4', 'size_bytes': 2048})
+        with (
+            patch('hippo.api.routers.article._assert_article_visible', new=AsyncMock()),
+            patch(
+                'hippo.api.routers.article.archive_module.open_audio',
+                new=Mock(
+                    return_value=AudioStream(
+                        body=iter([b'x']), content_type='video/mp4', size=2048, total=2048
+                    )
+                ),
+            ),
+        ):
+            response = await article_api.stream_archived_media(
+                kind='video',
+                article_pk=7,
+                request=_request(),
+                storage=storage,
+                user=_user(),
+            )
+
+        self.assertEqual('video/mp4', response.media_type)
+        self.assertEqual('video', storage.media_assets.get.await_args.kwargs['kind'])
+
+    async def test_an_unknown_kind_is_a_404(self) -> None:
+        with self.assertRaises(article_api.ApiError):
+            await article_api.stream_archived_media(
+                kind='wallpaper',
+                article_pk=7,
+                request=_request(),
+                storage=_storage(),
+                user=_user(),
+            )
 
     async def test_no_asset_at_all_is_a_404(self) -> None:
         with self.assertRaises(ApiError) as ctx:

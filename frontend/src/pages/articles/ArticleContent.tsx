@@ -117,6 +117,22 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({ block }: { block: Ar
   const { t } = useI18n();
   const [playing, setPlaying] = useState(false);
 
+  // 我们自己留档的视频（对象存储里的文件）直接播，没有第三方 iframe 也没有
+  // 「点一下才加载」的必要：它就在我们自己的服务器上。
+  if (!block.embed_url && block.url) {
+    return (
+      <div className="reader-video">
+        <video
+          src={block.url}
+          controls
+          preload='metadata'
+          poster={block.cover_url || undefined}
+          data-testid='reader-video-file'
+        />
+      </div>
+    );
+  }
+
   if (!block.embed_url) return null;
 
   // The poster stays until the reader asks for the video: loading a third-party

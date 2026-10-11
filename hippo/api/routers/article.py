@@ -282,24 +282,28 @@ async def export_transcript(
     return Response(content=body, media_type=media_type)
 
 
-@router.get('/media/{article_pk}/audio', response_model=None)
-async def stream_archived_audio(
+@router.get('/media/{article_pk}/{kind}', response_model=None)
+async def stream_archived_media(
     article_pk: int,
+    kind: str,
     request: Request,
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
 ) -> Response:
-    """Play the archived audio, with range support so the reader can seek.
+    """Stream an article's archived media, with range support so the reader can seek.
 
-    Without an archive the original URL is still the right answer; a missing one is
-    a 404 the reader turns into "no player".
+    Same handler for audio and video: both are an object in the store and a content
+    type. Without an archive the original URL is still the right answer; a missing
+    one is a 404 the reader turns into "no player".
     """
+    if kind not in archive_module.MEDIA_KINDS:
+        raise ApiError(f'不认识的媒体类型：{kind}', status=404)
     await _assert_article_visible(storage, user.id, article_pk)
-    asset = await storage.media_assets.get(article_pk)
+    asset = await storage.media_assets.get(article_pk, kind=kind)
     if not asset or asset.get('state') != 'stored' or not asset.get('s3_key'):
         if asset and asset.get('orig_url'):
             return RedirectResponse(str(asset['orig_url']), status_code=302)
-        raise ApiError('这篇文章没有留档音频', status=404)
+        raise ApiError(f'这篇文章没有留档{kind}', status=404)
 
     try:
         start, end = archive_module.parse_range(request.headers.get('range'), asset.get('size_bytes'))

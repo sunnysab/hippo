@@ -57,6 +57,8 @@ class _FakeStorage:
         self.media_jobs = AsyncMock()
         self.media_jobs.update_progress = AsyncMock(side_effect=lambda *a, **k: self.progress.append(k))
         self.media_assets = AsyncMock()
+        # 默认没有存好的视频：走「从网上下来」那条路。用留档视频当源的测试自己覆盖。
+        self.media_assets.get = AsyncMock(return_value=None)
         self.articles = AsyncMock()
         self.articles.save_article_content = AsyncMock(side_effect=self._save)
 
@@ -158,7 +160,7 @@ class TranscribeJobTest(unittest.IsolatedAsyncioTestCase):
         with (
             self._patch_audio(),
             patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1234)),
-            patch('hippo.media.pipeline.archive_module.store_audio', new=lambda **k: ('media/audio/7.mp3', 10)),
+            patch('hippo.media.pipeline.archive_module.store_media', new=lambda **k: ('media/audio/7.mp3', 10)),
         ):
             outcome = await _run(self.storage, ResolvedMedia(audio_url='https://host/ep.mp3'), transcriber=transcriber)
 
@@ -193,7 +195,7 @@ class TranscribeJobTest(unittest.IsolatedAsyncioTestCase):
         with (
             self._patch_audio(),
             patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1234)) as download,
-            patch('hippo.media.pipeline.archive_module.store_audio', new=lambda **k: ('media/audio/7.mp3', 10)),
+            patch('hippo.media.pipeline.archive_module.store_media', new=lambda **k: ('media/audio/7.mp3', 10)),
         ):
             outcome = await _run(self.storage, media, transcriber=transcriber)
 
@@ -217,7 +219,7 @@ class TranscribeJobTest(unittest.IsolatedAsyncioTestCase):
         with (
             self._patch_audio(),
             patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1234)),
-            patch('hippo.media.pipeline.archive_module.store_audio', new=lambda **k: ('media/audio/7.mp3', 10)),
+            patch('hippo.media.pipeline.archive_module.store_media', new=lambda **k: ('media/audio/7.mp3', 10)),
         ):
             outcome = await _run(self.storage, media, transcriber=transcriber)
 
@@ -238,7 +240,7 @@ class TranscribeJobTest(unittest.IsolatedAsyncioTestCase):
         with (
             self._patch_audio(),
             patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1234)),
-            patch('hippo.media.pipeline.archive_module.store_audio', new=lambda **k: ('k', 1)),
+            patch('hippo.media.pipeline.archive_module.store_media', new=lambda **k: ('k', 1)),
             patch('hippo.media.pipeline._archive', new=AsyncMock(return_value=False)),
         ):
             await _run(self.storage, media, transcriber=transcriber)
@@ -276,6 +278,38 @@ class TranscribeJobTest(unittest.IsolatedAsyncioTestCase):
         ):
             await _run(self.storage, ResolvedMedia(audio_url='https://host/long.mp3'), settings=settings)
 
+    async def test_a_stored_video_is_used_instead_of_downloading(self) -> None:
+        # 已经躺在对象存储里的视频优先：那是别人手上就有的文件，不该再从网上下一遍。
+        self.storage.media_assets.get = AsyncMock(
+            return_value={'state': 'stored', 's3_key': 'media/video/7.webm', 'size_bytes': 4096}
+        )
+        fetched: list[tuple[str, str]] = []
+
+        def _fetch(key, target):
+            fetched.append((key, str(target)))
+            target.write_bytes(b'x' * 16)
+            return 16
+
+        with (
+            self._patch_audio(),
+            patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1)) as download,
+            patch('hippo.media.pipeline.archive_module.fetch_object', new=_fetch),
+            patch('hippo.media.pipeline.archive_module.store_media', new=lambda **k: ('k', 1)),
+        ):
+            await _run(
+                self.storage,
+                ResolvedMedia(audio_url='https://host/ep.mp3'),
+                transcriber=_FakeTranscriber([_text(1900)]),
+            )
+
+        download.assert_not_awaited()
+        self.assertEqual(1, len(fetched))
+        key, path = fetched[0]
+        self.assertEqual('media/video/7.webm', key)
+        # 任务自己的临时目录（hippo-media-<pk>-*），文件名叫 source.bin。
+        self.assertTrue(path.endswith('source.bin'), path)
+        self.assertIn('hippo-media-7-', path)
+
     async def test_a_repetition_loop_is_retried_as_two_halves(self) -> None:
         halves = [
             audio_module.Chunk(index=0, path=self.chunk, start_seconds=0.0, duration_seconds=150.0),
@@ -286,7 +320,7 @@ class TranscribeJobTest(unittest.IsolatedAsyncioTestCase):
             self._patch_audio(),
             patch('hippo.media.pipeline.audio_module.split', return_value=halves),
             patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1)),
-            patch('hippo.media.pipeline.archive_module.store_audio', new=lambda **k: ('k', 1)),
+            patch('hippo.media.pipeline.archive_module.store_media', new=lambda **k: ('k', 1)),
         ):
             outcome = await _run(self.storage, ResolvedMedia(audio_url='https://host/ep.mp3'), transcriber=transcriber)
 
@@ -303,7 +337,7 @@ class TranscribeJobTest(unittest.IsolatedAsyncioTestCase):
                 ]
             ),
             patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1)),
-            patch('hippo.media.pipeline.archive_module.store_audio', new=lambda **k: ('k', 1)),
+            patch('hippo.media.pipeline.archive_module.store_media', new=lambda **k: ('k', 1)),
         ):
             outcome = await _run(self.storage, ResolvedMedia(audio_url='https://host/ep.mp3'), transcriber=transcriber)
 
@@ -314,7 +348,7 @@ class TranscribeJobTest(unittest.IsolatedAsyncioTestCase):
         with (
             self._patch_audio(),
             patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1)),
-            patch('hippo.media.pipeline.archive_module.store_audio', new=lambda **k: ('k', 1)),
+            patch('hippo.media.pipeline.archive_module.store_media', new=lambda **k: ('k', 1)),
             self.assertRaises(MediaJobSkipped),
         ):
             await _run(self.storage, ResolvedMedia(audio_url='https://host/ep.mp3'), transcriber=transcriber)
@@ -328,7 +362,7 @@ class TranscribeJobTest(unittest.IsolatedAsyncioTestCase):
         with (
             self._patch_audio(),
             patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1)),
-            patch('hippo.media.pipeline.archive_module.store_audio', new=explode),
+            patch('hippo.media.pipeline.archive_module.store_media', new=explode),
         ):
             outcome = await _run(self.storage, ResolvedMedia(audio_url='https://host/ep.mp3'), transcriber=transcriber)
 
