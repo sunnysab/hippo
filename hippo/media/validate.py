@@ -23,6 +23,15 @@ from dataclasses import dataclass
 #: is deliberately wide.
 MIN_CHARS_PER_SECOND = 0.5
 MAX_CHARS_PER_SECOND = 15.0
+#: Latin script fits about three times as much speech into a second: a Fireship
+#: video narrated at full speed measured 18-19 characters per second, which the
+#: Chinese ceiling rejected as a loop — and a rejected chunk fails the job, so
+#: every fast English video failed three times over.
+#:
+#: The two cases cannot be told apart by rate alone (a slowly repeating decode
+#: lands at 16-19 as well), so this ceiling only catches a runaway loop; the
+#: repeated-character and truncation checks are what guard the rest.
+MAX_CHARS_PER_SECOND_LATIN = 30.0
 
 #: One character owning more than half the text is the ``!!!!`` signature.
 MAX_REPEAT_RATIO = 0.5
@@ -56,10 +65,20 @@ class Verdict:
     silent: bool = False
 
 
+def _is_cjk(text: str) -> bool:
+    """Whether the transcript reads mostly as Chinese characters."""
+    cjk = sum(1 for character in text if '\u4e00' <= character <= '\u9fff')
+    return cjk * 2 >= len(text)
+
+
 def _chars_per_token(text: str) -> float:
     """Pick the ratio that matches the script the transcript actually came out in."""
-    cjk = sum(1 for character in text if '\u4e00' <= character <= '\u9fff')
-    return CHARS_PER_TOKEN if cjk * 2 >= len(text) else CHARS_PER_TOKEN_LATIN
+    return CHARS_PER_TOKEN if _is_cjk(text) else CHARS_PER_TOKEN_LATIN
+
+
+def _max_chars_per_second(text: str) -> float:
+    """The loop ceiling for the script at hand — see the two constants above."""
+    return MAX_CHARS_PER_SECOND if _is_cjk(text) else MAX_CHARS_PER_SECOND_LATIN
 
 
 def _peak_repeat_ratio(text: str) -> float:
@@ -84,7 +103,7 @@ def check(text: str, duration_seconds: float, *, max_new_tokens: int | None = No
         return Verdict(ok=False, silent=True, reason='切片内没有可转写的内容')
 
     rate = len(stripped) / duration_seconds
-    if rate > MAX_CHARS_PER_SECOND:
+    if rate > _max_chars_per_second(stripped):
         return Verdict(ok=False, reason=f'字符/秒异常（{rate:.1f}），疑似解码循环')
 
     repeat_ratio = _peak_repeat_ratio(stripped)
@@ -104,6 +123,7 @@ __all__ = [
     'CHARS_PER_TOKEN',
     'CHARS_PER_TOKEN_LATIN',
     'MAX_CHARS_PER_SECOND',
+    'MAX_CHARS_PER_SECOND_LATIN',
     'MAX_REPEAT_RATIO',
     'MIN_CHARS',
     'MIN_CHARS_PER_SECOND',

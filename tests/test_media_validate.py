@@ -6,7 +6,7 @@ regression tests for the two ways a chunk can go wrong unnoticed.
 
 import unittest
 
-from hippo.media.validate import Verdict, check
+from hippo.media.validate import MAX_CHARS_PER_SECOND_LATIN, Verdict, check
 
 #: A sentence with enough character variety that the repetition check has
 #: something to measure; a single repeated character would trip it by design.
@@ -49,6 +49,24 @@ class CheckTest(unittest.TestCase):
         text = (_ENGLISH * 60)[:3500]
 
         self.assertTrue(check(text, 300, max_new_tokens=2048).ok)
+
+    def test_fast_english_speech_is_not_a_decode_loop(self) -> None:
+        # 实测：Fireship 一条 300 秒切片出了 5441 字符的连贯英文（18.1 字/秒），
+        # 被中文的 15 字/秒上限判成解码循环，于是每个语速快的英文视频都会失败三次。
+        text = (_ENGLISH * 100)[:5441]
+
+        self.assertTrue(check(text, 300, max_new_tokens=2048).ok)
+        self.assertLess(18.1, MAX_CHARS_PER_SECOND_LATIN)
+
+    def test_a_runaway_latin_loop_is_still_caught(self) -> None:
+        verdict = check((_ENGLISH * 200)[:12000], 300, max_new_tokens=2048)
+
+        self.assertFalse(verdict.ok)
+        self.assertIn('字符/秒异常', verdict.reason)
+
+    def test_the_chinese_ceiling_is_unchanged(self) -> None:
+        # 中文 300 秒切片顶到生成预算（约 3400 字）时仍然是异常，而不是被放宽放过。
+        self.assertFalse(check(_sample(3400), 300, max_new_tokens=2048).ok)
 
     def test_the_cap_is_read_off_the_script_not_off_the_setting(self) -> None:
         # 英文的 2048 token 约合 8000 字符，远高于 300 秒语音可能产出的量（字符/秒上限
