@@ -325,6 +325,33 @@ async def _transcribe_chunk(
     return recovered
 
 
+def _media_blocks(
+    resolved: ResolvedMedia,
+    *,
+    article_pk: int,
+    archived: bool,
+) -> list[dict[str, Any]]:
+    """The players that go above the text: the video, and the audio we kept.
+
+    Both, when both exist — a video is watchable, and the archived audio is what
+    survives the original disappearing (and what makes a transcript anchor seek).
+    ``_save`` decides which of them the reader actually gets to see.
+
+    A resolved audio url with no archive (keep_media off) is still worth a player,
+    because it streams from wherever the source hosts it.
+    """
+    blocks: list[dict[str, Any]] = []
+    if resolved.embed_block:
+        blocks.append(resolved.embed_block)
+    if archived:
+        blocks.append({'type': 'audio', 'url': f'/api/media/{article_pk}/audio'})
+    elif resolved.audio_url and not resolved.embed_block and not resolved.headers:
+        # 直接指向源站的播放器。带自定义头的源（B站 CDN 要 Referer）不能这样给：
+        # 浏览器的 <audio> 加不了那些头，给出去也是个播不响的播放器。
+        blocks.append({'type': 'audio', 'url': str(resolved.audio_url)})
+    return blocks
+
+
 async def _save(
     storage: PostgresStorage,
     article: ArticleRecord,
@@ -363,11 +390,7 @@ async def _save_subtitle(
 ) -> dict[str, Any]:
     """Write a ready-made subtitle in as the body, with the player above it."""
     await storage.media_jobs.update_progress(job_id, stage='subtitle', progress=90)
-    blocks: list[dict[str, Any]] = []
-    if resolved.embed_block:
-        blocks.append(resolved.embed_block)
-    elif archived:
-        blocks.append({'type': 'audio', 'url': f'/api/media/{article_pk}/audio'})
+    blocks = _media_blocks(resolved, article_pk=article_pk, archived=archived)
     blocks.extend(resolved.subtitle.blocks)  # type: ignore[union-attr]
     await _save(storage, article, blocks=blocks, markdown=resolved.subtitle.markdown)  # type: ignore[union-attr]
     return {
@@ -441,7 +464,9 @@ async def transcribe_job(
 
         if subtitle is not None:
             # 有现成字幕就不花 ASR 的钱，但下载、转码、留档照做。
-            return await keep_subtitle(archived=archived is not None)
+            # `bool`：留档失败时返回的是 False，写 `is not None` 会给出一个指向
+            # 不存在对象的播放器。
+            return await keep_subtitle(archived=bool(archived))
 
         await storage.media_jobs.update_progress(job_id, stage='transcribe', progress=25)
 
@@ -469,13 +494,7 @@ async def transcribe_job(
         if not paragraphs:
             raise MediaJobSkipped('整段音频都没有转写到内容')
 
-        blocks = []
-        if resolved.embed_block:
-            blocks.append(resolved.embed_block)
-        elif archived:
-            blocks.append({'type': 'audio', 'url': f'/api/media/{article_pk}/audio'})
-        else:
-            blocks.append({'type': 'audio', 'url': str(resolved.audio_url)})
+        blocks = _media_blocks(resolved, article_pk=article_pk, archived=archived)
         blocks.extend(_paragraph_blocks(paragraphs))
 
         await storage.media_jobs.update_progress(job_id, stage='save', progress=95)

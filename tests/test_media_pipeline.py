@@ -205,6 +205,47 @@ class TranscribeJobTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('/api/media/7/audio', self.storage.saved[0]['content_blocks'][0]['url'])
         self.assertEqual('字幕', self.storage.saved[0]['content_blocks'][1]['text'])
 
+    async def test_a_video_with_a_kept_audio_offers_both_players(self) -> None:
+        # 「放视频、听音频、看文本」：视频条目同时给视频块与留档音频块，
+        # 于是字幕锚点也就能跳（前端的 canSeek 只认 audio 块）。
+        transcriber = _FakeTranscriber([])
+        media = ResolvedMedia(
+            audio_url='https://host/ep.mp3',
+            subtitle=_SUBTITLE,
+            embed_block={'type': 'video', 'provider': 'bilibili', 'embed_url': 'https://player.bilibili.com/x'},
+        )
+        with (
+            self._patch_audio(),
+            patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1234)),
+            patch('hippo.media.pipeline.archive_module.store_audio', new=lambda **k: ('media/audio/7.mp3', 10)),
+        ):
+            outcome = await _run(self.storage, media, transcriber=transcriber)
+
+        blocks = self.storage.saved[0]['content_blocks']
+        self.assertEqual(['video', 'audio', 'paragraph'], [block['type'] for block in blocks])
+        self.assertEqual('/api/media/7/audio', blocks[1]['url'])
+        self.assertTrue(outcome['archived'])
+
+    async def test_a_video_that_cannot_be_archived_gets_no_broken_player(self) -> None:
+        # 需要自定义头的源（B站 CDN）：没有留档时不要给出指不过去的 audio 块。
+        transcriber = _FakeTranscriber([])
+        media = ResolvedMedia(
+            audio_url='https://cdn.bilibili.com/a.m4s',
+            headers={'Referer': 'https://www.bilibili.com/'},
+            subtitle=_SUBTITLE,
+            embed_block={'type': 'video', 'provider': 'bilibili', 'embed_url': 'https://player.bilibili.com/x'},
+        )
+        with (
+            self._patch_audio(),
+            patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1234)),
+            patch('hippo.media.pipeline.archive_module.store_audio', new=lambda **k: ('k', 1)),
+            patch('hippo.media.pipeline._archive', new=AsyncMock(return_value=False)),
+        ):
+            await _run(self.storage, media, transcriber=transcriber)
+
+        blocks = self.storage.saved[0]['content_blocks']
+        self.assertEqual(['video', 'paragraph'], [block['type'] for block in blocks])
+
     async def test_a_too_long_recording_still_keeps_its_subtitle(self) -> None:
         # 超长的音频不下载（也就不留档），但现成的字幕没理由跟着一起丢。
         settings = default_media_settings()
@@ -216,7 +257,10 @@ class TranscribeJobTest(unittest.IsolatedAsyncioTestCase):
 
         download.assert_not_awaited()
         self.assertFalse(outcome['archived'])
-        self.assertEqual('字幕', self.storage.saved[0]['content_blocks'][0]['text'])
+        blocks = self.storage.saved[0]['content_blocks']
+        # 超长不下载，但字幕还在；播放器指向源站（这条没有自定义头，能播）。
+        self.assertEqual(['audio', 'paragraph'], [block['type'] for block in blocks])
+        self.assertEqual('字幕', blocks[1]['text'])
 
     async def test_an_entry_without_audio_is_skipped(self) -> None:
         with self.assertRaises(MediaJobSkipped):

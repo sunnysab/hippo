@@ -4,7 +4,7 @@ import { renderInlineNodes } from '../../utils/markdown';
 import { EmptyState } from '../../components/EmptyState';
 import type { ArticlePayload, ArticleContentBlock } from '../../store/articles';
 import { buildContentBlockKeys } from './contentKeys';
-import { formatDuration as anchorLabel } from '../../utils/duration';
+import { formatDuration as anchorLabel, timestampHref } from '../../utils/duration';
 import { headingAnchorId } from './outline';
 
 /**
@@ -16,6 +16,12 @@ interface PlayerControls {
   /** False when the article has no player, which is when anchors are plain text. */
   canSeek: boolean;
   seek: (seconds: number) => void;
+  /**
+   * Where to open the original at a timestamp, for entries whose player is a
+   * third-party iframe: Bilibili and YouTube both read `?t=<seconds>` on the video
+   * page, which is the only offset a reader can follow without an iframe API.
+   */
+  videoHref?: (seconds: number) => string | null;
 }
 
 const PlayerContext = createContext<PlayerControls>({ canSeek: false, seek: () => {} });
@@ -176,9 +182,22 @@ const ContentBlock = memo(function ContentBlock({
     const text = renderInlineNodes(block.text || '');
     if (!label) return <p>{text}</p>;
     if (!player.canSeek) {
+      // 视频条目的播放器是第三方 iframe，够不到它的进度轴，所以锚点指向原视频的
+      // 对应时刻（新标签打开）；有留档音频时上面的分支会就地跳转。
+      const href = player.videoHref?.(block.t || 0) || null;
+      if (!href) {
+        return (
+          <p>
+            <span className="reader-anchor" title={label}>{label}</span>
+            {text}
+          </p>
+        );
+      }
       return (
         <p>
-          <span className="reader-anchor" title={label}>{label}</span>
+          <a className="reader-anchor is-action" href={href} target="_blank" rel="noreferrer" title={label}>
+            {label}
+          </a>
           {text}
         </p>
       );
@@ -294,6 +313,7 @@ interface RenderedContentProps extends ArticleContentProps {
 function RenderedContent({ payload, content, hideSmall, onImageContextMenu }: RenderedContentProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const canSeek = content.some((block) => block.type === 'audio' && Boolean(block.url));
+  const originalLink = payload.article?.link || '';
   const controls = useMemo<PlayerControls>(
     () => ({
       canSeek,
@@ -305,8 +325,9 @@ function RenderedContent({ payload, content, hideSmall, onImageContextMenu }: Re
           // 浏览器可能拒绝自动播放；位置已经设好，读者自己按播放键即可。
         });
       },
+      videoHref: (seconds: number) => timestampHref(originalLink, seconds),
     }),
-    [canSeek],
+    [canSeek, originalLink],
   );
   const contentKeys = buildContentBlockKeys(content);
 
