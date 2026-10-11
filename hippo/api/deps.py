@@ -1,5 +1,7 @@
 """Shared FastAPI dependencies and request-parameter helpers."""
 
+
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
@@ -13,6 +15,25 @@ from ..sync_scheduler import SyncScheduler
 
 #: Name of the cookie carrying the opaque session token.
 SESSION_COOKIE = 'hippo_session'
+
+#: Headers an API key may arrive in. The bearer form is what OpenAI-style clients
+#: send; ``X-API-Key`` is what curl users reach for.
+API_KEY_HEADERS = ('authorization', 'x-api-key')
+
+#: Paths an API key may never reach. Administration and credential handling are
+#: obvious; key management itself matters just as much, or a leaked key could mint
+#: itself a wider one.
+API_KEY_FORBIDDEN_PREFIXES = (
+    '/api/admin',
+    '/api/apikey',
+    '/api/auth',
+    '/api/login',
+    '/api/source/credential',
+)
+
+#: Methods that only read. Anything else needs the ``write`` scope, which the
+#: console does not issue yet.
+_SAFE_METHODS = frozenset({'GET', 'HEAD', 'OPTIONS'})
 
 
 def parse_int(value: str | None) -> int | None:
@@ -41,15 +62,57 @@ def client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
+def _api_key_from_request(request: Request) -> str | None:
+    authorization = request.headers.get('authorization') or ''
+    if authorization.lower().startswith('bearer '):
+        return authorization[7:].strip() or None
+    raw = request.headers.get('x-api-key')
+    return raw.strip() if raw else None
+
+
+async def api_key_user(request: Request, storage: PostgresStorage) -> User | None:
+    """Resolve an API key, enforcing what a key may and may not do.
+
+    Raises rather than returning ``None`` for a key that was presented but is
+    unusable: silently falling back to anonymous would turn a revoked key into a
+    confusing 401 from some deeper dependency.
+    """
+    secret = _api_key_from_request(request)
+    if not secret:
+        return None
+    path = request.url.path
+    if any(path.startswith(prefix) for prefix in API_KEY_FORBIDDEN_PREFIXES):
+        raise ApiError('API Key 不能用于管理接口，请用网页登录', status=403)
+    key = await storage.api_keys.authenticate(secret)
+    if key is None:
+        raise ApiError('API Key 无效或已吊销', status=401)
+    scopes = tuple(key.get('scopes') or ())
+    if request.method not in _SAFE_METHODS and 'write' not in scopes:
+        raise ApiError('这个 API Key 只有只读权限', status=403)
+    await storage.api_keys.touch(int(key['id']), client_ip(request))
+    await storage.commit()
+    user = await storage.users.get(int(key['user_id']))
+    if user is None or user.is_disabled:
+        raise ApiError('API Key 对应的账号不可用', status=403)
+    request.state.api_key = {'id': int(key['id']), 'name': key.get('name'), 'scopes': list(scopes)}
+    return user
+
+
 async def current_user_optional(
     request: Request,
     storage: PostgresStorage = Depends(get_storage),
 ) -> User | None:
-    """Resolve the session cookie, returning ``None`` when absent or expired."""
+    """Resolve the session cookie or an API key, whichever was presented.
+
+    Everything that depends on this — which is every read endpoint — therefore
+    accepts a key without changing a single route.
+    """
     token = request.cookies.get(SESSION_COOKIE)
-    if not token:
-        return None
-    return await storage.sessions.resolve(token)
+    if token:
+        user = await storage.sessions.resolve(token)
+        if user is not None:
+            return user
+    return await api_key_user(request, storage)
 
 
 async def current_user(user: User | None = Depends(current_user_optional)) -> User:

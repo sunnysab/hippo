@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .account import AccountRepository, GroupRepository
 from .annotation import AnnotationRepository
+from .apikey import ApiKeyRepository
 from .article import (
     ARTICLE_CONTENT_PRESENT_SQL,
     ArticleDocumentRepository,
@@ -32,6 +33,7 @@ __all__ = [
     'ARTICLE_CONTENT_PRESENT_SQL',
     'AccountRepository',
     'AnnotationRepository',
+    'ApiKeyRepository',
     'ArticleDocumentRepository',
     'ArticleImageTarget',
     'ArticleMediaRepository',

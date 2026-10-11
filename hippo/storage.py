@@ -22,6 +22,7 @@ from .report import ReportRepository
 from .repositories import (
     AccountRepository,
     AnnotationRepository,
+    ApiKeyRepository,
     ArticleDocumentRepository,
     ArticleMediaRepository,
     ArticleQueueRepository,
@@ -44,7 +45,7 @@ from .repositories import (
 )
 from .sync_jobs import SyncJobRepository
 
-SCHEMA_VERSION = '26'
+SCHEMA_VERSION = '27'
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'schema' / 'postgres.sql'
 
@@ -245,6 +246,7 @@ class PostgresStorage(AbstractAsyncContextManager):
         self.tokens = UserTokenRepository(self.conn)
         self.subscriptions = SubscriptionRepository(self.conn)
         self.credentials = UserCredentialRepository(self.conn)
+        self.api_keys = ApiKeyRepository(self.conn)
         self.audit = AuditRepository(self.conn)
         self.llm = LlmProviderRepository(self.conn)
         self.annotations = AnnotationRepository(self.conn)

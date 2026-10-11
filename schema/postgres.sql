@@ -723,3 +723,29 @@ CREATE TABLE IF NOT EXISTS user_credential (
     updated_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (user_id, source)
 );
+
+-- ============================================================
+-- 公开 API：只读 API Key
+-- ============================================================
+
+-- 密钥只在创建时明文返回一次：库里存 sha256 与可展示的前缀，像会话令牌一样。
+-- 数据库被拖走也不能直接拿来调 API。
+CREATE TABLE IF NOT EXISTS api_key (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    prefix TEXT NOT NULL,
+    key_hash TEXT NOT NULL,
+    scopes TEXT[] NOT NULL DEFAULT '{read}',
+    last_used_at TIMESTAMPTZ,
+    last_used_ip TEXT,
+    expires_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_hash
+ON api_key (key_hash);
+
+CREATE INDEX IF NOT EXISTS idx_api_key_user
+ON api_key (user_id);
