@@ -205,6 +205,41 @@ async def list_article_images(
     return {'images': payload}
 
 
+@router.post('/article/{article_id}/transcribe', status_code=202)
+async def transcribe_article(
+    article_id: int,
+    force_asr: bool = Query(False, description='跳过现成的字幕/转录稿，强制重新转写'),
+    storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
+) -> dict[str, Any]:
+    """Queue a transcribed article again — the reader's "转写这篇".
+
+    ``force_asr`` is for the case a published subtitle is worse than the model:
+    the flag rides along in the job payload and the resolver skips it.
+    """
+    await _assert_article_visible(storage, user.id, article_id)
+    job = await storage.media_jobs.get(article_id)
+    if not job:
+        raise ApiError('这篇文章没有转写任务（不是媒体条目）', status=404)
+    payload = dict(job.get('payload') or {})
+    if force_asr:
+        payload['skip_subtitle'] = True
+    async with storage.transaction():
+        await storage.media_jobs.enqueue_many(
+            [
+                {
+                    'article_pk': article_id,
+                    'source': job['source'],
+                    'media_url': job['media_url'],
+                    'payload': payload,
+                }
+            ],
+            force=True,
+        )
+    logger.info('按需转写 article_pk=%s force_asr=%s', article_id, force_asr)
+    return {'article_pk': article_id, 'state': 'pending', 'force_asr': force_asr}
+
+
 @router.get('/article/{article_id}/transcript', response_model=None)
 async def export_transcript(
     article_id: int,

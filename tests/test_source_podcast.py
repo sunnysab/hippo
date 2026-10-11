@@ -277,6 +277,19 @@ class ResolverTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual('https://cdn.example/ep1.mp3', media.audio_url)
 
+    async def test_force_asr_ignores_a_published_transcript(self) -> None:
+        transcript = AsyncMock(return_value=VTT)
+        client = _client(transcript=transcript)
+        job = {
+            'media_url': 'https://cdn.example/ep1.mp3',
+            'payload': {'transcript_url': 'https://x.vtt', 'skip_subtitle': True},
+        }
+
+        media = await PodcastResolver(client).resolve(job)
+
+        self.assertEqual('https://cdn.example/ep1.mp3', media.audio_url)
+        transcript.assert_not_awaited()
+
     async def test_no_audio_and_no_transcript_is_a_skip(self) -> None:
         client = _client(transcript=AsyncMock(return_value=VTT))
 

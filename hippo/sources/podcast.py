@@ -364,7 +364,7 @@ class PodcastResolver:
         if isinstance(payload, str):
             payload = {}
         duration = payload.get('duration_seconds')
-        transcript_url = str(payload.get('transcript_url') or '')
+        transcript_url = '' if payload.get('skip_subtitle') else str(payload.get('transcript_url') or '')
         if transcript_url:
             subtitle = await self._transcript(transcript_url)
             if subtitle is not None:

@@ -7,6 +7,7 @@ progress bar cannot be dragged.
 
 import unittest
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import AsyncMock, Mock, patch
 
 from hippo.api.routers import article as article_api
@@ -32,10 +33,11 @@ def _user() -> SimpleNamespace:
     return SimpleNamespace(id=1, username='u')
 
 
-def _storage(*, blocks=BLOCKS, asset=None) -> SimpleNamespace:
+def _storage(*, blocks=BLOCKS, asset=None, job=None) -> SimpleNamespace:
     return SimpleNamespace(
         transaction=_NullTransaction,
         media_assets=SimpleNamespace(get=AsyncMock(return_value=asset)),
+        media_jobs=AsyncMock(get=AsyncMock(return_value=job)),
         conn=None,
     )
 
@@ -103,6 +105,49 @@ class TranscriptExportTest(unittest.IsolatedAsyncioTestCase):
 
 def _request(range_header: str | None = None) -> SimpleNamespace:
     return SimpleNamespace(headers={'range': range_header} if range_header else {})
+
+
+class OnDemandTranscribeTest(unittest.IsolatedAsyncioTestCase):
+    _JOB: ClassVar[dict] = {
+        'id': 1,
+        'article_pk': 7,
+        'source': 'bilibili',
+        'media_url': 'https://www.bilibili.com/video/BV1gHps6yEHL',
+        'payload': {'transcript_url': 'https://cdn/sub.vtt'},
+        'state': 'done',
+    }
+
+    async def _transcribe(self, *, job=None, force_asr=False):
+        storage = _storage(job=job)
+        with patch('hippo.api.routers.article._assert_article_visible', new=AsyncMock()):
+            result = await article_api.transcribe_article(
+                article_id=7, force_asr=force_asr, storage=storage, user=_user()
+            )
+        return result, storage
+
+    async def test_a_done_job_goes_back_to_pending(self) -> None:
+        result, storage = await self._transcribe(job=self._JOB)
+
+        self.assertEqual('pending', result['state'])
+        queued = storage.media_jobs.enqueue_many.call_args.args[0][0]
+        self.assertEqual(7, queued['article_pk'])
+        self.assertEqual('bilibili', queued['source'])
+        self.assertEqual(self._JOB['media_url'], queued['media_url'])
+        self.assertTrue(storage.media_jobs.enqueue_many.call_args.kwargs['force'])
+
+    async def test_force_asr_asks_the_resolver_to_skip_the_subtitle(self) -> None:
+        _, storage = await self._transcribe(job=self._JOB, force_asr=True)
+
+        queued = storage.media_jobs.enqueue_many.call_args.args[0][0]
+        self.assertTrue(queued['payload']['skip_subtitle'])
+        # 原来的转录稿地址留着：只是这次不用
+        self.assertEqual('https://cdn/sub.vtt', queued['payload']['transcript_url'])
+
+    async def test_an_article_without_a_job_is_a_404(self) -> None:
+        with self.assertRaises(ApiError) as ctx:
+            await self._transcribe(job=None)
+
+        self.assertEqual(404, ctx.exception.status)
 
 
 class AudioStreamingTest(unittest.IsolatedAsyncioTestCase):

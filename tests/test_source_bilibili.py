@@ -243,6 +243,20 @@ class ResolverTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual('https://cdn/a.m4s', media.audio_url)
 
+    async def test_force_asr_skips_a_cc_subtitle(self) -> None:
+        client = _FakeClient(
+            video={'bvid': 'BV1gHps6yEHL', 'pages': [{'cid': 42}]},
+            player={'subtitle': {'subtitles': [{'subtitle_url': '//cdn/sub.json'}]}},
+            fetch_json={'body': [{'from': 0.0, 'content': '字幕'}]},
+            playurl={'dash': {'audio': [{'id': 30280, 'bandwidth': 1, 'baseUrl': 'https://cdn/a.m4s'}]}},
+        )
+        job = {**self._JOB, 'payload': {'skip_subtitle': True}}
+
+        media = await BilibiliResolver(client).resolve(job)
+
+        self.assertEqual('https://cdn/a.m4s', media.audio_url)
+        self.assertIsNone(media.subtitle)
+
     async def test_a_video_without_a_page_is_skipped(self) -> None:
         from hippo.media.pipeline import MediaJobSkipped
 

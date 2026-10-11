@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Mapping
 from hashlib import md5
 from pathlib import Path
 from typing import Any
@@ -445,7 +446,10 @@ class BilibiliResolver:
             raise MediaJobSkipped(f'视频 {bvid} 没有可用的音轨')
         duration = int(video.get('duration') or 0) or None
 
-        if self._use_cc_subtitle:
+        # 「强制重转」把 skip_subtitle 放进任务 payload：CC 字幕质量差时用它换回 ASR。
+        payload = job.get('payload') if isinstance(job, Mapping) else None
+        skip_subtitle = bool((payload or {}).get('skip_subtitle')) if isinstance(payload, dict) else False
+        if self._use_cc_subtitle and not skip_subtitle:
             subtitle = await self._cc_subtitle(bvid, cid)
             if subtitle is not None:
                 return ResolvedMedia(embed_block=embed, subtitle=subtitle, duration_seconds=duration)

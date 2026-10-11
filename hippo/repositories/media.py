@@ -180,6 +180,17 @@ class MediaJobRepository:
             counts = {str(row['state']): int(row['n']) for row in await cur.fetchall()}
         return {state: counts.get(state, 0) for state in ('pending', 'processing', 'failed', 'done')}
 
+    async def get(self, article_pk: int) -> dict[str, Any] | None:
+        """The job for one article, so a reader action can re-queue it as it was."""
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                'SELECT id, article_pk, source, media_url, payload, state, attempts, last_error'
+                ' FROM media_job WHERE article_pk = %s',
+                (int(article_pk),),
+            )
+            row = await cur.fetchone()
+        return dict(row) if row else None
+
     async def states_for_articles(self, article_pks: Iterable[int]) -> dict[int, str]:
         """State per article, so a detail response can say "转写中"."""
         ids = [int(pk) for pk in article_pks]
