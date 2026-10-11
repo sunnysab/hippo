@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from .sources.credentials import MAX_CREDENTIAL_BYTES
 from .storage import PostgresStorage, load_meta_json, save_meta_json
 
 MEDIA_SETTINGS_KEY = 'media:settings'
@@ -47,7 +48,7 @@ _ATTEMPTS_RANGE = (1, 10)
 #: audio bitrate used when archiving.
 BITRATES = ('original', '64k', '96k', '128k', '192k', '256k')
 
-_SECRETS = ('asr_api_key', 'bilibili_cookie')
+_SECRETS = ('asr_api_key', 'bilibili_cookie', 'youtube_cookies')
 
 #: Sources that open their own network connections, each with a proxy field. The
 #: daemon-backed weixin source is not here: it is reached over the local socket.
@@ -85,7 +86,8 @@ def default_media_settings() -> dict[str, Any]:
         'keep_media_bitrate': '128k',
         'bilibili_cc_subtitle': True,
         'bilibili_cookie': '',
-        'youtube_cookies_file': '',
+        # Netscape cookies.txt 的内容（不是服务器上的路径）：由「提交 cookie」接口或管理台写入。
+        'youtube_cookies': '',
         # 代理按来源分开配置，另有一个实例默认值：`direct` 是直连（用于覆盖默认代理），
         # `default` 是跟随默认代理。下面三个默认值与本实例实测一致——B站 必须直连
         # （出口代理的 IP 已被 B站拉黑，会 412），YouTube 必须走代理——管理台可改。
@@ -194,8 +196,13 @@ def normalize_media_settings(values: Any, *, current: dict[str, Any] | None = No
     base['keep_media'] = _as_bool(base['keep_media'], True)
     base['keep_media_bitrate'] = _as_choice(base['keep_media_bitrate'], BITRATES, '128k')
     base['bilibili_cc_subtitle'] = _as_bool(base['bilibili_cc_subtitle'], True)
-    for key in (*_SECRETS, 'youtube_cookies_file'):
+    for key in _SECRETS:
         base[key] = _as_text(base[key])
+    cookies = _as_text(base['youtube_cookies'])
+    # 形状校验在 API 层（能给出可读的错误），这里只兜住长度：超限就保留原值，绝不截断。
+    base['youtube_cookies'] = (
+        cookies if len(cookies.encode('utf-8')) <= MAX_CREDENTIAL_BYTES else _as_text(previous.get('youtube_cookies'))
+    )
     base['proxy_default'] = _normalize_proxy(
         base['proxy_default'],
         current=_as_text(previous.get('proxy_default')),

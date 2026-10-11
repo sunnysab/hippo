@@ -21,9 +21,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shutil
 import sys
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -40,6 +42,11 @@ SOURCE = 'youtube'
 #: system-wide one (fresher, or the operator's own) wins when PATH has it.
 YTDLP_NAME = 'yt-dlp'
 WATCH_BASE = 'https://www.youtube.com/watch?v='
+
+#: A logged-in session is what keeps Google from answering with the bot check, so a
+#: submitted cookie is worth carrying into every call. It is written to a private
+#: temporary file because ``--cookies`` only accepts a path.
+COOKIE_FILE_PREFIX = 'hippo-ytdlp-cookies-'
 
 #: One channel page per listing call. yt-dlp's channel tabs are continuable, so a
 #: window of items is enough for the periodic sync; deeper history is a backfill.
@@ -118,15 +125,57 @@ def ytdlp_bin() -> str:
     return str(sibling) if sibling.is_file() else YTDLP_NAME
 
 
-async def run_ytdlp(args: Sequence[str], *, proxy: str = '', timeout: float = PROBE_TIMEOUT) -> str:
+def write_cookie_file(cookies: str) -> Path | None:
+    """Put a submitted cookie where ``yt-dlp`` can read it, and nowhere else.
+
+    0600 in the system temp dir: it is a live login for a Google account.
+    """
+    if not cookies.strip():
+        return None
+    handle, name = tempfile.mkstemp(prefix=COOKIE_FILE_PREFIX, suffix='.txt')
+    path = Path(name)
+    try:
+        os.fchmod(handle, 0o600)
+        with os.fdopen(handle, 'w', encoding='utf-8') as file:
+            file.write(cookies if cookies.endswith('\n') else f'{cookies}\n')
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    return path
+
+
+async def run_ytdlp(
+    args: Sequence[str],
+    *,
+    proxy: str = '',
+    timeout: float = PROBE_TIMEOUT,
+    cookies: str = '',
+) -> str:
     """Run ``yt-dlp`` and return its stdout.
 
     stderr is kept in the error because that is where yt-dlp explains *why*
     (bot check, deleted video, geo-block), and an operator needs to read it.
     """
+    cookie_path = write_cookie_file(cookies)
+    try:
+        return await _run_ytdlp(args, proxy=proxy, timeout=timeout, cookie_path=cookie_path)
+    finally:
+        if cookie_path is not None:
+            cookie_path.unlink(missing_ok=True)
+
+
+async def _run_ytdlp(
+    args: Sequence[str],
+    *,
+    proxy: str,
+    timeout: float,
+    cookie_path: Path | None,
+) -> str:
     command = [ytdlp_bin(), '--no-warnings', '--no-progress']
     if proxy:
         command += ['--proxy', proxy]
+    if cookie_path is not None:
+        command += ['--cookies', str(cookie_path)]
     command += list(args)
     try:
         process = await asyncio.create_subprocess_exec(
@@ -170,8 +219,9 @@ class YoutubeSource:
 
     source = SOURCE
 
-    def __init__(self, *, proxy: str = '') -> None:
+    def __init__(self, *, proxy: str = '', cookies: str = '') -> None:
         self._proxy = proxy
+        self._cookies = cookies
 
     async def preview(self, ref: str) -> ChannelInfo:
         channel_id = channel_id_from_url(ref)
@@ -182,6 +232,7 @@ class YoutubeSource:
             ['--flat-playlist', '--dump-json', '-I', '1:1', url],
             proxy=self._proxy,
             timeout=LIST_TIMEOUT,
+            cookies=self._cookies,
         )
         entries = parse_json_lines(output)
         if not entries:
@@ -212,6 +263,7 @@ class YoutubeSource:
             ],
             proxy=self._proxy,
             timeout=LIST_TIMEOUT,
+            cookies=self._cookies,
         )
         entries = parse_json_lines(output)
         items: list[Item] = []
@@ -242,8 +294,9 @@ class YoutubeSource:
 class YoutubeResolver:
     """Turn a queued watch URL into the audio the pipeline downloads."""
 
-    def __init__(self, *, proxy: str = '') -> None:
+    def __init__(self, *, proxy: str = '', cookies: str = '') -> None:
         self._proxy = proxy
+        self._cookies = cookies
 
     async def resolve(self, job) -> ResolvedMedia:
         video_id = video_id_from_url(str(job.get('media_url') or ''))
@@ -252,6 +305,7 @@ class YoutubeResolver:
         output = await run_ytdlp(
             ['--dump-json', '--no-playlist', f'{WATCH_BASE}{video_id}'],
             proxy=self._proxy,
+            cookies=self._cookies,
         )
         entries = parse_json_lines(output)
         if not entries:
@@ -287,5 +341,6 @@ __all__ = [
     'run_ytdlp',
     'video_block',
     'video_id_from_url',
+    'write_cookie_file',
     'ytdlp_bin',
 ]

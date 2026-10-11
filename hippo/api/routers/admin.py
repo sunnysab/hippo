@@ -260,7 +260,7 @@ _MASK_CHARACTERS = '•'
 def _public_media_settings(settings: dict[str, Any]) -> dict[str, Any]:
     """Serialisable form: secrets are masked, never echoed whole."""
     public = dict(settings)
-    for key in ('asr_api_key', 'bilibili_cookie'):
+    for key in ('asr_api_key', 'bilibili_cookie', 'youtube_cookies'):
         public[key] = mask_key(str(settings.get(key) or ''))
         public[f'{key}_set'] = bool(str(settings.get(key) or '').strip())
     public['asr_endpoints'] = dict(settings.get('asr_endpoints') or {})

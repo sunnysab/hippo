@@ -5,6 +5,7 @@ JSON is interpreted, which is the part that breaks when yt-dlp changes.
 """
 
 import json
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,8 +20,10 @@ from hippo.sources.youtube import (
     best_audio_format,
     channel_id_from_url,
     parse_json_lines,
+    run_ytdlp,
     video_block,
     video_id_from_url,
+    write_cookie_file,
     ytdlp_bin,
 )
 
@@ -208,6 +211,13 @@ class RunYtdlpErrorTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('yt-dlp', str(ctx.exception))
 
 
+class _FakeProcess:
+    returncode = 0
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        return b'{}', b''
+
+
 class YtdlpLocationTest(unittest.TestCase):
     """Where ``yt-dlp`` comes from, before it is executed."""
 
@@ -239,3 +249,55 @@ class YtdlpLocationTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CookieFileTest(unittest.TestCase):
+    """The submitted cookie reaches yt-dlp as a file it can read, and nowhere else."""
+
+    def test_the_file_is_private_and_holds_the_cookie(self) -> None:
+        cookies = '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t1800000000\tSID\tabc\n'
+
+        path = write_cookie_file(cookies)
+
+        self.assertIsNotNone(path)
+        try:
+            self.assertEqual(0o600, stat.S_IMODE(path.stat().st_mode))
+            self.assertEqual(cookies, path.read_text(encoding='utf-8'))
+        finally:
+            path.unlink()
+
+    def test_a_blank_cookie_writes_nothing(self) -> None:
+        self.assertIsNone(write_cookie_file(''))
+        self.assertIsNone(write_cookie_file('   \n'))
+
+    def test_a_cookie_without_a_trailing_newline_is_still_readable(self) -> None:
+        # yt-dlp 不要求结尾换行，但补上更稳（有的解析器按行读）。
+        path = write_cookie_file('SID=abc')
+
+        try:
+            self.assertEqual('SID=abc\n', path.read_text(encoding='utf-8'))
+        finally:
+            path.unlink()
+
+
+class CookieFileRunTest(unittest.IsolatedAsyncioTestCase):
+    async def test_run_ytdlp_passes_the_cookie_file_and_removes_it(self) -> None:
+        seen: dict[str, object] = {}
+
+        async def fake_exec(*command, **kwargs):
+            seen['command'] = command
+            path = Path(command[command.index('--cookies') + 1])
+            seen['exists'] = path.is_file()
+            seen['content'] = path.read_text(encoding='utf-8')
+            seen['mode'] = stat.S_IMODE(path.stat().st_mode)
+            return _FakeProcess()
+
+        with patch('hippo.sources.youtube.asyncio.create_subprocess_exec', new=fake_exec):
+            await run_ytdlp(['--version'], cookies='# Netscape HTTP Cookie File\n')
+
+        command = seen['command']
+        self.assertIn('--cookies', command)
+        self.assertTrue(seen['exists'])
+        self.assertEqual(0o600, seen['mode'])
+        # 跑完就删：临时目录里不留登录态。
+        self.assertFalse(Path(command[command.index('--cookies') + 1]).exists())

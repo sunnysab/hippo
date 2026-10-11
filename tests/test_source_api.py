@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 from hippo.api.routers import source as source_api
 from hippo.exceptions import ApiError
 from hippo.models import AccountCredential
+from hippo.sources.credentials import MAX_CREDENTIAL_BYTES
 from hippo.sources.detect import detect_source
 from hippo.sources.ingest import ChannelInfo
 
@@ -211,7 +212,9 @@ class CredentialTest(unittest.IsolatedAsyncioTestCase):
         )
         listed = await source_api.list_credentials(user=_user(), storage=storage)
 
-        self.assertEqual({'bilibili': {'configured': True}}, listed)
+        self.assertEqual(
+            {'bilibili': {'configured': True}, 'youtube': {'configured': False}}, listed
+        )
         self.assertNotIn('secret', str(listed))
 
     async def test_an_empty_secret_clears_it(self) -> None:
@@ -220,7 +223,8 @@ class CredentialTest(unittest.IsolatedAsyncioTestCase):
         await source_api.set_credential(source='bilibili', body={'secret': '  '}, user=_user(), storage=storage)
 
         self.assertEqual(
-            {'bilibili': {'configured': False}}, await source_api.list_credentials(user=_user(), storage=storage)
+            {'bilibili': {'configured': False}, 'youtube': {'configured': False}},
+            await source_api.list_credentials(user=_user(), storage=storage),
         )
 
     async def test_deleting_reports_it_as_gone(self) -> None:
@@ -229,12 +233,58 @@ class CredentialTest(unittest.IsolatedAsyncioTestCase):
         await source_api.delete_credential(source='bilibili', user=_user(), storage=storage)
 
         self.assertEqual(
-            {'bilibili': {'configured': False}}, await source_api.list_credentials(user=_user(), storage=storage)
+            {'bilibili': {'configured': False}, 'youtube': {'configured': False}},
+            await source_api.list_credentials(user=_user(), storage=storage),
         )
 
     async def test_an_unsupported_source_is_refused(self) -> None:
         with self.assertRaises(ApiError):
             await source_api.set_credential(source='weixin', body={}, user=_user(), storage=_storage())
+
+    async def test_a_bilibili_cookie_without_sessdata_is_refused(self) -> None:
+        # 没有 SESSDATA 的「cookie」过不了 B站的风控，早拒绝比晚 412 好。
+        with self.assertRaises(ApiError) as ctx:
+            await source_api.set_credential(
+                source='bilibili', body={'secret': 'buvid3=abc'}, user=_user(), storage=_storage()
+            )
+
+        self.assertIn('SESSDATA', str(ctx.exception))
+
+    async def test_a_cookie_header_is_flattened_before_it_is_stored(self) -> None:
+        # 换行会被 HTTP 客户端当成头注入拒绝，落库前压成一行。
+        storage = _storage()
+
+        await source_api.set_credential(
+            source='bilibili',
+            body={'secret': 'SESSDATA=abc;\n  bili_jct=def\n'},
+            user=_user(),
+            storage=storage,
+        )
+
+        self.assertEqual('SESSDATA=abc; bili_jct=def', await storage.credentials.get(1, 'bilibili'))
+
+    async def test_a_netscape_cookie_file_is_accepted_for_youtube(self) -> None:
+        storage = _storage()
+        cookies = '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t1800000000\tSID\tabc\n'
+
+        await source_api.set_credential(source='youtube', body={'secret': cookies}, user=_user(), storage=storage)
+
+        self.assertEqual(cookies.strip(), await storage.credentials.get(1, 'youtube'))
+
+    async def test_an_html_page_is_refused_for_both_sources(self) -> None:
+        html = '<!DOCTYPE html><html><body>Sign in</body></html>'
+
+        for source in ('bilibili', 'youtube'):
+            with self.subTest(source=source), self.assertRaises(ApiError):
+                await source_api.set_credential(source=source, body={'secret': html}, user=_user(), storage=_storage())
+
+    async def test_an_oversized_credential_is_refused(self) -> None:
+        huge = 'SESSDATA=' + 'a' * (MAX_CREDENTIAL_BYTES + 1)
+
+        with self.assertRaises(ApiError) as ctx:
+            await source_api.set_credential(source='bilibili', body={'secret': huge}, user=_user(), storage=_storage())
+
+        self.assertIn('过大', str(ctx.exception))
 
 
 if __name__ == '__main__':

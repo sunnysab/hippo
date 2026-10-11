@@ -24,7 +24,7 @@ interface MediaSettings {
   bilibili_cc_subtitle: boolean;
   bilibili_cookie: string;
   bilibili_cookie_set: boolean;
-  youtube_cookies_file: string;
+  youtube_cookies: string;
   proxy_default: string;
   proxy_bilibili: string;
   proxy_youtube: string;
@@ -57,7 +57,7 @@ const EMPTY: MediaSettings = {
   bilibili_cc_subtitle: true,
   bilibili_cookie: '',
   bilibili_cookie_set: false,
-  youtube_cookies_file: '',
+  youtube_cookies: '',
   proxy_default: '',
   proxy_bilibili: '',
   proxy_youtube: '',
@@ -335,11 +335,14 @@ export function AdminMediaPage() {
             />
           </label>
           <label className="auth-field">
-            <span>{t('admin.media.youtubeCookies', 'YouTube cookies 文件')}</span>
-            <input
+            <span>{t('admin.media.youtubeCookies', 'YouTube cookies（Netscape cookies.txt 内容）')}</span>
+            <textarea
               className="input"
-              defaultValue={settings.youtube_cookies_file}
-              onBlur={(event) => void save({ youtube_cookies_file: event.target.value.trim() })}
+              rows={4}
+              spellCheck={false}
+              placeholder={t('admin.media.youtubeCookiesPlaceholder', '留空则不使用登录态；提交后不会回显')}
+              defaultValue={settings.youtube_cookies}
+              onBlur={(event) => void save({ youtube_cookies: event.target.value })}
             />
           </label>
           <ProxyFields

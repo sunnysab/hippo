@@ -33,6 +33,7 @@ class MediaSources:
         storage: PostgresStorage,
         settings: Mapping[str, Any],
         bilibili_cookie: str | None = None,
+        youtube_cookies: str | None = None,
     ) -> None:
         self.adapters: dict[str, SourceAdapter] = {}
         self.resolvers: dict[str, MediaResolver] = {}
@@ -62,12 +63,16 @@ class MediaSources:
         self.adapters[PODCAST_SOURCE] = MediaSync(storage=storage, source=podcast_source)
         self.resolvers[PODCAST_SOURCE] = PodcastResolver(podcast, proxy=podcast_proxy)
 
-        # yt-dlp 是子进程，没有客户端要管，只需要代理设置。
+        # yt-dlp 是子进程，没有客户端要管，只需要代理设置与 cookie（登录态是躲开
+        # 「confirm you're not a bot」的唯一办法）。
         youtube_proxy = resolve_proxy(settings, YOUTUBE_SOURCE)
-        youtube_source = YoutubeSource(proxy=youtube_proxy)
+        cookies = (
+            youtube_cookies if youtube_cookies is not None else str(settings.get('youtube_cookies') or '')
+        )
+        youtube_source = YoutubeSource(proxy=youtube_proxy, cookies=cookies)
         self.sources[YOUTUBE_SOURCE] = youtube_source
         self.adapters[YOUTUBE_SOURCE] = MediaSync(storage=storage, source=youtube_source)
-        self.resolvers[YOUTUBE_SOURCE] = YoutubeResolver(proxy=youtube_proxy)
+        self.resolvers[YOUTUBE_SOURCE] = YoutubeResolver(proxy=youtube_proxy, cookies=cookies)
 
     def _client(self, client: Any) -> Any:
         self._closers.append(client.aclose)

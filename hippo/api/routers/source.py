@@ -18,6 +18,9 @@ from ...logger import get_logger
 from ...media_settings import get_media_settings
 from ...models import AccountCredential, User
 from ...sources import UnsupportedSource
+from ...sources.credentials import SOURCES as CREDENTIAL_SOURCES
+from ...sources.credentials import CredentialError
+from ...sources.credentials import clean as clean_credential
 from ...sources.detect import detect_source
 from ...sources.registry import MediaSources
 from ...storage import PostgresStorage, ensure_default_group
@@ -29,7 +32,8 @@ router = APIRouter(dependencies=[Depends(current_user)])
 
 #: Sources whose credential hippo actually reads. A user cookie is only used for
 #: what the user triggers; the background sync runs with the instance credential.
-CREDENTIAL_SOURCES = ('bilibili',)
+#: Both names and their checking rules live in ``sources.credentials`` so the
+#: console and this endpoint cannot drift apart.
 
 
 async def _media_sources(storage: PostgresStorage, user: User) -> MediaSources:
@@ -37,8 +41,14 @@ async def _media_sources(storage: PostgresStorage, user: User) -> MediaSources:
     if not settings.get('enabled'):
         raise ApiError('媒体来源未启用，请先在管理台「媒体与转写」里打开', status=400)
     cookie = await storage.credentials.get(user.id, 'bilibili')
+    cookies = await storage.credentials.get(user.id, 'youtube')
     try:
-        return MediaSources(storage=storage, settings=settings, bilibili_cookie=cookie)
+        return MediaSources(
+            storage=storage,
+            settings=settings,
+            bilibili_cookie=cookie,
+            youtube_cookies=cookies,
+        )
     except Exception as exc:
         raise ApiError(f'媒体来源初始化失败：{exc}', status=500) from exc
 
@@ -181,11 +191,17 @@ async def set_credential(
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
 ) -> None:
-    """Store the caller's own cookie. An empty secret clears it."""
-    if source not in CREDENTIAL_SOURCES:
-        raise ApiError(f'不支持为 {source} 配置凭证', status=400)
+    """Store the caller's own cookie. An empty secret clears it.
+
+    The value is never read back out of the API — not here, and not from the list
+    endpoint, which only reports whether one is configured.
+    """
+    try:
+        secret = clean_credential(source, body.get('secret'))
+    except CredentialError as exc:
+        raise ApiError(str(exc), status=400) from exc
     async with storage.transaction():
-        await storage.credentials.set(user.id, source, str(body.get('secret') or ''))
+        await storage.credentials.set(user.id, source, secret)
 
 
 @router.delete('/source/credential/{source}', status_code=status.HTTP_204_NO_CONTENT)
