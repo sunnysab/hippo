@@ -90,12 +90,76 @@ def markdown(cues: list[Cue], *, target_chars: int = TARGET_PARAGRAPH_CHARS) -> 
     return '\n\n'.join(text for _, text in paragraphs(cues, target_chars=target_chars))
 
 
+# ---------------------------------------------------------------------------
+# The other direction: content blocks back out as a file someone can take away.
+# ---------------------------------------------------------------------------
+
+
+def timed_paragraphs(blocks: object) -> list[tuple[float, str]]:
+    """The transcript's paragraphs and their anchors, out of an article's blocks.
+
+    Blocks are what the reader renders, so the transcript is not stored twice; the
+    only thing that matters here is that paragraphs carry ``t``.
+    """
+    if not isinstance(blocks, list):
+        return []
+    result: list[tuple[float, str]] = []
+    for block in blocks:
+        if not isinstance(block, dict) or block.get('type') != 'paragraph':
+            continue
+        text = str(block.get('text') or '').strip()
+        if not text:
+            continue
+        try:
+            start = float(block.get('t') or 0.0)
+        except (TypeError, ValueError):
+            start = 0.0
+        result.append((start, text))
+    return result
+
+
+def format_timestamp(seconds: float, *, comma: bool = False) -> str:
+    total = max(int(seconds), 0)
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f'{hours:02d}:{minutes:02d}:{secs:02d}' + (',000' if comma else '')
+
+
+def to_text(blocks: object) -> str:
+    return '\n\n'.join(text for _, text in timed_paragraphs(blocks))
+
+
+def to_markdown(blocks: object, *, title: str | None = None) -> str:
+    paragraphs = timed_paragraphs(blocks)
+    body = '\n\n'.join(f'**[{format_timestamp(start)[3:]}]** {text}' for start, text in paragraphs)
+    return f'# {title}\n\n{body}' if title else body
+
+
+def to_srt(blocks: object, *, tail_seconds: float = 6.0) -> str:
+    """Subtitles from the paragraph anchors.
+
+    Each cue ends where the next one starts, which is exact enough given the
+    anchors come from the source (a published transcript) or from chunk boundaries.
+    """
+    paragraphs = timed_paragraphs(blocks)
+    lines: list[str] = []
+    for index, (start, text) in enumerate(paragraphs, start=1):
+        end = paragraphs[index][0] if index < len(paragraphs) else start + tail_seconds
+        lines.append(f'{index}\n{format_timestamp(start, comma=True)} --> {format_timestamp(end, comma=True)}\n{text}\n')
+    return '\n'.join(lines)
+
+
 __all__ = [
     'TARGET_PARAGRAPH_CHARS',
     'Cue',
     'blocks',
     'clean_cue_text',
+    'format_timestamp',
     'markdown',
     'paragraphs',
     'parse_timed_text',
+    'timed_paragraphs',
+    'to_markdown',
+    'to_srt',
+    'to_text',
 ]

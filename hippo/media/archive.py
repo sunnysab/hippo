@@ -8,7 +8,10 @@ never collide.
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from ..s3 import get_s3_client, guess_extension, upload_object_bytes, with_prefix
 
@@ -48,4 +51,80 @@ def store_audio(
     return key, len(payload)
 
 
-__all__ = ['DEFAULT_CONTENT_TYPE', 'MEDIA_PREFIX', 'ArchiveError', 'build_media_key', 'store_audio']
+#: `bytes=0-1023` / `bytes=500-`. A suffix range (`bytes=-500`) is not worth
+#: supporting for audio seeking and is answered with the whole file.
+_RANGE_RE = re.compile(r'bytes=(\d*)-(\d*)')
+
+
+@dataclass(frozen=True, slots=True)
+class AudioStream:
+    body: Any
+    content_type: str
+    size: int
+    total: int
+
+
+def parse_range(header: str | None, total: int | None) -> tuple[int | None, int | None]:
+    """Read a Range header into inclusive bounds, or ``(None, None)`` for all of it."""
+    if not header:
+        return None, None
+    matched = _RANGE_RE.fullmatch(header.strip())
+    if not matched:
+        return None, None
+    raw_start, raw_end = matched.groups()
+    if not raw_start:
+        return None, None
+    start = int(raw_start)
+    end = int(raw_end) if raw_end else None
+    if total is not None:
+        if start >= total:
+            raise ArchiveError('请求的范围超出文件大小')
+        if end is not None:
+            end = min(end, total - 1)
+    if end is not None and end < start:
+        raise ArchiveError('请求的范围不合法')
+    return start, end
+
+
+def open_audio(key: str, *, start: int | None = None, end: int | None = None) -> AudioStream:
+    """Open an archived object for reading.
+
+    ``key`` is used verbatim: it already carries the prefix, because that is what
+    ``store_audio`` saved. The bucket comes from the shared S3 config.
+    """
+    bundle = get_s3_client()
+    if not bundle:
+        raise ArchiveError('未配置对象存储（HIPPO_S3_*），无法读取留档音频')
+    config, client = bundle
+    kwargs: dict[str, Any] = {}
+    if start is not None:
+        kwargs['Range'] = f'bytes={start}-{end if end is not None else ""}'
+    try:
+        response = client.get_object(Bucket=config.bucket, Key=key, **kwargs)
+    except Exception as exc:
+        raise ArchiveError(f'读取留档音频失败：{exc}') from exc
+    size = int(response.get('ContentLength') or 0)
+    total = size
+    content_range = str(response.get('ContentRange') or '')
+    if '/' in content_range:
+        _, _, raw_total = content_range.partition('/')
+        if raw_total.isdigit():
+            total = int(raw_total)
+    return AudioStream(
+        body=response['Body'],
+        content_type=str(response.get('ContentType') or DEFAULT_CONTENT_TYPE),
+        size=size,
+        total=total,
+    )
+
+
+__all__ = [
+    'DEFAULT_CONTENT_TYPE',
+    'MEDIA_PREFIX',
+    'ArchiveError',
+    'AudioStream',
+    'build_media_key',
+    'open_audio',
+    'parse_range',
+    'store_audio',
+]

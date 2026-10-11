@@ -1,12 +1,15 @@
 """Article and image endpoints."""
 
 import asyncio
+import json
 import threading
 import time as time_module
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Response
+from fastapi import APIRouter, Body, Depends, Query, Request, Response
+from fastapi.responses import RedirectResponse, StreamingResponse
+from starlette.concurrency import iterate_in_threadpool
 
 from ...article_queries import (
     _assert_article_visible,
@@ -26,6 +29,8 @@ from ...article_queries import (
 from ...container import build_downloader_container
 from ...exceptions import ApiError
 from ...logger import get_logger
+from ...media import archive as archive_module
+from ...media.subtitle import to_markdown, to_srt, to_text
 from ...models import User
 from ...storage import PostgresStorage, fetchone_row, open_storage
 from ..deps import current_user, get_storage, parse_group_ids
@@ -198,6 +203,93 @@ async def list_article_images(
     """
     payload = await _list_article_images(storage, user.id, article_id)
     return {'images': payload}
+
+
+@router.get('/article/{article_id}/transcript', response_model=None)
+async def export_transcript(
+    article_id: int,
+    format: str = Query('md', pattern='^(md|txt|srt)$'),
+    storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
+) -> Response:
+    """Export the transcript as markdown, plain text or subtitles.
+
+    This is the endpoint a script or a feed reader uses to take the words away: the
+    timestamps live in the content blocks, so the export needs nothing else.
+    """
+    await _assert_article_visible(storage, user.id, article_id)
+    row = await fetchone_row(
+        storage,
+        'SELECT content_json FROM article_content WHERE article_pk = %s',
+        [article_id],
+    )
+    blocks: Any = row.get('content_json') if row else None
+    if isinstance(blocks, str):
+        try:
+            blocks = json.loads(blocks)
+        except json.JSONDecodeError:
+            blocks = None
+    if not blocks:
+        raise ApiError('这篇还没有正文', status=404)
+
+    if format == 'srt':
+        body = to_srt(blocks)
+        media_type = 'application/x-subrip; charset=utf-8'
+    elif format == 'txt':
+        body = to_text(blocks)
+        media_type = 'text/plain; charset=utf-8'
+    else:
+        body = to_markdown(blocks)
+        media_type = 'text/markdown; charset=utf-8'
+    if not body.strip():
+        # 有正文但没有段落（例如只有一块视频）时，导出个空文件没有意义。
+        raise ApiError('这篇没有可导出的转写稿', status=404)
+    return Response(content=body, media_type=media_type)
+
+
+@router.get('/media/{article_pk}/audio', response_model=None)
+async def stream_archived_audio(
+    article_pk: int,
+    request: Request,
+    storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
+) -> Response:
+    """Play the archived audio, with range support so the reader can seek.
+
+    Without an archive the original URL is still the right answer; a missing one is
+    a 404 the reader turns into "no player".
+    """
+    await _assert_article_visible(storage, user.id, article_pk)
+    asset = await storage.media_assets.get(article_pk)
+    if not asset or asset.get('state') != 'stored' or not asset.get('s3_key'):
+        if asset and asset.get('orig_url'):
+            return RedirectResponse(str(asset['orig_url']), status_code=302)
+        raise ApiError('这篇文章没有留档音频', status=404)
+
+    try:
+        start, end = archive_module.parse_range(request.headers.get('range'), asset.get('size_bytes'))
+    except archive_module.ArchiveError as exc:
+        raise ApiError(str(exc), status=416) from exc
+    try:
+        stream = await asyncio.to_thread(archive_module.open_audio, str(asset['s3_key']), start=start, end=end)
+    except archive_module.ArchiveError as exc:
+        raise ApiError(str(exc), status=502) from exc
+
+    headers = {
+        'Accept-Ranges': 'bytes',
+        'Content-Length': str(stream.size),
+        'Cache-Control': 'private, max-age=3600',
+    }
+    status_code = 200
+    if start is not None:
+        headers['Content-Range'] = f'bytes {start}-{start + stream.size - 1}/{stream.total}'
+        status_code = 206
+    return StreamingResponse(
+        iterate_in_threadpool(stream.body),
+        status_code=status_code,
+        media_type=stream.content_type,
+        headers=headers,
+    )
 
 
 @router.get('/image/{image_id}')
