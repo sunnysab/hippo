@@ -77,8 +77,10 @@ def default_media_settings() -> dict[str, Any]:
         'bilibili_cc_subtitle': True,
         'bilibili_cookie': '',
         'youtube_cookies_file': '',
+        # B站 必须直连（本机的出口代理已被 B站拉黑）；YouTube 必须走代理。这两个默认值
+        # 是本实例实测出来的，管理台可改。
         'proxy_bilibili': '',
-        'proxy_youtube': '',
+        'proxy_youtube': 'http://100.111.170.110:8082',
         'proxy_podcast': '',
     }
 

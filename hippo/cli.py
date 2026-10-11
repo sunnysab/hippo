@@ -17,7 +17,7 @@ import click
 import typer
 from tqdm import tqdm
 
-from .config import DEFAULT_RECENT_DAYS, DEFAULT_SYNC_REQUEST_INTERVAL
+from .config import DEFAULT_GROUP_NAME, DEFAULT_RECENT_DAYS, DEFAULT_SYNC_REQUEST_INTERVAL
 from .container import build_downloader_container
 from .controllers.sync import (
     sync_account_articles as perform_account_sync,
@@ -33,12 +33,15 @@ from .file_storage import FileStorageError, S3FileStorage
 from .image_hashes import ensure_image_hash_by_id
 from .image_store import ArticleImageService
 from .logger import configure_logging, setup_logger
+from .media_settings import get_media_settings
 from .models import AccountCredential, AccountGroup, User
 from .repositories import ARTICLE_CONTENT_PRESENT_SQL as _ARTICLE_CONTENT_PRESENT_SQL
 from .rss import build_rss_xml, query_rss_items
 from .security import hash_password
 from .server import serve as run_server
-from .storage import PostgresStorage, StorageInitError, open_storage
+from .sources.detect import detect_source
+from .sources.registry import MediaSources
+from .storage import PostgresStorage, StorageInitError, ensure_default_group, open_storage
 from .sync_worker import run_sync_worker
 from .utils import format_table, parse_iso_datetime_to_timestamp
 
@@ -100,6 +103,11 @@ db_app = typer.Typer(
 )
 user_app = typer.Typer(
     help='Manage user accounts',
+    no_args_is_help=True,
+    rich_markup_mode=None,
+)
+sources_app = typer.Typer(
+    help='Subscribe to Bilibili / YouTube / podcast sources',
     no_args_is_help=True,
     rich_markup_mode=None,
 )
@@ -699,6 +707,7 @@ accounts_app.add_typer(groups_app, name='group')
 app.add_typer(articles_app, name='article')
 app.add_typer(db_app, name='db')
 app.add_typer(user_app, name='user')
+app.add_typer(sources_app, name='source')
 
 
 @user_app.command('add')
@@ -1160,6 +1169,101 @@ async def sync_all_accounts(
         skip_time=skip_time,
         download=download,
     )
+
+
+@sources_app.command('add')
+@coro
+async def add_source(
+    url: str = typer.Argument(..., help='视频 / 频道 / 订阅地址'),
+    group: str | None = typer.Option(None, help='放到哪个分组（默认分组）'),
+    user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
+) -> None:
+    """Resolve a URL and subscribe to whatever it points at."""
+    source = detect_source(url)
+    if source is None:
+        raise typer.BadParameter('请输入 http(s) 订阅地址')
+    async with open_storage() as storage:
+        user = await _cli_user(storage, user_name)
+        settings = await get_media_settings(storage)
+        if not settings.get('enabled'):
+            raise typer.BadParameter('媒体来源未启用，请先在管理台「媒体与转写」里打开')
+        cookie = await storage.credentials.get(user.id, 'bilibili')
+        sources = MediaSources(storage=storage, settings=settings, bilibili_cookie=cookie)
+        try:
+            info = await sources.preview(source, url)
+        finally:
+            await sources.aclose()
+
+        group_id: int | None = None
+        if group:
+            existing = await storage.groups.list_groups(user_id=user.id)
+            match = next((item for item in existing if item.name == group), None)
+            if match is None:
+                raise typer.BadParameter(f'分组不存在：{group}')
+            group_id = match.id
+        if group_id is None:
+            group_id = (await ensure_default_group(storage, user.id, name=DEFAULT_GROUP_NAME)).id
+
+        async with storage.transaction():
+            account = await storage.accounts.upsert_account(
+                AccountCredential(
+                    biz=info.biz,
+                    nickname=info.nickname,
+                    source=source,
+                    alias=info.source_key,
+                    round_head_img=info.avatar_url,
+                )
+            )
+            await storage.subscriptions.upsert(user.id, account.biz, group_id=group_id)
+            await storage.sync_jobs.create_job(trigger_type='manual', biz_list=[account.biz])
+    typer.echo(f'已订阅 {account.nickname}（{source}，{account.biz}）')
+
+
+@sources_app.command('list')
+@coro
+async def list_sources(
+    user_name: str | None = typer.Option(None, '--user', help='按哪个用户的订阅视图操作（默认首个管理员）'),
+) -> None:
+    """List the media sources this user follows."""
+    async with open_storage() as storage:
+        user = await _cli_user(storage, user_name)
+        accounts = await storage.accounts.list_followed_accounts(user.id)
+    media = [account for account in accounts if account.source != 'weixin']
+    if not media:
+        typer.echo('尚未订阅任何媒体来源，使用 `source add <url>` 添加')
+        return
+    rows = [
+        [account.nickname, account.source, account.biz, account.alias or '-', 'yes' if account.is_disabled else '']
+        for account in media
+    ]
+    table_text = format_table(['昵称', '来源', 'biz', '来源内标识', 'Disabled'], rows)
+    if table_text:
+        typer.echo(table_text)
+
+
+@sources_app.command('cookie')
+@coro
+async def set_source_cookie(
+    value: str | None = typer.Argument(None, help='SESSDATA 等 Cookie；不给值则查看当前状态'),
+    source: str = typer.Option('bilibili', help='哪个来源的凭证'),
+    clear: bool = typer.Option(False, '--clear', help='清空已配置的凭证'),
+    user_name: str | None = typer.Option(None, '--user', help='给哪个用户配置（默认首个管理员）'),
+) -> None:
+    """Store this user's own source credential (the instance-wide one is in the console)."""
+    async with open_storage() as storage:
+        user = await _cli_user(storage, user_name)
+        if clear:
+            async with storage.transaction():
+                await storage.credentials.delete(user.id, source)
+            typer.echo(f'已清除 {source} 凭证')
+            return
+        if not value:
+            configured = await storage.credentials.get(user.id, source)
+            typer.echo(f'{source}: {"已配置" if configured else "未配置"}')
+            return
+        async with storage.transaction():
+            await storage.credentials.set(user.id, source, value)
+    typer.echo(f'已保存 {source} 凭证')
 
 
 @articles_app.command('list')

@@ -27,6 +27,7 @@ from .api.routers import (
     registration,
     report,
     settings,
+    source,
 )
 from .avatar import _ensure_avatar_images_table
 from .config import DEFAULT_HOST, DEFAULT_PORT
@@ -228,6 +229,7 @@ def create_app(
         registration,
         account,
         article,
+        source,
         annotation,
         chat,
         report,
