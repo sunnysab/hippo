@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiGet, apiSend } from '../../api';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
+import { ProxyFields } from './ProxyFields';
 
 interface MediaSettings {
   enabled: boolean;
@@ -24,6 +25,7 @@ interface MediaSettings {
   bilibili_cookie: string;
   bilibili_cookie_set: boolean;
   youtube_cookies_file: string;
+  proxy_default: string;
   proxy_bilibili: string;
   proxy_youtube: string;
   proxy_podcast: string;
@@ -56,6 +58,7 @@ const EMPTY: MediaSettings = {
   bilibili_cookie: '',
   bilibili_cookie_set: false,
   youtube_cookies_file: '',
+  proxy_default: '',
   proxy_bilibili: '',
   proxy_youtube: '',
   proxy_podcast: '',
@@ -339,33 +342,15 @@ export function AdminMediaPage() {
               onBlur={(event) => void save({ youtube_cookies_file: event.target.value.trim() })}
             />
           </label>
-          <label className="auth-field">
-            <span>{t('admin.media.proxyBilibili', 'B站代理')}</span>
-            <input
-              className="input"
-              placeholder={t('admin.media.proxyOff', '留空 = 直连')}
-              defaultValue={settings.proxy_bilibili}
-              onBlur={(event) => void save({ proxy_bilibili: event.target.value.trim() })}
-            />
-          </label>
-          <label className="auth-field">
-            <span>{t('admin.media.proxyYoutube', 'YouTube 代理')}</span>
-            <input
-              className="input"
-              placeholder={t('admin.media.proxyOff', '留空 = 直连')}
-              defaultValue={settings.proxy_youtube}
-              onBlur={(event) => void save({ proxy_youtube: event.target.value.trim() })}
-            />
-          </label>
-          <label className="auth-field">
-            <span>{t('admin.media.proxyPodcast', '播客代理')}</span>
-            <input
-              className="input"
-              placeholder={t('admin.media.proxyOff', '留空 = 直连')}
-              defaultValue={settings.proxy_podcast}
-              onBlur={(event) => void save({ proxy_podcast: event.target.value.trim() })}
-            />
-          </label>
+          <ProxyFields
+            values={{
+              proxy_default: settings.proxy_default,
+              proxy_bilibili: settings.proxy_bilibili,
+              proxy_youtube: settings.proxy_youtube,
+              proxy_podcast: settings.proxy_podcast,
+            }}
+            onSave={save}
+          />
         </div>
         <label className="auth-check">
           <input

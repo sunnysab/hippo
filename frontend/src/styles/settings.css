@@ -451,3 +451,18 @@
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 13px;
 }
+
+/* A proxy row: the mode on the left, the URL (only when custom) on the right. */
+.proxy-field {
+  display: flex;
+  gap: 8px;
+}
+
+.proxy-field select {
+  flex: 0 0 auto;
+}
+
+.proxy-field input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
