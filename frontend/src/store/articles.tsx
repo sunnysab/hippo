@@ -22,6 +22,10 @@ export interface Article {
   image_id: number | null;
   /** Source discriminator, e.g. `weixin`. Labels live in `utils/source`. */
   source: string;
+  /** Platform-neutral kind (`article` / `video` / `audio` / …), set by the API. */
+  content_kind?: string | null;
+  /** Length of the audio or video behind this entry, when there is one. */
+  duration_seconds?: number | null;
   /** When this user read it; null means unread. */
   read_at: string | null;
   /** When this user starred it; null means not starred. */

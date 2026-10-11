@@ -130,15 +130,16 @@ class ArticleRepository:
         publish_at: int | None,
         raw_json: str,
         now: datetime,
+        duration_seconds: int | None = None,
         return_inserted: bool = False,
     ) -> tuple[int, bool]:
         await cur.execute(
             """
             INSERT INTO articles
                 (biz, article_id, title, item_show_type, author, digest, cover, link, source_url,
-                 publish_at, raw_json, created_at, updated_at)
+                 publish_at, raw_json, duration_seconds, created_at, updated_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s)
+                    %s, %s, %s, %s, %s, %s)
             ON CONFLICT (biz, article_id) DO UPDATE SET
                 title=EXCLUDED.title,
                 item_show_type=COALESCE(EXCLUDED.item_show_type, articles.item_show_type),
@@ -147,6 +148,7 @@ class ArticleRepository:
                 link=EXCLUDED.link,
                 source_url=EXCLUDED.source_url,
                 publish_at=COALESCE(EXCLUDED.publish_at, articles.publish_at),
+                duration_seconds=COALESCE(EXCLUDED.duration_seconds, articles.duration_seconds),
                 raw_json=EXCLUDED.raw_json,
                 updated_at=EXCLUDED.updated_at
             RETURNING id"""
@@ -163,6 +165,7 @@ class ArticleRepository:
                 source_url,
                 publish_at,
                 raw_json,
+                duration_seconds,
                 now,
                 now,
             ),
@@ -189,6 +192,7 @@ class ArticleRepository:
                     source_url=article.source_url,
                     publish_at=article.publish_at,
                     raw_json=json.dumps(article.raw, ensure_ascii=False),
+                    duration_seconds=article.duration_seconds,
                     now=now,
                     return_inserted=True,
                 )
@@ -270,6 +274,7 @@ class ArticleRepository:
                 source_url=article.source_url,
                 publish_at=article.publish_at,
                 raw_json=json.dumps(article.raw, ensure_ascii=False),
+                duration_seconds=article.duration_seconds,
                 now=now,
             )
 

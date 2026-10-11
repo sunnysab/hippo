@@ -724,6 +724,10 @@ CREATE TABLE IF NOT EXISTS user_credential (
     PRIMARY KEY (user_id, source)
 );
 
+-- 音视频条目的时长。列表卡片要显示它，而 raw_json 里的形状每个来源都不一样，
+-- 所以存成一列；文字文章为 NULL。
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS duration_seconds INTEGER;
+
 -- ============================================================
 -- 公开 API：只读 API Key
 -- ============================================================

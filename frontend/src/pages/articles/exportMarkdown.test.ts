@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { anchorLabel, articleToMarkdown } from './exportMarkdown';
+import { formatDuration } from '../../utils/duration';
+import { articleToMarkdown } from './exportMarkdown';
 import type { ArticlePayload } from '../../store/articles';
 
 const payload = (content: ArticlePayload['content']): ArticlePayload => ({
@@ -73,15 +74,15 @@ describe('articleToMarkdown', () => {
   });
 });
 
-describe('anchorLabel', () => {
+describe('formatDuration', () => {
   it('formats minutes and seconds, and only adds hours when there are any', () => {
-    expect(anchorLabel(0)).toBe('00:00');
-    expect(anchorLabel(62.9)).toBe('01:02');
-    expect(anchorLabel(3723)).toBe('1:02:03');
+    expect(formatDuration(0)).toBe('00:00');
+    expect(formatDuration(62.9)).toBe('01:02');
+    expect(formatDuration(3723)).toBe('1:02:03');
   });
 
   it('has no label when the block has no timestamp', () => {
-    expect(anchorLabel(undefined)).toBe('');
-    expect(anchorLabel(Number.NaN)).toBe('');
+    expect(formatDuration(undefined)).toBe('');
+    expect(formatDuration(Number.NaN)).toBe('');
   });
 });

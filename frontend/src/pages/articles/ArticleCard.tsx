@@ -1,7 +1,8 @@
 import { memo, useState } from 'react';
+import { formatDuration } from '../../utils/duration';
 import { escapeHtml, formatDate } from '../../utils/format';
 import type { Article } from '../../store/articles';
-import { ItemShowTypeBadge } from './ItemShowTypeBadge';
+import { ContentKindBadge } from './ContentKindBadge';
 import { useI18n } from '../../i18n';
 
 interface ArticleCardProps {
@@ -30,6 +31,7 @@ export const ArticleCard = memo(function ArticleCard({
   const digest = article.digest || '';
   const isRead = Boolean(article.read_at);
   const isStarred = Boolean(article.starred_at);
+  const duration = formatDuration(article.duration_seconds);
 
   return (
     <div
@@ -45,11 +47,14 @@ export const ArticleCard = memo(function ArticleCard({
         }
       }}
     >
-      {thumb ? (
-        <img className="article-thumb" src={thumb} alt="" onError={() => setThumbFailed(true)} />
-      ) : (
-        <div className="article-thumb placeholder"></div>
-      )}
+      <div className="article-thumb-wrap">
+        {thumb ? (
+          <img className="article-thumb" src={thumb} alt="" onError={() => setThumbFailed(true)} />
+        ) : (
+          <div className="article-thumb placeholder"></div>
+        )}
+        {duration ? <span className="article-duration">{duration}</span> : null}
+      </div>
       <div className="article-info">
         <div className="article-title">
           {!isRead ? <span className="article-unread-dot" aria-label={t('articles.unread', '未读')} /> : null}
@@ -68,7 +73,7 @@ export const ArticleCard = memo(function ArticleCard({
             }}
           >{escapeHtml(article.account_nickname || '')}</span>
           <span>{escapeHtml(formatDate(article.publish_at))}</span>
-          <ItemShowTypeBadge value={article.item_show_type} compact />
+          <ContentKindBadge kind={article.content_kind} compact />
         </div>
         <div className="article-digest" title={digest}>{digest}</div>
       </div>

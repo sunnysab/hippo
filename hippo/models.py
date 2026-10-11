@@ -62,6 +62,8 @@ class ArticleRecord(HippoBaseModel):
     link: str
     source_url: str | None
     publish_at: int | None
+    #: 音视频的时长（秒）。文字文章为 None，卡片据此决定要不要显示时长徽章。
+    duration_seconds: int | None = None
     raw: dict[str, Any]
 
 

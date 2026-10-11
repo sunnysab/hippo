@@ -4,7 +4,7 @@ import { renderInlineNodes } from '../../utils/markdown';
 import { EmptyState } from '../../components/EmptyState';
 import type { ArticlePayload, ArticleContentBlock } from '../../store/articles';
 import { buildContentBlockKeys } from './contentKeys';
-import { anchorLabel } from './exportMarkdown';
+import { formatDuration as anchorLabel } from '../../utils/duration';
 import { headingAnchorId } from './outline';
 
 /**

@@ -33,6 +33,37 @@ def _build_item_show_type_where_clause(item_show_type: int) -> tuple[str, list[i
     return 'a.item_show_type = %s', [item_show_type]
 
 
+#: WeChat's layout type, flattened into something platform-neutral. The raw type
+#: stays available for the facet filter, which is per-platform by nature.
+CONTENT_KIND_BY_ITEM_SHOW_TYPE: dict[int, str] = {
+    0: 'article',
+    5: 'video',
+    6: 'audio',
+    7: 'audio',
+    8: 'gallery',
+    10: 'text',
+    11: 'article',
+    17: 'short',
+}
+
+#: Sources whose items have one obvious kind. A podcast feed is audio; a video
+#: platform is video; anything unregistered degrades to a plain article, which is
+#: the reading experience that always works.
+CONTENT_KIND_BY_SOURCE: dict[str, str] = {
+    'bilibili': 'video',
+    'youtube': 'video',
+    'podcast': 'audio',
+}
+
+
+def content_kind(source: Any, item_show_type: Any) -> str:
+    """What kind of thing this is, whichever platform it came from."""
+    platform = str(source or '').strip()
+    if platform and platform != 'weixin':
+        return CONTENT_KIND_BY_SOURCE.get(platform, 'article')
+    return CONTENT_KIND_BY_ITEM_SHOW_TYPE.get(_coalesce_item_show_type(item_show_type) or 0, 'article')
+
+
 def _coalesce_item_show_type(value: Any) -> int | None:
     if value is None:
         return 0
@@ -314,7 +345,7 @@ def _build_article_query(
 
     query_sql = (
         'SELECT a.id, a.biz, a.article_id, a.title, a.item_show_type, a.author, a.digest, a.cover, a.link,'
-        ' a.source_url, a.publish_at, a.created_at, ar.read_at, st.starred_at, acc.source,'
+        ' a.source_url, a.publish_at, a.duration_seconds, a.created_at, ar.read_at, st.starred_at, acc.source,'
         ' acc.nickname AS account_nickname, acc.alias AS account_alias,'
         ' acc.round_head_img AS account_avatar,'
         ' sub.group_id, g.name AS group_name,'
@@ -494,6 +525,7 @@ async def _list_articles(
     rows = await fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
     for row in rows:
         row['item_show_type'] = _coalesce_item_show_type(row.get('item_show_type'))
+        row['content_kind'] = content_kind(row.get('source'), row.get('item_show_type'))
         row['account_avatar_url'] = f'/api/account/{row["biz"]}/avatar'
     item_show_type_facets, facet_total = await _article_item_show_type_facets(
         storage=storage,
@@ -543,7 +575,7 @@ async def _get_article(storage: PostgresStorage, user_id: int, article_id: int) 
         storage,
         (
             'SELECT a.id, a.biz, a.article_id, a.title, a.item_show_type, a.author, a.digest, a.cover, a.link,'
-            ' a.source_url, a.publish_at, a.created_at, acc.source,'
+            ' a.source_url, a.publish_at, a.duration_seconds, a.created_at, acc.source,'
             ' (SELECT st.starred_at FROM article_star st'
             '   WHERE st.article_pk = a.id AND st.user_id = %s) AS starred_at,'
             ' (SELECT ar.read_at FROM article_read ar'
@@ -562,6 +594,7 @@ async def _get_article(storage: PostgresStorage, user_id: int, article_id: int) 
     if not article:
         raise ApiError('Article not found', status=404)
     article['item_show_type'] = _coalesce_item_show_type(article.get('item_show_type'))
+    article['content_kind'] = content_kind(article.get('source'), article.get('item_show_type'))
     article['account_avatar_url'] = f'/api/account/{article["biz"]}/avatar'
 
     content_row = await fetchone_row(

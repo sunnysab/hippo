@@ -1407,3 +1407,22 @@ mark.hippo-highlight:hover {
   border-radius: 50%;
   background: currentColor;
 }
+
+/* The thumbnail is a positioning context for the duration badge. */
+.article-thumb-wrap {
+  position: relative;
+  align-self: start;
+}
+
+.article-duration {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  background: rgb(0 0 0 / 65%);
+  color: #fff;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}

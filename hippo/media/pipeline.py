@@ -153,7 +153,7 @@ async def _load_article(storage: PostgresStorage, article_pk: int) -> ArticleRec
         storage,
         (
             'SELECT biz, article_id, title, item_show_type, author, digest, cover, link,'
-            ' source_url, publish_at, raw_json FROM articles WHERE id = %s'
+            ' source_url, publish_at, duration_seconds, raw_json FROM articles WHERE id = %s'
         ),
         [article_pk],
     )
@@ -176,6 +176,7 @@ async def _load_article(storage: PostgresStorage, article_pk: int) -> ArticleRec
         link=str(row['link']),
         source_url=row['source_url'],
         publish_at=row['publish_at'],
+        duration_seconds=row['duration_seconds'],
         raw=raw if isinstance(raw, dict) else {},
     )
 

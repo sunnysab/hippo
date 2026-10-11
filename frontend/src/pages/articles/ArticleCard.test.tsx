@@ -24,11 +24,36 @@ const article: Article = {
   group_name: '',
   image_id: 9,
   source: 'weixin',
+  content_kind: 'audio',
+  duration_seconds: 3725,
   read_at: null,
   starred_at: null,
 };
 
 describe('ArticleCard', () => {
+  it('shows the length of an audio or video entry over its thumbnail', () => {
+    const { container } = render(
+      <ArticleCard article={article} isActive={false} onClick={vi.fn()} onContextMenu={vi.fn()} />,
+    );
+
+    expect(container.querySelector('.article-duration')?.textContent).toBe('1:02:05');
+    // 平台无关的类型名，而不是微信的版式名
+    expect(container.querySelector('.item-show-type-badge')?.textContent).toBe('音频');
+  });
+
+  it('shows no duration for an article without one', () => {
+    const { container } = render(
+      <ArticleCard
+        article={{ ...article, content_kind: 'article', duration_seconds: null }}
+        isActive={false}
+        onClick={vi.fn()}
+        onContextMenu={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector('.article-duration')).toBeNull();
+  });
+
   it('keeps the thumbnail column when the cover fails to load', () => {
     const { container } = render(
       <ArticleCard article={article} isActive={false} onClick={vi.fn()} onContextMenu={vi.fn()} />,

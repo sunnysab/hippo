@@ -122,6 +122,7 @@ class MediaSync:
                 link=item.link,
                 source_url=item.link,
                 publish_at=item.publish_at,
+                duration_seconds=item.duration_seconds,
                 raw=item.raw,
             )
             for item in items

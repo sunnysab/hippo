@@ -9,6 +9,22 @@ export const ITEM_SHOW_TYPE_META: Record<number, { key: string; fallback: string
   17: { key: 'articles.type.17', fallback: 'Short Post', tone: 'short' },
 };
 
+/**
+ * What a list entry is, independent of which platform it came from.
+ *
+ * The WeChat layout type above stays as it is: it is what the facet filter filters
+ * *by*, and it is meaningless for a Bilibili video or a podcast episode. The badge
+ * in the list reads this table instead, so nothing has to special-case a source.
+ */
+export const CONTENT_KIND_META: Record<string, { key: string; fallback: string; tone: string }> = {
+  article: { key: 'contentKind.article', fallback: '文章', tone: 'regular' },
+  video: { key: 'contentKind.video', fallback: '视频', tone: 'video' },
+  audio: { key: 'contentKind.audio', fallback: '音频', tone: 'audio' },
+  gallery: { key: 'contentKind.gallery', fallback: '图片', tone: 'picture' },
+  text: { key: 'contentKind.text', fallback: '文字', tone: 'text' },
+  short: { key: 'contentKind.short', fallback: '短内容', tone: 'short' },
+};
+
 export const ARTICLE_SORT_PUBLISH_AT_DESC = 'publish_at_desc';
 export const ARTICLE_SORT_RELEVANCE_DESC = 'relevance_desc';
 
