@@ -677,6 +677,9 @@ CREATE TABLE IF NOT EXISTS media_job (
     article_pk INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
     source TEXT NOT NULL,
     media_url TEXT NOT NULL,
+    -- 列表阶段知道、解析阶段才需要的东西（播客的转录稿地址、B站的分 P 等）。
+    -- 存这里是为了让解析器不必重新拉一遍列表接口。
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     state TEXT NOT NULL DEFAULT 'pending',
     stage TEXT,
     progress SMALLINT NOT NULL DEFAULT 0,

@@ -140,7 +140,14 @@ class MediaSync:
 
     async def _enqueue(self, items: list[Item], pks: Mapping[str, int]) -> int:
         payload = [
-            {'article_pk': pks[item.article_id], 'source': self._source.source, 'media_url': item.media_url}
+            {
+                'article_pk': pks[item.article_id],
+                'source': self._source.source,
+                'media_url': item.media_url,
+                # 列表阶段已经知道的东西（转录稿地址、视频 id…）跟着任务走，
+                # 解析阶段就不必把列表接口再拉一遍。
+                'payload': item.raw,
+            }
             for item in items
             if item.article_id in pks
         ]

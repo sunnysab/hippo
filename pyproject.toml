@@ -42,6 +42,8 @@ dependencies = [
   "bcrypt>=5.0.0",
   "openai>=3.22.1",
   "jinja2>=3.1.6",
+  # 播客 feed 是用户输入的任意 XML：DTD/实体炸弹必须挡在解析器外
+  "defusedxml>=0.7.1",
 ]
 
 [project.optional-dependencies]

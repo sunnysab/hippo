@@ -27,6 +27,7 @@ def _item(article_id: str) -> Item:
         link=f'https://host/{article_id}',
         media_url=f'https://host/{article_id}.mp3',
         publish_at=1700000000,
+        raw={'transcript_url': f'url-{article_id}'},
     )
 
 
@@ -85,6 +86,8 @@ class MediaSyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('条目 a', storage.saved[0][0].title)
         self.assertEqual('podcast', storage.queued[0]['source'])
         self.assertEqual('https://host/a.mp3', storage.queued[0]['media_url'])
+        # 列表阶段知道的额外信息（播客的转录稿地址等）跟着任务走
+        self.assertEqual('url-a', storage.queued[0]['payload']['transcript_url'])
         self.assertEqual(1, storage.commits)
 
     async def test_listing_the_same_items_again_queues_nothing(self) -> None:

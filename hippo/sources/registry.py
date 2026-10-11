@@ -18,6 +18,8 @@ from . import SourceAdapter
 from .bilibili import SOURCE as BILIBILI_SOURCE
 from .bilibili import BilibiliClient, BilibiliResolver, BilibiliSource
 from .ingest import MediaResolverRegistry, MediaSync
+from .podcast import SOURCE as PODCAST_SOURCE
+from .podcast import PodcastClient, PodcastResolver, PodcastSource
 from .youtube import SOURCE as YOUTUBE_SOURCE
 from .youtube import YoutubeResolver, YoutubeSource
 
@@ -41,6 +43,11 @@ class MediaSources:
             bilibili,
             use_cc_subtitle=bool(settings.get('bilibili_cc_subtitle')),
         )
+
+        podcast_proxy = str(settings.get('proxy_podcast') or '')
+        podcast = self._client(PodcastClient(proxy=podcast_proxy))
+        self.adapters[PODCAST_SOURCE] = MediaSync(storage=storage, source=PodcastSource(podcast))
+        self.resolvers[PODCAST_SOURCE] = PodcastResolver(podcast, proxy=podcast_proxy)
 
         # yt-dlp 是子进程，没有客户端要管，只需要代理设置。
         youtube_proxy = str(settings.get('proxy_youtube') or '')

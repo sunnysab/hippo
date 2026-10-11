@@ -12,6 +12,7 @@ from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Json
 
 #: Same ceiling as ``article_queue``: once the retries are used up the row turns
 #: failed instead of being handed out again forever.
@@ -35,17 +36,21 @@ class MediaJobRepository:
         finished transcript is not redone, and a running job is not restarted.
         ``force`` is what the reader's "转写这篇" button uses.
         """
-        rows = [(int(item['article_pk']), str(item['source']), str(item['media_url'])) for item in items]
+        rows = [
+            (int(item['article_pk']), str(item['source']), str(item['media_url']), Json(item.get('payload') or {}))
+            for item in items
+        ]
         if not rows:
             return 0
         async with self._conn.cursor() as cur:
             await cur.executemany(
                 """
-                INSERT INTO media_job (article_pk, source, media_url, created_at, updated_at)
-                VALUES (%s, %s, %s, NOW(), NOW())
+                INSERT INTO media_job (article_pk, source, media_url, payload, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, NOW(), NOW())
                 ON CONFLICT (article_pk) DO UPDATE
                    SET media_url = EXCLUDED.media_url,
                        source = EXCLUDED.source,
+                       payload = EXCLUDED.payload,
                        state = 'pending',
                        stage = NULL,
                        progress = 0,
@@ -67,7 +72,7 @@ class MediaJobRepository:
                  WHERE id IN (
                        SELECT id FROM media_job WHERE state = 'pending' ORDER BY id LIMIT %s
                  )
-                RETURNING id, article_pk, source, media_url, attempts
+                RETURNING id, article_pk, source, media_url, payload, attempts
                 """,
                 (max(int(limit), 1),),
             )
