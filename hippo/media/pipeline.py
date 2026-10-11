@@ -237,10 +237,10 @@ async def _download(
                 try:
                     async with client.stream('GET', url, headers=request_headers) as response:
                         if response.status_code == 416:
-                            # 请求越界 = 已经下完了，这是正常收尾而不是错误。
-                            if not written:
-                                raise MediaJobFailure('音频下载得到了空文件')
-                            return written
+                            # 请求越界 = 服务器说「没有了」。正常收尾，但长度是否够由
+                            # 循环末尾统一判断（服务器先报过 59 分钟、之后只给 2 MB 的
+                            # 情况必须当场失败，而不是当完整的存下来）。
+                            break
                         if response.status_code not in (200, 206):
                             raise MediaJobFailure(f'音频下载失败：HTTP {response.status_code}')
                         if response.status_code == 200 and written:
@@ -269,6 +269,10 @@ async def _download(
                 break
     if not written:
         raise MediaJobFailure('音频下载得到了空文件')
+    if total is not None and written < total:
+        # 服务器先报了一个总长，之后却说「没有了」（416）或给了一个空片。曾经因此
+        # 把 2 MB 当成完整的 59 分钟节目留了档——这里把短文件当失败，让上层重试。
+        raise MediaJobFailure(f'音频被截断：只拿到 {written}/{total} 字节')
     return written
 
 

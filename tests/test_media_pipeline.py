@@ -463,6 +463,31 @@ class DownloadTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn('上限', str(ctx.exception))
 
+    async def test_a_short_answer_is_a_failure_not_a_file(self) -> None:
+        # 先给出总长，随后回答说「没有了」：不能把半截当成完整文件存档。
+        class _Truncating(_RangeServer):
+            def __call__(self, request: httpx.Request) -> httpx.Response:
+                header = request.headers.get('range') or ''
+                start = int(header[len('bytes=') :].split('-')[0]) if header.startswith('bytes=') else 0
+                if start == 0:
+                    body = self.payload[:4096]
+                    return httpx.Response(
+                        206,
+                        content=body,
+                        headers={
+                            'content-length': str(len(body)),
+                            'content-range': f'bytes 0-4095/{len(self.payload)}',
+                        },
+                    )
+                return httpx.Response(416, headers={'content-range': f'bytes */{len(self.payload)}'})
+
+        server = _Truncating(os.urandom(64 * 1024))
+
+        with _patch_transport(server), self.assertRaises(MediaJobFailure) as ctx:
+            await self._fetch(server)
+
+        self.assertIn('截断', str(ctx.exception))
+
     async def test_an_error_status_is_reported(self) -> None:
         server = _RangeServer(b'x' * 10, status=404)
 
