@@ -7,6 +7,8 @@ export interface ArticleFiltersState {
   groupId: string;
   accountBiz: string;
   itemShowType: string;
+  /** '' for every source, otherwise `accounts.source` (weixin/bilibili/…). */
+  source: string;
   /** '' for every article, `unread` for the unread box. */
   read: string;
   /** 'true' keeps only starred articles. */
@@ -33,6 +35,7 @@ export const areArticleFiltersEqual = (
   left.groupId === right.groupId &&
   left.accountBiz === right.accountBiz &&
   left.itemShowType === right.itemShowType &&
+  left.source === right.source &&
   left.read === right.read &&
   left.starred === right.starred &&
   left.search === right.search &&
@@ -52,6 +55,7 @@ export const buildArticleRouteStateFromSearchParams = (
       groupId: searchParams.get('group') || '',
       accountBiz: searchParams.get('account') || '',
       itemShowType: searchParams.get('type') || '',
+      source: searchParams.get('source') || '',
       read: searchParams.get('read') || '',
       starred: searchParams.get('starred') || '',
       search,
@@ -70,6 +74,7 @@ export const buildArticleSearchParams = (
   if (filters.groupId) params.set('group', filters.groupId);
   if (filters.accountBiz) params.set('account', filters.accountBiz);
   if (filters.itemShowType) params.set('type', filters.itemShowType);
+  if (filters.source) params.set('source', filters.source);
   if (filters.read) params.set('read', filters.read);
   if (filters.starred) params.set('starred', filters.starred);
   if (filters.search.trim()) params.set('q', filters.search.trim());

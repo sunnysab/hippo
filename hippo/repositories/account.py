@@ -95,6 +95,26 @@ class AccountRepository:
             rows = await cur.fetchall()
         return [_row_to_account(row) for row in rows]
 
+    async def count_by_source(self, user_id: int) -> list[dict[str, Any]]:
+        """How many channels this user follows per source, for the article rail.
+
+        Counted over subscriptions rather than the whole catalogue: a source nobody
+        follows should not offer itself as a filter.
+        """
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT a.source, COUNT(*) AS channels
+                  FROM accounts a
+                  JOIN subscription s ON s.biz = a.biz AND s.user_id = %s
+                 GROUP BY a.source
+                 ORDER BY a.source
+                """,
+                (int(user_id),),
+            )
+            rows = await cur.fetchall()
+        return [{'source': str(row['source']), 'channels': int(row['channels'])} for row in rows]
+
     async def list_syncable_accounts(
         self,
         *,

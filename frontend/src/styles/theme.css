@@ -101,7 +101,7 @@
   /* The app is a bounded column, not a full-bleed canvas. Past this width a
      two-field form floats in a screen-wide panel and every page reads as a
      left-aligned strip. One bound for every page keeps them consistent. */
-  --app-width: 1600px;
+  --app-width: 1760px;
   /* Keeps the fixed top bar aligned with the column above. */
   --app-inset: max(12px, calc((100vw - var(--app-width)) / 2 + 12px));
   /* 760px at 17px is ~44 CJK characters per line; the reader is justified, so

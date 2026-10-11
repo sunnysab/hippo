@@ -50,6 +50,19 @@ def _require_source(url: str) -> str:
     return source
 
 
+@router.get('/source')
+async def list_sources(
+    user: User = Depends(current_user),
+    storage: PostgresStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """The sources this user actually follows, for the article rail.
+
+    A source with no subscription is not offered as a filter, and no source is
+    hidden: an unknown one shows up with its raw identifier (see ``SOURCE_META``).
+    """
+    return {'sources': await storage.accounts.count_by_source(user.id)}
+
+
 @router.get('/source/preview')
 async def preview_source(
     url: str = Query(..., description='视频 / 频道 / 订阅地址'),

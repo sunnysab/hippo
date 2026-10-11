@@ -8,6 +8,8 @@ import { ArticleFilterSummary } from './ArticleFilterSummary';
 import { ArticleList } from './ArticleList';
 import { ArticlePreview } from './ArticlePreview';
 import { ArticleResizer } from './ArticleResizer';
+import { ViewRail } from './ViewRail';
+import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { ReaderControls } from './ReaderControls';
 import { Popover } from '../../components/Popover';
 import { LoadingIndicator } from '../../components/LoadingIndicator';
@@ -29,6 +31,8 @@ export function ArticlesPage() {
     selectArticle,
     loadArticles,
   } = useArticleFilters();
+  // 宽屏才给左栏：窄屏上它会把正文挤到没法读，那里继续用列表头部的控件。
+  const showViewRail = useMediaQuery('(min-width: 1600px)');
   const {
     config,
     updateConfig,
@@ -46,7 +50,14 @@ export function ArticlesPage() {
 
   return (
     <section id="view-articles" className="view is-active">
-      <div className={`article-layout${listCollapsed ? ' is-collapsed' : ''}${mobileReading ? ' is-mobile-reading' : ''}`}>
+      <div
+        className={`article-layout${listCollapsed ? ' is-collapsed' : ''}${mobileReading ? ' is-mobile-reading' : ''}${
+          showViewRail && !listCollapsed ? ' with-rail' : ''
+        }`}
+      >
+        {showViewRail && !listCollapsed ? (
+          <ViewRail filters={filters} groupOptions={groupOptions} onChange={updateFilters} />
+        ) : null}
         <div className="panel article-list">
           <div className="panel-header article-sidebar-header">
             <div>
