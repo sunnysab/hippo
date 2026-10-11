@@ -33,7 +33,15 @@ MIN_CHARS = 10
 #: Measured against the real model: 2048 generated tokens produced 3367 Chinese
 #: characters before stopping at the cap. Used only to recognise a hitting-the-cap
 #: case, and deliberately rounded down so the warning errs toward firing early.
+#:
+#: Latin script needs far fewer tokens for the same number of characters (~4 per
+#: token against ~1.6 for Chinese), so one ratio cannot serve both: a 300 s English
+#: chunk that transcribed perfectly well came out at 3500 characters and was
+#: rejected as truncated. Which ratio applies is decided from the text itself —
+#: the configured language is not a reliable guide, since English audio transcribed
+#: under a ``zh`` setting still yields English text.
 CHARS_PER_TOKEN = 1.6
+CHARS_PER_TOKEN_LATIN = 4.0
 #: How close to the cap counts as "probably truncated".
 CAP_RATIO = 0.9
 
@@ -46,6 +54,12 @@ class Verdict:
     reason: str | None = None
     #: Nothing was said in this chunk. Not an error, and not worth retrying.
     silent: bool = False
+
+
+def _chars_per_token(text: str) -> float:
+    """Pick the ratio that matches the script the transcript actually came out in."""
+    cjk = sum(1 for character in text if '\u4e00' <= character <= '\u9fff')
+    return CHARS_PER_TOKEN if cjk * 2 >= len(text) else CHARS_PER_TOKEN_LATIN
 
 
 def _peak_repeat_ratio(text: str) -> float:
@@ -78,7 +92,7 @@ def check(text: str, duration_seconds: float, *, max_new_tokens: int | None = No
         return Verdict(ok=False, reason=f'单个字符占比 {repeat_ratio:.0%}，疑似解码循环')
 
     if max_new_tokens:
-        cap = max_new_tokens * CHARS_PER_TOKEN * CAP_RATIO
+        cap = max_new_tokens * _chars_per_token(stripped) * CAP_RATIO
         if len(stripped) >= cap:
             return Verdict(ok=False, reason=f'输出 {len(stripped)} 字接近生成长度上限，疑似被截断')
 
@@ -88,6 +102,7 @@ def check(text: str, duration_seconds: float, *, max_new_tokens: int | None = No
 __all__ = [
     'CAP_RATIO',
     'CHARS_PER_TOKEN',
+    'CHARS_PER_TOKEN_LATIN',
     'MAX_CHARS_PER_SECOND',
     'MAX_REPEAT_RATIO',
     'MIN_CHARS',

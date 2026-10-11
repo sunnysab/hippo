@@ -12,6 +12,10 @@ from hippo.media.validate import Verdict, check
 #: something to measure; a single repeated character would trip it by design.
 _SENTENCE = '这是一段用于校验转写结果的中文样例，句子里有足够多的不同字符。'
 
+#: The English side of the same problem: Latin script packs far more characters
+#: into one token, so the same length means something else entirely.
+_ENGLISH = 'The committee heard testimony from several witnesses about the evacuation. '
+
 
 def _sample(length: int) -> str:
     return (_SENTENCE * (length // len(_SENTENCE) + 1))[:length]
@@ -38,6 +42,20 @@ class CheckTest(unittest.TestCase):
 
         self.assertFalse(verdict.ok)
         self.assertIn('疑似解码循环', verdict.reason)
+
+    def test_a_long_english_chunk_is_not_mistaken_for_a_truncated_one(self) -> None:
+        # 实测：The Daily 第 5 片（300 秒英文）在两档模型上都给出了 3400~3500 字符的
+        # 完整转写，却被按中文的字符/token 比例判成「疑似截断」。
+        text = (_ENGLISH * 60)[:3500]
+
+        self.assertTrue(check(text, 300, max_new_tokens=2048).ok)
+
+    def test_the_cap_is_read_off_the_script_not_off_the_setting(self) -> None:
+        # 英文的 2048 token 约合 8000 字符，远高于 300 秒语音可能产出的量（字符/秒上限
+        # 是 15），所以英文切片实际上不可能碰到截断告警——这正是要断言的行为。
+        self.assertTrue(check((_ENGLISH * 80)[:4400], 300, max_new_tokens=2048).ok)
+        # 同样长度的中文就顶到预算了，保护没有丢。
+        self.assertFalse(check(_sample(3400), 300, max_new_tokens=2048).ok)
 
     def test_a_chunk_at_the_generation_cap_is_flagged(self) -> None:
         # 2048 tokens produced 3367 characters before the measured truncation.
