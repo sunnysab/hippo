@@ -71,6 +71,12 @@ function SettingsPageContent({ initialFormState }: SettingsPageContentProps) {
       summary: t('settings.navAccountSummary', '修改接收邮件的邮箱地址。'),
     },
     {
+      key: 'apikey',
+      path: '/settings/apikey',
+      title: t('settings.navApiKeys', 'API 密钥'),
+      summary: t('settings.navApiKeysSummary', '给脚本与阅读器的只读凭证。'),
+    },
+    {
       key: 'filter',
       path: '/settings/filter',
       title: t('settings.navFilter', 'Filter'),

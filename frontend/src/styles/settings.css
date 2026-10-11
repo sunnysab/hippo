@@ -433,3 +433,21 @@
     padding-bottom: 12px;
   }
 }
+
+/* The one-time API key: loud enough that nobody scrolls past it. */
+.api-key-secret {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--info);
+  border-radius: var(--radius-sm);
+  background: var(--info-soft);
+}
+
+.api-key-secret code {
+  word-break: break-all;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+}
