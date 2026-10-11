@@ -122,6 +122,9 @@ class SplitParagraphsTest(unittest.TestCase):
         self.assertEqual([], pipeline_module.split_paragraphs('   ', 300.0))
 
 
+_SUBTITLE = Subtitle(blocks=[{'type': 'paragraph', 'text': '字幕', 't': 0}], markdown='字幕')
+
+
 class TranscribeJobTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self._dir = TemporaryDirectory()
@@ -172,15 +175,48 @@ class TranscribeJobTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_ready_made_subtitle_skips_the_asr(self) -> None:
         transcriber = _FakeTranscriber([])
-        media = ResolvedMedia(
-            subtitle=Subtitle(blocks=[{'type': 'paragraph', 'text': '字幕', 't': 0}], markdown='字幕'),
-        )
+        media = ResolvedMedia(subtitle=_SUBTITLE)
+
         with patch('hippo.media.pipeline._download', new=AsyncMock()) as download:
-            await _run(self.storage, media, transcriber=transcriber)
+            outcome = await _run(self.storage, media, transcriber=transcriber)
 
         download.assert_not_awaited()
         self.assertEqual(0, transcriber.calls)
         self.assertEqual([{'type': 'paragraph', 'text': '字幕', 't': 0}], self.storage.saved[0]['content_blocks'])
+        self.assertFalse(outcome['archived'])
+
+    async def test_a_ready_made_subtitle_still_archives_the_audio(self) -> None:
+        # 字幕是平台给的，音频是我们唯一能留下来的东西：有字幕也要下载、转码、留档。
+        transcriber = _FakeTranscriber([])
+        media = ResolvedMedia(audio_url='https://host/ep.mp3', subtitle=_SUBTITLE)
+
+        with (
+            self._patch_audio(),
+            patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1234)) as download,
+            patch('hippo.media.pipeline.archive_module.store_audio', new=lambda **k: ('media/audio/7.mp3', 10)),
+        ):
+            outcome = await _run(self.storage, media, transcriber=transcriber)
+
+        download.assert_awaited_once()
+        self.assertEqual(0, transcriber.calls)
+        self.assertTrue(outcome['archived'])
+        # 播放器在正文之前，字幕段落照旧。
+        self.assertEqual('audio', self.storage.saved[0]['content_blocks'][0]['type'])
+        self.assertEqual('/api/media/7/audio', self.storage.saved[0]['content_blocks'][0]['url'])
+        self.assertEqual('字幕', self.storage.saved[0]['content_blocks'][1]['text'])
+
+    async def test_a_too_long_recording_still_keeps_its_subtitle(self) -> None:
+        # 超长的音频不下载（也就不留档），但现成的字幕没理由跟着一起丢。
+        settings = default_media_settings()
+        settings['max_duration_seconds'] = 60
+        media = ResolvedMedia(audio_url='https://host/long.mp3', duration_seconds=600, subtitle=_SUBTITLE)
+
+        with patch('hippo.media.pipeline._download', new=AsyncMock()) as download:
+            outcome = await _run(self.storage, media, settings=settings)
+
+        download.assert_not_awaited()
+        self.assertFalse(outcome['archived'])
+        self.assertEqual('字幕', self.storage.saved[0]['content_blocks'][0]['text'])
 
     async def test_an_entry_without_audio_is_skipped(self) -> None:
         with self.assertRaises(MediaJobSkipped):

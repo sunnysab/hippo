@@ -352,6 +352,32 @@ def _paragraph_blocks(paragraphs: Iterable[tuple[float, str]]) -> list[dict[str,
     ]
 
 
+async def _save_subtitle(
+    storage: PostgresStorage,
+    *,
+    job_id: int,
+    article: ArticleRecord,
+    article_pk: int,
+    resolved: ResolvedMedia,
+    archived: bool,
+) -> dict[str, Any]:
+    """Write a ready-made subtitle in as the body, with the player above it."""
+    await storage.media_jobs.update_progress(job_id, stage='subtitle', progress=90)
+    blocks: list[dict[str, Any]] = []
+    if resolved.embed_block:
+        blocks.append(resolved.embed_block)
+    elif archived:
+        blocks.append({'type': 'audio', 'url': f'/api/media/{article_pk}/audio'})
+    blocks.extend(resolved.subtitle.blocks)  # type: ignore[union-attr]
+    await _save(storage, article, blocks=blocks, markdown=resolved.subtitle.markdown)  # type: ignore[union-attr]
+    return {
+        'article_pk': article_pk,
+        'segments': len(resolved.subtitle.blocks),  # type: ignore[union-attr]
+        'subtitle': True,
+        'archived': archived,
+    }
+
+
 async def transcribe_job(
     *,
     storage: PostgresStorage,
@@ -364,23 +390,35 @@ async def transcribe_job(
     article_pk = int(job['article_pk'])
     article = await _load_article(storage, article_pk)
     resolved = await resolver.resolve(job)
+    subtitle = resolved.subtitle
+    job_id = int(job['id'])
+    ceiling = float(settings.get('max_duration_seconds') or 0)
 
-    if resolved.subtitle is not None:
-        await storage.media_jobs.update_progress(int(job['id']), stage='subtitle', progress=90)
-        blocks: list[dict[str, Any]] = []
-        if resolved.embed_block:
-            blocks.append(resolved.embed_block)
-        blocks.extend(resolved.subtitle.blocks)
-        await _save(storage, article, blocks=blocks, markdown=resolved.subtitle.markdown)
-        return {'article_pk': article_pk, 'segments': len(resolved.subtitle.blocks), 'subtitle': True}
+    async def keep_subtitle(*, archived: bool) -> dict[str, Any]:
+        return await _save_subtitle(
+            storage,
+            job_id=job_id,
+            article=article,
+            article_pk=article_pk,
+            resolved=resolved,
+            archived=archived,
+        )
+
+    # 列表阶段就知道时长的，先拦下来，不必白下几十兆。字幕是平台给的，超长也照样用。
+    known = float(resolved.duration_seconds or 0)
+    if ceiling and known > ceiling:
+        if subtitle is None:
+            raise MediaJobSkipped(f'音频 {known / 60:.0f} 分钟，超过 {ceiling / 60:.0f} 分钟上限')
+        return await keep_subtitle(archived=False)
 
     if not resolved.audio_url:
-        raise MediaJobSkipped('这个条目没有可下载的音频')
+        if subtitle is None:
+            raise MediaJobSkipped('这个条目没有可下载的音频')
+        return await keep_subtitle(archived=False)
 
     tier = str(settings.get('asr_tier') or 'accurate')
     transcriber = transcriber or client_for(dict(settings), tier)
     max_new_tokens = int(settings.get('asr_max_new_tokens') or 2048)
-    job_id = int(job['id'])
 
     with tempfile.TemporaryDirectory(prefix=f'hippo-media-{article_pk}-') as temp_name:
         workdir = Path(temp_name)
@@ -394,11 +432,17 @@ async def transcribe_job(
             timeout=float(settings.get('asr_timeout_seconds') or 900),
         )
         duration = float(resolved.duration_seconds or await asyncio.to_thread(audio_module.probe_duration, source))
-        ceiling = float(settings.get('max_duration_seconds') or 0)
-        if ceiling and duration > ceiling:
+        over_ceiling = bool(ceiling) and duration > ceiling
+        if over_ceiling and subtitle is None:
             raise MediaJobSkipped(f'音频 {duration / 60:.0f} 分钟，超过 {ceiling / 60:.0f} 分钟上限')
 
-        archived = await _archive(storage, article_pk, source, job=job, settings=settings)
+        # 有字幕也要留档：字幕是平台给的，音频是这个条目里我们唯一能留下来的东西。
+        archived = None if over_ceiling else await _archive(storage, article_pk, source, job=job, settings=settings)
+
+        if subtitle is not None:
+            # 有现成字幕就不花 ASR 的钱，但下载、转码、留档照做。
+            return await keep_subtitle(archived=archived is not None)
+
         await storage.media_jobs.update_progress(job_id, stage='transcribe', progress=25)
 
         chunks = await asyncio.to_thread(
