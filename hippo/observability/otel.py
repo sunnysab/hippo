@@ -17,7 +17,6 @@ import contextlib
 import functools
 import inspect
 import logging
-import os
 import socket
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
@@ -28,7 +27,6 @@ from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
@@ -153,11 +151,9 @@ def init_telemetry(service_name: str) -> TelemetryRuntime | None:
     # and any credential that happens to travel through SQL.
     PsycopgInstrumentor().instrument(tracer_provider=tracer_provider, capture_parameters=False)
     HTTPXClientInstrumentor().instrument(tracer_provider=tracer_provider)
-    # Without this the logging instrumentation skips stamping otelTraceID /
-    # otelSpanID on each record, and stdlib log lines would lose their
-    # correlation ids once they cross to the listener thread.
-    os.environ.setdefault('OTEL_PYTHON_LOG_CORRELATION', 'true')
-    LoggingInstrumentor().instrument(set_logging_format=False, tracer_provider=tracer_provider)
+    # Deliberately no LoggingInstrumentor: it installs a second, unwrapped handler
+    # on the root logger (duplicate logs, and it exports structlog's objects as
+    # attributes). The trace correlation it would add is done by the factory below.
     _install_trace_record_factory()
 
     return TelemetryRuntime(
