@@ -87,10 +87,15 @@ class Feed:
     episodes: list[Episode] = field(default_factory=list)
 
 
-def feed_biz(feed_url: str) -> str:
-    """A stable ``biz`` for a feed URL, since the URL itself is long and mutable."""
+def feed_biz(feed_url: str, kind: str = SOURCE) -> str:
+    """A stable ``biz`` for a feed URL, since the URL itself is long and mutable.
+
+    The prefix is the kind the preview resolved (``podcast`` or ``feed``) and the
+    account stores that same value: the two disagreeing is what makes an account
+    impossible to rename later, because the biz *is* its identity.
+    """
     digest = hashlib.sha1(feed_url.strip().encode('utf-8')).hexdigest()
-    return f'{SOURCE}:{digest[:16]}'
+    return f'{kind}:{digest[:16]}'
 
 
 def normalize_feed_url(value: str) -> str:
@@ -336,7 +341,7 @@ class PodcastSource:
         # 判定放在这里，因为只有抓到 feed 才知道。
         kind = SOURCE if any(episode.audio_url for episode in feed.episodes) else FEED_SOURCE
         return ChannelInfo(
-            biz=feed_biz(url),
+            biz=feed_biz(url, kind),
             nickname=feed.title,
             source_key=url,
             avatar_url=feed.image_url,
