@@ -1,0 +1,21 @@
+# Deployment settings that are not secrets: a deliberate, reviewable choice
+# that should not hide in the environment.
+#
+# Copy it next to .env and edit it there. Like .env it is per-machine and is
+# never deployed (deploy.sh excludes it, so the box keeps its own copy):
+#
+#     cp config.example.toml config.toml
+#
+# The path is resolved against the working directory, so the services and the
+# CLI must run from the repository root.
+
+[observability]
+# OTLP/gRPC endpoint of the collector. Telemetry stays off while this is empty.
+otlp_endpoint = "http://127.0.0.1:4317"
+# Plaintext gRPC. Set to false when the collector terminates TLS.
+insecure = true
+# Fraction of traces to export.
+sample_ratio = 0.1
+environment = "prod"
+# Flip to false to stop exporting without losing the endpoint.
+# enabled = true

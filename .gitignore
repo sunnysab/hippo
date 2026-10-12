@@ -3,6 +3,8 @@ __pycache__/
 *.pyo
 *.pyd
 .env
+# Per-machine deployment settings; config.example.toml is the tracked template.
+config.toml
 env.sh
 .venv/
 .venv

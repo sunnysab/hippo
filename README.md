@@ -195,7 +195,24 @@ uv run python -m hippo --help        # 全部命令
 
 ## 配置
 
-`hippo/config.py` 启动时 `load_dotenv()`，因此**必须在仓库目录下启动**，或自行注入环境变量。
+配置分两处：
+
+- **`config.toml`**（不入库，每台机器一份）：部署选择，目前只有遥测。先
+  `cp config.example.toml config.toml` 再编辑；与 `.env` 一样，`deploy.sh` 不会覆盖也不会删除它。
+- **`.env` / 环境变量**：密钥与按机器而异的值。`hippo/config.py` 启动时 `load_dotenv()`，
+  因此**必须在仓库目录下启动**，或自行注入环境变量。
+
+### config.toml
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `observability.enabled` | `true` | 置 `false` 可停掉导出而不丢 endpoint |
+| `observability.otlp_endpoint` | — | OTLP/gRPC 端点；留空即整个遥测关闭 |
+| `observability.insecure` | `false` | 采集器走明文 gRPC（`http://` 端点）时置 `true` |
+| `observability.sample_ratio` | `0.1` | 导出的 trace 比例 |
+| `observability.environment` | `prod` | 写入 `deployment.environment` |
+
+### 环境变量
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
@@ -211,7 +228,6 @@ uv run python -m hippo --help        # 全部命令
 | `HIPPO_SESSION_TTL_HOURS` | `168` | 会话有效期（小时） |
 | `HIPPO_ENABLE_INPROCESS_SYNC` | — | 在 Web 进程里跑同步（仅开发用） |
 | `HIPPO_LOG_LEVEL` / `HIPPO_LOG_FORMAT` / `HIPPO_LOG_FILE` / `HIPPO_LOG_TAIL_LINES` | `WARNING` / `json` / — / `500` | 日志 |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_INSECURE` / `HIPPO_OTEL_ENABLED` / `HIPPO_OTEL_SAMPLE_RATIO` / `HIPPO_ENV` | — | 遥测 |
 | `HIPPO_SIGNOZ_URL` | — | 管理台「看日志」深链的目标 |
 
 ## 开发

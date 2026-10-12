@@ -1,51 +1,89 @@
-"""Observability wiring: OTLP opt-in, span helpers, log handlers and redaction.
+"""Observability wiring: config.toml opt-in, span helpers, handlers and redaction.
 
-Telemetry must stay silent unless an OTLP endpoint is configured: the CLI, the
-test suite and local development all run without a collector.
+Telemetry must stay silent unless ``config.toml`` names an OTLP endpoint: the
+CLI, the test suite and local development all run without a collector.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 import pytest
 
+from hippo.config import ObservabilitySettings, load_observability_settings
 from hippo.observability import logging as obs_logging
 from hippo.observability import metrics as metrics_module
 from hippo.observability import otel as otel_module
 
 
-def test_telemetry_is_off_without_endpoint(monkeypatch):
-    monkeypatch.delenv('OTEL_EXPORTER_OTLP_ENDPOINT', raising=False)
-    monkeypatch.delenv('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', raising=False)
-    monkeypatch.delenv('HIPPO_OTEL_ENABLED', raising=False)
+def _write_config(tmp_path: Path, body: str) -> Path:
+    path = tmp_path / 'config.toml'
+    path.write_text(body, encoding='utf-8')
+    return path
+
+
+def test_telemetry_is_off_without_a_config_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
 
     assert otel_module.otlp_endpoint() is None
     assert otel_module.telemetry_enabled() is False
 
 
-def test_telemetry_flag_overrides_configured_endpoint(monkeypatch):
-    monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://127.0.0.1:4317')
+def test_telemetry_reads_the_endpoint_from_config_toml(tmp_path, monkeypatch):
+    _write_config(tmp_path, '[observability]\notlp_endpoint = "http://collector:4317"\ninsecure = true\n')
+    monkeypatch.chdir(tmp_path)
 
-    monkeypatch.setenv('HIPPO_OTEL_ENABLED', '0')
-    assert otel_module.telemetry_enabled() is False
-
-    monkeypatch.setenv('HIPPO_OTEL_ENABLED', '1')
     assert otel_module.telemetry_enabled() is True
+    assert otel_module.otlp_endpoint() == 'http://collector:4317'
 
 
-@pytest.mark.parametrize(
-    ('raw', 'expected'),
-    [(None, 0.1), ('0.5', 0.5), ('2', 1.0), ('-1', 0.0), ('oops', 0.1)],
-)
-def test_sample_ratio_is_clamped(monkeypatch, raw, expected):
-    if raw is None:
-        monkeypatch.delenv('HIPPO_OTEL_SAMPLE_RATIO', raising=False)
-    else:
-        monkeypatch.setenv('HIPPO_OTEL_SAMPLE_RATIO', raw)
+def test_telemetry_can_be_switched_off_without_losing_the_endpoint(tmp_path):
+    path = _write_config(
+        tmp_path,
+        '[observability]\nenabled = false\notlp_endpoint = "http://collector:4317"\n',
+    )
 
-    assert otel_module._sample_ratio() == expected
+    settings = load_observability_settings(path)
+    assert settings.enabled is False
+    assert settings.otlp_endpoint == 'http://collector:4317'
+
+
+@pytest.mark.parametrize(('raw', 'expected'), [('0.5', 0.5), ('2', 1.0), ('-1', 0.0)])
+def test_sample_ratio_is_clamped(tmp_path, raw, expected):
+    path = _write_config(tmp_path, f'[observability]\nsample_ratio = {raw}\n')
+
+    assert load_observability_settings(path).sample_ratio == expected
+
+
+def test_an_invalid_sample_ratio_falls_back_to_the_default(tmp_path):
+    path = _write_config(tmp_path, '[observability]\nsample_ratio = "oops"\n')
+
+    assert load_observability_settings(path).sample_ratio == ObservabilitySettings().sample_ratio
+
+
+def test_a_broken_file_falls_back_to_defaults(tmp_path, capsys):
+    path = _write_config(tmp_path, 'not = [valid')
+
+    assert load_observability_settings(path) == ObservabilitySettings()
+    assert 'Failed to read' in capsys.readouterr().err
+
+
+def test_exporters_take_the_endpoint_from_the_file(monkeypatch):
+    """The SDK would otherwise fall back to OTEL_EXPORTER_OTLP_ENDPOINT."""
+    captured: list[dict[str, object]] = []
+
+    class _FakeExporter:
+        def __init__(self, **kwargs: object) -> None:
+            captured.append(kwargs)
+
+    for name in ('OTLPSpanExporter', 'OTLPMetricExporter', 'OTLPLogExporter'):
+        monkeypatch.setattr(otel_module, name, _FakeExporter)
+
+    otel_module._exporters(ObservabilitySettings(otlp_endpoint='http://collector:4317'))
+
+    assert captured == [{'endpoint': 'http://collector:4317', 'insecure': False}] * 3
 
 
 @pytest.fixture

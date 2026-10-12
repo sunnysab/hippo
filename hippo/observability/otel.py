@@ -5,8 +5,10 @@ Two independent processes initialise this module: ``hippo-web`` (FastAPI) and
 why :func:`init_telemetry` takes the name as an argument instead of reading it
 from a module constant.
 
-Tracing is off unless an OTLP endpoint is configured, so the CLI and the test
-suite stay silent by default.
+The endpoint, the TLS mode and the sample ratio come from the ``[observability]``
+table in ``config.toml``: the SDK's own ``OTEL_*`` environment variables would
+give the same setting two sources of truth. Telemetry stays off while that table
+has no endpoint, so the CLI and the test suite stay silent by default.
 """
 
 from __future__ import annotations
@@ -37,37 +39,32 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
 
-_DISABLED_VALUES = {'0', 'false', 'no', 'off'}
-_DEFAULT_SAMPLE_RATIO = 0.1
+from ..config import ObservabilitySettings, load_observability_settings
+
 _TRACER_NAME = 'hippo'
-
-
-def _env_flag(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() not in _DISABLED_VALUES
 
 
 def otlp_endpoint() -> str | None:
     """Return the configured OTLP endpoint, if any."""
-    return os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT') or os.environ.get('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT') or None
+    return load_observability_settings().otlp_endpoint or None
 
 
 def telemetry_enabled() -> bool:
-    """Tracing only turns on when an endpoint is configured."""
-    if not _env_flag('HIPPO_OTEL_ENABLED', True):
-        return False
-    return bool(otlp_endpoint())
+    """Telemetry only turns on when the file enables it and sets an endpoint."""
+    settings = load_observability_settings()
+    return settings.enabled and bool(settings.otlp_endpoint)
 
 
-def _sample_ratio() -> float:
-    raw = os.environ.get('HIPPO_OTEL_SAMPLE_RATIO', str(_DEFAULT_SAMPLE_RATIO)).strip()
-    try:
-        ratio = float(raw)
-    except ValueError:
-        return _DEFAULT_SAMPLE_RATIO
-    return min(max(ratio, 0.0), 1.0)
+def _exporters(
+    settings: ObservabilitySettings,
+) -> tuple[OTLPSpanExporter, OTLPMetricExporter, OTLPLogExporter]:
+    """Build the three exporters from the file, never from the environment.
+
+    The endpoint is passed explicitly: left out, the SDK would fall back to
+    ``OTEL_EXPORTER_OTLP_ENDPOINT`` and the two sources could disagree.
+    """
+    kwargs = {'endpoint': settings.otlp_endpoint, 'insecure': settings.insecure}
+    return OTLPSpanExporter(**kwargs), OTLPMetricExporter(**kwargs), OTLPLogExporter(**kwargs)
 
 
 def _service_version() -> str:
@@ -123,31 +120,33 @@ def _install_trace_record_factory() -> None:
 def init_telemetry(service_name: str) -> TelemetryRuntime | None:
     """Install trace, metric and log exporters for ``service_name``.
 
-    Returns ``None`` when no OTLP endpoint is configured.
+    Returns ``None`` when telemetry is off or no endpoint is configured.
     """
-    if not telemetry_enabled():
+    settings = load_observability_settings()
+    if not settings.enabled or not settings.otlp_endpoint:
         return None
 
     resource = Resource.create(
         {
             'service.name': service_name,
             'service.version': _service_version(),
-            'deployment.environment': os.environ.get('HIPPO_ENV', 'prod'),
+            'deployment.environment': settings.environment,
             'host.name': socket.gethostname(),
         }
     )
+    span_exporter, metric_exporter, log_exporter = _exporters(settings)
 
-    sampler = ParentBased(TraceIdRatioBased(_sample_ratio()))
+    sampler = ParentBased(TraceIdRatioBased(settings.sample_ratio))
     tracer_provider = TracerProvider(resource=resource, sampler=sampler)
-    tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    tracer_provider.add_span_processor(BatchSpanProcessor(span_exporter))
     trace.set_tracer_provider(tracer_provider)
 
-    metric_reader = PeriodicExportingMetricReader(OTLPMetricExporter(), export_interval_millis=30_000)
+    metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=30_000)
     meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
     metrics.set_meter_provider(meter_provider)
 
     logger_provider = LoggerProvider(resource=resource)
-    logger_provider.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter()))
+    logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
     log_handler = LoggingHandler(level=logging.NOTSET, logger_provider=logger_provider)
 
     # capture_parameters stays off: statement parameters would leak account ids

@@ -1,13 +1,25 @@
-"""Application configuration."""
+"""Application configuration.
+
+Secrets and per-host facts live in ``.env`` / the environment. Deployment
+settings that belong in version control live in ``config.toml``.
+"""
 
 from __future__ import annotations
 
 import os
+import sys
+import tomllib
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+#: Resolved against the working directory, like ``.env``: the services and the
+#: CLI all run from the repository root.
+CONFIG_FILE: Final = 'config.toml'
 
 APP_NAME: Final = 'hippo'
 CLI_NAME: Final = 'hippo'
@@ -38,6 +50,56 @@ def _env_int(name: str, default: int | None = None) -> int | None:
     return value if value > 0 else default
 
 
+@dataclass(frozen=True)
+class ObservabilitySettings:
+    """The ``[observability]`` table of ``config.toml``."""
+
+    #: Telemetry only runs when this is on *and* an endpoint is configured.
+    enabled: bool = True
+    otlp_endpoint: str = ''
+    #: Plaintext gRPC (``http://`` collectors) instead of TLS.
+    insecure: bool = False
+    #: Fraction of traces the SDK exports; the rest are dropped at the root.
+    sample_ratio: float = 0.1
+    environment: str = 'prod'
+
+
+def _sample_ratio(value: object, default: float) -> float:
+    try:
+        ratio = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    return min(max(ratio, 0.0), 1.0)
+
+
+def load_observability_settings(path: Path | str = CONFIG_FILE) -> ObservabilitySettings:
+    """Read the observability settings, defaulting to "telemetry off".
+
+    Telemetry is optional, so a missing or malformed file must not stop the app;
+    it is reported on stderr and the defaults are used instead.
+    """
+    file = Path(path)
+    if not file.is_file():
+        return ObservabilitySettings()
+    try:
+        raw = tomllib.loads(file.read_text(encoding='utf-8'))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        sys.stderr.write(f'Failed to read {file}: {exc}\n')
+        return ObservabilitySettings()
+    table = raw.get('observability')
+    if not isinstance(table, dict):
+        return ObservabilitySettings()
+    defaults = ObservabilitySettings()
+    environment = str(table.get('environment') or '').strip()
+    return ObservabilitySettings(
+        enabled=bool(table.get('enabled', defaults.enabled)),
+        otlp_endpoint=str(table.get('otlp_endpoint') or '').strip(),
+        insecure=bool(table.get('insecure', defaults.insecure)),
+        sample_ratio=_sample_ratio(table.get('sample_ratio'), defaults.sample_ratio),
+        environment=environment or defaults.environment,
+    )
+
+
 ARTICLE_WORKER_URL: Final = os.environ.get('HIPPO_ARTICLE_WORKER')
 ARTICLE_WORKER_PROXY: Final = os.environ.get('HIPPO_ARTICLE_WORKER_PROXY')
 ARTICLE_WORKER_MAX_CONNECTIONS: Final = _env_int('HIPPO_ARTICLE_MAX_CONNECTIONS')
@@ -49,6 +111,7 @@ __all__ = [
     'ARTICLE_WORKER_PROXY',
     'ARTICLE_WORKER_URL',
     'CLI_NAME',
+    'CONFIG_FILE',
     'DEFAULT_GROUP_NAME',
     'DEFAULT_HOST',
     'DEFAULT_MAX_CONTENT_DOWNLOAD_ATTEMPTS',
@@ -60,6 +123,8 @@ __all__ = [
     'HTTP_PROXY',
     'WECHAT_COMMENT_ENDPOINT',
     'WECHAT_PROFILE_ENDPOINT',
+    'ObservabilitySettings',
+    'load_observability_settings',
 ]
 
 
