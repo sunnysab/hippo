@@ -8,7 +8,6 @@ ones an incident review will look for.
 from __future__ import annotations
 
 import asyncio
-import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -16,7 +15,7 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, Body, Depends, Query, Request, status
 
-from ...config import LOG_TAIL_LINES, SIGNOZ_URL
+from ...config import WEB_SERVICE, get_settings
 from ...exceptions import ApiError
 from ...media.asr import health_url
 from ...media_settings import ASR_TIERS, get_media_settings, set_media_settings
@@ -407,7 +406,7 @@ async def list_audit_actions(
 
 @router.get('/admin/log/tail')
 async def tail_log(
-    lines: int = Query(default=LOG_TAIL_LINES, ge=1, le=5000),
+    lines: int | None = Query(default=None, ge=1, le=5000),
     _: User = Depends(require_admin),
 ) -> dict[str, Any]:
     """Last N lines of the rotating file log.
@@ -415,9 +414,10 @@ async def tail_log(
     SignOz is the primary place to read logs; this is the fallback for when it
     is unreachable and someone needs to see what just happened.
     """
+    limit = min(lines or get_settings().logging.tail_lines, 5000)
     path = _log_file_path()
     if path is None:
-        return {'available': False, 'reason': '未配置文件日志（HIPPO_LOG_FILE）', 'lines': []}
+        return {'available': False, 'reason': '未配置文件日志（[logging] file）', 'lines': []}
     if not path.exists():
         return {'available': False, 'reason': f'日志文件不存在: {path}', 'lines': []}
 
@@ -426,10 +426,10 @@ async def tail_log(
     with path.open('rb') as handle:
         handle.seek(0, 2)
         size = handle.tell()
-        block = min(size, lines * 512)
+        block = min(size, limit * 512)
         handle.seek(max(size - block, 0))
         content = handle.read().decode('utf-8', errors='replace')
-    captured = content.splitlines()[-lines:]
+    captured = content.splitlines()[-limit:]
     return {
         'available': True,
         'path': str(path),
@@ -448,16 +448,17 @@ async def signoz_link(
     The window is padded a little so the entry that prompted the investigation
     is inside it once the browser lands.
     """
-    if not SIGNOZ_URL:
-        return {'available': False, 'reason': '未配置 HIPPO_SIGNOZ_URL'}
+    signoz_url = get_settings().web.signoz_url
+    if not signoz_url:
+        return {'available': False, 'reason': '未配置 [web] signoz_url'}
     until = datetime.now(UTC)
     since = until - timedelta(minutes=minutes)
     start_ms = int(since.timestamp() * 1000)
     end_ms = int(until.timestamp() * 1000)
-    url = f'{SIGNOZ_URL}/logs?&startTime={start_ms}&endTime={end_ms}&service.name=hippo'
+    url = f'{signoz_url}/logs?&startTime={start_ms}&endTime={end_ms}&service.name=hippo'
     return {'available': True, 'url': url, 'since': since.isoformat(), 'until': until.isoformat()}
 
 
 def _log_file_path() -> Path | None:
-    raw = os.environ.get('HIPPO_LOG_FILE')
-    return Path(raw) if raw else None
+    target = get_settings().logging.file_for(WEB_SERVICE)
+    return Path(target) if target else None

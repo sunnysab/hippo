@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Request, Response, status
 
+from ...config import get_settings
 from ...exceptions import ApiError
 from ...logger import get_logger
 from ...models import User
@@ -29,8 +29,7 @@ _MIN_PASSWORD_LENGTH = 8
 
 def cookie_secure() -> bool:
     """``Secure`` must be off when serving plain HTTP in development."""
-    raw = os.environ.get('HIPPO_COOKIE_SECURE', '0')
-    return raw.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return get_settings().web.cookie_secure
 
 
 def _set_session_cookie(response: Response, token: str) -> None:

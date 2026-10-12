@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import random
 import re
 from collections.abc import Awaitable, Callable, Iterable
@@ -14,6 +13,7 @@ import httpx
 from bs4 import BeautifulSoup
 from markdownify import markdownify
 
+from .config import get_settings
 from .http import ArticleContentUnavailableError, MPClient
 from .image_store import ArticleImageStore
 from .logger import get_logger
@@ -673,7 +673,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         articles_list = list(articles)
         add_span_attributes({'article.batch_size': len(articles_list)})
         content_ids: set[str] | None = None
-        if self.storage and os.environ.get('HIPPO_PG_DSN'):
+        if self.storage and get_settings().database.dsn:
             get_content_ids = getattr(self.storage, 'get_article_content_ids', None)
             if callable(get_content_ids):
                 try:
@@ -1064,7 +1064,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         return article_pk
 
     async def _is_downloaded(self, article: ArticleRecord) -> bool:
-        if self.storage and os.environ.get('HIPPO_PG_DSN'):
+        if self.storage and get_settings().database.dsn:
             repo = getattr(self.storage, 'articles', None)
             has_content = getattr(repo, 'has_article_content', None) if repo else None
             if callable(has_content):

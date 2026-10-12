@@ -6,10 +6,8 @@ After=network.target postgresql.service
 Type=simple
 User=sab
 WorkingDirectory=/home/sab/hippo
-EnvironmentFile=/home/sab/hippo/.env
-Environment=WEIXIN_SDK_PATH=/home/sab/Code/weixin-rs/sdk/python
 ExecStart=/home/sab/hippo/.venv/bin/python -m hippo sync-worker
-Environment=HIPPO_LOG_FILE=/home/sab/hippo/logs/hippo-sync-worker.log
+# Everything else (PG DSN, daemon address, log level and file) comes from config.toml.
 Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=10

@@ -10,9 +10,9 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import Any
 
+from .config import get_settings
 from .logger import get_logger
 from .storage import PostgresStorage, open_storage
 from .weixin_source import load_bot_class, query_param
@@ -79,8 +79,9 @@ async def enqueue_pushed_article(storage: PostgresStorage, push: Any) -> bool:
 async def watch_article_push(*, reconnect_seconds: float = RECONNECT_SECONDS) -> None:
     """常驻监听公众号推送（断线由 SDK 的 ``start()`` 自行重连）。"""
     bot_class = load_bot_class()
-    host = os.environ.get('WEIXIN_DAEMON_HOST', '127.0.0.1')
-    port = int(os.environ.get('WEIXIN_DAEMON_PORT', '9099'))
+    weixin = get_settings().weixin
+    host = weixin.daemon_host
+    port = weixin.daemon_port
     while True:
         bot = bot_class(host=host, port=port)
 

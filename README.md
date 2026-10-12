@@ -29,7 +29,7 @@ Node.js 24（仅构建前端）、S3 兼容对象存储（可选，未配置时�
 
 ```bash
 uv sync --extra weixin            # --extra weixin 提供 daemon SDK 需要的 msgpack
-cp .env.example .env              # 至少设置 HIPPO_PG_DSN；有 daemon 时设置 WEIXIN_SDK_PATH
+cp config.example.toml config.toml   # 至少填 [database] dsn；有 daemon 时填 [weixin] sdk_path
 
 uv run python -m hippo db init    # 建表（幂等），校验 schema 版本
 uv run python -m hippo user add admin --password '…' --admin   # 第一个管理员
@@ -195,42 +195,45 @@ uv run python -m hippo --help        # 全部命令
 
 ## 配置
 
-配置分两处：
+部署配置只有一处：仓库根目录的 `config.toml`（不入库，每台机器一份）。所有键都有默认值，
+唯一必填的是 `[database] dsn`。
 
-- **`config.toml`**（不入库，每台机器一份）：部署选择，目前只有遥测。先
-  `cp config.example.toml config.toml` 再编辑；与 `.env` 一样，`deploy.sh` 不会覆盖也不会删除它。
-- **`.env` / 环境变量**：密钥与按机器而异的值。`hippo/config.py` 启动时 `load_dotenv()`，
-  因此**必须在仓库目录下启动**，或自行注入环境变量。
+```bash
+cp config.example.toml config.toml
+```
 
-### config.toml
+`hippo/config.py` 在首次使用时读取它并缓存在进程内（改完要重启），路径相对工作目录，
+所以服务与 CLI 都要在仓库根下运行。**没有环境变量这一层**：`.env` 已不再参与配置。
 
-| 键 | 默认 | 说明 |
-|---|---|---|
-| `observability.enabled` | `true` | 置 `false` 可停掉导出而不丢 endpoint |
-| `observability.otlp_endpoint` | — | OTLP/gRPC 端点；留空即整个遥测关闭 |
-| `observability.insecure` | `false` | 采集器走明文 gRPC（`http://` 端点）时置 `true` |
-| `observability.sample_ratio` | `1.0` | `1.0` 导出全部 span，失败的 trace 也在内；调低会在 SDK 里丢掉整条 trace，**错误一并丢**。要降量请在采集器侧做 tail sampling |
-| `observability.environment` | `prod` | 写入 `deployment.environment` |
+| 段 | 键 | 默认 | 说明 |
+|---|---|---|---|
+| `[database]` | `dsn` | — | **必填**，PostgreSQL 连接串 |
+| | `pool_min` / `pool_max` | `1` / `8` | 连接池大小（`pool_max` 不会小于 `pool_min`）|
+| | `warmup_jieba` / `warmup_text` | `true` / `hippo` | 启动时预热分词器 |
+| | `disable_jit` | `true` | 关掉 PG 的 JIT（大查询更稳）|
+| | `init_log` | `false` | 打印库初始化过程 |
+| `[s3]` | `endpoint` / `bucket` / `access_key` / `secret_key` | — | 对象存储；四项缺任一即视为未配置，图片按需回源 |
+| | `region` / `prefix` | `us-east-1` / `mp/image/` | 按 path-style 寻址 |
+| `[web]` | `cookie_secure` | `false` | HTTPS 部署置 `true` |
+| | `session_ttl_hours` | `168` | 会话有效期 |
+| | `inprocess_sync` | `false` | 在 Web 进程内跑同步（仅开发用）|
+| | `signoz_url` | — | 管理台「看日志」深链目标 |
+| `[logging]` | `level` | `WARNING` | 日志级别 |
+| | `format` | `json` | `json`（SignOz 吃的格式）或 `console` |
+| | `file` | `logs/{service}.log` | `{service}` 换为 `hippo-web` / `hippo-sync-worker`；空即不写文件 |
+| | `tail_lines` | `500` | 管理台日志尾行数 |
+| `[http]` | `proxy` | — | 抓正文/头像的代理 |
+| | `article_worker` / `article_worker_proxy` / `article_max_connections` | — | 用 Cloudflare Worker 中转抓正文 |
+| `[weixin]` | `sdk_path` | `/opt/weixin-rs/sdk/python` | weixin-rs SDK 路径 |
+| | `daemon_host` / `daemon_port` | `127.0.0.1` / `9099` | daemon 地址 |
+| `[observability]` | `enabled` | `true` | 置 `false` 可停掉导出而不丢 endpoint |
+| | `otlp_endpoint` | — | OTLP/gRPC 端点；留空即整个遥测关闭 |
+| | `insecure` | `false` | 采集器走明文 gRPC（`http://` 端点）时置 `true` |
+| | `sample_ratio` | `1.0` | `1.0` 导出全部 span，失败的 trace 也在内；调低会在 SDK 里丢掉整条 trace，**错误一并丢**。要降量请在采集器侧做 tail sampling |
+| | `environment` | `prod` | 写入 `deployment.environment` |
 
-### 环境变量
-
-| 变量 | 默认 | 说明 |
-|---|---|---|
-| `HIPPO_PG_DSN` | — | **必填**，PostgreSQL 连接串 |
-| `HIPPO_PG_POOL_MIN` / `HIPPO_PG_POOL_MAX` | `1` / `8` | 连接池大小 |
-| `HIPPO_PG_JIEBA_WARMUP` | `1` | 预热 jieba 分词表 |
-| `HIPPO_PG_JIEBA_WARMUP_TEXT` | `hippo` | 预热时喂给分词器的文本 |
-| `HIPPO_PG_DISABLE_JIT` | — | 关闭 PG 的 JIT（大查询更稳） |
-| `HIPPO_DB_INIT_LOG` | — | 置 `1` 时把数据库初始化过程打进日志 |
-| `HIPPO_S3_ENDPOINT` 等 `HIPPO_S3_*` | — | 对象存储（endpoint/bucket/access_key/secret_key/region/prefix，按 path-style 寻址） |
-| `WEIXIN_SDK_PATH` / `WEIXIN_DAEMON_HOST` / `WEIXIN_DAEMON_PORT` | 见上表 | daemon 连接 |
-| `HIPPO_HTTP_PROXY` | — | 抓取文章页/头像时使用的代理 |
-| `HIPPO_ARTICLE_WORKER` / `HIPPO_ARTICLE_WORKER_PROXY` / `HIPPO_ARTICLE_MAX_CONNECTIONS` | — | 用 Cloudflare Worker 中转抓正文 |
-| `HIPPO_COOKIE_SECURE` | `0` | 置 `1` 时给会话 Cookie 加 `Secure`（HTTPS 部署请打开） |
-| `HIPPO_SESSION_TTL_HOURS` | `168` | 会话有效期（小时） |
-| `HIPPO_ENABLE_INPROCESS_SYNC` | — | 在 Web 进程里跑同步（仅开发用） |
-| `HIPPO_LOG_LEVEL` / `HIPPO_LOG_FORMAT` / `HIPPO_LOG_FILE` / `HIPPO_LOG_TAIL_LINES` | `WARNING` / `json` / — / `500` | 日志 |
-| `HIPPO_SIGNOZ_URL` | — | 管理台「看日志」深链的目标 |
+systemd unit 里只剩 `PYTHONUNBUFFERED=1`（Python 运行时开关，不是应用配置）以及 `RuntimeDirectory`
+这类 systemd 自身的东西。
 
 ## 开发
 

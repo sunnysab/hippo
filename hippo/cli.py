@@ -7,7 +7,6 @@ import concurrent.futures
 import functools
 import inspect
 import json
-import os
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,7 +16,7 @@ import click
 import typer
 from tqdm import tqdm
 
-from .config import DEFAULT_GROUP_NAME, DEFAULT_RECENT_DAYS, DEFAULT_SYNC_REQUEST_INTERVAL
+from .config import DEFAULT_GROUP_NAME, DEFAULT_RECENT_DAYS, DEFAULT_SYNC_REQUEST_INTERVAL, get_settings
 from .container import build_downloader_container
 from .controllers.sync import (
     sync_account_articles as perform_account_sync,
@@ -62,6 +61,15 @@ app = typer.Typer(
     no_args_is_help=True,
     rich_markup_mode=None,
 )
+
+
+def _resolve_pg_dsn(pg_dsn: str | None) -> str:
+    """DSN from the flag, falling back to ``[database] dsn`` in config.toml."""
+    resolved = pg_dsn or get_settings().database.dsn
+    if not resolved:
+        typer.echo('Missing PostgreSQL DSN. Set [database] dsn in config.toml or pass --pg-dsn.')
+        raise typer.Exit(code=2)
+    return resolved
 
 
 def coro(func):
@@ -188,7 +196,7 @@ def _parse_octal_mode(value: str) -> int:
 @db_app.command('init')
 @coro
 async def init_db(
-    pg_dsn: str | None = typer.Option(None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'),
+    pg_dsn: str | None = typer.Option(None, help='PostgreSQL DSN (defaults to [database] dsn in config.toml)'),
     backfill_image_hashes: bool = typer.Option(
         False,
         '--backfill-image-hashes',
@@ -201,10 +209,7 @@ async def init_db(
         help='Optional limit used with --backfill-image-hashes',
     ),
 ) -> None:
-    resolved_dsn = pg_dsn or os.environ.get('HIPPO_PG_DSN')
-    if not resolved_dsn:
-        typer.echo('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
-        raise typer.Exit(code=2)
+    resolved_dsn = _resolve_pg_dsn(pg_dsn)
     async with PostgresStorage(resolved_dsn, auto_init=True):
         pass
     typer.echo('PostgreSQL schema initialized.')
@@ -219,12 +224,9 @@ async def init_db(
 @db_app.command('rebuild-counts')
 @coro
 async def rebuild_counts(
-    pg_dsn: str | None = typer.Option(None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'),
+    pg_dsn: str | None = typer.Option(None, help='PostgreSQL DSN (defaults to [database] dsn in config.toml)'),
 ) -> None:
-    resolved_dsn = pg_dsn or os.environ.get('HIPPO_PG_DSN')
-    if not resolved_dsn:
-        typer.echo('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
-        raise typer.Exit(code=2)
+    resolved_dsn = _resolve_pg_dsn(pg_dsn)
     async with (
         PostgresStorage(resolved_dsn, auto_init=False) as storage,
         storage.transaction(),
@@ -237,15 +239,12 @@ async def rebuild_counts(
 @db_app.command('backfill-item-show-type')
 @coro
 async def backfill_item_show_type(
-    pg_dsn: str | None = typer.Option(None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'),
+    pg_dsn: str | None = typer.Option(None, help='PostgreSQL DSN (defaults to [database] dsn in config.toml)'),
     limit: int | None = typer.Option(None, min=1, help='Optional max article count to backfill per run'),
     batch_size: int = typer.Option(1000, min=1, help='Article batch size used during backfill'),
     dry_run: bool = typer.Option(False, help='Preview candidate count without writing changes'),
 ) -> None:
-    resolved_dsn = pg_dsn or os.environ.get('HIPPO_PG_DSN')
-    if not resolved_dsn:
-        typer.echo('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
-        raise typer.Exit(code=2)
+    resolved_dsn = _resolve_pg_dsn(pg_dsn)
 
     raw_candidate_ids_sql = f"""
     SELECT a.id
@@ -591,7 +590,7 @@ async def _backfill_pks(
 @db_app.command('backfill-content-json')
 @coro
 async def backfill_content_json(
-    pg_dsn: str | None = typer.Option(None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'),
+    pg_dsn: str | None = typer.Option(None, help='PostgreSQL DSN (defaults to [database] dsn in config.toml)'),
     article_pk: int | None = typer.Option(None, min=1, help='Only backfill a specific article_pk'),
     limit: int | None = typer.Option(None, min=1, help='Optional max row count to backfill per run'),
     batch_size: int = typer.Option(1000, min=1, help='Row batch size used during backfill'),
@@ -599,10 +598,7 @@ async def backfill_content_json(
     workers: int = typer.Option(1, min=1, help='Number of parallel workers (threads)'),
     resume: bool = typer.Option(False, help='Only process rows where content_json is NULL (skip already backfilled)'),
 ) -> None:
-    resolved_dsn = pg_dsn or os.environ.get('HIPPO_PG_DSN')
-    if not resolved_dsn:
-        typer.echo('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
-        raise typer.Exit(code=2)
+    resolved_dsn = _resolve_pg_dsn(pg_dsn)
 
     if article_pk is not None or workers <= 1:
         processed, updated = await _backfill_range(
@@ -1636,7 +1632,7 @@ async def _download_article_async(
 @articles_app.command('backfill-images')
 @coro
 async def backfill_article_images(
-    pg_dsn: str | None = typer.Option(None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'),
+    pg_dsn: str | None = typer.Option(None, help='PostgreSQL DSN (defaults to [database] dsn in config.toml)'),
     limit: int | None = typer.Option(None, min=1, help='Max images to backfill per run'),
     workers: int = typer.Option(8, min=1, help='Concurrent image downloads'),
     retries: int = typer.Option(3, min=1, help='Download retries per image'),
@@ -1666,7 +1662,7 @@ async def backfill_article_images(
 @articles_app.command('backfill-image-hashes')
 @coro
 async def backfill_article_image_hashes(
-    pg_dsn: str | None = typer.Option(None, help='PostgreSQL DSN (defaults to HIPPO_PG_DSN)'),
+    pg_dsn: str | None = typer.Option(None, help='PostgreSQL DSN (defaults to [database] dsn in config.toml)'),
     limit: int | None = typer.Option(
         None,
         min=1,
@@ -1716,10 +1712,7 @@ async def _backfill_article_image_hashes_async(
     batch_size: int | None,
     dry_run: bool,
 ) -> None:
-    resolved_dsn = pg_dsn or os.environ.get('HIPPO_PG_DSN')
-    if not resolved_dsn:
-        typer.echo('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
-        raise typer.Exit(code=2)
+    resolved_dsn = _resolve_pg_dsn(pg_dsn)
 
     updated = 0
     skipped = 0

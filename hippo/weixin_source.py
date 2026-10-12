@@ -24,10 +24,9 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from .config import get_settings
 from .observability.otel import add_span_attributes, traced
 from .utils import strip_nul
-
-DEFAULT_SDK_PATH = '/opt/weixin-rs/sdk/python'
 
 # 会话类错误（daemon 侧 -13/未登录）：不是文章的错，不计 attempts、整体暂停等重新登录。
 # 普通 CGI 的 -13 是会话死；心跳/NewSync 的 -13 由 daemon 的定性阶梯先救，救不回来才到这。
@@ -55,7 +54,7 @@ def classify_daemon_error(message: str) -> str:
 
 def load_bot_class() -> Any:
     """导入 weixin-rs 的 ``WeChatBot``；路径不对时给出可执行的报错。"""
-    sdk_path = os.environ.get('WEIXIN_SDK_PATH') or DEFAULT_SDK_PATH
+    sdk_path = get_settings().weixin.sdk_path
     if os.path.isdir(sdk_path) and sdk_path not in sys.path:
         sys.path.insert(0, sdk_path)
     try:
@@ -140,8 +139,9 @@ class WeixinSource:
     """daemon RPC 的薄封装：连接、确保登录、列表、正文。"""
 
     def __init__(self, host: str | None = None, port: int | None = None, *, auto_login: bool = True) -> None:
-        self.host = host or os.environ.get('WEIXIN_DAEMON_HOST', '127.0.0.1')
-        self.port = int(port or os.environ.get('WEIXIN_DAEMON_PORT', '9099'))
+        weixin = get_settings().weixin
+        self.host = host or weixin.daemon_host
+        self.port = int(port or weixin.daemon_port)
         self._auto_login = auto_login
         self._bot: Any = None
         self._body_errors: dict[str, str] = {}

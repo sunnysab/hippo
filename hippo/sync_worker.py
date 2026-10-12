@@ -11,11 +11,12 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from .config import WORKER_SERVICE
 from .container import build_sync_container
 from .logger import get_logger, setup_logger
 from .media_settings import get_media_settings
 from .models import AccountCredential
-from .observability.logging import resolve_level, shutdown_logging
+from .observability.logging import shutdown_logging
 from .observability.metrics import instrument as metric
 from .observability.otel import add_span_attributes, init_telemetry, span, traced
 from .sources import body_adapters
@@ -41,7 +42,7 @@ from .weixin_watch import watch_article_push
 from .weixin_worker import SyncStats, WeixinArticleSync
 
 logger = get_logger(__name__)
-SERVICE_NAME = 'hippo-sync-worker'
+SERVICE_NAME = WORKER_SERVICE
 
 # 回填失败的号，这么多分钟内不再重新排队。失败不会把账号从 pending 挪走，
 # 而主循环在 handled 之后不 sleep，不退避就是每轮重排同一个失败号
@@ -627,13 +628,9 @@ async def run_sync_worker(
 ) -> None:
     resolved_worker_id = worker_id or f'{socket.gethostname()}-{os.getpid()}'
     telemetry = init_telemetry(SERVICE_NAME)
-    if telemetry is not None:
-        # cli 在 import 阶段已经建过一次日志管线；这里重建才能把 OTLP log handler 挂上
-        setup_logger(
-            level=resolve_level(os.environ.get('HIPPO_LOG_LEVEL')),
-            log_file=os.environ.get('HIPPO_LOG_FILE'),
-            extra_handlers=telemetry.log_handlers,
-        )
+    # cli 在 import 阶段已经按 CLI 的名字建过日志管线；这里重建才能指向本进程自己的
+    # 日志文件（deploy 时两个服务共用一份 config.toml），并把 OTLP log handler 挂上
+    setup_logger(service=SERVICE_NAME, extra_handlers=telemetry.log_handlers if telemetry else None)
     # 正文抓取跑在独立 task：它经常被 daemon 的节奏闸门挡住几十秒，
     # 不能拖住主循环里「入队新文章 / 执行同步 job」的响应。
     drain_task = asyncio.create_task(_body_drain_loop(drain_interval))

@@ -9,12 +9,12 @@ import time
 RECENT_WINDOW_SECONDS = 3 * 24 * 3600
 
 import asyncio
-import os
 from collections.abc import Callable
 
 import httpx
 from tqdm import tqdm
 
+from .config import get_settings
 from .file_storage import FileStorageError, S3FileStorage
 from .http import MPClient
 from .image_store import ArticleImageService
@@ -61,9 +61,9 @@ async def backfill_article_images(
     dry_run: bool = False,
     log: Callable[[str], None] | None = None,
 ) -> dict[str, int]:
-    resolved_dsn = pg_dsn or os.environ.get('HIPPO_PG_DSN')
+    resolved_dsn = pg_dsn or get_settings().database.dsn
     if not resolved_dsn:
-        raise RuntimeError('Missing PostgreSQL DSN. Set HIPPO_PG_DSN or pass --pg-dsn.')
+        raise RuntimeError('Missing [database] dsn in config.toml (or pass --pg-dsn).')
 
     _log = log or (lambda msg: None)
     updated = 0

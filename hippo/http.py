@@ -10,13 +10,7 @@ from urllib.parse import quote, urlparse
 import certifi
 import httpx
 
-from .config import (
-    ARTICLE_WORKER_MAX_CONNECTIONS,
-    ARTICLE_WORKER_PROXY,
-    ARTICLE_WORKER_URL,
-    DEFAULT_USER_AGENT,
-    HTTP_PROXY,
-)
+from .config import DEFAULT_USER_AGENT, get_settings
 from .logger import get_logger
 
 logger = get_logger(__name__)
@@ -92,11 +86,19 @@ class MPClient(AbstractAsyncContextManager):
         self,
         *,
         timeout: float = 30.0,
-        proxy: str | None = HTTP_PROXY,
-        article_worker: str | None = ARTICLE_WORKER_URL,
-        article_worker_proxy: str | None = ARTICLE_WORKER_PROXY,
-        article_max_connections: int | None = ARTICLE_WORKER_MAX_CONNECTIONS,
+        proxy: str | None = None,
+        article_worker: str | None = None,
+        article_worker_proxy: str | None = None,
+        article_max_connections: int | None = None,
     ) -> None:
+        # Explicit arguments win; the file only supplies what the caller left out.
+        settings = get_settings().http
+        proxy = settings.proxy if proxy is None else proxy
+        article_worker = settings.article_worker if article_worker is None else article_worker
+        article_worker_proxy = settings.article_worker_proxy if article_worker_proxy is None else article_worker_proxy
+        article_max_connections = (
+            settings.article_max_connections if article_max_connections is None else article_max_connections
+        )
         client_kwargs: dict[str, Any] = {
             'timeout': timeout,
             'headers': HEADERS,

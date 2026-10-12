@@ -1,17 +1,75 @@
-# Deployment settings that are not secrets: a deliberate, reviewable choice
-# that should not hide in the environment.
-#
-# Copy it next to .env and edit it there. Like .env it is per-machine and is
-# never deployed (deploy.sh excludes it, so the box keeps its own copy):
+# Deployment configuration. Copy it next to the code and edit it there:
 #
 #     cp config.example.toml config.toml
+#
+# Like .env used to be, config.toml is per-machine and never deployed (deploy.sh
+# excludes it, so the box keeps its own copy). Unlike .env, it is the *only*
+# place a deployment value lives: nothing below is read from the environment.
 #
 # The path is resolved against the working directory, so the services and the
 # CLI must run from the repository root.
 
+[database]
+# Required. PostgreSQL connection string.
+dsn = "postgresql://postgres@127.0.0.1:5432/hippo"
+# Connection pool bounds; pool_max is never lowered below pool_min.
+pool_min = 1
+pool_max = 8
+# Feed the tokenizer a query at startup so the first search is not slow.
+warmup_jieba = true
+warmup_text = "hippo"
+# PostgreSQL's JIT hurts the big article queries, so it stays off.
+disable_jit = true
+# Print the schema initialization steps.
+init_log = false
+
+[s3]
+# Optional S3-compatible object store for article images. Images are skipped
+# while any of endpoint/bucket/access_key/secret_key is empty.
+endpoint = "http://127.0.0.1:3900"
+bucket = "hippo"
+access_key = ""
+secret_key = ""
+region = "us-east-1"
+# prefix = "mp/image/"
+
+[web]
+# Secure cookies must stay off while serving plain HTTP in development.
+cookie_secure = false
+session_ttl_hours = 168
+# Run the sync loops inside the web process. Development only.
+inprocess_sync = false
+# Base URL of SignOz; the admin console deep-links into it when set.
+signoz_url = ""
+
+[logging]
+level = "WARNING"
+# json (what SignOz ingests) or console.
+format = "json"
+# {service} keeps the web app and the worker off each other's file: two
+# processes must not rotate the same one. Empty means no file sink.
+file = "logs/{service}.log"
+# Trailing lines returned by the admin console's log tail.
+tail_lines = 500
+
+[http]
+# Proxy used when fetching article pages and avatars.
+proxy = ""
+# Optional Cloudflare Worker relay for article bodies.
+article_worker = ""
+article_worker_proxy = ""
+# Concurrent connections through the relay; unset means httpx's own cap.
+# article_max_connections = 8
+
+[weixin]
+# Path of the weixin-rs Python SDK.
+sdk_path = "/opt/weixin-rs/sdk/python"
+daemon_host = "127.0.0.1"
+daemon_port = 9099
+
 [observability]
 # OTLP/gRPC endpoint of the collector. Telemetry stays off while this is empty.
-otlp_endpoint = "http://127.0.0.1:4317"
+otlp_endpoint = ""
 # Plaintext gRPC. Set to false when the collector terminates TLS.
 insecure = true
 # 1.0 exports every span, failed traces included. A lower ratio drops whole

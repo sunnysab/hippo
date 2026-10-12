@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Any
 
 import boto3
 from botocore.config import Config
+
+from .config import get_settings
 
 _DEFAULT_PREFIX = 'mp/image/'
 
@@ -33,21 +34,16 @@ def _normalize_prefix(value: str | None) -> str:
 
 
 def load_s3_config() -> S3Config | None:
-    endpoint = os.environ.get('HIPPO_S3_ENDPOINT')
-    bucket = os.environ.get('HIPPO_S3_BUCKET')
-    access_key = os.environ.get('HIPPO_S3_ACCESS_KEY')
-    secret_key = os.environ.get('HIPPO_S3_SECRET_KEY')
-    if not endpoint or not bucket or not access_key or not secret_key:
+    settings = get_settings().s3
+    if not settings.configured:
         return None
-    region = os.environ.get('HIPPO_S3_REGION') or 'us-east-1'
-    prefix = _normalize_prefix(os.environ.get('HIPPO_S3_PREFIX'))
     return S3Config(
-        endpoint=endpoint,
-        bucket=bucket,
-        access_key=access_key,
-        secret_key=secret_key,
-        region=region,
-        prefix=prefix,
+        endpoint=settings.endpoint,
+        bucket=settings.bucket,
+        access_key=settings.access_key,
+        secret_key=settings.secret_key,
+        region=settings.region,
+        prefix=_normalize_prefix(settings.prefix),
     )
 
 

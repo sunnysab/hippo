@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sys
 import threading
 from collections.abc import Callable, Sequence
@@ -16,6 +15,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
+from .config import get_settings
 from .exceptions import StorageInitError
 from .models import AccountGroup
 from .report import ReportRepository
@@ -57,18 +57,8 @@ ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
 """
 
 _pool_local = threading.local()
-_DB_INIT_LOG_VALUES = {'1', 'true', 'yes', 'on'}
-_PG_JIEBA_WARMUP_VALUES = {'1', 'true', 'yes', 'on'}
-_PG_DISABLE_JIT_VALUES = {'1', 'true', 'yes', 'on'}
-_DEFAULT_JIEBA_WARMUP_TEXT = 'hippo'
-
-
-def _db_init_log_enabled() -> bool:
-    return os.environ.get('HIPPO_DB_INIT_LOG', '').strip().lower() in _DB_INIT_LOG_VALUES
-
-
 def _log_db_init(message: str) -> None:
-    if not _db_init_log_enabled():
+    if not get_settings().database.init_log:
         return
     print(f'[db init] {message}', file=sys.stderr, flush=True)
 
@@ -88,28 +78,18 @@ def _extract_error_snippet(sql: str, exc: psycopg.errors.DatabaseError) -> str:
     return f'at position {pos}: "{line}"'
 
 
-def _jieba_warmup_enabled() -> bool:
-    return os.environ.get('HIPPO_PG_JIEBA_WARMUP', '1').strip().lower() in _PG_JIEBA_WARMUP_VALUES
-
-
-def _pg_disable_jit_enabled() -> bool:
-    return os.environ.get('HIPPO_PG_DISABLE_JIT', '1').strip().lower() in _PG_DISABLE_JIT_VALUES
-
-
 async def _rollback_quietly(conn) -> None:
     with suppress(Exception):
         await conn.rollback()
 
 
 async def _warmup_jieba_parser(conn) -> None:
-    if not _jieba_warmup_enabled():
+    database = get_settings().database
+    if not database.warmup_jieba:
         return
-    warmup_text = os.environ.get('HIPPO_PG_JIEBA_WARMUP_TEXT', _DEFAULT_JIEBA_WARMUP_TEXT).strip()
-    if not warmup_text:
-        warmup_text = _DEFAULT_JIEBA_WARMUP_TEXT
     try:
         async with conn.cursor() as cur:
-            await cur.execute("SELECT plainto_tsquery('jiebaqry', %s)", (warmup_text,))
+            await cur.execute("SELECT plainto_tsquery('jiebaqry', %s)", (database.warmup_text,))
             await cur.fetchone()
     except Exception as exc:
         _log_db_init(f'jieba warmup skipped: {exc}')
@@ -133,12 +113,11 @@ async def get_pool(dsn: str) -> AsyncConnectionPool:
     if cached is not None:
         with suppress(Exception):
             await cached.close()
-    min_conn = int(os.environ.get('HIPPO_PG_POOL_MIN', '1') or '1')
-    max_conn = int(os.environ.get('HIPPO_PG_POOL_MAX', '8') or '8')
-    if max_conn < min_conn:
-        max_conn = min_conn
+    database = get_settings().database
+    min_conn = database.pool_min
+    max_conn = database.pool_max
     options = ['-c timezone=Asia/Shanghai']
-    if _pg_disable_jit_enabled():
+    if database.disable_jit:
         options.append('-c jit=off')
     pool = AsyncConnectionPool(
         conninfo=dsn,
@@ -310,9 +289,9 @@ class PostgresStorage(AbstractAsyncContextManager):
 
 
 def open_storage(*, auto_init: bool = False) -> PostgresStorage:
-    dsn = os.environ.get('HIPPO_PG_DSN')
+    dsn = get_settings().database.dsn
     if not dsn:
-        raise StorageInitError('Missing HIPPO_PG_DSN for PostgreSQL storage.')
+        raise StorageInitError('Missing [database] dsn in config.toml.')
     return PostgresStorage(dsn, auto_init=auto_init)
 
 

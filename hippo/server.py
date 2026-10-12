@@ -31,35 +31,19 @@ from .api.routers import (
     source,
 )
 from .avatar import _ensure_avatar_images_table
-from .config import DEFAULT_HOST, DEFAULT_PORT
+from .config import DEFAULT_HOST, DEFAULT_PORT, WEB_SERVICE, get_settings
 from .logger import configure_logging
-from .observability.logging import shutdown_logging
+from .observability.logging import resolve_level, shutdown_logging
 from .observability.otel import init_telemetry, instrument_app
 from .report_scheduler import ReportScheduler
 from .storage import open_storage
 from .sync_scheduler import SyncScheduler
 
-DEFAULT_LOG_LEVEL = 'WARNING'
-SERVICE_NAME = 'hippo-web'
-_LOG_LEVEL_MAP = {
-    'CRITICAL': logging.CRITICAL,
-    'ERROR': logging.ERROR,
-    'WARNING': logging.WARNING,
-    'INFO': logging.INFO,
-    'DEBUG': logging.DEBUG,
-}
-_INPROCESS_SYNC_VALUES = {'1', 'true', 'yes', 'on'}
-
-
-def _resolve_log_level() -> tuple[int, str]:
-    level_name = str(os.environ.get('HIPPO_LOG_LEVEL') or DEFAULT_LOG_LEVEL).strip().upper()
-    if level_name not in _LOG_LEVEL_MAP:
-        level_name = DEFAULT_LOG_LEVEL
-    return _LOG_LEVEL_MAP[level_name], level_name.lower()
+SERVICE_NAME = WEB_SERVICE
 
 
 def _inprocess_sync_enabled() -> bool:
-    return os.environ.get('HIPPO_ENABLE_INPROCESS_SYNC', '').strip().lower() in _INPROCESS_SYNC_VALUES
+    return get_settings().web.inprocess_sync
 
 
 def _normalize_listen_host(host: str | None) -> str | None:
@@ -175,10 +159,12 @@ def create_app(
     *,
     enable_inprocess_sync: bool | None = None,
 ) -> FastAPI:
-    log_level, _ = _resolve_log_level()
+    app_settings = get_settings()
     telemetry = init_telemetry(SERVICE_NAME)
     configure_logging(
-        level=log_level,
+        level=resolve_level(app_settings.logging.level),
+        json_output=app_settings.logging.format != 'console',
+        log_file=app_settings.logging.file_for(SERVICE_NAME),
         extra_handlers=telemetry.log_handlers if telemetry else None,
     )
     static_path = Path(static_dir).expanduser().resolve()
@@ -258,7 +244,7 @@ def serve(
     import uvicorn
 
     app = create_app(static_dir=static_dir, enable_inprocess_sync=enable_inprocess_sync)
-    _, uvicorn_log_level = _resolve_log_level()
+    uvicorn_log_level = logging.getLevelName(resolve_level(get_settings().logging.level)).lower()
     listen_sockets = _build_listen_sockets(
         host=host,
         port=port,

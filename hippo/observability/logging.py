@@ -161,7 +161,7 @@ def configure_logging(
     global _LISTENER, _CONFIGURED
 
     if json_output is None:
-        json_output = os.environ.get('HIPPO_LOG_FORMAT', 'json').strip().lower() != 'console'
+        json_output = True
 
     timestamper = structlog.processors.TimeStamper(fmt='iso', utc=True)
     shared: list[Any] = [

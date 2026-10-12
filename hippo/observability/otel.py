@@ -39,19 +39,19 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
 
-from ..config import ObservabilitySettings, load_observability_settings
+from ..config import ObservabilitySettings, get_settings
 
 _TRACER_NAME = 'hippo'
 
 
 def otlp_endpoint() -> str | None:
     """Return the configured OTLP endpoint, if any."""
-    return load_observability_settings().otlp_endpoint or None
+    return get_settings().observability.otlp_endpoint or None
 
 
 def telemetry_enabled() -> bool:
     """Telemetry only turns on when the file enables it and sets an endpoint."""
-    settings = load_observability_settings()
+    settings = get_settings().observability
     return settings.enabled and bool(settings.otlp_endpoint)
 
 
@@ -122,7 +122,7 @@ def init_telemetry(service_name: str) -> TelemetryRuntime | None:
 
     Returns ``None`` when telemetry is off or no endpoint is configured.
     """
-    settings = load_observability_settings()
+    settings = get_settings().observability
     if not settings.enabled or not settings.otlp_endpoint:
         return None
 

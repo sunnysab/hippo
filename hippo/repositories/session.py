@@ -6,13 +6,13 @@ and see who is currently signed in.
 
 from __future__ import annotations
 
-import os
 from datetime import timedelta
 from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
 
+from ..config import get_settings
 from ..models import User
 from ..security import new_token, token_hash
 from ..utils import utc_now_dt
@@ -20,16 +20,9 @@ from .user import _row_to_user
 
 _USER_COLUMNS = 'u.id, u.username, u.email, u.email_verified, u.role, u.timezone, u.is_disabled'
 
-_DEFAULT_TTL_HOURS = 24 * 7
-
 
 def session_ttl() -> timedelta:
-    raw = os.environ.get('HIPPO_SESSION_TTL_HOURS', '').strip()
-    try:
-        hours = float(raw)
-    except ValueError:
-        hours = _DEFAULT_TTL_HOURS
-    return timedelta(hours=max(hours, 1.0))
+    return timedelta(hours=get_settings().web.session_ttl_hours)
 
 
 class UserSessionRepository:
