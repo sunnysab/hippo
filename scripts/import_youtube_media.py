@@ -62,7 +62,10 @@ KEEP_VIDEO_CODECS = {'hevc', 'av1', 'vp9'}
 
 #: H.265 settings for talking-head 1080p: CRF 26 keeps text readable, `hvc1` is what
 #: Apple's players look for, and `+faststart` lets a browser start before the end.
-X265_ARGS = ['-c:v', 'libx265', '-crf', '26', '-preset', 'medium', '-tag:v', 'hvc1', '-movflags', '+faststart']
+#: `faster` rather than `medium`: a 66 MB file had not finished after five minutes at
+#: `medium` while the machine was busy transcribing, and the difference between the
+#: presets is not worth hours of CPU on this content.
+X265_ARGS = ['-c:v', 'libx265', '-crf', '26', '-preset', 'faster', '-tag:v', 'hvc1', '-movflags', '+faststart']
 
 
 #: How much of a normalised title identifies a video. The channels in question edit
