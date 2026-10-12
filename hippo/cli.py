@@ -1217,7 +1217,8 @@ async def add_source(
             )
             await storage.subscriptions.upsert(user.id, account.biz, group_id=group_id)
             await storage.sync_jobs.create_job(trigger_type='manual', biz_list=[account.biz])
-    typer.echo(f'已订阅 {account.nickname}（{source}，{account.biz}）')
+    # 打印实际存下来的来源：feed 有没有音频只有 preview 抓下来才知道。
+    typer.echo(f'已订阅 {account.nickname}（{account.source}，{account.biz}）')
 
 
 @sources_app.command('list')
