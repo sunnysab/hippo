@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 
 import pytest
+import structlog
 
 from hippo import config
 from hippo.observability import logging as obs_logging
@@ -135,6 +136,57 @@ def test_redact_masks_credential_keys_case_insensitively():
     }
 
 
+def test_the_logger_attribute_is_flattened_to_a_name():
+    """The OTLP exporter drops any attribute that is not a primitive."""
+
+    class _Logger:
+        name = 'hippo.sync'
+
+    assert obs_logging._normalize_logger_name(None, 'info', {'logger': _Logger()}) == {'logger': 'hippo.sync'}
+    assert obs_logging._normalize_logger_name(None, 'info', {'logger': 'hippo'}) == {'logger': 'hippo'}
+    assert obs_logging._normalize_logger_name(None, 'info', {}) == {}
+
+
+def test_the_extra_sink_only_sees_primitives():
+    """The OTLP exporter drops any attribute that is not a primitive."""
+    record = logging.LogRecord('hippo.test', logging.WARNING, __file__, 1, 'hello', (), None)
+    record.article_id = 7
+    record._logger = object()  # structlog's own logger, as the record carries it
+    seen: dict[str, object] = {}
+
+    class _Inner(logging.Handler):
+        def emit(self, inner: logging.LogRecord) -> None:
+            seen.update(inner.__dict__)
+
+    obs_logging._DropsNonPrimitivesHandler(_Inner()).emit(record)
+
+    assert seen['article_id'] == 7
+    assert '_logger' not in seen
+    assert record._logger is not None, 'the ProcessorFormatter still needs it'
+
+
+def test_structlog_records_reach_an_extra_sink_clean(tmp_path, monkeypatch):
+    _write_config(tmp_path, '[logging]\nformat = "json"\nfile = ""\n')
+    monkeypatch.chdir(tmp_path)
+    seen: list[dict[str, object]] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            seen.append(dict(record.__dict__))
+
+    from hippo.logger import setup_logger
+
+    setup_logger(extra_handlers=[_Capture()])
+    try:
+        structlog.get_logger('hippo.test').warning('hello', article_id=1)
+    finally:
+        obs_logging.shutdown_logging()
+
+    assert seen, 'the handler sees nothing'
+    assert seen[0]['msg']['article_id'] == 1  # type: ignore[index]
+    assert all(isinstance(value, obs_logging._PRIMITIVE_TYPES) for value in seen[0].values())
+
+
 def test_setup_logger_uses_the_configured_level_and_file(tmp_path, monkeypatch):
     _write_config(tmp_path, '[logging]\nlevel = "DEBUG"\nfile = "logs/{service}.log"\n')
     monkeypatch.chdir(tmp_path)
@@ -145,7 +197,10 @@ def test_setup_logger_uses_the_configured_level_and_file(tmp_path, monkeypatch):
     setup_logger(service=config.WORKER_SERVICE, extra_handlers=[handler])
     try:
         assert obs_logging._LISTENER is not None
-        assert handler in obs_logging._LISTENER.handlers
+        wrappers = [
+            item for item in obs_logging._LISTENER.handlers if isinstance(item, obs_logging._DropsNonPrimitivesHandler)
+        ]
+        assert any(wrapper._inner is handler for wrapper in wrappers)
         assert logging.getLogger().level == logging.DEBUG
         assert (tmp_path / 'logs' / 'hippo-sync-worker.log').exists()
     finally:

@@ -49,6 +49,36 @@ _LISTENER: logging.handlers.QueueListener | None = None
 _CONFIGURED = False
 
 
+#: Attribute types the OTLP log exporter can express. Anything else makes it
+#: drop that attribute with a warning, on every record.
+_PRIMITIVE_TYPES = (str, bytes, int, float, bool, type(None), tuple, list, dict)
+
+
+class _DropsNonPrimitivesHandler(logging.Handler):
+    """Hide attribute values a sink cannot express from that sink only.
+
+    The OTLP log exporter accepts primitives and drops the whole attribute --
+    with a warning per record -- on anything else. structlog parks its logger
+    object on the record (``_logger``) and the ``ProcessorFormatter`` needs
+    that same key, so it is hidden only for the duration of this handler.
+    """
+
+    def __init__(self, inner: logging.Handler) -> None:
+        super().__init__(level=inner.level)
+        self._inner = inner
+
+    def emit(self, record: logging.LogRecord) -> None:
+        hidden = {
+            key: record.__dict__.pop(key)
+            for key, value in list(record.__dict__.items())
+            if not isinstance(value, _PRIMITIVE_TYPES)
+        }
+        try:
+            self._inner.emit(record)
+        finally:
+            record.__dict__.update(hidden)
+
+
 class _AsyncQueueHandler(logging.handlers.QueueHandler):
     """Queue handler that keeps the record payload intact.
 
@@ -85,6 +115,19 @@ def _add_trace_context(_logger: Any, _method_name: str, event_dict: dict[str, An
     if context.is_valid:
         event_dict['trace_id'] = format(context.trace_id, '032x')
         event_dict['span_id'] = format(context.span_id, '016x')
+    return event_dict
+
+
+def _normalize_logger_name(_logger: Any, _method_name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
+    """Replace the logger object structlog hands over with its name.
+
+    ``add_logger_name`` stores the object itself for structlog-native calls.
+    The OTLP log exporter accepts primitives only and drops the whole attribute
+    (with a warning) when it meets anything else.
+    """
+    value = event_dict.get('logger')
+    if value is not None and not isinstance(value, str):
+        event_dict['logger'] = getattr(value, 'name', None) or str(value)
     return event_dict
 
 
@@ -168,6 +211,7 @@ def configure_logging(
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
+        _normalize_logger_name,
         structlog.stdlib.PositionalArgumentsFormatter(),
         timestamper,
         _redact,
@@ -196,7 +240,9 @@ def configure_logging(
     )
 
     handlers = _build_handlers(formatter, log_file)
-    handlers.extend(extra_handlers or [])
+    # Extra sinks export the record's attributes (OTLP does); wrap them so they
+    # never meet the objects structlog keeps on the record.
+    handlers.extend(_DropsNonPrimitivesHandler(handler) for handler in extra_handlers or [])
     log_queue: queue.Queue[Any] = queue.Queue(-1)
     queue_handler = _AsyncQueueHandler(log_queue)
 
