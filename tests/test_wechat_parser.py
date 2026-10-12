@@ -5,7 +5,7 @@ import os
 import unittest
 from pathlib import Path
 
-from hippo.downloader import _parse_markdown_blocks
+from hippo.downloader import parse_markdown_blocks
 from hippo.wechat_parser import extract_cgi_data, parse_wechat_article
 
 # 真实页面样本有 12MB，留在采集机上不入库；本机没有就跳过，用 HIPPO_WECHAT_SAMPLES
@@ -47,7 +47,7 @@ class WechatParserSamplesTest(unittest.TestCase):
     def test_parses_picture_share_into_gallery_blocks(self) -> None:
         raw_html = self._read_sample('图片分享/01.html')
         parsed = parse_wechat_article(raw_html, article_url=_ARTICLE_URL)
-        title, _cover_local, blocks, _body_markdown = _parse_markdown_blocks(parsed.markdown)
+        title, _cover_local, blocks, _body_markdown = parse_markdown_blocks(parsed.markdown)
         image_blocks = [block for block in blocks if block.get('type') == 'image']
 
         self.assertEqual(parsed.item_show_type, 8)
@@ -58,7 +58,7 @@ class WechatParserSamplesTest(unittest.TestCase):
     def test_parses_text_share_into_text_blocks(self) -> None:
         raw_html = self._read_sample('文本分享/01.html')
         parsed = parse_wechat_article(raw_html, article_url=_ARTICLE_URL)
-        title, _cover_local, blocks, _body_markdown = _parse_markdown_blocks(parsed.markdown)
+        title, _cover_local, blocks, _body_markdown = parse_markdown_blocks(parsed.markdown)
 
         self.assertEqual(parsed.item_show_type, 10)
         self.assertEqual(title, parsed.title)
@@ -68,7 +68,7 @@ class WechatParserSamplesTest(unittest.TestCase):
     def test_parses_regular_article_with_many_images(self) -> None:
         raw_html = self._read_sample('普通图文/02.html')
         parsed = parse_wechat_article(raw_html, article_url=_ARTICLE_URL)
-        title, _cover_local, blocks, _body_markdown = _parse_markdown_blocks(parsed.markdown)
+        title, _cover_local, blocks, _body_markdown = parse_markdown_blocks(parsed.markdown)
         image_blocks = [block for block in blocks if block.get('type') == 'image']
 
         self.assertEqual(parsed.item_show_type, 0)
@@ -92,7 +92,7 @@ class WechatParserSamplesTest(unittest.TestCase):
             }
         )
         parsed = parse_wechat_article(raw_html, article_url=_ARTICLE_URL)
-        title, _cover_local, blocks, _body_markdown = _parse_markdown_blocks(parsed.markdown)
+        title, _cover_local, blocks, _body_markdown = parse_markdown_blocks(parsed.markdown)
 
         self.assertEqual(parsed.item_show_type, 6)
         self.assertEqual(parsed.title, 'Night Shift')
@@ -126,7 +126,7 @@ class WechatParserSamplesTest(unittest.TestCase):
             }
         )
         parsed = parse_wechat_article(raw_html, article_url=_ARTICLE_URL)
-        title, _cover_local, blocks, _body_markdown = _parse_markdown_blocks(parsed.markdown)
+        title, _cover_local, blocks, _body_markdown = parse_markdown_blocks(parsed.markdown)
 
         self.assertEqual(parsed.item_show_type, 7)
         self.assertEqual(parsed.title, 'Design Review 042')
@@ -162,7 +162,7 @@ class WechatParserSamplesTest(unittest.TestCase):
         )
 
         parsed = parse_wechat_article(raw_html, article_url=_ARTICLE_URL)
-        title, _cover_local, blocks, body_markdown = _parse_markdown_blocks(parsed.markdown)
+        title, _cover_local, blocks, body_markdown = parse_markdown_blocks(parsed.markdown)
 
         self.assertEqual(parsed.item_show_type, 7)
         self.assertEqual(title, '5月6日行业快讯')
@@ -207,7 +207,7 @@ class WechatParserSamplesTest(unittest.TestCase):
             }
         )
         parsed = parse_wechat_article(raw_html, article_url=_ARTICLE_URL)
-        title, _cover_local, blocks, _body_markdown = _parse_markdown_blocks(parsed.markdown)
+        title, _cover_local, blocks, _body_markdown = parse_markdown_blocks(parsed.markdown)
 
         self.assertEqual(parsed.item_show_type, 17)
         self.assertEqual(parsed.title, '今天把解析链路彻底换成 cgiDataNew 了。')
@@ -216,7 +216,7 @@ class WechatParserSamplesTest(unittest.TestCase):
         self.assertTrue(any(block.get('type') == 'paragraph' for block in blocks))
         self.assertIn('Source: https://example.com/short-post', parsed.markdown)
 
-    def test_parse_markdown_blocks_collapses_linked_image_split_by_blank_lines(self) -> None:
+    def testparse_markdown_blocks_collapses_linked_image_split_by_blank_lines(self) -> None:
         markdown = '\n'.join(
             [
                 'Paragraph before',
@@ -231,7 +231,7 @@ class WechatParserSamplesTest(unittest.TestCase):
             ]
         )
 
-        _title, _cover_local, blocks, body_markdown = _parse_markdown_blocks(markdown)
+        _title, _cover_local, blocks, body_markdown = parse_markdown_blocks(markdown)
 
         self.assertEqual(
             blocks,
@@ -250,7 +250,7 @@ class WechatParserSamplesTest(unittest.TestCase):
         self.assertNotIn('\n[\n', body_markdown)
         self.assertNotIn('](https://mp.weixin.qq.com/s/demo)', [block.get('text') for block in blocks if block.get('type') == 'paragraph'])
 
-    def test_parse_markdown_blocks_splits_audio_timestamp_lines(self) -> None:
+    def testparse_markdown_blocks_splits_audio_timestamp_lines(self) -> None:
         markdown = '\n'.join(
             [
                 '# 5月6日行业快讯',
@@ -261,7 +261,7 @@ class WechatParserSamplesTest(unittest.TestCase):
             ]
         )
 
-        title, _cover_local, blocks, body_markdown = _parse_markdown_blocks(markdown)
+        title, _cover_local, blocks, body_markdown = parse_markdown_blocks(markdown)
 
         self.assertEqual(title, '5月6日行业快讯')
         self.assertEqual(
