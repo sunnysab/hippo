@@ -104,6 +104,24 @@ class _WorkerProgressTracker:
         self._last_log: str | None = None
         self._accounts: dict[str, AccountProgress] = {}
         self._report: dict[str, Any] | None = None
+        self._saving: asyncio.Task[None] | None = None
+
+    def _persist(self) -> asyncio.Task[None] | None:
+        """Write the tracker's state without blocking the sync loop.
+
+        The observer protocols are synchronous — the loop calls them where it stands —
+        so the write cannot be awaited there. Skipping a write is harmless because the
+        state is cumulative: the next one carries everything. The task is returned so a
+        test can wait for the write instead of sleeping.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return None
+        if self._saving is not None and not self._saving.done():
+            return self._saving
+        self._saving = loop.create_task(self._save())
+        return self._saving
 
     async def _save(self) -> None:
         async with self._storage.transaction():
@@ -129,17 +147,17 @@ class _WorkerProgressTracker:
             self._accounts[account.biz] = progress
         return progress
 
-    async def on_lock_acquired(self) -> None:
+    def on_lock_acquired(self) -> None:
         self._last_log = None
-        await self._save()
+        self._persist()
 
-    async def on_accounts_loaded(self, accounts: list[AccountCredential]) -> None:
+    def on_accounts_loaded(self, accounts: list[AccountCredential]) -> None:
         self._accounts_total = len(accounts)
         for account in accounts:
             self._progress_for(account)
-        await self._save()
+        self._persist()
 
-    async def on_account_start(self, account: AccountCredential) -> None:
+    def on_account_start(self, account: AccountCredential) -> None:
         self._current_account = {
             'biz': account.biz,
             'nickname': account.nickname or account.biz,
@@ -151,17 +169,17 @@ class _WorkerProgressTracker:
         progress.phase = 'listing'
         progress.error = None
         progress.touch()
-        await self._save()
+        self._persist()
 
-    async def on_account_stage(self, account: AccountCredential, stage: str) -> None:
+    def on_account_stage(self, account: AccountCredential, stage: str) -> None:
         self._phase = stage
         progress = self._progress_for(account)
         if progress.status == 'running':
             progress.phase = stage
             progress.touch()
-        await self._save()
+        self._persist()
 
-    async def on_account_done(self, result: SyncAccountResult, summary: SyncSummary | None) -> None:
+    def on_account_done(self, result: SyncAccountResult, summary: SyncSummary | None) -> None:
         progress = self._progress_for(AccountCredential(biz=result.biz, nickname=result.nickname or result.biz))
         if result.skipped:
             progress.status = 'skipped'
@@ -184,25 +202,25 @@ class _WorkerProgressTracker:
         if self._current_account and self._current_account.get('biz') == result.biz:
             self._current_account = None
             self._phase = None
-        await self._save()
+        self._persist()
 
-    async def on_images_start(self) -> None:
+    def on_images_start(self) -> None:
         self._phase = 'images'
         self._last_log = 'downloading_images'
-        await self._save()
+        self._persist()
 
-    async def on_images_done(self) -> None:
+    def on_images_done(self) -> None:
         self._phase = None
         self._last_log = None
-        await self._save()
+        self._persist()
 
-    async def on_log(self, message: str) -> None:
+    def on_log(self, message: str) -> None:
         self._last_log = message
-        await self._save()
+        self._persist()
 
-    async def set_report(self, result: SyncJobResult) -> None:
+    def set_report(self, result: SyncJobResult) -> None:
         self._report = result.report.to_dict()
-        await self._save()
+        self._persist()
 
 
 class _WorkerObserver(SyncObserver):
@@ -215,16 +233,16 @@ class _WorkerObserver(SyncObserver):
         self._tracker = tracker
         self._account = account
 
-    async def on_log(self, message: str) -> None:
+    def on_log(self, message: str) -> None:
         self._tracker._last_log = message
-        self._tracker._save()
+        self._tracker._persist()
 
     def on_progress(self, *, current: int | None, total: int | None, delta: int | None) -> None:
         progress = self._tracker._progress_for(self._account)
         progress.article_current = current
         progress.article_total = total
         progress.touch()
-        self._tracker._save()
+        self._tracker._persist()
 
     def on_page(self, payload: dict[str, Any]) -> None:
         records = payload.get('records') or []
@@ -235,14 +253,14 @@ class _WorkerObserver(SyncObserver):
         progress.last_article = _article_snapshot(last_record)
         progress.touch()
         self._tracker._current_article = progress.last_article
-        self._tracker._save()
+        self._tracker._persist()
 
     def on_complete(self, summary: SyncSummary) -> None:
         progress = self._tracker._progress_for(self._account)
         progress.page_count = summary.page_count
         progress.saved = summary.total_saved
         progress.touch()
-        self._tracker._save()
+        self._tracker._persist()
 
     def on_skip(self, reason: str) -> None:
         progress = self._tracker._progress_for(self._account)
@@ -250,7 +268,7 @@ class _WorkerObserver(SyncObserver):
         progress.phase = None
         progress.skip_reason = reason
         progress.touch()
-        self._tracker._save()
+        self._tracker._persist()
 
 
 def _parse_meta_datetime(value: str | None) -> datetime | None:
@@ -440,7 +458,7 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
                     result=None,
                 )
             return True
-        await tracker.set_report(result)
+        tracker.set_report(result)
         was_cancelled = await storage.sync_jobs.is_cancelling(job.task_id)
         final_status = 'cancelled' if was_cancelled else str(result.status.get('status') or 'success')
         final_error = 'Cancelled by user' if was_cancelled else result.error

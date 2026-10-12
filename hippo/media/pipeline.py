@@ -364,6 +364,16 @@ def _show_notes(article: ArticleRecord) -> tuple[list[dict[str, Any]], str]:
     return blocks, markdown
 
 
+async def _progress(storage: PostgresStorage, job_id: int, *, stage: str, progress: int) -> None:
+    """Record where a job is, and commit it.
+
+    The worker commits when the job is done, which for an hour-long episode means the
+    reader's "转写中" line shows nothing at all for that hour.
+    """
+    await storage.media_jobs.update_progress(job_id, stage=stage, progress=progress)
+    await storage.commit()
+
+
 def _media_blocks(
     resolved: ResolvedMedia,
     *,
@@ -428,7 +438,7 @@ async def _save_subtitle(
     archived: bool,
 ) -> dict[str, Any]:
     """Write a ready-made subtitle in as the body, with the player above it."""
-    await storage.media_jobs.update_progress(job_id, stage='subtitle', progress=90)
+    await _progress(storage, job_id, stage='subtitle', progress=90)
     show_notes, notes_markdown = _show_notes(article)
     blocks = _media_blocks(resolved, article_pk=article_pk, archived=archived)
     blocks.extend(show_notes)
@@ -488,7 +498,7 @@ async def transcribe_job(
     with tempfile.TemporaryDirectory(prefix=f'hippo-media-{article_pk}-') as temp_name:
         workdir = Path(temp_name)
         source = workdir / 'source.bin'
-        await storage.media_jobs.update_progress(job_id, stage='download', progress=5)
+        await _progress(storage, job_id, stage='download', progress=5)
         # 已经存在对象存储里的视频优先：那是别人手上就有的文件，不必再从网上下一遍。
         stored = await storage.media_assets.get(article_pk, kind='video')
         if stored and stored.get('state') == 'stored' and stored.get('s3_key'):
@@ -516,7 +526,7 @@ async def transcribe_job(
             # 不存在对象的播放器。
             return await keep_subtitle(archived=bool(archived))
 
-        await storage.media_jobs.update_progress(job_id, stage='transcribe', progress=25)
+        await _progress(storage, job_id, stage='transcribe', progress=25)
 
         chunks = await asyncio.to_thread(
             audio_module.prepare,
@@ -529,7 +539,7 @@ async def transcribe_job(
         paragraphs: list[tuple[float, str]] = []
         for done, chunk in enumerate(chunks, start=1):
             progress = 25 + int(done / len(chunks) * 65)
-            await storage.media_jobs.update_progress(job_id, stage='transcribe', progress=progress)
+            await _progress(storage, job_id, stage='transcribe', progress=progress)
             paragraphs.extend(
                 await _transcribe_chunk(
                     transcriber,
@@ -547,7 +557,7 @@ async def transcribe_job(
         blocks.extend(show_notes)
         blocks.extend(_paragraph_blocks(paragraphs))
 
-        await storage.media_jobs.update_progress(job_id, stage='save', progress=95)
+        await _progress(storage, job_id, stage='save', progress=95)
         transcript = _text(paragraphs, with_time=False)
         markdown = '\n\n'.join(part for part in (notes_markdown, transcript) if part)
         await _save(storage, article, blocks=blocks, markdown=markdown)

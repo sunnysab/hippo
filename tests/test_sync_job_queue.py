@@ -384,12 +384,45 @@ class SyncJobQueueTest(unittest.TestCase):
             error='invalid args',
         )
 
-        asyncio.run(tracker.on_account_done(result, None))
+        tracker.on_account_done(result, None)
+        asyncio.run(tracker._save())
 
         update = storage.sync_jobs.progress_updates[-1]
         self.assertEqual(update['accounts_done'], 1)
         self.assertEqual(update['accounts'][0]['status'], 'failed')
         self.assertEqual(update['accounts'][0]['error'], 'invalid args')
+
+    def test_tracker_events_persist_even_though_nobody_awaits_them(self) -> None:
+        # 观察者协议是同步的，调用点不会 await：这些方法以前是 async def，于是协程从不
+        # 执行、进度永远停在 0%。现在它们同步改状态、自己把写入排出去。
+        from hippo.sync_worker import _WorkerProgressTracker
+
+        async def scenario() -> str:
+            storage = _FakeStorage(_FakeSyncJobs())
+            tracker = _WorkerProgressTracker(storage=storage, task_id='job-7')
+            tracker.on_log('正文阶段：处理待抓队列')
+            await tracker._persist()
+            return storage.sync_jobs.progress_updates[-1]['last_log']
+
+        self.assertEqual('正文阶段：处理待抓队列', asyncio.run(scenario()))
+
+    def test_the_tracker_coalesces_writes(self) -> None:
+        from hippo.sync_worker import _WorkerProgressTracker
+
+        async def scenario() -> tuple[object, object, int]:
+            storage = _FakeStorage(_FakeSyncJobs())
+            tracker = _WorkerProgressTracker(storage=storage, task_id='job-8')
+            tracker.on_log('一条')
+            first = tracker._persist()
+            tracker.on_log('两条')
+            second = tracker._persist()
+            await first
+            return (first, second, len(storage.sync_jobs.progress_updates))
+
+        first, second, writes = asyncio.run(scenario())
+        # 上一次还没写完时复用同一次写入（状态累计，丢一次没有信息损失）。
+        self.assertIs(first, second)
+        self.assertEqual(1, writes)
 
     def test_persist_sync_outcome_records_failed_account_count_without_failing_job(self) -> None:
         storage = _FakeStorage(_FakeSyncJobs())
