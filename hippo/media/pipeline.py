@@ -28,8 +28,10 @@ from typing import Any, Protocol
 import httpx
 
 from ..config import DEFAULT_USER_AGENT
+from ..downloader import parse_markdown_blocks
 from ..logger import get_logger
 from ..models import ArticleRecord
+from ..normalize_html import normalize_html
 from ..storage import PostgresStorage, fetchone_row
 from . import archive as archive_module
 from . import audio as audio_module
@@ -344,6 +346,24 @@ async def _transcribe_chunk(
     return recovered
 
 
+def _show_notes(article: ArticleRecord) -> tuple[list[dict[str, Any]], str]:
+    """The article's own text as blocks: a podcast's show notes, which the feed gave us.
+
+    The digest already holds them (the listing stores the feed's description), so
+    nothing has to travel through the job payload. They go above the transcript — it
+    is what the episode says about itself, and the transcript's timestamps mark where
+    it ends
+    """
+    html = str(article.digest or '')
+    if '<' not in html:
+        return [], ''
+    markdown = normalize_html(html, 'markdown').strip()
+    if not markdown:
+        return [], ''
+    _, _, blocks, _ = parse_markdown_blocks(markdown)
+    return blocks, markdown
+
+
 def _media_blocks(
     resolved: ResolvedMedia,
     *,
@@ -409,9 +429,12 @@ async def _save_subtitle(
 ) -> dict[str, Any]:
     """Write a ready-made subtitle in as the body, with the player above it."""
     await storage.media_jobs.update_progress(job_id, stage='subtitle', progress=90)
+    show_notes, notes_markdown = _show_notes(article)
     blocks = _media_blocks(resolved, article_pk=article_pk, archived=archived)
+    blocks.extend(show_notes)
     blocks.extend(resolved.subtitle.blocks)  # type: ignore[union-attr]
-    await _save(storage, article, blocks=blocks, markdown=resolved.subtitle.markdown)  # type: ignore[union-attr]
+    markdown = '\n\n'.join(part for part in (notes_markdown, resolved.subtitle.markdown) if part)  # type: ignore[union-attr]
+    await _save(storage, article, blocks=blocks, markdown=markdown)
     return {
         'article_pk': article_pk,
         'segments': len(resolved.subtitle.blocks),  # type: ignore[union-attr]
@@ -519,11 +542,15 @@ async def transcribe_job(
         if not paragraphs:
             raise MediaJobSkipped('整段音频都没有转写到内容')
 
+        show_notes, notes_markdown = _show_notes(article)
         blocks = _media_blocks(resolved, article_pk=article_pk, archived=archived)
+        blocks.extend(show_notes)
         blocks.extend(_paragraph_blocks(paragraphs))
 
         await storage.media_jobs.update_progress(job_id, stage='save', progress=95)
-        await _save(storage, article, blocks=blocks, markdown=_text(paragraphs, with_time=False))
+        transcript = _text(paragraphs, with_time=False)
+        markdown = '\n\n'.join(part for part in (notes_markdown, transcript) if part)
+        await _save(storage, article, blocks=blocks, markdown=markdown)
         return {
             'article_pk': article_pk,
             'segments': len(paragraphs),

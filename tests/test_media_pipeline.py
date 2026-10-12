@@ -175,6 +175,51 @@ class TranscribeJobTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('**[', self.storage.saved[0]['content_markdown'])
         self.assertFalse(self.storage.saved[0]['replace_images'])
 
+    async def test_show_notes_come_before_the_transcript(self) -> None:
+        # 播客的节目简介（feed 的 description，已存成 digest）要进正文，且排在转写稿之前。
+        article = pipeline_module.ArticleRecord(
+            **{**_ARTICLE, 'digest': '<p>本期聊聊<strong>通胀</strong>。</p><ul><li>嘉宾：某人</li></ul>'}
+        )
+        transcriber = _FakeTranscriber([_text(1900)])
+
+        with (
+            patch('hippo.media.pipeline._load_article', new=AsyncMock(return_value=article)),
+            self._patch_audio(),
+            patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1)),
+            patch('hippo.media.pipeline.archive_module.store_media', new=lambda **k: ('k', 1)),
+        ):
+            await _run(self.storage, ResolvedMedia(audio_url='https://host/ep.mp3'), transcriber=transcriber)
+
+        saved = self.storage.saved[0]
+        blocks = saved['content_blocks']
+        # 播放器 → 节目简介（段落 + 列表各成一块）→ 带时间锚点的转写稿。
+        self.assertEqual('audio', blocks[0]['type'])
+        notes = ' '.join(block.get('text', '') for block in blocks[1:3])
+        self.assertIn('本期聊聊', notes)
+        self.assertIn('嘉宾', notes)
+        self.assertNotIn('t', blocks[1])
+        self.assertIn('t', blocks[3])
+        # 搜索/导出读的是 markdown：简介在前，转写稿在后。
+        self.assertIn('本期聊聊', saved['content_markdown'])
+        self.assertIn('嘉宾：某人', saved['content_markdown'])
+        self.assertLess(
+            saved['content_markdown'].index('本期聊聊'),
+            saved['content_markdown'].index('这是一段用于校验切分'),
+        )
+
+    async def test_an_article_without_show_notes_is_unchanged(self) -> None:
+        transcriber = _FakeTranscriber([_text(1900)])
+
+        with (
+            self._patch_audio(),
+            patch('hippo.media.pipeline._download', new=AsyncMock(return_value=1)),
+            patch('hippo.media.pipeline.archive_module.store_media', new=lambda **k: ('k', 1)),
+        ):
+            await _run(self.storage, ResolvedMedia(audio_url='https://host/ep.mp3'), transcriber=transcriber)
+
+        self.assertEqual('audio', self.storage.saved[0]['content_blocks'][0]['type'])
+        self.assertNotIn('本期聊聊', self.storage.saved[0]['content_markdown'])
+
     async def test_a_ready_made_subtitle_skips_the_asr(self) -> None:
         transcriber = _FakeTranscriber([])
         media = ResolvedMedia(subtitle=_SUBTITLE)
