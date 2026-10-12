@@ -7,7 +7,12 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from hippo.sync_worker import backfill_account_history, maybe_enqueue_backfill_job
+from hippo.sources.weixin import SOURCE as WEIXIN_SOURCE
+from hippo.sync_worker import (
+    BACKFILL_RETRY_COOLDOWN_MINUTES,
+    backfill_account_history,
+    maybe_enqueue_backfill_job,
+)
 
 
 class _FakeSource:
@@ -54,10 +59,35 @@ class BackfillTest(unittest.IsolatedAsyncioTestCase):
         created = await maybe_enqueue_backfill_job(storage)
 
         self.assertTrue(created)
+        # 只挑微信源（别的源没有回填实现）+ 跳过刚失败过的号（否则每轮重排）
+        storage.accounts.list_pending_backfill.assert_awaited_once_with(
+            limit=1,
+            source=WEIXIN_SOURCE,
+            cooldown_minutes=BACKFILL_RETRY_COOLDOWN_MINUTES,
+        )
         storage.sync_jobs.create_job.assert_awaited_once_with(
             trigger_type='backfill',
             biz_list=['Mz9'],
         )
+
+    async def test_skips_a_non_wechat_account(self) -> None:
+        account = SimpleNamespace(
+            biz='youtube:UC1',
+            nickname='D',
+            source='youtube',
+            gh_id='UC1',
+            alias='UC1',
+            backfill_cursor=None,
+        )
+        storage = _storage(account)
+
+        with patch('hippo.sync_worker.WeixinSource', return_value=_FakeSource()) as source:
+            result = await backfill_account_history(storage, biz='youtube:UC1')
+
+        self.assertEqual('skipped', result.status['status'])
+        source.assert_not_called()
+        # 不标 done：跳过不等于回填完了，标了就是谎报
+        storage.accounts.mark_backfill_done.assert_not_awaited()
 
     async def test_does_not_requeue_while_a_job_is_active(self) -> None:
         storage = SimpleNamespace(
@@ -90,7 +120,14 @@ class BackfillTest(unittest.IsolatedAsyncioTestCase):
             return pages[len(calls) - 1]
 
         sync_impl = SimpleNamespace(sync_account=sync_account)
-        account = SimpleNamespace(biz='Mz1', nickname='A', gh_id='gh_1', alias=None, backfill_cursor=None)
+        account = SimpleNamespace(
+            biz='Mz1',
+            nickname='A',
+            source='weixin',
+            gh_id='gh_1',
+            alias=None,
+            backfill_cursor=None,
+        )
         storage = _storage(account)
 
         with (
@@ -114,7 +151,14 @@ class BackfillTest(unittest.IsolatedAsyncioTestCase):
             return SimpleNamespace(listed=5, enqueued=0, next_offset=None, is_end=True)
 
         sync_impl = SimpleNamespace(sync_account=sync_account)
-        account = SimpleNamespace(biz='Mz2', nickname='B', gh_id='gh_2', alias=None, backfill_cursor='cur-9')
+        account = SimpleNamespace(
+            biz='Mz2',
+            nickname='B',
+            source='weixin',
+            gh_id='gh_2',
+            alias=None,
+            backfill_cursor='cur-9',
+        )
         storage = _storage(account)
 
         with (
@@ -126,7 +170,14 @@ class BackfillTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(['cur-9'], [call['offset'] for call in calls])
 
     async def test_skips_when_every_subscriber_is_disabled(self) -> None:
-        account = SimpleNamespace(biz='Mz3', nickname='C', gh_id='gh_3', alias=None, backfill_cursor=None)
+        account = SimpleNamespace(
+            biz='Mz3',
+            nickname='C',
+            source='weixin',
+            gh_id='gh_3',
+            alias=None,
+            backfill_cursor=None,
+        )
         storage = _storage(account, syncable=False)
 
         result = await backfill_account_history(storage, biz='Mz3')

@@ -225,17 +225,49 @@ class AccountRepository:
                 (utc_now_dt(), biz),
             )
 
-    async def list_pending_backfill(self, *, limit: int = 1) -> list[AccountCredential]:
-        """还没回填完的号，最新加进来的优先（从新到旧）。"""
+    async def list_pending_backfill(
+        self,
+        *,
+        limit: int = 1,
+        source: str | None = None,
+        cooldown_minutes: int = 0,
+    ) -> list[AccountCredential]:
+        """还没回填完的号，最新加进来的优先（从新到旧）。
+
+        ``source`` 限定媒体源。回填走的是该源的适配器，不是所有源都有：微信之外的号
+        混进来只会被反复重排、每次都失败（见 ``maybe_enqueue_backfill_job``）。
+
+        ``cooldown_minutes`` > 0 时跳过刚回填失败过的号：失败不会把账号从 pending 挪走，
+        不退避就是每个 tick 都重排同一个失败号（线上实测 0.15s 一轮）。
+        """
+        where = ["a.backfill_state = 'pending'"]
+        params: list[Any] = []
+        if source is not None:
+            where.append('a.source = %s')
+            params.append(source)
+        if cooldown_minutes > 0:
+            where.append(
+                """
+                NOT EXISTS (
+                    SELECT 1 FROM sync_jobs j
+                    WHERE j.trigger_type = 'backfill'
+                      AND j.status = 'failed'
+                      AND j.created_at > NOW() - (%s * INTERVAL '1 minute')
+                      AND j.biz_list @> to_jsonb(ARRAY[a.biz])
+                )
+                """
+            )
+            params.append(int(cooldown_minutes))
+        params.append(max(int(limit), 1))
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                """
+                f"""
                 SELECT a.* FROM accounts a
-                WHERE a.backfill_state = 'pending'
+                WHERE {' AND '.join(where)}
                 ORDER BY a.created_at DESC
                 LIMIT %s
                 """,
-                (max(int(limit), 1),),
+                params,
             )
             rows = await cur.fetchall()
         return [_row_to_account(row) for row in rows]

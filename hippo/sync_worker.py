@@ -19,6 +19,7 @@ from .observability.logging import shutdown_logging
 from .observability.metrics import instrument as metric
 from .observability.otel import init_telemetry
 from .sources import body_adapters
+from .sources.weixin import SOURCE as WEIXIN_SOURCE
 from .storage import PostgresStorage, open_storage, save_meta_json
 from .sync_core import request_sync_cancel
 from .sync_service import (
@@ -41,6 +42,11 @@ from .weixin_worker import SyncStats, WeixinArticleSync
 
 logger = get_logger(__name__)
 SERVICE_NAME = 'hippo-sync-worker'
+
+# 回填失败的号，这么多分钟内不再重新排队。失败不会把账号从 pending 挪走，
+# 而主循环在 handled 之后不 sleep，不退避就是每轮重排同一个失败号
+# （线上实测：0.15s 一轮、7.5 小时 2.3 万次，每次都白跑一次全握手）。
+BACKFILL_RETRY_COOLDOWN_MINUTES = 15
 
 # 正文 drain：每轮抓一批（<=daemon 的 [articles].batch_size），节流由 daemon 侧闸门决定
 BODY_BATCH = 5
@@ -292,10 +298,21 @@ async def maybe_enqueue_backfill_job(storage: PostgresStorage) -> bool:
     加号时已经入过队，这里兜的是被挂起的那些：进程重启或报错后
     ``recover_stale_running_jobs`` 会把 job 标成 failed，账号却仍留在 pending，
     所以每个 tick 都拿最新加进来的那个号补一条，直到它自己翻到底把状态置 done。
+
+    只挑微信源的号：回填只有微信这一条路径。youtube/podcast 的号加进来时也是
+    ``pending``，混进来后永远翻不到底（回填用的是微信列表接口），于是每个 tick
+    都被重新挑中、失败、再挑中——因为 job 算 handled，主循环连 sleep 都跳过。
+
+    失败的号还要等过 ``BACKFILL_RETRY_COOLDOWN_MINUTES``：同一个账号失败后仍留在
+    pending，不退避就还是每轮重排一次。
     """
     if await storage.sync_jobs.has_active_job():
         return False
-    pending = await storage.accounts.list_pending_backfill(limit=1)
+    pending = await storage.accounts.list_pending_backfill(
+        limit=1,
+        source=WEIXIN_SOURCE,
+        cooldown_minutes=BACKFILL_RETRY_COOLDOWN_MINUTES,
+    )
     if not pending:
         return False
     async with storage.transaction():
@@ -335,6 +352,11 @@ async def backfill_account_history(
 
     empty = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
     account = await storage.accounts.get_account(biz, fallback_to_default=False)
+    if account.source != WEIXIN_SOURCE:
+        # 回填的列表与正文都走微信 daemon，别的源拿过去只会 400；不标 done（那是谎报完成），
+        # 只保证它不再被排进队列（见 maybe_enqueue_backfill_job）。
+        await log(f'{account.nickname}：{account.source} 源暂不支持历史回填，跳过')
+        return SyncJobResult(status={'status': 'skipped'}, report=empty, error=None)
     source_key = (account.gh_id or account.alias or '').strip()
     if not source_key:
         return SyncJobResult(

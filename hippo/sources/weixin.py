@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from ..weixin_worker import SyncStats, WeixinArticleSync
 
+#: ``accounts.source`` 上的取值：回填只有微信这条路径，靠它把别的源挡在外面。
+SOURCE = 'weixin'
+
 
 class WeixinSourceAdapter:
     def __init__(self, sync: WeixinArticleSync) -> None:
@@ -31,4 +34,4 @@ class WeixinSourceAdapter:
         return await self._sync.drain(limit=limit)
 
 
-__all__ = ['WeixinSourceAdapter']
+__all__ = ['SOURCE', 'WeixinSourceAdapter']
