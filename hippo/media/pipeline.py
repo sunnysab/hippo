@@ -27,6 +27,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from ..config import DEFAULT_USER_AGENT
 from ..logger import get_logger
 from ..models import ArticleRecord
 from ..storage import PostgresStorage, fetchone_row
@@ -50,6 +51,20 @@ DOWNLOAD_BLOCK_BYTES = 8 * 1024**2
 DOWNLOAD_ATTEMPTS = 3
 #: Pause before re-requesting a block that failed, growing with the attempt.
 DOWNLOAD_RETRY_BACKOFF_SECONDS = 2.0
+
+
+def _download_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    """The caller's headers, with a browser User-Agent unless they set one.
+
+    What HTTP libraries send by default gets refused: cdn.lizhi.fm answers 403 to
+    both ``python-httpx/…`` and ``curl/…`` and serves the same URL to a browser agent
+    (measured). Sources that need a specific agent (Bilibili's CDN wants its Referer)
+    still override this.
+    """
+    prepared = dict(headers)
+    if not any(key.lower() == 'user-agent' for key in prepared):
+        prepared['User-Agent'] = DEFAULT_USER_AGENT
+    return prepared
 
 #: How the transcript is split for reading. One 300 s chunk is ~1900 characters,
 #: which is a wall of text; grouped sentences of about this size read better and
@@ -231,7 +246,7 @@ async def _download(
             appended = 0
             for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
                 # 每次尝试都按当前进度重算区间：上一次传到一半断掉时，续的是断点而不是重来。
-                request_headers = dict(headers)
+                request_headers = _download_headers(headers)
                 request_headers['Range'] = f'bytes={written}-{written + DOWNLOAD_BLOCK_BYTES - 1}'
                 appended = 0
                 try:

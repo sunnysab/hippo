@@ -479,6 +479,27 @@ class DownloadTest(unittest.IsolatedAsyncioTestCase):
         # 第二次请求从断点开始，而不是从 0 重新下。
         self.assertEqual(1024, server.ranges[1][0])
 
+    async def test_a_browser_user_agent_is_sent_unless_the_source_sets_one(self) -> None:
+        # cdn.lizhi.fm 对 python-httpx/… 和 curl/… 都回 403，浏览器 UA 才给文件。
+        seen: list[str] = []
+
+        class _Recording(_RangeServer):
+            def __call__(self, request: httpx.Request) -> httpx.Response:
+                seen.append(request.headers.get('user-agent', ''))
+                return super().__call__(request)
+
+        with _patch_transport(_Recording(b'x' * 1024)):
+            await self._fetch(_Recording(b'x' * 1024))
+        self.assertTrue(seen)
+        self.assertIn('Mozilla/5.0', seen[0])
+
+        seen.clear()
+        with tempfile.TemporaryDirectory() as temp_name, _patch_transport(_Recording(b'x' * 1024)):
+            target = Path(temp_name) / 'a.bin'
+            await _download('https://cdn.test/audio', target, headers={'User-Agent': 'yt-dlp/1'},
+                            timeout=5)
+        self.assertEqual(['yt-dlp/1'], seen)
+
     async def test_a_host_without_range_support_is_still_downloaded_whole(self) -> None:
         payload = os.urandom(64 * 1024)
         server = _RangeServer(payload, supports_range=False)
