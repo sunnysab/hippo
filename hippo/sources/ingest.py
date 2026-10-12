@@ -154,7 +154,7 @@ class MediaSync:
             if not item.content_html or item.article_id not in pks:
                 continue
             article = by_article_id[item.article_id]
-            markdown = normalize_html(item.content_html, 'html')
+            markdown = normalize_html(item.content_html, 'markdown')
             _, _, blocks, _ = parse_markdown_blocks(markdown)
             await self._storage.articles.save_article_content(
                 article,
