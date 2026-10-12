@@ -20,6 +20,8 @@ from typing import Any
 
 import httpx
 
+from ..observability.otel import traced
+
 TRANSCRIPTIONS_PATH = '/audio/transcriptions'
 HEALTH_PATH = '/health'
 
@@ -150,6 +152,7 @@ class AsrClient:
             raise AsrError('转写服务的健康检查返回了意外的结构')
         return payload
 
+    @traced('asr.transcribe')
     async def transcribe(self, audio: Path, *, language: str | None = None) -> Transcript:
         """Upload one chunk and return its transcript.
 

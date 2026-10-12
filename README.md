@@ -211,7 +211,7 @@ uv run python -m hippo --help        # 全部命令
 | `HIPPO_SESSION_TTL_HOURS` | `168` | 会话有效期（小时） |
 | `HIPPO_ENABLE_INPROCESS_SYNC` | — | 在 Web 进程里跑同步（仅开发用） |
 | `HIPPO_LOG_LEVEL` / `HIPPO_LOG_FORMAT` / `HIPPO_LOG_FILE` / `HIPPO_LOG_TAIL_LINES` | `WARNING` / `json` / — / `500` | 日志 |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` / `HIPPO_OTEL_ENABLED` / `HIPPO_OTEL_SAMPLE_RATIO` / `HIPPO_ENV` | — | 遥测 |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_INSECURE` / `HIPPO_OTEL_ENABLED` / `HIPPO_OTEL_SAMPLE_RATIO` / `HIPPO_ENV` | — | 遥测 |
 | `HIPPO_SIGNOZ_URL` | — | 管理台「看日志」深链的目标 |
 
 ## 开发

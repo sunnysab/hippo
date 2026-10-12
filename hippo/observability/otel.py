@@ -11,9 +11,13 @@ suite stay silent by default.
 
 from __future__ import annotations
 
+import contextlib
+import functools
+import inspect
 import logging
 import os
 import socket
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -35,6 +39,7 @@ from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
 
 _DISABLED_VALUES = {'0', 'false', 'no', 'off'}
 _DEFAULT_SAMPLE_RATIO = 0.1
+_TRACER_NAME = 'hippo'
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -181,12 +186,48 @@ def get_meter(name: str) -> metrics.Meter:
     return metrics.get_meter(name)
 
 
+@contextlib.contextmanager
+def span(name: str, **attributes: Any) -> Iterator[trace.Span]:
+    """Run a block inside a span tagged with ``attributes``.
+
+    Exceptions propagate untouched; the SDK marks the span as errored on the way
+    out. Attribute values of ``None`` are skipped so callers can pass optional
+    context without branching.
+    """
+    with get_tracer(_TRACER_NAME).start_as_current_span(name) as current:
+        for key, value in attributes.items():
+            if value is not None:
+                current.set_attribute(key, value)
+        yield current
+
+
+def traced(
+    name: str,
+    **attributes: Any,
+) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+    """Decorator: run an async function's whole body inside a span."""
+
+    def decorate(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+        if not inspect.iscoroutinefunction(func):
+            raise TypeError(f'@traced only supports async functions, got {func!r}')
+        span_name = name or func.__qualname__
+
+        @functools.wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            with span(span_name, **attributes):
+                return await func(*args, **kwargs)
+
+        return wrapper
+
+    return decorate
+
+
 def add_span_attributes(attributes: dict[str, Any]) -> None:
     """Attach attributes to the active span, if there is one."""
-    span = trace.get_current_span()
-    if span is not None and span.is_recording():
+    current = trace.get_current_span()
+    if current is not None and current.is_recording():
         for key, value in attributes.items():
-            span.set_attribute(key, value)
+            current.set_attribute(key, value)
 
 
 __all__ = [
@@ -197,5 +238,7 @@ __all__ = [
     'init_telemetry',
     'instrument_app',
     'otlp_endpoint',
+    'span',
     'telemetry_enabled',
+    'traced',
 ]

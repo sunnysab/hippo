@@ -19,6 +19,7 @@ from .image_store import ArticleImageStore
 from .logger import get_logger
 from .models import AccountCredential, ArticleRecord, DownloadResult
 from .normalize_html import promote_lazy_image_srcs
+from .observability.otel import add_span_attributes, traced
 from .storage import PostgresStorage
 from .utils import is_http_url, slugify
 from .wechat_parser import _postprocess_markdown, parse_wechat_article
@@ -267,6 +268,7 @@ class ArticleFetcher:
     def __init__(self, client: MPClient) -> None:
         self._client = client
 
+    @traced('article.fetch_html')
     async def fetch_article_html(self, url: str) -> str:
         last_exc: Exception | None = None
         for attempt in range(_ARTICLE_MAX_RETRIES):
@@ -506,6 +508,7 @@ class ImageDownloadManager:
                         return
                     await asyncio.sleep(min(2**attempt, _RETRY_BACKOFF_MAX))
 
+    @traced('article.download_images')
     async def download_images_for_article(
         self,
         article: ArticleRecord,
@@ -647,6 +650,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         await self._image_mgr.abort()
 
     # ------------------------------------------------------------------
+    @traced('article.download_many')
     async def download_many(
         self,
         articles: Iterable[ArticleRecord],
@@ -667,6 +671,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         failed = 0
         pending: list[ArticleRecord] = []
         articles_list = list(articles)
+        add_span_attributes({'article.batch_size': len(articles_list)})
         content_ids: set[str] | None = None
         if self.storage and os.environ.get('HIPPO_PG_DSN'):
             get_content_ids = getattr(self.storage, 'get_article_content_ids', None)

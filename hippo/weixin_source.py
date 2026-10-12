@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from .observability.otel import add_span_attributes, traced
 from .utils import strip_nul
 
 DEFAULT_SDK_PATH = '/opt/weixin-rs/sdk/python'
@@ -188,6 +189,7 @@ class WeixinSource:
         if not status.get('logged_in'):
             raise SessionExpiredError('daemon 未登录，且 login_auto 未成功（需要人工扫码）')
 
+    @traced('daemon.list_articles')
     async def _list_raw(self, source_key: str, pages: int, offset: str = '') -> dict[str, Any]:
         """裸 RPC：响应顶层带着解析后的 ``biz``（``gh_…``），SDK 的高层封装会把它丢掉。"""
         params: dict[str, Any] = {'biz': source_key, 'pages': pages}
@@ -236,8 +238,10 @@ class WeixinSource:
             is_end=bool(res.get('is_end')),
         )
 
+    @traced('daemon.fetch_bodies')
     async def fetch_bodies(self, urls: list[str]) -> list[FetchedArticle]:
         """批量抓正文（短链优先；daemon 负责节流与降级），保留每 URL 的 daemon 诊断。"""
+        add_span_attributes({'daemon.batch_size': len(urls)})
         self._body_errors = {}
         self._bodies_by_key = {}
         res = await self._bot.call(

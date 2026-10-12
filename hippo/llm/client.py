@@ -18,6 +18,7 @@ from openai import AsyncOpenAI
 
 from ..exceptions import ApiError
 from ..logger import get_logger
+from ..observability.otel import span
 from ..storage import PostgresStorage
 
 logger = get_logger(__name__)
@@ -63,16 +64,17 @@ def _classify(exc: Exception) -> tuple[str, int]:
 
 @asynccontextmanager
 async def _client(provider: dict[str, Any]) -> AsyncIterator[AsyncOpenAI]:
-    client = AsyncOpenAI(
-        base_url=provider['base_url'],
-        api_key=provider['api_key'],
-        timeout=REQUEST_TIMEOUT,
-        max_retries=0,
-    )
-    try:
-        yield client
-    finally:
-        await client.close()
+    with span('llm.request', model=provider.get('model'), provider=provider.get('name')):
+        client = AsyncOpenAI(
+            base_url=provider['base_url'],
+            api_key=provider['api_key'],
+            timeout=REQUEST_TIMEOUT,
+            max_retries=0,
+        )
+        try:
+            yield client
+        finally:
+            await client.close()
 
 
 async def resolve_provider(

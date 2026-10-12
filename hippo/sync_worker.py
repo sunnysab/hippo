@@ -12,12 +12,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .container import build_sync_container
-from .logger import get_logger
+from .logger import get_logger, setup_logger
 from .media_settings import get_media_settings
 from .models import AccountCredential
-from .observability.logging import shutdown_logging
+from .observability.logging import resolve_level, shutdown_logging
 from .observability.metrics import instrument as metric
-from .observability.otel import init_telemetry
+from .observability.otel import add_span_attributes, init_telemetry, span, traced
 from .sources import body_adapters
 from .sources.weixin import SOURCE as WEIXIN_SOURCE
 from .storage import PostgresStorage, open_storage, save_meta_json
@@ -428,6 +428,7 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
     job = await storage.sync_jobs.claim_next_job(worker_id=worker_id)
     if not job:
         return False
+    add_span_attributes({'sync.job.id': job.task_id, 'sync.job.trigger': job.trigger_type})
     async with storage.transaction():
         await storage.sync_jobs.mark_running(job.task_id, worker_id=worker_id)
     tracker = _WorkerProgressTracker(storage=storage, task_id=job.task_id)
@@ -476,6 +477,7 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
     return True
 
 
+@traced('worker.drain_bodies')
 async def drain_bodies_once(storage: PostgresStorage, *, limit: int = BODY_BATCH) -> int:
     """抓一批待处理正文，返回本次落库篇数。
 
@@ -509,6 +511,7 @@ async def drain_bodies_once(storage: PostgresStorage, *, limit: int = BODY_BATCH
     return result.ingested
 
 
+@traced('worker.backfill_images')
 async def backfill_images_once(*, batch: int = IMAGE_BATCH, workers: int = IMAGE_WORKERS) -> int:
     """抓一批待下载图片，返回本次成功入库的张数。
 
@@ -548,6 +551,7 @@ async def _image_backfill_loop(
         await asyncio.sleep(max(float(poll_interval), 5.0))
 
 
+@traced('worker.transcribe_media')
 async def transcribe_media_once(storage: PostgresStorage, *, limit: int = MEDIA_BATCH) -> int:
     """转写一批待办，返回本轮处理的条数（含失败与跳过）。
 
@@ -623,6 +627,13 @@ async def run_sync_worker(
 ) -> None:
     resolved_worker_id = worker_id or f'{socket.gethostname()}-{os.getpid()}'
     telemetry = init_telemetry(SERVICE_NAME)
+    if telemetry is not None:
+        # cli 在 import 阶段已经建过一次日志管线；这里重建才能把 OTLP log handler 挂上
+        setup_logger(
+            level=resolve_level(os.environ.get('HIPPO_LOG_LEVEL')),
+            log_file=os.environ.get('HIPPO_LOG_FILE'),
+            extra_handlers=telemetry.log_handlers,
+        )
     # 正文抓取跑在独立 task：它经常被 daemon 的节奏闸门挡住几十秒，
     # 不能拖住主循环里「入队新文章 / 执行同步 job」的响应。
     drain_task = asyncio.create_task(_body_drain_loop(drain_interval))
@@ -640,12 +651,13 @@ async def run_sync_worker(
                     await maybe_enqueue_scheduled_job(storage)
                     await maybe_enqueue_backfill_job(storage)
                 pending = int((await storage.article_queue.stats()).get('pending') or 0)
-                try:
-                    handled = await run_worker_once(storage=storage, worker_id=resolved_worker_id)
-                except Exception:
-                    # 单个 job 的异常不该拖垮 worker（drain / 图片回填还跑在旁边）
-                    logger.exception('同步 job 执行异常，继续下一轮')
-                    handled = True
+                with span('worker.round'):
+                    try:
+                        handled = await run_worker_once(storage=storage, worker_id=resolved_worker_id)
+                    except Exception:
+                        # 单个 job 的异常不该拖垮 worker（drain / 图片回填还跑在旁边）
+                        logger.exception('同步 job 执行异常，继续下一轮')
+                        handled = True
             metric('histogram', 'hippo.worker.round.duration', unit='s').record(time.perf_counter() - started_at)
             metric('histogram', 'hippo.queue.pending', unit='{article}').record(pending)
             if handled:
