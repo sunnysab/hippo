@@ -219,7 +219,9 @@ uv run python -m hippo --help        # 全部命令
 | `HIPPO_PG_DSN` | — | **必填**，PostgreSQL 连接串 |
 | `HIPPO_PG_POOL_MIN` / `HIPPO_PG_POOL_MAX` | `1` / `8` | 连接池大小 |
 | `HIPPO_PG_JIEBA_WARMUP` | `1` | 预热 jieba 分词表 |
+| `HIPPO_PG_JIEBA_WARMUP_TEXT` | `hippo` | 预热时喂给分词器的文本 |
 | `HIPPO_PG_DISABLE_JIT` | — | 关闭 PG 的 JIT（大查询更稳） |
+| `HIPPO_DB_INIT_LOG` | — | 置 `1` 时把数据库初始化过程打进日志 |
 | `HIPPO_S3_ENDPOINT` 等 `HIPPO_S3_*` | — | 对象存储（endpoint/bucket/access_key/secret_key/region/prefix，按 path-style 寻址） |
 | `WEIXIN_SDK_PATH` / `WEIXIN_DAEMON_HOST` / `WEIXIN_DAEMON_PORT` | 见上表 | daemon 连接 |
 | `HIPPO_HTTP_PROXY` | — | 抓取文章页/头像时使用的代理 |
