@@ -28,7 +28,7 @@ from .controllers.sync import (
 from .controllers.sync import (
     sync_group_accounts as perform_group_sync,
 )
-from .downloader import _attach_image_block_metadata, _parse_markdown_blocks
+from .downloader import _attach_image_block_metadata, parse_markdown_blocks
 from .file_storage import FileStorageError, S3FileStorage
 from .image_hashes import ensure_image_hash_by_id
 from .image_store import ArticleImageService
@@ -430,7 +430,7 @@ async def _process_batch(
         markdown = str(content_markdown or '').strip()
         if not markdown:
             continue
-        _title, _cover_local, blocks, normalized_markdown = _parse_markdown_blocks(markdown)
+        _title, _cover_local, blocks, normalized_markdown = parse_markdown_blocks(markdown)
         rebuilt_blocks = await _attach_image_block_metadata(
             blocks,
             resolve_url=lambda value: value.strip() if isinstance(value, str) else None,

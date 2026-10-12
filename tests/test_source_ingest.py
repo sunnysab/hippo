@@ -37,12 +37,20 @@ class _FakeStorage:
     def __init__(self) -> None:
         self.saved: list[list] = []
         self.queued: list[dict] = []
+        #: (markdown, blocks) per article body written straight from a feed.
+        self.contents: list[tuple[str, list[dict]]] = []
         self.commits = 0
         self._pks: dict[str, int] = {}
 
         self.meta = SimpleNamespace(get=AsyncMock(return_value=None))
         self.articles = AsyncMock()
         self.articles.save_articles = AsyncMock(side_effect=self._save)
+
+        async def _save_content(article, **kwargs) -> int:
+            self.contents.append((str(kwargs.get('content_markdown') or ''), kwargs.get('content_blocks') or []))
+            return 1
+
+        self.articles.save_article_content = AsyncMock(side_effect=_save_content)
         self.media_jobs = AsyncMock()
         self.media_jobs.enqueue_many = AsyncMock(side_effect=self._enqueue)
 
@@ -101,6 +109,47 @@ class MediaSyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, again.listed)
         # media_job 的 UNIQUE(article_pk) + 入队守卫保证不会重复转写。
         self.assertEqual(0, again.enqueued)
+
+    async def test_a_feed_entry_with_a_body_is_stored_as_an_article(self) -> None:
+        # 博客 feed（阮一峰那样的 Atom）：正文在 feed 里，没有音频 → 写正文、不排转写。
+        storage = _FakeStorage()
+        body = '<p>第一段</p><h2>小标题</h2><p>第二段</p>'
+        source = _Source(
+            [
+                Listing(
+                    items=[
+                        Item(
+                            article_id='post-1',
+                            title='一篇博客',
+                            link='https://blog/post-1',
+                            media_url='',
+                            content_html=body,
+                        )
+                    ]
+                )
+            ]
+        )
+
+        await MediaSync(storage=storage, source=source).sync_account(
+            biz='podcast:blog', source_key='https://blog/atom.xml', pages=1
+        )
+
+        self.assertEqual([], storage.queued)          # 没有音频，不该排转写
+        self.assertEqual(1, len(storage.contents))
+        marks, blocks = storage.contents[0]
+        self.assertIn('第一段', marks)
+        self.assertIn('小标题', marks)
+        self.assertTrue(blocks)
+
+    async def test_an_audio_entry_still_queues(self) -> None:
+        storage = _FakeStorage()
+
+        await MediaSync(storage=storage, source=_Source([Listing(items=[_item('1')])])).sync_account(
+            biz='podcast:1', source_key='key', pages=1
+        )
+
+        self.assertEqual(1, len(storage.queued))
+        self.assertEqual([], storage.contents)
 
     async def test_the_item_limit_comes_from_the_settings(self) -> None:
         storage = _FakeStorage()

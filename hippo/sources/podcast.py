@@ -139,11 +139,22 @@ def _text(element: Any) -> str:
 
 
 def _find(parent: Any, *names: str) -> Any:
+    """The first of ``names`` that exists, understanding both plain and namespaced tags.
+
+    A bare name is tried as written (RSS) and then in the Atom namespace, because an
+    Atom document puts ``title`` and ``link`` in that namespace — a plain lookup finds
+    a body but not the title, which reads as a feed with unnamed entries.
+    """
     if parent is None:
         return None
     for name in names:
-        namespace, _, local = name.partition(':')
-        found = parent.find(f'{{{_NS[namespace]}}}{local}')
+        if ':' in name:
+            namespace, _, local = name.partition(':')
+            found = parent.find(f'{{{_NS[namespace]}}}{local}')
+        else:
+            found = parent.find(name)
+            if found is None:
+                found = parent.find(f'{{{_NS["atom"]}}}{name}')
         if found is not None:
             return found
     return None
@@ -199,7 +210,9 @@ def _enclosure(item: Any) -> tuple[str | None, str | None]:
 
 
 def _episode(item: Any, channel: Any) -> Episode | None:
-    title = _text(item.find('title')) or '(无标题)'
+    # `_find` 而不是 `item.find`：Atom 的 title/link 都带命名空间，裸 find 找不到，
+    # 于是 Atom 条目标题会变成「(无标题)」（正文却是读得到的）。
+    title = _text(_find(item, 'title')) or '(无标题)'
     audio_url, audio_type = _enclosure(item)
     transcript_url, transcript_type = _transcript(item)
     link = _text(item.find('link')) or ''
@@ -223,7 +236,8 @@ def _episode(item: Any, channel: Any) -> Episode | None:
         description=_text(item.find('description')) or None,
         transcript_url=transcript_url,
         transcript_type=transcript_type,
-        body_html=_text(_find(item, 'content:encoded')) or None,
+        # RSS 把正文放在 content:encoded，Atom 放在 <content>（type="html" 时是全文）。
+        body_html=_text(_find(item, 'content:encoded')) or _text(item.find(f'{{{_NS["atom"]}}}content')) or None,
     )
 
 
@@ -331,7 +345,8 @@ class PodcastSource:
                 article_id=episode.guid,
                 title=episode.title,
                 link=episode.link or episode.audio_url or source_key,
-                media_url=episode.audio_url or episode.link or source_key,
+                # 纯文本条目（博客 feed）没有音频：media_url 留空，于是不会排转写任务。
+                media_url=episode.audio_url or ('' if episode.body_html else (episode.link or source_key)),
                 publish_at=episode.published_at,
                 cover=episode.image_url or feed.image_url,
                 digest=episode.description,
@@ -344,6 +359,7 @@ class PodcastSource:
                     'transcript_type': episode.transcript_type,
                     'duration_seconds': episode.duration_seconds,
                 },
+                content_html=episode.body_html,
             )
             for episode in window
         ]

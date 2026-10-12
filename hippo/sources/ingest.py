@@ -16,10 +16,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from ..downloader import parse_markdown_blocks
 from ..logger import get_logger
 from ..media.pipeline import MediaJobSkipped, MediaResolver, ResolvedMedia
 from ..media_settings import get_media_settings
 from ..models import ArticleRecord
+from ..normalize_html import normalize_html
 from ..storage import PostgresStorage
 from ..weixin_worker import SyncStats
 
@@ -52,6 +54,10 @@ class Item:
     digest: str | None = None
     author: str | None = None
     duration_seconds: int | None = None
+    #: Some feeds carry the article itself (a blog's Atom `<content>`, RSS
+    #: `content:encoded`). When present it becomes the article body and there is no
+    #: media to transcribe, so nothing is queued.
+    content_html: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -128,7 +134,38 @@ class MediaSync:
             for item in items
         ]
         await self._storage.articles.save_articles(records)
-        return await self._article_pks(biz, [item.article_id for item in items])
+        pks = await self._article_pks(biz, [item.article_id for item in items])
+        await self._store_bodies(pks, items, records)
+        return pks
+
+    async def _store_bodies(
+        self,
+        pks: Mapping[str, int],
+        items: list[Item],
+        records: list[ArticleRecord],
+    ) -> None:
+        """Write the body of a feed that carries one, the way a fetched article is.
+
+        Reuses the reader-facing pipeline: clean the HTML, keep the text as markdown
+        (search and export read that) and the blocks the reader renders.
+        """
+        by_article_id = {record.article_id: record for record in records}
+        for item in items:
+            if not item.content_html or item.article_id not in pks:
+                continue
+            article = by_article_id[item.article_id]
+            markdown = normalize_html(item.content_html, 'html')
+            _, _, blocks, _ = parse_markdown_blocks(markdown)
+            await self._storage.articles.save_article_content(
+                article,
+                url_token=None,
+                title=item.title,
+                item_show_type=None,
+                content_markdown=markdown,
+                content_blocks=blocks,
+                cover_url=item.cover,
+                images=[],
+            )
 
     async def _article_pks(self, biz: str, article_ids: list[str]) -> dict[str, int]:
         if not article_ids:
@@ -150,7 +187,8 @@ class MediaSync:
                 'payload': item.raw,
             }
             for item in items
-            if item.article_id in pks
+            # 没有音频的条目（博客 feed 的自带正文）不需要转写任务。
+            if item.article_id in pks and item.media_url
         ]
         return await self._storage.media_jobs.enqueue_many(payload)
 

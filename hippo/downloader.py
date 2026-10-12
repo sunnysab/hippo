@@ -108,7 +108,7 @@ def _image_url(value: str | None) -> str | None:
     return None
 
 
-def _parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[dict], str]:
+def parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[dict], str]:
     lines = markdown.splitlines()
     title: str | None = None
     cover_local: str | None = None
@@ -987,7 +987,7 @@ class ArticleDownloader(AbstractAsyncContextManager):
         save_article_content = getattr(repo, 'save_article_content', None) if repo else None
         if not callable(save_article_content):
             return
-        title, cover_local, blocks, body_markdown = _parse_markdown_blocks(markdown_content)
+        title, cover_local, blocks, body_markdown = parse_markdown_blocks(markdown_content)
         base_url = article.link or 'https://mp.weixin.qq.com/'
         resolved_map = {raw: resolved for raw, resolved in url_map.items() if resolved}
 

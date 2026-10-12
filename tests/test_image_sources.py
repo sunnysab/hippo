@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, patch
 
 from markdownify import markdownify
 
-from hippo.downloader import _image_url, _parse_markdown_blocks
+from hippo.downloader import _image_url, parse_markdown_blocks
 from hippo.normalize_html import promote_lazy_image_srcs
 from hippo.wechat_parser import _postprocess_markdown
 
@@ -63,7 +63,7 @@ class ParseMarkdownBlocksTest(unittest.TestCase):
     HEAD = '# 标题\n\n正文\n\n'
 
     def _image_blocks(self, markdown: str) -> list[dict]:
-        _title, _cover, blocks, _body = _parse_markdown_blocks(self.HEAD + markdown)
+        _title, _cover, blocks, _body = parse_markdown_blocks(self.HEAD + markdown)
         return [block for block in blocks if block.get('type') == 'image']
 
     def test_a_titled_image_keeps_only_the_url(self) -> None:
@@ -100,7 +100,7 @@ class ParseMarkdownBlocksTest(unittest.TestCase):
         html = '<img data-src="https://mmbiz.qpic.cn/cover.jpg" alt="封面" />'
 
         markdown = markdownify(promote_lazy_image_srcs(html), heading_style='ATX')
-        _title, cover, blocks, _body = _parse_markdown_blocks(markdown)
+        _title, cover, blocks, _body = parse_markdown_blocks(markdown)
 
         self.assertEqual('https://mmbiz.qpic.cn/cover.jpg', cover)
         self.assertEqual([], [block for block in blocks if block.get('type') == 'image'])

@@ -41,7 +41,7 @@ import sys
 
 from markdownify import markdownify
 
-from hippo.downloader import _attach_image_block_metadata, _parse_markdown_blocks
+from hippo.downloader import _attach_image_block_metadata, parse_markdown_blocks
 from hippo.normalize_html import promote_lazy_image_srcs
 from hippo.storage import PostgresStorage
 from hippo.wechat_parser import _postprocess_markdown
@@ -205,7 +205,7 @@ async def main() -> int:
                     markdown = _postprocess_markdown(
                         markdownify(promote_lazy_image_srcs(raw_html), heading_style='ATX')
                     )
-                    _title, _cover, blocks, body_markdown = _parse_markdown_blocks(markdown)
+                    _title, _cover, blocks, body_markdown = parse_markdown_blocks(markdown)
                 except Exception as exc:
                     log(f'✗ 文章 {article_pk} 渲染失败：{exc}')
                     failed += 1

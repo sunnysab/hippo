@@ -140,7 +140,7 @@ class _FakeStorage:
         return _FakeTransaction()
 
 
-def _fake_parse_markdown_blocks(markdown: str) -> tuple[None, None, list[dict], str]:
+def _fakeparse_markdown_blocks(markdown: str) -> tuple[None, None, list[dict], str]:
     return None, None, [{'type': 'paragraph', 'text': markdown}], markdown
 
 
@@ -162,7 +162,7 @@ class BackfillContentJsonCommandTest(unittest.TestCase):
 
         with (
             patch('hippo.cli.PostgresStorage', _FakeStorage),
-            patch('hippo.cli._parse_markdown_blocks', side_effect=_fake_parse_markdown_blocks),
+            patch('hippo.cli.parse_markdown_blocks', side_effect=_fakeparse_markdown_blocks),
             patch(
                 'hippo.cli._attach_image_block_metadata',
                 side_effect=_fake_attach_image_block_metadata,
@@ -195,7 +195,7 @@ class BackfillContentJsonCommandTest(unittest.TestCase):
 
         with (
             patch('hippo.cli.PostgresStorage', _FakeStorage),
-            patch('hippo.cli._parse_markdown_blocks', side_effect=_fake_parse_markdown_blocks),
+            patch('hippo.cli.parse_markdown_blocks', side_effect=_fakeparse_markdown_blocks),
             patch(
                 'hippo.cli._attach_image_block_metadata',
                 side_effect=_fake_attach_image_block_metadata,
@@ -221,7 +221,7 @@ class BackfillContentJsonCommandTest(unittest.TestCase):
 
         with (
             patch('hippo.cli.PostgresStorage', _FakeStorage),
-            patch('hippo.cli._parse_markdown_blocks', side_effect=_fake_parse_markdown_blocks),
+            patch('hippo.cli.parse_markdown_blocks', side_effect=_fakeparse_markdown_blocks),
             patch(
                 'hippo.cli._attach_image_block_metadata',
                 side_effect=_fake_attach_image_block_metadata,
