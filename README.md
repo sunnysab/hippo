@@ -209,7 +209,7 @@ uv run python -m hippo --help        # 全部命令
 | `observability.enabled` | `true` | 置 `false` 可停掉导出而不丢 endpoint |
 | `observability.otlp_endpoint` | — | OTLP/gRPC 端点；留空即整个遥测关闭 |
 | `observability.insecure` | `false` | 采集器走明文 gRPC（`http://` 端点）时置 `true` |
-| `observability.sample_ratio` | `0.1` | 导出的 trace 比例 |
+| `observability.sample_ratio` | `1.0` | `1.0` 导出全部 span，失败的 trace 也在内；调低会在 SDK 里丢掉整条 trace，**错误一并丢**。要降量请在采集器侧做 tail sampling |
 | `observability.environment` | `prod` | 写入 `deployment.environment` |
 
 ### 环境变量

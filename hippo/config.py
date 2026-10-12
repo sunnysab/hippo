@@ -59,8 +59,10 @@ class ObservabilitySettings:
     otlp_endpoint: str = ''
     #: Plaintext gRPC (``http://`` collectors) instead of TLS.
     insecure: bool = False
-    #: Fraction of traces the SDK exports; the rest are dropped at the root.
-    sample_ratio: float = 0.1
+    #: 1.0 keeps every span, failed traces included. Any lower value drops
+    #: whole traces at the SDK, errors and all: to trim volume, sample in the
+    #: collector instead.
+    sample_ratio: float = 1.0
     environment: str = 'prod'
 
 

@@ -63,6 +63,13 @@ def test_an_invalid_sample_ratio_falls_back_to_the_default(tmp_path):
     assert load_observability_settings(path).sample_ratio == ObservabilitySettings().sample_ratio
 
 
+def test_every_trace_is_exported_by_default(tmp_path):
+    """A lower default would drop failed traces inside the SDK."""
+    path = _write_config(tmp_path, '[observability]\notlp_endpoint = "http://collector:4317"\n')
+
+    assert load_observability_settings(path).sample_ratio == 1.0
+
+
 def test_a_broken_file_falls_back_to_defaults(tmp_path, capsys):
     path = _write_config(tmp_path, 'not = [valid')
 
