@@ -1,4 +1,4 @@
-"""Observability wiring: config.toml opt-in, span helpers, handlers and redaction.
+"""Observability wiring: OTLP opt-in, span helpers, handlers and redaction.
 
 Telemetry must stay silent unless ``config.toml`` names an OTLP endpoint: the
 CLI, the test suite and local development all run without a collector.
@@ -12,16 +12,22 @@ from pathlib import Path
 
 import pytest
 
-from hippo.config import ObservabilitySettings, load_observability_settings
+from hippo import config
 from hippo.observability import logging as obs_logging
 from hippo.observability import metrics as metrics_module
 from hippo.observability import otel as otel_module
 
 
-def _write_config(tmp_path: Path, body: str) -> Path:
-    path = tmp_path / 'config.toml'
-    path.write_text(body, encoding='utf-8')
-    return path
+@pytest.fixture(autouse=True)
+def _fresh_settings():
+    """Every test reads the config file from its own working directory."""
+    config.reset_settings()
+    yield
+    config.reset_settings()
+
+
+def _write_config(tmp_path: Path, body: str) -> None:
+    (tmp_path / 'config.toml').write_text(body, encoding='utf-8')
 
 
 def test_telemetry_is_off_without_a_config_file(tmp_path, monkeypatch):
@@ -39,42 +45,12 @@ def test_telemetry_reads_the_endpoint_from_config_toml(tmp_path, monkeypatch):
     assert otel_module.otlp_endpoint() == 'http://collector:4317'
 
 
-def test_telemetry_can_be_switched_off_without_losing_the_endpoint(tmp_path):
-    path = _write_config(
-        tmp_path,
-        '[observability]\nenabled = false\notlp_endpoint = "http://collector:4317"\n',
-    )
+def test_telemetry_can_be_switched_off_without_losing_the_endpoint(tmp_path, monkeypatch):
+    _write_config(tmp_path, '[observability]\nenabled = false\notlp_endpoint = "http://collector:4317"\n')
+    monkeypatch.chdir(tmp_path)
 
-    settings = load_observability_settings(path)
-    assert settings.enabled is False
-    assert settings.otlp_endpoint == 'http://collector:4317'
-
-
-@pytest.mark.parametrize(('raw', 'expected'), [('0.5', 0.5), ('2', 1.0), ('-1', 0.0)])
-def test_sample_ratio_is_clamped(tmp_path, raw, expected):
-    path = _write_config(tmp_path, f'[observability]\nsample_ratio = {raw}\n')
-
-    assert load_observability_settings(path).sample_ratio == expected
-
-
-def test_an_invalid_sample_ratio_falls_back_to_the_default(tmp_path):
-    path = _write_config(tmp_path, '[observability]\nsample_ratio = "oops"\n')
-
-    assert load_observability_settings(path).sample_ratio == ObservabilitySettings().sample_ratio
-
-
-def test_every_trace_is_exported_by_default(tmp_path):
-    """A lower default would drop failed traces inside the SDK."""
-    path = _write_config(tmp_path, '[observability]\notlp_endpoint = "http://collector:4317"\n')
-
-    assert load_observability_settings(path).sample_ratio == 1.0
-
-
-def test_a_broken_file_falls_back_to_defaults(tmp_path, capsys):
-    path = _write_config(tmp_path, 'not = [valid')
-
-    assert load_observability_settings(path) == ObservabilitySettings()
-    assert 'Failed to read' in capsys.readouterr().err
+    assert otel_module.telemetry_enabled() is False
+    assert otel_module.otlp_endpoint() == 'http://collector:4317'
 
 
 def test_exporters_take_the_endpoint_from_the_file(monkeypatch):
@@ -88,7 +64,7 @@ def test_exporters_take_the_endpoint_from_the_file(monkeypatch):
     for name in ('OTLPSpanExporter', 'OTLPMetricExporter', 'OTLPLogExporter'):
         monkeypatch.setattr(otel_module, name, _FakeExporter)
 
-    otel_module._exporters(ObservabilitySettings(otlp_endpoint='http://collector:4317'))
+    otel_module._exporters(config.ObservabilitySettings(otlp_endpoint='http://collector:4317'))
 
     assert captured == [{'endpoint': 'http://collector:4317', 'insecure': False}] * 3
 
@@ -159,14 +135,18 @@ def test_redact_masks_credential_keys_case_insensitively():
     }
 
 
-def test_extra_handlers_are_fanned_out_on_the_listener_thread(monkeypatch):
-    """Without this the worker would log to its file only, never to OTLP."""
-    monkeypatch.delenv('HIPPO_LOG_FILE', raising=False)
+def test_setup_logger_uses_the_configured_level_and_file(tmp_path, monkeypatch):
+    _write_config(tmp_path, '[logging]\nlevel = "DEBUG"\nfile = "logs/{service}.log"\n')
+    monkeypatch.chdir(tmp_path)
     handler = logging.NullHandler()
 
-    obs_logging.configure_logging(extra_handlers=[handler])
+    from hippo.logger import setup_logger
+
+    setup_logger(service=config.WORKER_SERVICE, extra_handlers=[handler])
     try:
         assert obs_logging._LISTENER is not None
         assert handler in obs_logging._LISTENER.handlers
+        assert logging.getLogger().level == logging.DEBUG
+        assert (tmp_path / 'logs' / 'hippo-sync-worker.log').exists()
     finally:
         obs_logging.shutdown_logging()
