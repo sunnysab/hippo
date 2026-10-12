@@ -104,7 +104,8 @@ async def preview_source(
     except LookupError:
         subscribed = False
     return {
-        'source': source,
+        # preview 认出来的优先：feed 里有没有音频附件，只有抓下来才知道。
+        'source': info.source or source,
         'biz': info.biz,
         'nickname': info.nickname,
         'avatar_url': info.avatar_url,
@@ -150,7 +151,9 @@ async def subscribe_source(
             AccountCredential(
                 biz=info.biz,
                 nickname=info.nickname,
-                source=source,
+                # preview 认出来的优先：feed 里有没有音频附件，只有抓下来才知道，
+                # 所以 podcast / feed 的区分在这里才落地。
+                source=info.source or source,
                 # alias 存来源内的标识（mid / channel id / feed URL）
                 alias=info.source_key,
                 round_head_img=info.avatar_url,

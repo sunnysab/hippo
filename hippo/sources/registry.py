@@ -18,8 +18,8 @@ from . import SourceAdapter, UnsupportedSource
 from .bilibili import SOURCE as BILIBILI_SOURCE
 from .bilibili import BilibiliClient, BilibiliResolver, BilibiliSource
 from .ingest import ChannelInfo, MediaResolverRegistry, MediaSource, MediaSync
+from .podcast import FEED_SOURCE, PodcastClient, PodcastResolver, PodcastSource
 from .podcast import SOURCE as PODCAST_SOURCE
-from .podcast import PodcastClient, PodcastResolver, PodcastSource
 from .youtube import SOURCE as YOUTUBE_SOURCE
 from .youtube import YoutubeResolver, YoutubeSource
 
@@ -62,6 +62,11 @@ class MediaSources:
         self.sources[PODCAST_SOURCE] = podcast_source
         self.adapters[PODCAST_SOURCE] = MediaSync(storage=storage, source=podcast_source)
         self.resolvers[PODCAST_SOURCE] = PodcastResolver(podcast, proxy=podcast_proxy)
+        # 图文订阅（没有音频附件的 feed）是同一套东西，只是名字不同：账号存的是
+        # preview 认出来的那个 source，取适配器时不能落空。
+        self.sources[FEED_SOURCE] = podcast_source
+        self.adapters[FEED_SOURCE] = self.adapters[PODCAST_SOURCE]
+        self.resolvers[FEED_SOURCE] = self.resolvers[PODCAST_SOURCE]
 
         # yt-dlp 是子进程，没有客户端要管，只需要代理设置与 cookie（登录态是躲开
         # 「confirm you're not a bot」的唯一办法）。

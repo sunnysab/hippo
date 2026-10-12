@@ -36,6 +36,10 @@ class ChannelInfo:
     nickname: str
     source_key: str
     avatar_url: str | None = None
+    #: The source this turned out to be, when parsing can tell (a feed with an audio
+    #: enclosure is a podcast, one without is a text feed). Empty means "the source the
+    #: caller already picked".
+    source: str = ''
 
 
 @dataclass(frozen=True, slots=True)

@@ -69,6 +69,19 @@ ATOM = """<?xml version="1.0" encoding="utf-8"?>
 </feed>
 """
 
+TEXT_FEED = """<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>阮一峰的网络日志</title>
+  <entry>
+    <title>科技爱好者周刊</title>
+    <id>tag:blog,2026:414</id>
+    <link rel="alternate" href="https://blog.example/414"/>
+    <updated>2026-10-11T11:41:55Z</updated>
+    <content type="html">&lt;p&gt;每周分享科技内容。&lt;/p&gt;</content>
+  </entry>
+</feed>
+"""
+
 VTT = """WEBVTT
 
 00:00:00.000 --> 00:00:04.000
@@ -212,6 +225,18 @@ class SourceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('一档播客', info.nickname)
         self.assertEqual('https://feed.example/rss', info.source_key)
         self.assertEqual(feed_biz('https://feed.example/rss'), info.biz)
+        # 有音频附件 → 播客
+        self.assertEqual('podcast', info.source)
+
+    async def test_preview_calls_a_text_feed_a_feed(self) -> None:
+        # 只有正文、没有音频附件的 feed（博客/周刊）：同一套解析，不同的来源名，
+        # 因为它不该被当成播客展示，也没有音频可转写。
+        client = _client(feed=AsyncMock(return_value=parse_feed(TEXT_FEED)))
+
+        info = await PodcastSource(client).preview('https://blog.example/atom.xml')
+
+        self.assertEqual('feed', info.source)
+        self.assertEqual('阮一峰的网络日志', info.nickname)
 
     async def test_listing_maps_episodes_and_keeps_the_transcript_url(self) -> None:
         client = _client(feed=AsyncMock(return_value=parse_feed(RSS)))

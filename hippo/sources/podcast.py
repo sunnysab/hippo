@@ -32,6 +32,10 @@ from .ingest import ChannelInfo, Item, Listing
 logger = get_logger(__name__)
 
 SOURCE = 'podcast'
+#: A feed whose entries carry an enclosure is a podcast; one whose entries are text is
+#: a blog. Same parser and same adapter — only the label and the badge differ, and the
+#: parse is the only place that can tell.
+FEED_SOURCE = 'feed'
 
 #: Real feeds can be large (The Daily's is ~20 MB) but not unbounded; this is a
 #: memory guard, not a policy.
@@ -328,11 +332,15 @@ class PodcastSource:
     async def preview(self, ref: str) -> ChannelInfo:
         url = normalize_feed_url(ref)
         feed = await self._client.feed(url)
+        # 有音频附件的是播客，只有正文的是图文订阅：同一套解析，只差一个标签。
+        # 判定放在这里，因为只有抓到 feed 才知道。
+        kind = SOURCE if any(episode.audio_url for episode in feed.episodes) else FEED_SOURCE
         return ChannelInfo(
             biz=feed_biz(url),
             nickname=feed.title,
             source_key=url,
             avatar_url=feed.image_url,
+            source=kind,
         )
 
     async def list_items(self, *, source_key: str, limit: int, cursor: str | None = None) -> Listing:
@@ -416,6 +424,7 @@ class PodcastResolver:
 
 
 __all__ = [
+    'FEED_SOURCE',
     'FEED_TIMEOUT',
     'MAX_FEED_BYTES',
     'MAX_TRANSCRIPT_BYTES',

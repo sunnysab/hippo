@@ -1209,7 +1209,8 @@ async def add_source(
                 AccountCredential(
                     biz=info.biz,
                     nickname=info.nickname,
-                    source=source,
+                    # preview 认出来的优先（feed 有没有音频只有抓下来才知道）
+                    source=info.source or source,
                     alias=info.source_key,
                     round_head_img=info.avatar_url,
                 )

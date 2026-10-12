@@ -4,6 +4,7 @@
   "source.bilibili": "哔哩哔哩",
   "source.youtube": "YouTube",
   "source.podcast": "播客",
+  "source.feed": "RSS",
   "nav.groups": "分组",
   "nav.articles": "文章",
   "nav.sync": "设置",

@@ -19,6 +19,8 @@ export const SOURCE_META: Record<string, SourceMeta> = {
   bilibili: { key: 'source.bilibili', fallback: '哔哩哔哩', tone: 'video' },
   youtube: { key: 'source.youtube', fallback: 'YouTube', tone: 'share' },
   podcast: { key: 'source.podcast', fallback: '播客', tone: 'audio' },
+  // 没有音频附件的 feed（博客/周刊）：同一套解析，只是没有可听的东西。
+  feed: { key: 'source.feed', fallback: 'RSS', tone: 'regular' },
 };
 
 /** Falls back to the raw identifier: an unknown source is still shown. */
