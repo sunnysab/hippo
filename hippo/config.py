@@ -96,6 +96,10 @@ class WebSettings:
     #: Run the sync loops inside the web process. Development only.
     inprocess_sync: bool = False
     signoz_url: str = ''
+    #: Origins allowed to call the API from a browser. Normally empty: the SPA
+    #: is served from the same origin, so cross-origin needs are rare and each
+    #: one is worth naming.
+    allowed_origins: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.session_ttl_hours < 1:
@@ -184,8 +188,13 @@ def _coerce(default: Any, raw: Any) -> Any:
             return int(raw)
         if isinstance(default, float):
             return float(raw)
+        if isinstance(default, tuple):
+            # A scalar is malformed here, not a one-element list.
+            if not isinstance(raw, list):
+                return default
+            return tuple(str(item).strip() for item in raw if str(item).strip())
         return str(raw).strip() or default
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return default
 
 

@@ -203,13 +203,13 @@ def create_app(
             shutdown_logging()
 
     app = FastAPI(lifespan=lifespan)
-    # Binding the caller's identity is registered before the middleware that
-    # can answer without reaching the app, so even those responses are logged
-    # with the origin they were decided at.
+    # add_middleware inserts at the front, so the last one added is the outermost.
+    # CORS goes last to stay outside the request context: a rejected origin is
+    # still answered with the CORS headers the browser needs to read the failure.
     install_request_context(app)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=['*'],
+        allow_origins=get_settings().web.allowed_origins,
         allow_methods=['*'],
         allow_headers=['*'],
     )

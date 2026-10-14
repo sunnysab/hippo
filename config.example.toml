@@ -41,6 +41,9 @@ session_ttl_hours = 168
 inprocess_sync = false
 # Base URL of SignOz; the admin console deep-links into it when set.
 signoz_url = ""
+# Browser origins allowed to call the API. Empty is the norm: the SPA is served
+# from the same origin and a reverse proxy fronts the API.
+# allowed_origins = ["http://localhost:5173"]
 
 [logging]
 level = "WARNING"

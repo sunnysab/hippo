@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+import pytest
 
 from hippo import config
 
@@ -190,3 +193,22 @@ def test_get_settings_caches_until_reset(tmp_path, monkeypatch):
         assert config.get_settings().database.dsn == 'second'
     finally:
         config.reset_settings()
+
+
+@pytest.mark.parametrize(
+    ('raw', 'expected'),
+    [
+        (['http://localhost:5173'], ('http://localhost:5173',)),
+        ([], ()),
+        ('http://localhost:5173', ()),  # a scalar is malformed, not one origin
+    ],
+)
+def test_allowed_origins_is_a_tuple_of_named_origins(tmp_path, monkeypatch, raw, expected) -> None:
+    """CORS defaults to closed, and a malformed value must not open it."""
+    from hippo import config
+
+    path = tmp_path / 'config.toml'
+    path.write_text(f'[web]\nallowed_origins = {json.dumps(raw)}\n', encoding='utf-8')
+    monkeypatch.chdir(tmp_path)
+
+    assert config.load_settings(path).web.allowed_origins == expected
