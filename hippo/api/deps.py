@@ -53,11 +53,18 @@ def get_sync_scheduler(request: Request) -> SyncScheduler | None:
 
 
 def client_ip(request: Request) -> str | None:
-    """Best-effort client address, honouring one layer of reverse proxy."""
-    forwarded = request.headers.get('x-forwarded-for')
-    if forwarded:
-        return forwarded.split(',')[0].strip()
-    return request.client.host if request.client else None
+    """Caller address, or ``None`` when it cannot be established.
+
+    ``X-Forwarded-For`` is only believed when the request arrived with no peer
+    address at all, which is what a Unix-socket listener reports; Caddy fronts
+    the socket and sets the header there. Over TCP the header is
+    caller-controlled, so the peer address wins: a direct connection cannot
+    claim someone else's address and slip past a per-address rate limit.
+    """
+    if request.client is None:
+        forwarded = request.headers.get('x-forwarded-for')
+        return forwarded.split(',')[0].strip() or None if forwarded else None
+    return request.client.host or None
 
 
 def _api_key_from_request(request: Request) -> str | None:
