@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 from hippo.api.routers import source as source_api
 from hippo.exceptions import ApiError
 from hippo.models import AccountCredential
+from hippo.sources.bilibili import BilibiliError
 from hippo.sources.credentials import MAX_CREDENTIAL_BYTES
 from hippo.sources.detect import detect_source
 from hippo.sources.ingest import ChannelInfo
@@ -147,8 +148,9 @@ class PreviewTest(unittest.IsolatedAsyncioTestCase):
 
         preview.assert_not_awaited()
 
-    async def test_an_upstream_failure_is_a_bad_gateway(self) -> None:
-        sources, _ = _sources(error=RuntimeError('风控拦截'))
+    async def test_an_adapter_error_is_a_bad_gateway_carrying_its_message(self) -> None:
+        # A SourceError is written for the operator, so its sentence is served.
+        sources, _ = _sources(error=BilibiliError('B站风控拦截：投稿列表需要有效的 SESSDATA'))
         with (
             patch('hippo.api.routers.source.MediaSources', sources),
             patch('hippo.api.routers.source.get_media_settings', new=AsyncMock(return_value={'enabled': True})),
@@ -157,7 +159,25 @@ class PreviewTest(unittest.IsolatedAsyncioTestCase):
             await source_api.preview_source(url='https://space.bilibili.com/1', user=_user(), storage=_storage())
 
         self.assertEqual(502, ctx.exception.status)
+        self.assertEqual('source.parse_failed', ctx.exception.code)
         self.assertIn('风控', str(ctx.exception))
+
+    async def test_an_internal_defect_is_a_bad_gateway_without_its_detail(self) -> None:
+        """A plain exception is our own bug: log it, do not hand it to the caller."""
+        error = RuntimeError('psql://user:secret@host/db')
+        sources, _ = _sources(error=error)
+        with (
+            patch('hippo.api.routers.source.MediaSources', sources),
+            patch('hippo.api.routers.source.get_media_settings', new=AsyncMock(return_value={'enabled': True})),
+            self.assertRaises(ApiError) as ctx,
+        ):
+            await source_api.preview_source(url='https://space.bilibili.com/1', user=_user(), storage=_storage())
+
+        self.assertEqual(502, ctx.exception.status)
+        self.assertEqual('解析失败', str(ctx.exception))
+        self.assertNotIn('secret', str(ctx.exception))
+        # Chained, not swallowed: the traceback still reaches the log.
+        self.assertIs(error, ctx.exception.__cause__)
 
     async def test_a_value_error_is_a_bad_request(self) -> None:
         sources, _ = _sources(error=ValueError('这不像是一个 B站 链接'))

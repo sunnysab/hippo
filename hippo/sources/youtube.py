@@ -33,6 +33,7 @@ from urllib.parse import parse_qs, urlparse
 
 from ..logger import get_logger
 from ..media.pipeline import MediaJobSkipped, ResolvedMedia
+from . import SourceError
 from .ingest import ChannelInfo, Item, Listing
 
 logger = get_logger(__name__)
@@ -59,7 +60,7 @@ _CHANNEL_ID_RE = re.compile(r'^UC[0-9A-Za-z_-]{22}$')
 _VIDEO_ID_RE = re.compile(r'^[0-9A-Za-z_-]{11}$')
 
 
-class YoutubeError(RuntimeError):
+class YoutubeError(SourceError):
     pass
 
 

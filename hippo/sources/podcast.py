@@ -27,6 +27,7 @@ from ..media.pipeline import MediaJobSkipped, ResolvedMedia, Subtitle
 from ..media.subtitle import blocks as subtitle_blocks
 from ..media.subtitle import markdown as subtitle_markdown
 from ..media.subtitle import parse_timed_text
+from . import SourceError
 from .ingest import ChannelInfo, Item, Listing
 
 logger = get_logger(__name__)
@@ -59,7 +60,7 @@ _NS = {
 _TRANSCRIPT_TYPES = ('text/vtt', 'application/srt', 'application/x-subrip', 'text/plain', 'text/srt')
 
 
-class PodcastError(RuntimeError):
+class PodcastError(SourceError):
     pass
 
 

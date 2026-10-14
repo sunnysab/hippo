@@ -19,6 +19,15 @@ class UnsupportedSource(RuntimeError):
     """No adapter is registered for this ``accounts.source`` value."""
 
 
+class SourceError(RuntimeError):
+    """An adapter failure whose message is written for the person running hippo.
+
+    Subclasses say what the operator should do about it -- supply a cookie, fix
+    the URL, check the network -- so the API may show the message as-is. Anything
+    else an adapter raises is an implementation detail: it is logged, not served.
+    """
+
+
 class SourceAdapter(Protocol):
     async def sync_account(
         self,
@@ -63,4 +72,11 @@ def body_adapters(adapters: Mapping[str, SourceAdapter]) -> list[BodyAdapter]:
     return [adapter for _, adapter in sorted(adapters.items()) if callable(getattr(adapter, 'drain', None))]
 
 
-__all__ = ['BodyAdapter', 'SourceAdapter', 'UnsupportedSource', 'adapter_for', 'body_adapters']
+__all__ = [
+    'BodyAdapter',
+    'SourceAdapter',
+    'SourceError',
+    'UnsupportedSource',
+    'adapter_for',
+    'body_adapters',
+]

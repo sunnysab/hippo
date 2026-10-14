@@ -25,6 +25,7 @@ import httpx
 
 from ..logger import get_logger
 from ..media.pipeline import MediaJobSkipped, ResolvedMedia, Subtitle
+from . import SourceError
 from .ingest import ChannelInfo, Item, Listing
 
 logger = get_logger(__name__)
@@ -118,7 +119,7 @@ _ORDINARY_AUDIO_IDS = {30216, 30232, 30280}
 _RISK_CONTROL_HINT = 'B站风控拦截：投稿列表需要有效的 SESSDATA（在管理台「媒体与转写」里配置）'
 
 
-class BilibiliError(RuntimeError):
+class BilibiliError(SourceError):
     pass
 
 

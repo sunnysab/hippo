@@ -17,11 +17,12 @@ from ...exceptions import ApiError
 from ...logger import get_logger
 from ...media_settings import get_media_settings, instance_credential, resolve_proxy
 from ...models import AccountCredential, User
-from ...sources import UnsupportedSource
+from ...sources import SourceError, UnsupportedSource
 from ...sources.credentials import SOURCES as CREDENTIAL_SOURCES
 from ...sources.credentials import CredentialError
 from ...sources.credentials import clean as clean_credential
 from ...sources.detect import detect_source
+from ...sources.ingest import ChannelInfo
 from ...sources.probe import probe_credential
 from ...sources.registry import MediaSources
 from ...storage import PostgresStorage, ensure_default_group
@@ -61,6 +62,25 @@ def _require_source(url: str) -> str:
     return source
 
 
+async def _preview(sources: MediaSources, source: str, url: str) -> ChannelInfo:
+    """Resolve a URL to a channel, mapping adapter failures onto HTTP.
+
+    A source's own error type carries a sentence written for the operator, so it
+    is served as-is. Anything else is a defect in this process: the detail goes
+    to the log and the caller gets a fixed message.
+    """
+    try:
+        return await sources.preview(source, url)
+    except (UnsupportedSource, ValueError) as exc:
+        raise ApiError(str(exc), status=400) from exc
+    except SourceError as exc:
+        raise ApiError(f'解析失败：{exc}', status=502, code='source.parse_failed') from exc
+    except Exception as exc:
+        # The detail stays in the chain: the handler logs it, the caller does not
+        # get it. Chained rather than logged here, so one failure is one record.
+        raise ApiError('解析失败', status=502, code='source.parse_failed') from exc
+
+
 @router.get('/source')
 async def list_sources(
     user: User = Depends(current_user),
@@ -88,14 +108,7 @@ async def preview_source(
     source = _require_source(url)
     sources = await _media_sources(storage, user)
     try:
-        try:
-            info = await sources.preview(source, url)
-        except UnsupportedSource as exc:
-            raise ApiError(str(exc), status=400) from exc
-        except ValueError as exc:
-            raise ApiError(str(exc), status=400) from exc
-        except Exception as exc:
-            raise ApiError(f'解析失败：{exc}', status=502, code='source.parse_failed') from exc
+        info = await _preview(sources, source, url)
     finally:
         await sources.aclose()
     try:
@@ -137,12 +150,7 @@ async def subscribe_source(
 
     sources = await _media_sources(storage, user)
     try:
-        try:
-            info = await sources.preview(source, url)
-        except (UnsupportedSource, ValueError) as exc:
-            raise ApiError(str(exc), status=400) from exc
-        except Exception as exc:
-            raise ApiError(f'解析失败：{exc}', status=502, code='source.parse_failed') from exc
+        info = await _preview(sources, source, url)
     finally:
         await sources.aclose()
 
