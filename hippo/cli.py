@@ -40,7 +40,7 @@ from .security import hash_password
 from .server import serve as run_server
 from .sources.detect import detect_source
 from .sources.registry import MediaSources
-from .storage import PostgresStorage, StorageInitError, ensure_default_group, open_storage
+from .storage import PostgresStorage, StorageInitError, close_pool, ensure_default_group, open_storage
 from .sync_worker import run_sync_worker
 from .utils import format_table, parse_iso_datetime_to_timestamp
 
@@ -73,9 +73,24 @@ def _resolve_pg_dsn(pg_dsn: str | None) -> str:
 
 
 def coro(func):
+    """Run a CLI coroutine in its own loop, closing the connection pool after.
+
+    ``open_storage`` binds a pool to the running loop and leaves it open, which
+    is right for the long-running services but not here: when the loop is torn
+    down with a connection attempt still in flight, ``asyncio.run`` blocks in
+    ``_cancel_all_tasks`` and the command never exits. Closing the pool first
+    shuts those workers down on a live loop.
+    """
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        return asyncio.run(func(*args, **kwargs))
+        async def run() -> Any:
+            try:
+                return await func(*args, **kwargs)
+            finally:
+                await close_pool()
+
+        return asyncio.run(run())
 
     return wrapper
 
