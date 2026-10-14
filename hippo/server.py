@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .api.errors import install_exception_handlers
+from .api.middleware import install_request_context
 from .api.routers import (
     account,
     admin,
@@ -202,6 +203,10 @@ def create_app(
             shutdown_logging()
 
     app = FastAPI(lifespan=lifespan)
+    # Binding the caller's identity is registered before the middleware that
+    # can answer without reaching the app, so even those responses are logged
+    # with the origin they were decided at.
+    install_request_context(app)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=['*'],

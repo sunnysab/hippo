@@ -1,7 +1,5 @@
 """Shared FastAPI dependencies and request-parameter helpers."""
 
-
-
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
@@ -108,23 +106,29 @@ async def current_user_optional(
     accepts a key without changing a single route.
     """
     token = request.cookies.get(SESSION_COOKIE)
-    if token:
-        user = await storage.sessions.resolve(token)
-        if user is not None:
-            return user
-    return await api_key_user(request, storage)
+    user = await storage.sessions.resolve(token) if token else None
+    if user is None:
+        user = await api_key_user(request, storage)
+    if user is not None:
+        # So a failure later in the request can be logged against its caller.
+        request.state.user_id = user.id
+    return user
 
 
-#: Said by every authenticated endpoint when the *hippo* session is missing. Spelled
-#: out because the shorter 「未登录」 reads like a statement about the source account
-#: (B站 / YouTube) to whoever just configured a credential there.
-NOT_SIGNED_IN = '未登录 hippo：请先登录（这里说的是 hippo 会话，与来源凭证无关）'
+#: Said by every authenticated endpoint when the *hippo* session is missing.
+#: Says whose session explicitly, because a bare 「未登录」 reads like a statement
+#: about the *source* account to whoever just configured a credential there.
+#: The wording is copy for the client; the log only ever sees the code.
+NOT_SIGNED_IN = '需要登录 hippo 会话'
+
+#: Stable identifier for the same condition, for clients and log queries.
+SESSION_MISSING = 'auth.session_missing'
 
 
 async def current_user(user: User | None = Depends(current_user_optional)) -> User:
     """Require a signed-in, enabled user."""
     if user is None:
-        raise ApiError(NOT_SIGNED_IN, status=401)
+        raise ApiError(NOT_SIGNED_IN, status=401, code=SESSION_MISSING)
     return user
 
 
@@ -151,6 +155,7 @@ def parse_group_ids(group_ids: str | None, group_id: int | None = None) -> list[
 __all__ = [
     'NOT_SIGNED_IN',
     'SESSION_COOKIE',
+    'SESSION_MISSING',
     'client_ip',
     'current_user',
     'current_user_optional',
