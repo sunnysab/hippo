@@ -44,8 +44,14 @@ def install_exception_handlers(app: FastAPI) -> None:
             # Our fault, and the only case worth a traceback: the cause of a 4xx
             # is the caller's own input.
             logger.error('request_failed', exc_info=exc, **fields)
-        else:
+        elif exc.status == 401:
+            # A routine session expiry, and the client redirects to the login
+            # form on it. Kept below the production level (WARNING) so it does
+            # not drown the log; every other 4xx stays at warning, because a 403
+            # or a 429 is something an operator may need to see.
             logger.info('request_failed', **fields)
+        else:
+            logger.warning('request_failed', **fields)
         return JSONResponse(
             status_code=exc.status,
             content={'error': str(exc), 'code': exc.code},

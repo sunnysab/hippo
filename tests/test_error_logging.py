@@ -69,7 +69,7 @@ class ApiErrorLogTest(unittest.TestCase):
         self.assertEqual('testclient', line['client_ip'])
         self.assertEqual('hippo.lab', line['http_host'])
         self.assertEqual('probe/1', line['user_agent'])
-        # A 4xx is the caller's own doing, so it is not an error-level event.
+        # A 401 is a routine expiry the client handles, so it stays quiet.
         self.assertEqual('info', line['level'])
 
     def test_the_body_carries_the_code_for_the_client_to_branch_on(self) -> None:
@@ -95,6 +95,19 @@ class ApiErrorLogTest(unittest.TestCase):
 
         self.assertEqual(502, response.status_code)
         self.assertEqual('error', self._failed()['level'])
+
+    def test_other_client_errors_stay_visible_at_warning(self) -> None:
+        """Only the 401 is demoted: a 403 or a 429 must survive level=WARNING."""
+        app = self._app()
+
+        @app.get('/api/forbidden')
+        async def forbidden():
+            raise ApiError('需要管理员权限', status=403, code='http_403')
+
+        response = TestClient(app).get('/api/forbidden')
+
+        self.assertEqual(403, response.status_code)
+        self.assertEqual('warning', self._failed()['level'])
 
     def test_the_cause_is_logged_but_never_returned(self) -> None:
         app = self._app()
