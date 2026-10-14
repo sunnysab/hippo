@@ -722,7 +722,7 @@ async def _ensure_image_hash(
     except LookupError as exc:
         raise ApiError(str(exc), status=404) from exc
     except RuntimeError as exc:
-        raise ApiError(str(exc), status=502) from exc
+        raise ApiError(str(exc), status=502, code='image.unavailable') from exc
 
 
 async def _ensure_image_visible(storage: PostgresStorage, user_id: int, image_id: int) -> None:
@@ -770,7 +770,7 @@ async def _fetch_image(storage: PostgresStorage, user_id: int, image_id: int) ->
     except LookupError as exc:
         raise ApiError(str(exc), status=404) from exc
     except RuntimeError as exc:
-        raise ApiError(str(exc), status=502) from exc
+        raise ApiError(str(exc), status=502, code='image.unavailable') from exc
 
 
 async def _list_feed(

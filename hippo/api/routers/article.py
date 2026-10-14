@@ -312,7 +312,7 @@ async def stream_archived_media(
     try:
         stream = await asyncio.to_thread(archive_module.open_audio, str(asset['s3_key']), start=start, end=end)
     except archive_module.ArchiveError as exc:
-        raise ApiError(str(exc), status=502) from exc
+        raise ApiError(str(exc), status=502, code='article.archive_unavailable') from exc
 
     headers = {
         'Accept-Ranges': 'bytes',

@@ -290,7 +290,7 @@ async def search_account(
         async with WeixinSource() as source:
             items = await source.search_public_accounts(keyword, offset)
     except Exception as exc:
-        raise ApiError(f'搜索公众号失败：{exc}', status=502) from exc
+        raise ApiError(f'搜索公众号失败：{exc}', status=502, code='daemon.search_failed') from exc
 
     accounts = await storage.accounts.list_followed_accounts(user.id)
     followed_biz = {account.biz for account in accounts}
@@ -432,7 +432,7 @@ async def create_account(
             async with WeixinSource() as source:
                 biz = await source.resolve_fakeid(gh_id)
         except Exception as exc:
-            raise ApiError(f'解析公众号 ID 失败：{exc}', status=502) from exc
+            raise ApiError(f'解析公众号 ID 失败：{exc}', status=502, code='daemon.resolve_failed') from exc
     group_id = body.get('group_id')
     if group_id is None:
         default_group = await ensure_default_group(storage, user.id, name=DEFAULT_GROUP_NAME)

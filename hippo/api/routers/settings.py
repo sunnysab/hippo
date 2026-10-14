@@ -290,7 +290,7 @@ async def send_sync_test_email(
             elapsed_ms,
             exc,
         )
-        raise ApiError(f'Failed to send test email: {exc}') from exc
+        raise ApiError(f'Failed to send test email: {exc}', code='settings.email_failed') from exc
     elapsed_ms = int((time_module.monotonic() - started_at) * 1000)
     logger.info(
         'Test email sent: to=%s smtp_host=%s elapsed_ms=%s',

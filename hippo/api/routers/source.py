@@ -51,7 +51,7 @@ async def _media_sources(storage: PostgresStorage, user: User) -> MediaSources:
             youtube_cookies=cookies,
         )
     except Exception as exc:
-        raise ApiError(f'媒体来源初始化失败：{exc}', status=500) from exc
+        raise ApiError('媒体来源初始化失败', status=500, code='source.init_failed') from exc
 
 
 def _require_source(url: str) -> str:
@@ -95,7 +95,7 @@ async def preview_source(
         except ValueError as exc:
             raise ApiError(str(exc), status=400) from exc
         except Exception as exc:
-            raise ApiError(f'解析失败：{exc}', status=502) from exc
+            raise ApiError(f'解析失败：{exc}', status=502, code='source.parse_failed') from exc
     finally:
         await sources.aclose()
     try:
@@ -142,7 +142,7 @@ async def subscribe_source(
         except (UnsupportedSource, ValueError) as exc:
             raise ApiError(str(exc), status=400) from exc
         except Exception as exc:
-            raise ApiError(f'解析失败：{exc}', status=502) from exc
+            raise ApiError(f'解析失败：{exc}', status=502, code='source.parse_failed') from exc
     finally:
         await sources.aclose()
 

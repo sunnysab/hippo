@@ -53,7 +53,7 @@ async def login_auto() -> dict[str, Any]:
         async with WeixinSource(auto_login=False) as source:
             result = await source.login_auto_now()
     except Exception as exc:
-        raise ApiError(f'免扫重登失败：{exc}', status=502) from exc
+        raise ApiError(f'免扫重登失败：{exc}', status=502, code='daemon.login_failed') from exc
     return {'ok': True, 'result': result}
 
 
@@ -64,7 +64,7 @@ async def login_qr() -> dict[str, Any]:
         async with WeixinSource(auto_login=False) as source:
             qr = await source.start_qr_login()
     except Exception as exc:
-        raise ApiError(f'获取二维码失败：{exc}', status=502) from exc
+        raise ApiError(f'获取二维码失败：{exc}', status=502, code='daemon.qr_failed') from exc
     png = getattr(qr, 'png', b'') or b''
     return {
         'uuid': getattr(qr, 'uuid', ''),
@@ -81,5 +81,5 @@ async def login_wait() -> dict[str, Any]:
         async with WeixinSource(auto_login=False) as source:
             result = await source.wait_login()
     except Exception as exc:
-        raise ApiError(f'登录等待失败：{exc}', status=502) from exc
+        raise ApiError(f'登录等待失败：{exc}', status=502, code='daemon.wait_failed') from exc
     return {'ok': True, 'result': result}
