@@ -25,7 +25,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .config import get_settings
-from .observability.otel import add_span_attributes, traced
+from .observability.otel import add_span_attributes, traced, traceparent
 from .utils import strip_nul
 
 # 会话类错误（daemon 侧 -13/未登录）：不是文章的错，不计 attempts、整体暂停等重新登录。
@@ -150,6 +150,9 @@ class WeixinSource:
     async def __aenter__(self) -> WeixinSource:
         bot_class = load_bot_class()
         self._bot = bot_class(host=self.host, port=self.port)
+        # Carry the active span into each RPC: without this the daemon's server span
+        # starts its own trace and the two services never line up.
+        self._bot.traceparent = traceparent
         await self._bot.__aenter__()
         if self._auto_login:
             await self.ensure_login()

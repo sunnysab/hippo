@@ -217,6 +217,18 @@ def traced(
     return decorate
 
 
+def traceparent() -> str:
+    """Return the active span's W3C traceparent, or an empty string.
+
+    The daemon SDK calls this before each RPC so its server span joins the
+    caller's trace instead of starting a new one.
+    """
+    context = trace.get_current_span().get_span_context()
+    if not context.is_valid:
+        return ''
+    return f'00-{context.trace_id:032x}-{context.span_id:016x}-{int(context.trace_flags):02x}'
+
+
 def add_span_attributes(attributes: dict[str, Any]) -> None:
     """Attach attributes to the active span, if there is one."""
     current = trace.get_current_span()
@@ -236,4 +248,5 @@ __all__ = [
     'span',
     'telemetry_enabled',
     'traced',
+    'traceparent',
 ]

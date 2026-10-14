@@ -95,6 +95,17 @@ def test_span_records_name_and_skips_none_attributes(exported_spans):
     assert 'missing' not in span.attributes
 
 
+def test_traceparent_matches_the_active_span(exported_spans):
+    assert otel_module.traceparent() == ''
+
+    with otel_module.span('daemon.list_articles'):
+        value = otel_module.traceparent()
+
+    (span,) = exported_spans.get_finished_spans()
+    flags = int(span.context.trace_flags)
+    assert value == f'00-{span.context.trace_id:032x}-{span.context.span_id:016x}-{flags:02x}'
+
+
 def test_traced_marks_failed_spans_as_errors(exported_spans):
     from opentelemetry.trace import StatusCode
 
