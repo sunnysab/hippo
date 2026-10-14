@@ -178,6 +178,17 @@ def run() -> None:
         raise typer.Exit(code=2) from exc
 
 
+def _resolve_tcp_listener(host: str | None, port: int | None) -> tuple[str | None, int | None]:
+    """Resolve the ``serve`` TCP options into what the listener layer expects.
+
+    Host and port travel together: either both name a listener or neither does,
+    so a stale port without a host cannot silently open one.
+    """
+    if not host or not host.strip() or not port:
+        return None, None
+    return host.strip(), port
+
+
 def _parse_octal_mode(value: str) -> int:
     normalized = value.strip().lower()
     if normalized.startswith('0o'):
@@ -1848,7 +1859,7 @@ async def export_accounts(
 @app.command('serve')
 def serve(
     host: str | None = typer.Option('127.0.0.1', help='HTTP 监听地址'),
-    port: int | None = typer.Option(8000, min=1, max=65535, help='HTTP 监听端口'),
+    port: int | None = typer.Option(None, min=1, max=65535, help='HTTP 监听端口（仅当指定 --host 时使用）'),
     no_tcp: bool = typer.Option(
         False,
         '--no-tcp',
@@ -1871,15 +1882,19 @@ def serve(
         help='在 Web 进程内启用自动同步（不推荐）',
     ),
 ) -> None:
-    """Start HTTP server for API + UI."""
+    """Start the API + UI.
+
+    Without ``--host`` the API is served only on the Unix socket, which is how a
+    front-end proxy (Caddy) reaches it. A TCP listener is opt-in and expects an
+    authenticating proxy in front.
+    """
     if no_tcp and unix_socket is None:
         raise typer.BadParameter('--unix-socket is required when --no-tcp is set')
-    resolved_host = None if no_tcp else host
-    resolved_port = None if no_tcp else port
+    host, port = (None, None) if no_tcp else _resolve_tcp_listener(host, port)
     try:
         run_server(
-            host=resolved_host,
-            port=resolved_port,
+            host=host,
+            port=port,
             static_dir=static_dir,
             unix_socket=unix_socket,
             unix_socket_mode=_parse_octal_mode(unix_socket_mode),

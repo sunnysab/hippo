@@ -36,6 +36,9 @@ uv run python -m hippo user add admin --password '…' --admin   # 第一个管�
 
 cd frontend && npm ci && npm run build && cd ..   # 构建 SPA（serve 默认读 frontend/dist）
 
+# 生产：只开 Unix socket，由 Caddy 之类的反向代理在前面接（Caddyfile 里 reverse_proxy unix//run/hippo/hippo.sock）
+uv run python -m hippo serve --unix-socket /run/hippo/hippo.sock
+# 开发：直接开 TCP
 uv run python -m hippo serve --host 127.0.0.1 --port 8000
 uv run python -m hippo sync-worker                 # 另开一个终端
 ```
@@ -167,7 +170,7 @@ uv run python -m hippo --help        # 全部命令
 
 | 命令 | 用途 |
 |---|---|
-| `serve` | 启动 API + SPA（`--host/--port`、`--static-dir`、`--unix-socket`、`--inprocess-sync`） |
+| `serve` | 启动 API + SPA（`--unix-socket`、`--host/--port`、`--static-dir`、`--inprocess-sync`）；不给 `--host` 就只监听 socket |
 | `sync-worker` | 独立同步进程（`--poll-interval`，默认 5s 轮询任务队列） |
 | `db init` | 建表/升级 schema；`db migrate-multiuser --owner <用户名>` 接管历史数据；`db rebuild-counts`、`db backfill-*` 维护 |
 | `user add <用户名> --password … [--admin] [--email …]` | 创建账号（CLI 建的账号直接视为已验证） |

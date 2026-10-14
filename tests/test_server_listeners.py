@@ -125,7 +125,8 @@ class ServerListenerTest(unittest.TestCase):
             self.assertIsInstance(sockets, list)
             self.assertEqual(2, len(sockets))
             self.assertEqual('warning', captured['config_kwargs']['log_level'])
-            self.assertEqual(0, captured['config_kwargs']['port'])
+            # No TCP options: the socket is the listener, so uvicorn gets no host/port.
+            self.assertNotIn('port', captured['config_kwargs'])
 
             for sock in sockets:
                 sock.close()
@@ -151,3 +152,32 @@ class CliServeTest(unittest.TestCase):
                 static_dir=Path('frontend/dist'),
                 inprocess_sync=False,
             )
+
+    def test_a_tcp_listener_needs_both_host_and_port(self) -> None:
+        self.assertEqual(('0.0.0.0', 2000), cli._resolve_tcp_listener('0.0.0.0', 2000))
+        self.assertEqual((None, None), cli._resolve_tcp_listener(None, None))
+        # A port alone must not resurrect the listener the options no longer name.
+        self.assertEqual((None, None), cli._resolve_tcp_listener(None, 2000))
+        self.assertEqual((None, None), cli._resolve_tcp_listener('  ', 2000))
+
+    def test_serve_only_binds_a_socket_when_no_host_is_given(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            uds_path = Path(tmpdir) / 'hippo.sock'
+            captured: dict[str, object] = {}
+
+            def fake_serve(**kwargs):
+                captured.update(kwargs)
+
+            with patch.object(cli, 'run_server', fake_serve):
+                cli.serve(
+                    host='127.0.0.1',
+                    port=8000,
+                    no_tcp=False,
+                    unix_socket=uds_path,
+                    unix_socket_mode='660',
+                    static_dir=Path('frontend/dist'),
+                    inprocess_sync=False,
+                )
+
+            self.assertEqual('127.0.0.1', captured['host'])
+            self.assertEqual(8000, captured['port'])

@@ -32,7 +32,7 @@ from .api.routers import (
     source,
 )
 from .avatar import _ensure_avatar_images_table
-from .config import DEFAULT_HOST, DEFAULT_PORT, WEB_SERVICE, get_settings
+from .config import WEB_SERVICE, get_settings
 from .logger import configure_logging
 from .observability.logging import resolve_level, shutdown_logging
 from .observability.otel import init_telemetry, instrument_app
@@ -238,14 +238,20 @@ def create_app(
 
 
 def serve(
-    host: str | None = DEFAULT_HOST,
-    port: int | None = DEFAULT_PORT,
+    host: str | None = None,
+    port: int | None = None,
     static_dir: Path | str = 'frontend/dist',
     *,
     unix_socket: Path | str | None = None,
     unix_socket_mode: int = 0o660,
     enable_inprocess_sync: bool | None = None,
 ) -> None:
+    """Serve the API on a Unix socket, or on TCP when a host is given.
+
+    A TCP listener is opt-in: it needs an authenticating front-end in front of
+    it, and a listener that only Caddy can reach (the socket) is the safe
+    default. Port follows host -- pass one without the other and nothing binds.
+    """
     import uvicorn
 
     app = create_app(static_dir=static_dir, enable_inprocess_sync=enable_inprocess_sync)
@@ -258,8 +264,6 @@ def serve(
     )
     config = uvicorn.Config(
         app,
-        host=host or DEFAULT_HOST,
-        port=DEFAULT_PORT if port is None else port,
         log_level=uvicorn_log_level,
         # Keep the structlog pipeline installed by create_app().
         log_config=None,
