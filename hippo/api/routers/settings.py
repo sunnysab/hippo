@@ -280,7 +280,11 @@ async def send_sync_test_email(
             smtp_host,
             elapsed_ms,
         )
-        raise ApiError('Test email timed out. Please verify SMTP host/port/TLS.') from exc
+        raise ApiError(
+            'Test email timed out. Please verify SMTP host/port/TLS.',
+            status=504,
+            code='settings.email_timeout',
+        ) from exc
     except Exception as exc:
         elapsed_ms = int((time_module.monotonic() - started_at) * 1000)
         logger.warning(
@@ -290,7 +294,14 @@ async def send_sync_test_email(
             elapsed_ms,
             exc,
         )
-        raise ApiError(f'Failed to send test email: {exc}', code='settings.email_failed') from exc
+        # The upstream text is the point of a test button, and the endpoint is
+        # admin-only -- but the failure is the mail server's, not the caller's,
+        # so it is a 502 rather than the 400 the default would give.
+        raise ApiError(
+            f'Failed to send test email: {exc}',
+            status=502,
+            code='settings.email_failed',
+        ) from exc
     elapsed_ms = int((time_module.monotonic() - started_at) * 1000)
     logger.info(
         'Test email sent: to=%s smtp_host=%s elapsed_ms=%s',
