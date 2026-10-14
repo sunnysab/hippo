@@ -7,6 +7,9 @@ which once became a request to ``https://mp.weixin.qq.com/s/"1.png"`` and stored
 an HTML error page as the image.
 """
 
+import asyncio
+import threading
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -144,3 +147,158 @@ class OriginFallbackTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('image/jpeg', content_type)
         download.assert_awaited_once()
         store.assert_called_once()
+
+
+class _FakeS3Client:
+    def __init__(self, *, fail_upload: bool = False) -> None:
+        self.puts: list[dict] = []
+        self._fail_upload = fail_upload
+
+    def put_object(self, **kwargs):
+        if self._fail_upload:
+            raise RuntimeError('upload refused')
+        self.puts.append(kwargs)
+        return {'ETag': '"etag"'}
+
+
+class _FakeCursor:
+    def __init__(self, executed: list[tuple]) -> None:
+        self._executed = executed
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def execute(self, sql: str, params: tuple) -> None:
+        self._executed.append((sql, params))
+
+
+class _FakeTransaction:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeStorage:
+    """Just enough of PostgresStorage for the cursor used by the store worker."""
+
+    def __init__(self, executed: list[tuple]) -> None:
+        self.conn = SimpleNamespace(cursor=lambda: _FakeCursor(executed))
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def transaction(self):
+        return _FakeTransaction()
+
+
+class S3ImageIoTest(unittest.IsolatedAsyncioTestCase):
+    """The on-demand image path must not block the loop, and must persist."""
+
+    async def test_a_stored_read_runs_off_the_event_loop(self) -> None:
+        import hippo.image_hashes as image_hashes
+
+        row = {
+            'content_type': 'image/png',
+            's3_key': 'mp/image/7.png',
+            'orig_url': 'https://mmbiz.qpic.cn/a.png',
+            'referer': 'https://mp.weixin.qq.com/s/x',
+        }
+
+        def slow_fetch(client, *, bucket, key):
+            time.sleep(0.2)
+            return b's3-bytes', 'image/png'
+
+        other_ran = []
+
+        async def other() -> None:
+            other_ran.append(True)
+
+        with (
+            patch.object(image_hashes, 'fetchone_row', AsyncMock(return_value=row)),
+            patch.object(image_hashes, 'get_s3_client', lambda: (SimpleNamespace(bucket='bucket'), object())),
+            patch.object(image_hashes, 'fetch_object_bytes', slow_fetch),
+        ):
+            task = asyncio.create_task(other())
+            payload, content_type = await image_hashes.fetch_image_bytes(SimpleNamespace(), 7)
+            # The loop drove `other` while the blocking S3 read was in flight.
+            self.assertEqual([True], other_ran)
+            await task
+
+        self.assertEqual(b's3-bytes', payload)
+        self.assertEqual('image/png', content_type)
+
+    async def test_the_origin_fallback_persists_body_and_metadata(self) -> None:
+        import hippo.image_hashes as image_hashes
+
+        client = _FakeS3Client()
+        config = SimpleNamespace(bucket='bucket', prefix='mp/image/')
+        executed: list[tuple] = []
+        started: list[threading.Thread] = []
+
+        class _RecordingThread(threading.Thread):
+            def start(self) -> None:
+                started.append(self)
+                super().start()
+
+        with (
+            patch.object(image_hashes, 'get_s3_client', lambda: (config, client)),
+            patch.object(image_hashes, 'open_storage', lambda: _FakeStorage(executed)),
+            patch.object(image_hashes, 'close_pool', AsyncMock()) as close_pool,
+            patch.object(image_hashes, 'threading', SimpleNamespace(Thread=_RecordingThread)),
+        ):
+            image_hashes._store_image_to_s3_async(
+                image_id=7,
+                payload=b'image-body',
+                content_type='image/jpeg',
+                s3_key=None,
+            )
+            started[0].join(timeout=5)
+
+        self.assertEqual(1, len(client.puts))
+        self.assertEqual('mp/image/7.jpg', client.puts[0]['Key'])
+        self.assertEqual(b'image-body', client.puts[0]['Body'])
+        self.assertEqual('image/jpeg', client.puts[0]['ContentType'])
+        self.assertEqual(1, len(executed))
+        self.assertIn('UPDATE article_images', executed[0][0])
+        self.assertEqual(('mp/image/7.jpg', 'image/jpeg', 7), executed[0][1])
+        close_pool.assert_awaited_once()
+
+    async def test_an_upload_failure_is_logged_and_the_pool_is_closed(self) -> None:
+        import hippo.image_hashes as image_hashes
+
+        client = _FakeS3Client(fail_upload=True)
+        config = SimpleNamespace(bucket='bucket', prefix='mp/image/')
+        executed: list[tuple] = []
+        started: list[threading.Thread] = []
+
+        class _RecordingThread(threading.Thread):
+            def start(self) -> None:
+                started.append(self)
+                super().start()
+
+        with (
+            patch.object(image_hashes, 'get_s3_client', lambda: (config, client)),
+            patch.object(image_hashes, 'open_storage', lambda: _FakeStorage(executed)),
+            patch.object(image_hashes, 'close_pool', AsyncMock()) as close_pool,
+            patch.object(image_hashes, 'threading', SimpleNamespace(Thread=_RecordingThread)),
+            patch.object(image_hashes.logger, 'warning') as warning,
+        ):
+            image_hashes._store_image_to_s3_async(
+                image_id=7,
+                payload=b'image-body',
+                content_type='image/jpeg',
+                s3_key='mp/image/7.jpg',
+            )
+            started[0].join(timeout=5)
+
+        self.assertEqual([], executed)
+        warning.assert_called_once()
+        close_pool.assert_awaited_once()

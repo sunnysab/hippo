@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import threading
 from typing import Any
@@ -9,7 +10,7 @@ from typing import Any
 from .http import MPClient
 from .logger import get_logger
 from .s3 import build_image_key, fetch_object_bytes, get_s3_client, upload_object_bytes
-from .storage import PostgresStorage, fetchone_row, open_storage
+from .storage import PostgresStorage, close_pool, fetchone_row, open_storage
 
 IMAGE_HASH_ALGO = 'sha256'
 logger = get_logger(__name__)
@@ -44,7 +45,9 @@ async def fetch_image_bytes(
         if bundle:
             config, client = bundle
             try:
-                payload, s3_content_type = fetch_object_bytes(
+                # boto3 is blocking; keep the read off the event loop.
+                payload, s3_content_type = await asyncio.to_thread(
+                    fetch_object_bytes,
                     client,
                     bucket=config.bucket,
                     key=str(s3_key),
@@ -146,12 +149,13 @@ def _store_image_to_s3_async(
     s3_key: str | None,
 ) -> None:
     async def _worker() -> None:
-        bundle = get_s3_client()
-        if not bundle:
-            return
-        config, client = bundle
-        resolved_key = s3_key or build_image_key(config.prefix, image_id, content_type)
+        resolved_key = s3_key
         try:
+            bundle = get_s3_client()
+            if not bundle:
+                return
+            config, client = bundle
+            resolved_key = s3_key or build_image_key(config.prefix, image_id, content_type)
             upload_object_bytes(
                 client,
                 bucket=config.bucket,
@@ -172,8 +176,14 @@ def _store_image_to_s3_async(
                 )
         except Exception as exc:
             logger.warning('S3 image store failed (id=%s key=%s): %s', image_id, resolved_key, exc)
+        finally:
+            # The worker thread owns its own loop; close the pool it opened with it.
+            await close_pool()
 
-    threading.Thread(target=_worker, daemon=True).start()
+    def _run() -> None:
+        asyncio.run(_worker())
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 __all__ = [
