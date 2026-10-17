@@ -1,6 +1,8 @@
-import { fireEvent, render } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Article } from '../../store/articles';
+import { I18nProvider } from '../../i18n';
+import zhCN from '../../i18n/zh-CN.json';
 import { ArticleCard } from './ArticleCard';
 
 const article: Article = {
@@ -142,5 +144,52 @@ describe('ArticleCard', () => {
     expect(onToggleRead).toHaveBeenCalledWith(article);
     // The row's own click must not also fire, or the reader jumps to the article.
     expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it('filters by the clicked account with an account-neutral tooltip', () => {
+    const onAccountClick = vi.fn();
+    const onClick = vi.fn();
+
+    render(
+      <I18nProvider>
+        <ArticleCard
+          article={{ ...article, source: 'youtube', account_nickname: 'Some Channel' }}
+          isActive={false}
+          onClick={onClick}
+          onContextMenu={vi.fn()}
+          onAccountClick={onAccountClick}
+        />
+      </I18nProvider>,
+    );
+
+    const account = screen.getByText('Some Channel');
+    expect(account.getAttribute('title')).toBe(zhCN['articles.filterByAccount']);
+
+    fireEvent.click(account);
+
+    expect(onAccountClick).toHaveBeenCalledWith('Mz123');
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it('renders raw text without double-escaping or creating elements', () => {
+    const { container } = render(
+      <I18nProvider>
+        <ArticleCard
+          article={{
+            ...article,
+            title: 'A & B <tag> "quote"',
+            account_nickname: 'chan & nel',
+          }}
+          isActive={false}
+          onClick={vi.fn()}
+          onContextMenu={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText('A & B <tag> "quote"')).toBeTruthy();
+    expect(screen.getByText('chan & nel')).toBeTruthy();
+    // React escapes the text itself; no element may come from the markup.
+    expect(container.querySelector('tag')).toBeNull();
   });
 });

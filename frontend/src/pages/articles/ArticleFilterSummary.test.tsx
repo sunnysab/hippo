@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { I18nProvider } from '../../i18n';
+import zhCN from '../../i18n/zh-CN.json';
 import { ArticleFilterSummary } from './ArticleFilterSummary';
 import type { ArticleFiltersState } from './filtering';
 
@@ -30,5 +31,32 @@ describe('ArticleFilterSummary', () => {
 
     expect(screen.getByText('分组：经济&金融')).toBeTruthy();
     expect(screen.getByText('搜索：ai 投资')).toBeTruthy();
+  });
+
+  it('calls a non-WeChat account an account, not a WeChat official one', () => {
+    const filters: ArticleFiltersState = {
+      groupId: '',
+      accountBiz: 'b1',
+      itemShowType: '',
+      source: '',
+      read: '',
+      starred: '',
+      search: '',
+      sort: '',
+    };
+
+    render(
+      <I18nProvider>
+        <ArticleFilterSummary
+          filters={filters}
+          groupOptions={[]}
+          accountOptions={[{ value: 'b1', label: '某B站UP' }]}
+          total={3}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText(zhCN['articles.summary.account'].replace('{value}', '某B站UP'))).toBeTruthy();
+    expect(screen.queryByText(/公众号/m)).toBeNull();
   });
 });

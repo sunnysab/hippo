@@ -1,6 +1,6 @@
 import { memo, useState } from 'react';
 import { formatDuration } from '../../utils/duration';
-import { escapeHtml, formatDate } from '../../utils/format';
+import { formatDate } from '../../utils/format';
 import type { Article } from '../../store/articles';
 import { ContentKindBadge } from './ContentKindBadge';
 import { useI18n } from '../../i18n';
@@ -58,7 +58,7 @@ export const ArticleCard = memo(function ArticleCard({
       <div className="article-info">
         <div className="article-title">
           {!isRead ? <span className="article-unread-dot" aria-label={t('articles.unread', '未读')} /> : null}
-          {escapeHtml(article.title || '')}
+          {article.title || ''}
         </div>
         <div className="article-meta">
           {avatar ? (
@@ -66,13 +66,13 @@ export const ArticleCard = memo(function ArticleCard({
           ) : null}
           <span
             className="article-account-name"
-            title="按此公众号筛选"
+            title={t('articles.filterByAccount', 'Filter by this account')}
             onClick={(e) => {
               e.stopPropagation();
               onAccountClick?.(article.biz);
             }}
-          >{escapeHtml(article.account_nickname || '')}</span>
-          <span>{escapeHtml(formatDate(article.publish_at))}</span>
+          >{article.account_nickname || ''}</span>
+          <span>{formatDate(article.publish_at)}</span>
           <ContentKindBadge kind={article.content_kind} compact />
         </div>
         <div className="article-digest" title={digest}>{digest}</div>
