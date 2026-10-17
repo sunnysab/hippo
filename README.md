@@ -343,8 +343,8 @@ cp config.example.toml config.toml
 | | `format` | `json` | `json`（SignOz 吃的格式）或 `console` |
 | | `file` | `logs/{service}.log` | `{service}` 换为 `hippo-web` / `hippo-sync-worker` / `hippo-knowledge-worker`；空即不写文件 |
 | | `tail_lines` | `500` | 管理台日志尾行数 |
-| `[http]` | `proxy` | — | 抓正文/头像的代理 |
-| | `article_worker` / `article_worker_proxy` / `article_max_connections` | — | 用 Cloudflare Worker 中转抓正文 |
+| `[http]` | `article_worker` / `article_worker_proxy` / `article_max_connections` | — | 用 Cloudflare Worker 中转抓正文；代理不再在这里配置 |
+| `media:settings` | `proxy_default` / `proxy_<source>` | 见管理台 | **按来源**的代理，直接在管理台「媒体」页配置（来源：公众号 / B站 / YouTube / 播客）|
 | `[weixin]` | `sdk_path` | `/opt/weixin-rs/sdk/python` | weixin-rs SDK 路径 |
 | | `daemon_host` / `daemon_port` | `127.0.0.1` / `9099` | daemon 地址 |
 | `[observability]` | `enabled` | `true` | 置 `false` 可停掉导出而不丢 endpoint |

@@ -53,7 +53,6 @@ file = "logs/{service}.log"
 tail_lines = 100
 
 [http]
-proxy = "http://proxy:8082"
 article_worker = "https://worker.example"
 article_max_connections = 4
 
@@ -98,7 +97,6 @@ environment = "staging"
     assert settings.logging.format == 'console'
     assert settings.logging.tail_lines == 100
     assert settings.http == config.HttpSettings(
-        proxy='http://proxy:8082',
         article_worker='https://worker.example',
         article_max_connections=4,
     )

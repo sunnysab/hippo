@@ -80,6 +80,9 @@ class RefetchRouteTest(unittest.TestCase):
             patch.object(article_api, '_assert_article_visible', visible),
             patch('hippo.api.routers.article.fetchone_row', AsyncMock(return_value=row)),
             patch('hippo.api.routers.article.open_storage', lambda: _Storage()),
+            # The route resolves the article source's proxy from media:settings; the
+            # fake storage has no meta table, so supply the settings directly.
+            patch('hippo.api.routers.article.get_media_settings', AsyncMock(return_value={})),
             patch('hippo.api.routers.article.build_downloader_container', lambda **kwargs: _Container()),
             patch('hippo.api.routers.article.threading.Thread', _DeferredThread),
         ):

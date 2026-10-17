@@ -30,9 +30,11 @@ async def fetch_image_bytes(
     row = await fetchone_row(
         storage,
         (
-            'SELECT i.content_type, i.s3_key, i.orig_url, a.link AS referer'
+            'SELECT i.content_type, i.s3_key, i.orig_url, a.link AS referer,'
+            '       acc.source AS account_source'
             ' FROM article_images i'
             ' JOIN articles a ON a.id = i.article_pk'
+            ' LEFT JOIN accounts acc ON acc.biz = a.biz'
             ' WHERE i.id = %s'
         ),
         [image_id],
@@ -67,8 +69,11 @@ async def fetch_image_bytes(
     if not orig_url:
         raise LookupError(f'Image {image_id} data missing')
     referer = row.get('referer')
+    # The account's source decides the exit: a YouTube cover needs the proxy the
+    # console configured for YouTube, a WeChat image must not share it.
+    proxy = await _proxy_for(storage, row.get('account_source'))
     try:
-        payload, fetched_type = await _download_image_from_origin(orig_url, referer=referer)
+        payload, fetched_type = await _download_image_from_origin(orig_url, referer=referer, proxy=proxy)
     except Exception as exc:
         logger.warning('Origin image fetch failed (id=%s url=%s): %s', image_id, orig_url, exc)
         raise RuntimeError(f'Image fetch failed for {image_id}') from exc
@@ -129,18 +134,35 @@ async def ensure_image_hash_by_id(
         )
 
 
+async def _proxy_for(storage: PostgresStorage, source: Any) -> str:
+    """The proxy configured for ``source``, or ``''`` for a direct connection.
+
+    An unknown source falls back to the instance default, which is what a host
+    the accounts table does not know yet (a hand-added feed) deserves.
+
+    Imported lazily: ``media_settings`` reaches ``sources`` -> ``weixin_worker`` ->
+    ``downloader`` -> ``image_store`` -> this module, so a top-level import cycles.
+    """
+    from .media_settings import get_media_settings, resolve_proxy
+
+    settings = await get_media_settings(storage)
+    return resolve_proxy(settings, str(source)) if source else str(settings.get('proxy_default') or '')
+
+
 async def _download_image_from_origin(
     orig_url: str,
     *,
     referer: str | None,
+    proxy: str = '',
 ) -> tuple[bytes, str | None]:
     """Fetch an image we do not have stored yet, straight from the origin.
 
-    Must stay a coroutine: this is always called from a running event loop, and
-    `asyncio.run` here raised "cannot be called from a running event loop" — the
-    reader got a 502 instead of the picture.
+    ``proxy`` is the exit chosen for the image's own source; an empty string
+    connects directly. Must stay a coroutine: this is always called from a
+    running event loop, and `asyncio.run` here raised "cannot be called from a
+    running event loop" — the reader got a 502 instead of the picture.
     """
-    async with MPClient() as client:
+    async with MPClient(proxy=proxy) as client:
         return await client.download_binary_with_type(orig_url, referer=referer)
 
 

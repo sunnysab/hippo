@@ -91,9 +91,10 @@ class MPClient(AbstractAsyncContextManager):
         article_worker_proxy: str | None = None,
         article_max_connections: int | None = None,
     ) -> None:
-        # Explicit arguments win; the file only supplies what the caller left out.
+        # No instance-wide proxy: every caller names the proxy for its own source
+        # (see media_settings.resolve_proxy), because a WeChat fetch and a YouTube
+        # fetch must not share one exit.
         settings = get_settings().http
-        proxy = settings.proxy if proxy is None else proxy
         article_worker = settings.article_worker if article_worker is None else article_worker
         article_worker_proxy = settings.article_worker_proxy if article_worker_proxy is None else article_worker_proxy
         article_max_connections = (

@@ -82,8 +82,13 @@ async def _fetch_and_cache_avatar(storage: PostgresStorage, biz: str, url: str) 
         'Origin': 'https://mp.weixin.qq.com',
         'User-Agent': 'Mozilla/5.0',
     }
+    # An avatar is WeChat traffic (the URL is a WeChat CDN host), so it uses the
+    # proxy configured for that source rather than a bare direct connection.
+    from .media_settings import get_media_settings, resolve_proxy
+
+    proxy = resolve_proxy(await get_media_settings(storage), 'weixin') or None
     try:
-        resp = httpx.get(url, headers=headers, timeout=10)
+        resp = httpx.get(url, headers=headers, timeout=10, proxy=proxy)
         if resp.status_code != 200:
             return None
         content_type = resp.headers.get('Content-Type') or 'application/octet-stream'

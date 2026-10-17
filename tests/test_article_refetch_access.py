@@ -90,6 +90,8 @@ class RefetchAccessHttpTest(unittest.TestCase):
             ),
         )
         self.open_patch = patch.object(article_api, 'open_storage', lambda: _AsyncContext(SimpleNamespace()))
+        # No meta table in the fake storage: hand the route its media settings.
+        self.settings_patch = patch.object(article_api, 'get_media_settings', AsyncMock(return_value={}))
         self.container_patch = patch.object(
             article_api,
             'build_downloader_container',
@@ -100,6 +102,7 @@ class RefetchAccessHttpTest(unittest.TestCase):
             self.visibility_patch,
             self.row_patch,
             self.open_patch,
+            self.settings_patch,
             self.container_patch,
             self.thread_patch,
         ):

@@ -54,9 +54,10 @@ _SECRETS = ('asr_api_key', 'bilibili_cookie', 'youtube_cookies')
 #: the way out, and never echoed back.
 INSTANCE_CREDENTIALS = {'bilibili': 'bilibili_cookie', 'youtube': 'youtube_cookies'}
 
-#: Sources that open their own network connections, each with a proxy field. The
-#: daemon-backed weixin source is not here: it is reached over the local socket.
-PROXY_SOURCES = ('bilibili', 'youtube', 'podcast')
+#: Sources that open their own network connections, each with a proxy field.
+#: ``weixin`` is here too: its article pages, avatars and images are fetched over
+#: HTTP even though the article *list* comes from the local daemon.
+PROXY_SOURCES = ('weixin', 'bilibili', 'youtube', 'podcast')
 #: A per-source proxy field holds one of: `''`/`'default'` (follow
 #: `proxy_default`), `'direct'` (no proxy, overriding a default), or a URL.
 PROXY_FOLLOW = 'default'
@@ -93,9 +94,11 @@ def default_media_settings() -> dict[str, Any]:
         # Netscape cookies.txt 的内容（不是服务器上的路径）：由「提交 cookie」接口或管理台写入。
         'youtube_cookies': '',
         # 代理按来源分开配置，另有一个实例默认值：`direct` 是直连（用于覆盖默认代理），
-        # `default` 是跟随默认代理。下面三个默认值与本实例实测一致——B站 必须直连
+        # `default` 是跟随默认代理。下面的默认值与本实例实测一致——公众号与 B站 必须直连
         # （出口代理的 IP 已被 B站拉黑，会 412），YouTube 必须走代理——管理台可改。
         'proxy_default': '',
+        # 公众号的页面、头像与图片都直连得通，给它套代理反而绕远。
+        'proxy_weixin': PROXY_DIRECT,
         'proxy_bilibili': PROXY_DIRECT,
         'proxy_youtube': 'http://100.111.170.110:8082',
         'proxy_podcast': PROXY_FOLLOW,

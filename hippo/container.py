@@ -10,6 +10,7 @@ from .downloader import ArticleDownloader
 from .file_storage import S3FileStorage
 from .http import MPClient
 from .image_store import ArticleImageService
+from .media_settings import PROXY_SOURCES, resolve_proxy
 from .sources import SourceAdapter
 from .sources.registry import MediaSources
 from .sources.weixin import WeixinSourceAdapter
@@ -59,7 +60,9 @@ def build_sync_container(
     enable_images: bool,
     media_settings: Mapping[str, Any] | None = None,
 ) -> AppContainer:
-    client = MPClient()
+    # Article bodies, avatars and images are all WeChat traffic, so the client
+    # uses the proxy configured for that source instead of one instance-wide exit.
+    client = MPClient(proxy=_source_proxy(media_settings, 'weixin'))
     weixin_source = WeixinSource()
     image_service: ArticleImageService | None = None
     if enable_images:
@@ -109,6 +112,7 @@ def build_downloader_container(
     article_max_connections: int | None = None,
     image_workers: int | None = None,
     enable_image_worker: bool = True,
+    proxy: str | None = None,
 ) -> AppContainer:
     client_kwargs: dict[str, Any] = {}
     if article_worker is not None:
@@ -117,6 +121,10 @@ def build_downloader_container(
         client_kwargs['article_worker_proxy'] = article_worker_proxy
     if article_max_connections is not None:
         client_kwargs['article_max_connections'] = article_max_connections
+    # The caller names the exit (typically the WeChat one); an omitted proxy keeps
+    # MPClient's own default, which is a direct connection.
+    if proxy is not None:
+        client_kwargs['proxy'] = proxy
     client = MPClient(**client_kwargs)
     image_service: ArticleImageService | None = None
     if enable_images:
@@ -138,6 +146,19 @@ def build_downloader_container(
         image_service=image_service,
         downloader=downloader,
     )
+
+
+def _source_proxy(settings: Mapping[str, Any] | None, source: str) -> str:
+    """The proxy for ``source``, or ``''`` when the settings are not loaded yet.
+
+    An empty settings mapping means the caller has no media settings at hand
+    (a test, or an early boot); connect directly rather than guess an exit.
+    """
+    if not settings:
+        return ''
+    if source not in PROXY_SOURCES:
+        return str(settings.get('proxy_default') or '')
+    return resolve_proxy(settings, source)
 
 
 __all__ = ['AppContainer', 'build_downloader_container', 'build_sync_container']

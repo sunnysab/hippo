@@ -18,6 +18,7 @@ from .config import get_settings
 from .file_storage import FileStorageError, S3FileStorage
 from .http import MPClient
 from .image_store import ArticleImageService
+from .media_settings import get_media_settings, resolve_proxy
 from .storage import PostgresStorage
 from .utils import is_http_url, sanitize_image_url
 
@@ -75,10 +76,22 @@ async def backfill_article_images(
                     raise
                 await asyncio.sleep(min(sleep_base * (2 ** (attempt - 1)), 5.0))
 
-    async with MPClient() as client, PostgresStorage(resolved_dsn) as storage:
+    async with PostgresStorage(resolved_dsn) as storage:
         image_store = _build_image_store(storage)
         if not image_store:
             raise RuntimeError('Failed to initialize image store (S3 not configured).')
+        # One HTTP client per source: a YouTube image must leave through the
+        # YouTube proxy, a WeChat image through the WeChat one (usually direct).
+        media_settings = await get_media_settings(storage)
+        clients: dict[str, MPClient] = {}
+
+        def client_for(source: str) -> MPClient:
+            if source not in clients:
+                proxy = (
+                    resolve_proxy(media_settings, source) if source else str(media_settings.get('proxy_default') or '')
+                )
+                clients[source] = MPClient(proxy=proxy)
+            return clients[source]
 
         failed_clause = '' if retry_failed else ' AND i.failed_at IS NULL'
         count_query = (
@@ -95,9 +108,11 @@ async def backfill_article_images(
             total_count = min(total_count, limit)
 
         base_query = (
-            'SELECT i.id, a.biz, a.article_id, a.link, i.orig_url'
+            'SELECT i.id, a.biz, a.article_id, a.link, i.orig_url, COALESCE(acc.source, '
+            ')'
             ' FROM article_images i'
             ' JOIN articles a ON a.id = i.article_pk'
+            ' LEFT JOIN accounts acc ON acc.biz = a.biz'
             f" WHERE (i.s3_key IS NULL OR i.s3_key = '') AND i.orig_url IS NOT NULL{failed_clause}"
         )
         order_clause = 'ORDER BY i.id DESC'
@@ -119,7 +134,7 @@ async def backfill_article_images(
                         rows = await cur.fetchall()
                     if not rows:
                         break
-                    for _, _, _, _, orig_url in rows:
+                    for _, _, _, _, orig_url, _source in rows:
                         _log(f'DRY-RUN {orig_url}')
                         skipped += 1
                         progress.update(1)
@@ -135,14 +150,14 @@ async def backfill_article_images(
             async def process_item(
                 item: tuple,
             ) -> tuple[tuple, bytes | None, str | None, str | None]:
-                _, _biz, _article_id, referer, orig_url = item
+                _, _biz, _article_id, referer, orig_url, source = item
                 normalized = _normalize_image_url(str(orig_url))
                 if not is_http_url(normalized):
                     return item, None, None, f'Invalid URL scheme: {normalized}'
                 async with sem:
                     try:
                         data, content_type = await download_with_retry(
-                            client,
+                            client_for(str(source or '')),
                             normalized,
                             referer=str(referer) if referer else None,
                         )
@@ -181,7 +196,7 @@ async def backfill_article_images(
                     tasks = [asyncio.create_task(process_item(item)) for item in batch]
                     for task_coro in asyncio.as_completed(tasks):
                         item, data, content_type, error = await task_coro
-                        _, biz, article_id, _, orig_url = item
+                        _, biz, article_id, _, orig_url, _source = item
                         try:
                             if error:
                                 raise RuntimeError(error)
@@ -208,6 +223,9 @@ async def backfill_article_images(
                     last_id = batch[-1][0]
             finally:
                 progress.close()
+
+        for client in clients.values():
+            await client.aclose()
 
     return {'updated': updated, 'skipped': skipped, 'failed': failed}
 

@@ -134,6 +134,8 @@ class OriginFallbackTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(image_hashes, 'fetchone_row', AsyncMock(return_value=row)),
             patch.object(image_hashes, 'get_s3_client', lambda: None),
+            # No media:settings row in this fake; the source proxy resolves to direct.
+            patch.object(image_hashes, '_proxy_for', AsyncMock(return_value='')),
             patch.object(
                 image_hashes,
                 '_download_image_from_origin',

@@ -56,8 +56,8 @@ file = "logs/{service}.log"
 tail_lines = 500
 
 [http]
-# Proxy used when fetching article pages and avatars.
-proxy = ""
+# No instance-wide proxy: each source names its own in the admin console
+# (media settings), so a WeChat fetch and a YouTube fetch never share one exit.
 # Optional Cloudflare Worker relay for article bodies.
 article_worker = ""
 article_worker_proxy = ""

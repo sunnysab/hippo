@@ -33,6 +33,7 @@ from ...exceptions import ApiError
 from ...logger import get_logger
 from ...media import archive as archive_module
 from ...media.subtitle import to_markdown, to_srt, to_text
+from ...media_settings import get_media_settings, resolve_proxy
 from ...models import User
 from ...storage import PostgresStorage, fetchone_row, open_storage
 from ..deps import current_user, get_storage, parse_group_ids
@@ -481,7 +482,10 @@ async def refetch_article(
     await _assert_article_visible(storage, user.id, article_id)
     row = await fetchone_row(
         storage,
-        'SELECT biz, article_id, link FROM articles WHERE id = %s',
+        'SELECT a.biz, a.article_id, a.link, COALESCE(acc.source, '
+        ') AS account_source'
+        ' FROM articles a LEFT JOIN accounts acc ON acc.biz = a.biz'
+        ' WHERE a.id = %s',
         [article_id],
     )
     if not row:
@@ -493,6 +497,7 @@ async def refetch_article(
     # （默认的 adhoc 只适用于手贴的、没有归属的链接）。
     owner_biz = str(row.get('biz') or '')
     owner_article_id = str(row.get('article_id') or '')
+    account_source = str(row.get('account_source') or '')
 
     task_id = uuid.uuid4().hex
     started_at = time_module.monotonic()
@@ -511,9 +516,16 @@ async def refetch_article(
     def _run() -> None:
         async def _do() -> None:
             async with open_storage() as thread_storage:
+                media_settings = await get_media_settings(thread_storage)
+                proxy = (
+                    resolve_proxy(media_settings, account_source)
+                    if account_source
+                    else str(media_settings.get('proxy_default') or '')
+                )
                 container = build_downloader_container(
                     storage=thread_storage,
                     enable_images=True,
+                    proxy=proxy,
                 )
                 async with container as app:
                     downloader = app.downloader

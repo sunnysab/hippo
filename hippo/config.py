@@ -126,9 +126,13 @@ class LoggingSettings:
 
 @dataclass(frozen=True)
 class HttpSettings:
-    """``[http]``: outbound proxying and the Cloudflare Worker relay."""
+    """``[http]``: the Cloudflare Worker relay.
 
-    proxy: str = ''
+    There is no instance-wide proxy here: each source names its own proxy in
+    ``media:settings`` (see :func:`media_settings.resolve_proxy`), so a WeChat
+    fetch and a YouTube fetch never share one exit.
+    """
+
     article_worker: str = ''
     article_worker_proxy: str = ''
     #: Concurrent connections through the relay; unset means httpx's own cap.
