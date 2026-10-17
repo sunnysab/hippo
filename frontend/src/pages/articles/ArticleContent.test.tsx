@@ -238,3 +238,19 @@ describe('ArticleContent media blocks', () => {
     expect(container.querySelector('.reader-anchor')).toBeNull();
   });
 });
+
+describe('ArticleContent inline images', () => {
+  it('drops a figure whose image cannot be served, instead of a broken-image glyph', () => {
+    const { container } = renderContent([
+      { type: 'image', image_id: 42, alt: '一张取不到的图' },
+      { type: 'paragraph', text: '正文照常渲染' },
+    ]);
+
+    const figure = container.querySelector('figure[data-image-id="42"]') as HTMLElement;
+    expect(figure).not.toBeNull();
+    // The route answered with an error, so the browser fires error on the <img>.
+    fireEvent.error(figure.querySelector('img')!);
+    expect(figure.style.display).toBe('none');
+    expect(container.querySelector('p')?.textContent).toContain('正文照常渲染');
+  });
+});

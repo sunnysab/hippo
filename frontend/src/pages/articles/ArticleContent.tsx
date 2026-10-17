@@ -118,6 +118,12 @@ const ArticleImageBlock = memo(function ArticleImageBlock({
         alt={block.alt || ''}
         loading='lazy'
         data-image-id={String(block.image_id)}
+        // An image we cannot serve (origin gone, blocked, upstream down) is dropped
+        // like the small ones above, so the reader shows no broken-image glyph.
+        onError={(event) => {
+          const figure = event.currentTarget.closest('figure');
+          if (figure) (figure as HTMLElement).style.display = 'none';
+        }}
         onContextMenu={(event) => {
           event.preventDefault();
           event.stopPropagation();
