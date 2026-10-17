@@ -458,20 +458,27 @@ def _cleanup_refetch_tasks() -> None:
 
 
 @router.get('/article/refetch/{task_id}')
-def get_refetch_status(task_id: str) -> dict[str, Any]:
+def get_refetch_status(task_id: str, user: User = Depends(current_user)) -> dict[str, Any]:
     _cleanup_refetch_tasks()
     with _refetch_lock:
-        task = _refetch_tasks.get(task_id)
-    if not task:
+        # Snapshot while holding the lock: the worker mutates the live entry
+        # (it may add finished_at) under the same lock, so reading it afterwards
+        # could see a partial update or a resized dict.
+        task = dict(_refetch_tasks.get(task_id) or {})
+    # A task id is not a capability: only the reader who started it may poll it,
+    # and a foreign id is indistinguishable from one that never existed.
+    if not task or task.get('user_id') != user.id:
         raise ApiError('Task not found', status=404)
-    return dict(task)
+    return {key: value for key, value in task.items() if key != 'user_id'}
 
 
 @router.post('/article/{article_id}/refetch')
 async def refetch_article(
     article_id: int,
     storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
 ) -> dict[str, Any]:
+    await _assert_article_visible(storage, user.id, article_id)
     row = await fetchone_row(
         storage,
         'SELECT biz, article_id, link FROM articles WHERE id = %s',
@@ -492,6 +499,8 @@ async def refetch_article(
     with _refetch_lock:
         _refetch_tasks[task_id] = {
             'task_id': task_id,
+            # Internal owner bookkeeping; never returned by the status endpoint.
+            'user_id': user.id,
             'status': 'running',
             'phase': 'downloading',
             'started_at': started_at,

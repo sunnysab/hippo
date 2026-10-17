@@ -7,12 +7,16 @@ upsert 的 (biz, article_id) 才会命中同一行。
 import asyncio
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 from hippo.api.routers import article as article_api
 from hippo.downloader import ArticleDownloader, ArticleFetcher
 from hippo.models import DownloadResult
 from hippo.repositories.article import ArticleRepository
+
+
+def _user(user_id: int = 9) -> SimpleNamespace:
+    return SimpleNamespace(id=user_id, username='reader', role='user')
 
 
 class DownloaderOwnershipTest(unittest.IsolatedAsyncioTestCase):
@@ -71,17 +75,20 @@ class RefetchRouteTest(unittest.TestCase):
             async def __aexit__(self, *exc):
                 return False
 
+        visible = AsyncMock()
         with (
+            patch.object(article_api, '_assert_article_visible', visible),
             patch('hippo.api.routers.article.fetchone_row', AsyncMock(return_value=row)),
             patch('hippo.api.routers.article.open_storage', lambda: _Storage()),
             patch('hippo.api.routers.article.build_downloader_container', lambda **kwargs: _Container()),
             patch('hippo.api.routers.article.threading.Thread', _DeferredThread),
         ):
-            task = asyncio.run(article_api.refetch_article(article_id=7, storage=SimpleNamespace()))
+            task = asyncio.run(article_api.refetch_article(article_id=7, storage=SimpleNamespace(), user=_user(9)))
             # 后台线程的内容当场跑：此时没有别的事件循环
             self.assertEqual(1, len(deferred))
             deferred[0]()
 
+        visible.assert_awaited_once_with(ANY, 9, 7)
         downloader.download_from_url.assert_awaited_once_with(
             'https://mp.weixin.qq.com/s/AbCdEf',
             with_images=True,
