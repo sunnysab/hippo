@@ -19,7 +19,7 @@ export function ArticleList({ onSelect, onLoadMore, onFilterByAccount }: Article
   const { state, dispatch } = useArticlesState();
   const { t } = useI18n();
   const { showToast } = useToast();
-  const listRef = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<HTMLButtonElement>(null);
   const [contextMenu, setContextMenu] = useState<{ article: Article; x: number; y: number } | null>(null);
   const [refetchingId, setRefetchingId] = useState<number | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -107,10 +107,15 @@ export function ArticleList({ onSelect, onLoadMore, onFilterByAccount }: Article
     }
   }, [onSelect, showToast, t]);
 
-  const handleLoadMore = useCallback(() => {
+  const handleLoadMore = useCallback(async () => {
     if (state.isArticleLoading || !state.hasMoreArticles) return;
-    void onLoadMore();
-  }, [onLoadMore, state.hasMoreArticles, state.isArticleLoading]);
+    try {
+      await onLoadMore();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      showToast((err as Error)?.message || t('articles.loadMoreFailed', 'Failed to load more articles.'));
+    }
+  }, [onLoadMore, showToast, t, state.hasMoreArticles, state.isArticleLoading]);
 
   useEffect(() => {
     return () => {
@@ -118,21 +123,36 @@ export function ArticleList({ onSelect, onLoadMore, onFilterByAccount }: Article
     };
   }, []);
 
+  // Watch the button instead of a scroller: on desktop the list clips itself and
+  // on phones the page scrolls, so no single scroll target covers both.
+  const loadMoreHandlerRef = useRef(handleLoadMore);
+  useEffect(() => { loadMoreHandlerRef.current = handleLoadMore; }, [handleLoadMore]);
+
+  // Re-observed when the list grows or the last page arrives, which is also what
+  // makes a sentinel that is still on screen fill the viewport by pulling the
+  // next page. The per-effect flag drops notifications already queued when this
+  // observer was torn down, so a stale callback cannot load after unmount or
+  // after a rebuild.
   useEffect(() => {
-    const el = listRef.current;
-    if (!el) return;
-    const handler = () => {
-      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 50) {
-        handleLoadMore();
+    const el = loadMoreRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    let active = true;
+    const observer = new IntersectionObserver((entries) => {
+      if (!active) return;
+      if (entries.some((entry) => entry.isIntersecting)) {
+        void loadMoreHandlerRef.current();
       }
+    });
+    observer.observe(el);
+    return () => {
+      active = false;
+      observer.disconnect();
     };
-    el.addEventListener('scroll', handler);
-    return () => el.removeEventListener('scroll', handler);
-  }, [handleLoadMore]);
+  }, [state.articles.length, state.hasMoreArticles]);
 
   if (!state.articles.length) {
     return (
-      <div className="article-list-scroll" id="article-list" ref={listRef}>
+      <div className="article-list-scroll" id="article-list">
         <EmptyState message={t('articles.emptyList', 'No articles found.')} />
       </div>
     );
@@ -140,7 +160,7 @@ export function ArticleList({ onSelect, onLoadMore, onFilterByAccount }: Article
 
   return (
     <>
-      <div className="article-list-scroll" id="article-list" ref={listRef}>
+      <div className="article-list-scroll" id="article-list">
         {state.articles.map((article) => (
           <ArticleCard
             key={article.id}
@@ -156,6 +176,18 @@ export function ArticleList({ onSelect, onLoadMore, onFilterByAccount }: Article
             onAccountClick={onFilterByAccount}
           />
         ))}
+        {state.hasMoreArticles ? (
+          <button
+            ref={loadMoreRef}
+            className="btn ghost article-list-more"
+            id="btn-article-load-more"
+            type="button"
+            disabled={state.isArticleLoading}
+            onClick={() => { void handleLoadMore(); }}
+          >
+            {state.isArticleLoading ? t('common.loading', 'Loading…') : t('articles.loadMore', 'Load more')}
+          </button>
+        ) : null}
       </div>
       <ContextMenu
         id="article-context-menu"

@@ -220,6 +220,12 @@
   padding-right: 6px;
 }
 
+/* The bottom affordance is its own row, tall enough to tap on a phone. */
+.article-list-more {
+  min-height: 44px;
+  margin-top: 2px;
+}
+
 .article-card {
   position: relative;
   display: grid;

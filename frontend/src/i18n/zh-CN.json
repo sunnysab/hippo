@@ -171,6 +171,7 @@
   "articles.backToList": "返回列表",
   "articles.resetFilters": "重置",
   "articles.loadMore": "加载更多",
+  "articles.loadMoreFailed": "加载更多文章失败。",
   "articles.previewTitle": "文章预览",
   "articles.previewKicker": "预览",
   "articles.previewSubtitle": "查看文章信息，并调整阅读排版。",
