@@ -315,6 +315,26 @@ body {
   color: var(--warning);
 }
 
+/* The message may carry a backend error of any length, so it takes the space
+   that is left instead of pushing the buttons off screen. */
+.banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Actions stay together and on the right; when the row is too narrow they wrap
+   onto their own line, still right-aligned. */
+.banner-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .banner.is-error {
   background: var(--danger-soft);
   color: var(--danger);
@@ -799,6 +819,25 @@ body {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* The buttons keep their 44px touch target on a phone; only the message shrinks. */
+  .banner {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .banner-actions {
+    width: 100%;
+  }
+
+  .banner-actions .btn {
+    min-height: 44px;
+  }
+
+  /* The dismiss glyph is one character wide; give it a real touch target. */
+  #btn-banner-dismiss {
+    min-width: 44px;
   }
 
   .content {
