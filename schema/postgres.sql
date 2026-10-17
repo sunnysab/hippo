@@ -753,3 +753,93 @@ ON api_key (key_hash);
 
 CREATE INDEX IF NOT EXISTS idx_api_key_user
 ON api_key (user_id);
+
+-- ============================================================
+-- Private knowledge base: knowledge base / document / chunk
+-- ============================================================
+
+-- Ownership lives here only: `document` carries no second user_id, so every
+-- read and write joins back to this table to authorize the caller.
+CREATE TABLE IF NOT EXISTS knowledge_base (
+    id UUID PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    deleted_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_base_user
+ON knowledge_base (user_id, created_at DESC);
+
+-- Import state lives on the document row (pending_upload / uploading / queued /
+-- processing / ready / failed / unsupported / deleted); this stage adds no
+-- generic job framework. locked_by / lease_token / locked_at are shared by the
+-- uploader and the import worker: an upload holds them with the reserved
+-- 'upload' label, while an import claim holds them under its own worker id and
+-- keeps the row in 'processing' between heartbeat renewals and the reaper.
+-- Every other consumer must treat these lease fields as worker-owned.
+CREATE TABLE IF NOT EXISTS document (
+    id UUID PRIMARY KEY,
+    knowledge_base_id UUID NOT NULL REFERENCES knowledge_base(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    mime_type TEXT,
+    size_bytes BIGINT CHECK (size_bytes IS NULL OR size_bytes >= 0),
+    sha256 TEXT,
+    s3_key TEXT,
+    state TEXT NOT NULL DEFAULT 'pending_upload' CHECK (
+        state IN ('pending_upload', 'uploading', 'queued', 'processing',
+                  'ready', 'failed', 'unsupported', 'deleted')
+    ),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    error_code TEXT,
+    error_message TEXT,
+    page_count INTEGER CHECK (page_count IS NULL OR page_count >= 0),
+    version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+    locked_by TEXT,
+    lease_token UUID,
+    locked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    deleted_at TIMESTAMPTZ,
+    -- A tombstone always has a timestamp and a live row never has one, so the
+    -- pair cannot drift apart. Rows mid-import are unaffected.
+    CHECK ((deleted_at IS NOT NULL) = (state = 'deleted'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_knowledge_base
+ON document (knowledge_base_id, created_at DESC);
+
+-- The import worker polls for unclaimed queued rows in insertion order. Partial
+-- on the live queue only, so the index stays small while rows move through the
+-- import states.
+CREATE INDEX IF NOT EXISTS idx_document_queued_import
+ON document (created_at, id)
+WHERE state = 'queued' AND deleted_at IS NULL;
+
+-- Live document dedupe: rows whose sha is not known yet (still uploading) do
+-- not participate, and a soft-deleted row does not block re-uploading the same
+-- file.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_active_sha256
+ON document (knowledge_base_id, sha256)
+WHERE sha256 IS NOT NULL AND deleted_at IS NULL;
+
+-- Chunks are the only authoritative copy of the text and the whole text is
+-- indexed; the article path truncates, this one must not. Duplicate pages,
+-- duplicate paragraphs and blank pages are all legal, so there is no unique
+-- constraint beyond the primary key.
+-- search_vector uses the core to_tsvector(regconfig, text), which is IMMUTABLE;
+-- the 'jiebaqry' dictionary comes from pg_jieba, created at the top of this file.
+CREATE TABLE IF NOT EXISTS document_chunk (
+    document_id UUID NOT NULL REFERENCES document(id) ON DELETE CASCADE,
+    page_no INTEGER NOT NULL CHECK (page_no >= 1),
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    text TEXT NOT NULL,
+    chunk_type TEXT NOT NULL DEFAULT 'paragraph',
+    heading_level INTEGER,
+    search_vector tsvector GENERATED ALWAYS AS (to_tsvector('jiebaqry', text)) STORED,
+    PRIMARY KEY (document_id, page_no, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_chunk_search
+ON document_chunk USING GIN (search_vector);

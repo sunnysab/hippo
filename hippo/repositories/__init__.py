@@ -18,6 +18,7 @@ from .article import (
 from .audit import AuditRepository
 from .chat import ChatRepository
 from .image import ArticleImageTarget, ImageRepository
+from .knowledge import KnowledgeRepository
 from .llm import LlmProviderRepository, mask_key
 from .media import ArticleMediaRepository, MediaJobRepository, UserCredentialRepository
 from .meta import MetaRepository
@@ -46,6 +47,7 @@ __all__ = [
     'DownloadAttemptRepository',
     'GroupRepository',
     'ImageRepository',
+    'KnowledgeRepository',
     'LlmProviderRepository',
     'MediaJobRepository',
     'MetaRepository',

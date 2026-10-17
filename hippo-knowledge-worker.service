@@ -1,0 +1,23 @@
+[Unit]
+Description=Hippo Knowledge Import Worker Service
+# Only the network and the database are prerequisites: importing a private
+# knowledge document neither logs into WeChat nor needs the web process up.
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=sab
+WorkingDirectory=/home/sab/hippo
+ExecStart=/home/sab/hippo/.venv/bin/python -m hippo.knowledge.worker
+# Everything else (PG DSN, S3 keys, log level and file) comes from config.toml.
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=10
+# SIGINT lets asyncio run cancel the loop and close the pool; the fixed grace
+# period covers an in-flight SDK transfer, and a lease left behind is recovered
+# by the worker's own heartbeat/lease timeout.
+KillSignal=SIGINT
+TimeoutStopSec=360
+
+[Install]
+WantedBy=multi-user.target

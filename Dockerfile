@@ -18,8 +18,12 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# build-essential/libpq-dev: C extensions. poppler-utils (pdftotext/pdfinfo) and
+# util-linux (prlimit) are the knowledge-base PDF parser's external tools.
+# ffmpeg/ffprobe back the media pipeline (slicing, transcoding, archiving).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential libpq-dev \
+    && apt-get install -y --no-install-recommends \
+        build-essential libpq-dev poppler-utils util-linux ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv

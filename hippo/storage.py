@@ -34,6 +34,7 @@ from .repositories import (
     DownloadAttemptRepository,
     GroupRepository,
     ImageRepository,
+    KnowledgeRepository,
     LlmProviderRepository,
     MediaJobRepository,
     MetaRepository,
@@ -45,7 +46,7 @@ from .repositories import (
 )
 from .sync_jobs import SyncJobRepository
 
-SCHEMA_VERSION = '28'
+SCHEMA_VERSION = '29'
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'schema' / 'postgres.sql'
 
@@ -57,6 +58,8 @@ ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
 """
 
 _pool_local = threading.local()
+
+
 def _log_db_init(message: str) -> None:
     if not get_settings().database.init_log:
         return
@@ -218,6 +221,7 @@ class PostgresStorage(AbstractAsyncContextManager):
         self.article_queue = ArticleQueueRepository(self.conn)
         self.media_jobs = MediaJobRepository(self.conn)
         self.images = ImageRepository(self.conn)
+        self.knowledge = KnowledgeRepository(self.conn)
         self.download_attempts = DownloadAttemptRepository(self.conn)
         self.sync_jobs = SyncJobRepository(self.conn)
         self.users = UserRepository(self.conn)

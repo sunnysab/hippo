@@ -27,6 +27,7 @@ from .api.routers import (
     chat,
     daemon,
     feed,
+    knowledge,
     llm,
     registration,
     report,
@@ -233,6 +234,7 @@ def create_app(
         daemon,
         admin,
         llm,
+        knowledge,
     ):
         app.include_router(module.router, prefix='/api')
     app.mount('/', StaticFiles(directory=static_path, html=True), name='static')
