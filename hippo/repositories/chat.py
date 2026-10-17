@@ -125,15 +125,25 @@ class ChatRepository:
             )
 
     async def list_messages(self, session_id: int, *, limit: int = 200) -> list[dict[str, Any]]:
-        """Oldest first: the model needs the conversation in order."""
+        """The newest ``limit`` turns, returned oldest first.
+
+        The model needs the conversation in order, but recent turns are the
+        ones that matter: a long session must not lose its tail to a leading
+        window. The inner query picks the window, the outer one restores the
+        chronological order the callers render and replay.
+        """
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """
                 SELECT id, session_id, role, content, created_at
-                FROM chat_message
-                WHERE session_id = %s
+                FROM (
+                    SELECT id, session_id, role, content, created_at
+                    FROM chat_message
+                    WHERE session_id = %s
+                    ORDER BY id DESC
+                    LIMIT %s
+                ) AS recent
                 ORDER BY id
-                LIMIT %s
                 """,
                 (session_id, max(limit, 1)),
             )
