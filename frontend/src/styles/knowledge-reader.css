@@ -1,0 +1,182 @@
+/* Parsed-text reader: one window of chunks, no HTML, no PDF viewer. Scoped to
+   `.knowledge-reader` so it cannot leak into other pages. */
+
+.knowledge-reader {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  flex: 1;
+}
+
+.knowledge-reader-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.knowledge-reader-heading {
+  min-width: 0;
+}
+
+.knowledge-reader-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+  line-height: 1.2;
+  letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-reader-meta {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.knowledge-reader-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.knowledge-reader-action {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.knowledge-reader-goto {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.knowledge-reader-goto-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.knowledge-reader-goto-input {
+  width: 5.5ch;
+  min-height: 44px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--surface-panel-strong);
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.knowledge-reader-scroll {
+  /* The reading pane is the only scroller: min-height:0 keeps the column from
+     growing past the viewport instead of scrolling. */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 14px 16px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel-strong);
+}
+
+.knowledge-reader-chunk {
+  /* Text nodes only: whitespace and markup in the source stay literal. */
+  margin: 0 0 1em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+
+.knowledge-reader-chunk:last-child {
+  margin-bottom: 0;
+}
+
+.knowledge-reader-chunk.is-focused {
+  border-radius: var(--radius-xs);
+  background: var(--accent-mist);
+  box-shadow: inset 3px 0 0 var(--accent);
+  scroll-margin: 16px;
+}
+
+.knowledge-reader-alert {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 13px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-chip-soft);
+  color: var(--muted);
+}
+
+.knowledge-reader-alert.is-error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.knowledge-reader-alert-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-reader-alert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.knowledge-reader-warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  padding: 11px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 13px;
+}
+
+/* Phones: one column of controls, each at least a 44px touch target. */
+@media (max-width: 720px) {
+  .knowledge-reader-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .knowledge-reader-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .knowledge-reader-toolbar .knowledge-reader-action {
+    width: 100%;
+  }
+
+  .knowledge-reader-goto {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px;
+    width: 100%;
+  }
+
+  .knowledge-reader-goto-label {
+    grid-column: 1 / -1;
+  }
+
+  .knowledge-reader-goto-input {
+    width: 100%;
+  }
+
+  .knowledge-reader-scroll {
+    padding: 12px;
+  }
+}

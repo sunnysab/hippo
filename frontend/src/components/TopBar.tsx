@@ -36,6 +36,7 @@ export function TopBar({ topbarRef, currentTab, syncStatus, lastSyncAt }: TopBar
   const tabs = [
     { key: 'groups', label: t('nav.groups', 'Groups'), path: '/groups' },
     { key: 'articles', label: t('nav.articles', 'Articles'), path: '/articles' },
+    { key: 'knowledge', label: t('nav.knowledge', 'Knowledge'), path: '/knowledge' },
     { key: 'chat', label: t('nav.chat', '对话'), path: '/chat' },
     { key: 'report', label: t('nav.report', '日报'), path: '/report' },
     { key: 'settings', label: t('nav.sync', 'Settings'), path: '/settings/filter' },

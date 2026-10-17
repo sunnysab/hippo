@@ -1051,4 +1051,36 @@ body {
     min-width: 44px;
     min-height: 44px;
   }
+
+  /* One more tab must scroll inside the single bottom row instead of stacking
+     the bar, so the column/width/order inherited from the top-bar blocks above
+     are reset here. */
+  .topbar {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .tabs {
+    min-width: 0;
+    width: auto;
+    order: 0;
+    flex: 1 1 auto;
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .tab {
+    flex: 0 0 auto;
+  }
+
+  .top-actions {
+    width: auto;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+  }
+
+  .content {
+    /* The bottom bar keeps its own row clear of the home indicator. */
+    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  }
 }

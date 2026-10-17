@@ -29,6 +29,7 @@ import { AdminSyncPage } from './pages/admin/AdminSyncPage';
 import { AdminLoginPage } from './pages/admin/AdminLoginPage';
 import { ChatPage } from './pages/chat/ChatPage';
 import { ReportPage } from './pages/report/ReportPage';
+import { KnowledgePage } from './pages/knowledge/KnowledgePage';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { status } = useAuth();
@@ -79,6 +80,7 @@ function AppRoutes() {
                 <Routes>
                   <Route path="/groups" element={<GroupsPage />} />
                   <Route path="/articles" element={<ArticlesPage />} />
+                  <Route path="/knowledge" element={<KnowledgePage />} />
                   <Route path="/chat" element={<ChatPage />} />
                   <Route path="/report" element={<ReportPage />} />
                   <Route path="/settings" element={<SettingsPage />}>
