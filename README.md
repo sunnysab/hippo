@@ -12,15 +12,18 @@
         └───────────┬──────────────┘
                     │ RPC (msgpack)
         ┌───────────▼──────────────┐        ┌────────────────────┐
-        │  hippo sync-worker       │───────▶│  PostgreSQL        │
+        │  hippo.sync_worker       │───────▶│  PostgreSQL        │
         │  列表入队 → 正文落库      │        │  + pg_jieba 全文   │
         └──────────────────────────┘        │  + S3 兼容对象存储 │
         ┌──────────────────────────┐        └─────────▲──────────┘
-        │  hippo serve (API + SPA) │──────────────────┘
+        │  hippo.server (API+SPA)  │──────────────────┘
         └──────────────────────────┘
 ```
 
-两个进程：`serve` 只提供 API/UI，`sync-worker` 独占同步任务。微信凭据只存在 daemon 里，hippo 不保存。
+两个常驻进程加一个可选进程：`hippo.server` 只提供 API/UI，`hippo.sync_worker` 独占同步任务，
+`hippo.knowledge.worker` 在需要私有知识库时额外启动，负责把已上传的 PDF/TXT 解析入库。
+微信凭据只存在 daemon 里，hippo 不保存。知识库与微信登录态完全无关，**不依赖 daemon**，
+没有微信账号也能用；不启动知识 worker 时，文档会停在 `queued`。
 
 ## 快速开始
 
@@ -31,22 +34,98 @@ Node.js 24（仅构建前端）、S3 兼容对象存储（可选，未配置时�
 uv sync --extra weixin            # --extra weixin 提供 daemon SDK 需要的 msgpack
 cp config.example.toml config.toml   # 至少填 [database] dsn；有 daemon 时填 [weixin] sdk_path
 
-uv run python -m hippo db init    # 建表（幂等），校验 schema 版本
-uv run python -m hippo user add admin --password '…' --admin   # 第一个管理员
+uv run python -m hippo.ops init-db    # 建表（幂等），校验 schema 版本
+uv run python -m hippo.ops create-admin --username admin   # 密码不写在命令行，交互隐藏输入
 
-cd frontend && npm ci && npm run build && cd ..   # 构建 SPA（serve 默认读 frontend/dist）
+cd frontend && npm ci && npm run build && cd ..   # 构建 SPA（hippo.server 默认读 frontend/dist）
 
 # 生产：只开 Unix socket，由 Caddy 之类的反向代理在前面接（Caddyfile 里 reverse_proxy unix//run/hippo/hippo.sock）
-uv run python -m hippo serve --unix-socket /run/hippo/hippo.sock
+uv run python -m hippo.server --unix-socket /run/hippo/hippo.sock
 # 开发：直接开 TCP
-uv run python -m hippo serve --host 127.0.0.1 --port 8000
-uv run python -m hippo sync-worker                 # 另开一个终端
+uv run python -m hippo.server --host 127.0.0.1 --port 8000
+uv run python -m hippo.sync_worker                 # 另开一个终端
+uv run python -m hippo.knowledge.worker            # 可选：需要私有知识库时再开（见下节）
 ```
 
 打开页面 → 用刚建的管理员登录 → **设置 → 微信登录** 扫码（`POST /api/login/qr` + `/api/login/wait`）
 → **公众号** 页搜索并添加要同步的号。添加后会投递一条历史回填任务，worker 自动从新到旧翻完。
 
 验证：`GET /api/settings/status` 里 `status` 在同步时变为 `running`；`GET /api/article?page=1` 能返回文章。
+
+## 私有知识库
+
+知识库是**按用户隔离**的私有文档集合。假设是「owner 自己上传、自己阅读」：每个请求都用当前登录用户
+解析归属，别人的知识库、文档、块一律 `404`，没有管理员特权可以越过。相应的 13 个路由见 [API.md](API.md)。
+
+### 前置条件
+
+- **对象存储必须配置。** 原始 PDF/TXT 存在 S3 兼容存储的 `knowledge/` 前缀下，`article_images` 那套
+  「未配置则回源」的降级**不适用于知识库**：`[s3]` 的 endpoint/bucket/access_key/secret_key 空缺时
+  上传直接失败，不会退化成明文落本地盘。图片按需回源的原有说明不受影响。
+- **桶/前缀必须私有。** 所有权检查只在 Hippo 自己的 API 里生效，它**约束不了匿名对象访问**：
+  如果 bucket 或 `knowledge/*` 前缀允许匿名 `GET`，任何拿到（或猜到）key 的人都能直接读原文。
+  必须保证 bucket 私有，或至少让 `knowledge/*` 前缀拒绝匿名读取。只想公开文章图片时，
+  只放开 `mp/image/*`，**不要**用 `Principal=*` 的桶策略公读整桶——那会连同 `knowledge/` 一起公开。
+  对象 key 里的 UUID 只是命名，不是授权。Hippo **不会**自动修改 bucket policy，也不调用对象存储的
+  策略接口；这部分由部署方在存储侧配置。真实环境需把**「匿名 GET `knowledge/*` 必须被拒」**
+  作为上线门槛逐项验收（带授权后执行）。
+- **解析工具。** PDF 走 Poppler 的 `pdftotext`/`pdfinfo`，并用 `util-linux` 的 `prlimit` 限制资源：
+
+  ```bash
+  pdftotext -v && pdfinfo -v && prlimit --version
+  ```
+
+  这些命令在**真实隔离环境验证完成并经授权后**再执行；上面只列出检查方式。TXT 不需要额外工具。
+
+### 限额（固定内部值，不是可调选项）
+
+| 项 | 值 |
+|---|---|
+| 单文件 | 64 MiB |
+| PDF 页数 | 1000 页 |
+| 文本字符 | 2,000,000 |
+| 总块数 | 50,000 |
+| 单块字符 | 4,000 |
+
+超过任一上限**直接失败**并记录错误码，不会静默截断、不会返回部分文本。解析层不做 OCR、向量化或
+AI 处理：只提取已有的文本层，扫描件会以「需要 OCR」失败。目前只有「解析后的文本阅读」，**没有原
+PDF 画布、没有文档标注**，后续能力不在此虚报。
+
+### 状态机
+
+```
+pending_upload --PUT file--> uploading --ACK--> queued --worker--> processing --> ready
+                                                 |                              |
+                                                 +-------- failed <--------------+
+```
+
+- `PUT /api/document/{id}/file` 返回 `202` 只表示**已受理**，不等于 `ready`；客户端要读文档就用
+  `GET /api/document/{id}` 轮询 `state`，`state=ready` 之后再取 `/content`。
+- 同一 app 最多 2 个并发上传，超出 `429`；请求体读取预算 120s，下载预算 120s（同步单次 IO，不是硬期限）。
+  上传端点自身没有 300s 上限——某些客户端自己等 300s，那只是客户端行为，不是服务端处理期限。
+- `uploading` 阶段崩溃或断连不会自动恢复（还没有 reaper）：留在 `uploading` 的行需要人工处理。
+- `uploaded` 不表示 `ready`，`queued` 也不表示已被 worker 领走。
+
+### Worker 的租约
+
+`hippo.knowledge.worker` 领走一条 `queued` 时写入服务端租约：处理期间每 **30s** 心跳续租，租约
+**600s** 未被续租即视为过期，启动时以及之后最多每 **60s** 回收一次过期的 `processing`（上限 50 条）。
+SQL 里另有维护锁 5s / 语句 10s：这是**服务端事务**的两个上限，不是网络或整个业务链路的硬截止。
+回收只覆盖 `processing`，**不碰 `active`，也不回收过期的 `uploading`**——这仍是已知缺口。
+
+### 上传失败后的重试
+
+- 上传失败（`sha256 IS NULL`）重试前先确认该次尝试的对象**已经删除**，再回到 `pending_upload`：
+  行里的 journalled key 是「这一次上传」的键，删除它不会碰已发布内容。回到 `pending_upload` 后
+  **必须重新发送文件**，重试本身不会重新上传。
+- 解析失败保留源对象，直接回到 `queued`，不需要重传。
+- 结果不确定时**先 `GET` 核对**，不要盲重试：创建响应丢失（比如网络中断、没有拿到 `id`）时，先
+  刷新 `GET /api/knowledge-base/{id}/document` 找 `pending_upload` 的行，不要重复 `POST`。
+
+### 删除与清理
+
+删除文档/知识库只写 **tombstone**：行不再可见，已发布状态不再返回；对象存储里的物理清理是**分开的**
+后续动作，这里不声称已自动完成。个人标注、AI 问答与「知识库已完整」的能力都不存在。
 
 ## 数据源：weixin-rs daemon
 
@@ -192,26 +271,32 @@ uv run ruff check hippo tests
   高亮标注、按内容哈希全局屏蔽图片。
 - **日报**：按用户时区生成当天摘要并邮件发送；投递台账保证同一天同一渠道只发一次（`POST /api/report/{date}/send` 幂等）。
 - **AI 对话**：对单篇文章提问或走预设（摘要 / 要点）；模型供应商在管理台配置，密钥只以末四位回显。
-- **RSS**：`GET /api/feed/mixed?format=rss`（用 `token=` 代替 Cookie），或用 `hippo rss` 直接产出 XML。
+- **RSS**：`GET /api/feed/mixed?format=rss`（用 `token=` 代替 Cookie）。
 - **可观测**：structlog 结构化日志、可选 OTLP 上报 SignOz、`GET /api/admin/log/tail` 兜底看日志文件。
 
-## CLI
+## 入口命令
+
+hippo 只保留两个常驻模块入口、一个可选的知识 worker 与一组运维命令，日常业务（订阅、同步、RSS、导出）都在 Web 管理台完成。
 
 ```bash
-uv run python -m hippo --help        # 全部命令
+uv run python -m hippo.server --help        # API + SPA
+uv run python -m hippo.sync_worker --help   # 同步 worker
+uv run python -m hippo.knowledge.worker     # 私有知识库导入 worker（可选，无参数）
+uv run python -m hippo.ops --help            # 数据库与账号运维
 ```
 
 | 命令 | 用途 |
 |---|---|
-| `serve` | 启动 API + SPA（`--unix-socket`、`--host/--port`、`--static-dir`、`--inprocess-sync`）；不给 `--host` 就只监听 socket |
-| `sync-worker` | 独立同步进程（`--poll-interval`，默认 5s 轮询任务队列） |
-| `db init` | 建表/升级 schema；`db migrate-multiuser --owner <用户名>` 接管历史数据；`db rebuild-counts`、`db backfill-*` 维护 |
-| `user add <用户名> --password … [--admin] [--email …]` | 创建账号（CLI 建的账号直接视为已验证） |
-| `account list / sync / sync-all / sync-config / enable / disable / remove` | 账号与订阅维护 |
-| `account group add / list / sync / set / clear` | 分组维护 |
-| `article list / sync / sync-all / download <url> / backfill-images` | 文章抓取与图片回填 |
-| `rss --group 分组 --limit 50` | 输出 RSS XML 到标准输出 |
-| `export-accounts` | 导出账号（含敏感字段）为 JSON |
+| `python -m hippo.server` | 启动 API + SPA（`--unix-socket`、`--host/--port`、`--unix-socket-mode`、`--static-dir`、`--inprocess-sync`）；没有完整的 `--host/--port` 对时必须给 `--unix-socket` |
+| `python -m hippo.sync_worker` | 独立同步进程（`--poll-interval`，默认 5s 轮询任务队列） |
+| `python -m hippo.knowledge.worker` | 私有知识库导入进程（无参数；配置与日志全部读 `config.toml`） |
+| `python -m hippo.ops init-db [--dsn …]` | 建表/升级 schema（幂等） |
+| `python -m hippo.ops create-admin --username … [--password …] [--email …] [--timezone …]` | 创建管理员（CLI 建的账号直接视为已验证；密码缺省时交互隐藏输入） |
+| `python -m hippo.ops assign-owner --owner <用户名>` | 把多用户改造前的无主分组/订阅归到该用户（可重复执行） |
+
+四个循环（列表 / 正文 drain / 图片回填 / 推送监听）全部在 `hippo.sync_worker` 里并行走，
+不再有单独的 `article sync`、`account sync` 等业务命令。正文重放等一次性维护仍用
+`scripts/replay_article_documents.py`。
 
 ## HTTP API
 
@@ -219,15 +304,15 @@ uv run python -m hippo --help        # 全部命令
 
 ## 数据库
 
-- schema 定义在 `schema/postgres.sql`，`hippo db init` 幂等执行；`hippo/storage.py` 里的 `SCHEMA_VERSION`
+- schema 定义在 `schema/postgres.sql`，`hippo.ops init-db` 幂等执行；`hippo/storage.py` 里的 `SCHEMA_VERSION`
   与库中记录不一致时服务拒绝启动（迁移总是先于重启）。
 - 主要表：`accounts`/`subscription`/`account_groups`（目录 + 每用户订阅）、`articles`/`article_content`/
   `article_document`/`article_images`（文章与派生内容）、`article_queue`（列表→正文的队列）、
   `sync_jobs`（同步任务）、`avatar_images`（头像缓存）、`blocked_image_hashes`（图片屏蔽）、
   `users`/`user_session`/`user_token`（账号与会话）、`annotation`/`article_read`（阅读数据）、
   `chat_session`/`chat_message`、`llm_provider`、`report_setting`/`report_delivery`、`audit_log`、`meta`（键值）。
-- 文章图片存在 S3 兼容对象存储，`article_images` 只存元数据与 `s3_key`；下载失败的记录可由
-  `hippo article backfill-images` 重试。
+- 文章图片存在 S3 兼容对象存储，`article_images` 只存元数据与 `s3_key`；下载失败的记录由
+  `hippo.sync_worker` 的图片回填循环重试。
 
 ## 配置
 
@@ -239,7 +324,7 @@ cp config.example.toml config.toml
 ```
 
 `hippo/config.py` 在首次使用时读取它并缓存在进程内（改完要重启），路径相对工作目录，
-所以服务与 CLI 都要在仓库根下运行。**没有环境变量这一层**：`.env` 已不再参与配置。
+所以服务与运维命令都要在仓库根下运行。**没有环境变量这一层**：`.env` 已不再参与配置。
 
 | 段 | 键 | 默认 | 说明 |
 |---|---|---|---|
@@ -256,7 +341,7 @@ cp config.example.toml config.toml
 | | `signoz_url` | — | 管理台「看日志」深链目标 |
 | `[logging]` | `level` | `WARNING` | 日志级别 |
 | | `format` | `json` | `json`（SignOz 吃的格式）或 `console` |
-| | `file` | `logs/{service}.log` | `{service}` 换为 `hippo-web` / `hippo-sync-worker`；空即不写文件 |
+| | `file` | `logs/{service}.log` | `{service}` 换为 `hippo-web` / `hippo-sync-worker` / `hippo-knowledge-worker`；空即不写文件 |
 | | `tail_lines` | `500` | 管理台日志尾行数 |
 | `[http]` | `proxy` | — | 抓正文/头像的代理 |
 | | `article_worker` / `article_worker_proxy` / `article_max_connections` | — | 用 Cloudflare Worker 中转抓正文 |
@@ -274,7 +359,7 @@ systemd unit 里只剩 `PYTHONUNBUFFERED=1`（Python 运行时开关，不是应
 ## 开发
 
 ```bash
-uv run pytest                # 146 个用例，约 1 秒；测试不连数据库
+uv run pytest                # 全量用例（不连数据库）
 uv run ruff check hippo tests scripts
 uv run ruff format --check hippo scripts
 
@@ -291,8 +376,11 @@ API 参考在根目录的 [API.md](API.md)。
 
 ```
 hippo/
-├── cli.py               # Typer CLI 入口
-├── server.py            # FastAPI 应用与静态资源
+├── server.py            # FastAPI 应用与静态资源（python -m hippo.server 入口）
+├── knowledge/           # 私有知识库：上传状态机、PDF/TXT 解析、导入 worker
+├── knowledge/worker.py  # 知识导入 worker（python -m hippo.knowledge.worker 入口）
+├── sync_worker.py       # 同步 worker（python -m hippo.sync_worker 入口）
+├── ops.py               # 运维命令：init-db / create-admin / assign-owner
 ├── api/                 # 路由（routers/）、依赖、错误处理、限流
 ├── storage.py           # 连接池、schema 版本、通用查询
 ├── repositories/        # 数据访问层（account/article/image/chat/audit/…）
@@ -323,12 +411,34 @@ tests/                   # pytest 用例
 scripts/                 # 一次性维护脚本（gh_id 解析、头像回填等）
 API.md                   # HTTP API 参考
 hippo.service / hippo-sync-worker.service   # systemd 单元示例
+hippo-knowledge-worker.service              # 知识导入 worker 的 systemd 单元示例（可选）
+hippo/knowledge/worker.py                   # 知识导入 worker（python -m hippo.knowledge.worker 入口）
 ```
 
 ## 部署
 
 自托管按「rsync 源码 + systemd」即可：构建前端后把仓库同步到目标机，
-`uv sync --frozen --no-dev --extra weixin` 对齐依赖，跑 `db init`，再用附带的两个 unit 分别跑
-`serve` 与 `sync-worker`。注意顺序：先迁移（`db init`）、后重启服务，schema 版本不匹配时服务会拒绝启动。
+`uv sync --frozen --no-dev --extra weixin` 对齐依赖，跑 `python -m hippo.ops init-db`，再用附带的三个 unit 分别跑
+`hippo.server`、`hippo.sync_worker` 与（需要知识库时）`hippo.knowledge.worker`。注意顺序：先迁移（`init-db`）、
+后重启服务，schema 版本不匹配时服务会拒绝启动。
+
+知识库上线前还有几件必须做的事，**在真实隔离环境验证完成并经授权后再执行**：
+
+1. 候选 schema 版本是 29，尚未在真实 PostgreSQL 上跑过。上线前必须在隔离 PG 上验证 DDL、`pg_jieba`、
+   GIN 索引、UUID 类型、CAS 语义与并发锁行为，并验证 S3 的上传/下载/删除。
+2. 正式迁移流程：**先备份**，然后**停掉 Web、sync worker 与知识 worker 三个进程**，再人工跑
+   `python -m hippo.ops init-db`，确认无误后重启。不要让旧进程在新 schema 上继续跑。
+3. 仓库里被 git 忽略的 `deploy.sh` **没有自动安装新 unit，也不会停知识 worker**；部署流程仍需人工
+   接入这一步。本文档不修改、也不代替那个本地脚本。
+
+```bash
+# 以下都需要先完成上面步骤并取得授权，在真实环境执行
+sudo cp hippo-knowledge-worker.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now hippo-knowledge-worker
+systemctl status hippo-knowledge-worker
+journalctl -u hippo-knowledge-worker -n 50
+```
 
 `Dockerfile` 只打包 API/UI：容器里没有 weixin-rs daemon 与其 SDK，因此**不能同步**，仅适合看界面或调 API。
+它同样没有知识 worker 的入口，需要知识库时请用 systemd 单元而不是这个镜像。

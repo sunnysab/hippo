@@ -1,6 +1,6 @@
 # Hippo API 参考
 
-面向 `hippo serve` 暴露的 HTTP 接口。文中所有端点都以 `/api` 开头，覆盖当前全部 **97** 个端点。
+面向 `hippo.server` 暴露的 HTTP 接口。文中所有端点都以 `/api` 开头，覆盖当前全部 **110** 个端点。
 服务同时提供框架自带的 OpenAPI 描述与交互界面：`GET /openapi.json`、`GET /docs`（Swagger UI）。
 本文件是它们的说明：约定、权限、参数语义与响应结构。
 
@@ -21,6 +21,7 @@
 - [12. 站点设置与管理](#12-站点设置与管理apiadmin)
 - [13. 媒体来源与转写](#13-媒体来源与转写apisource-apimedia)
 - [14. 公开 API Key](#14-公开-api-key-apiapikey)
+- [15. 私有知识库](#15-私有知识库-apiknowledge-base-apidocument)
 - [附录 A：端点总览](#附录-a端点总览)
 - [附录 B：状态码](#附录-b状态码)
 
@@ -799,6 +800,117 @@ GET    /api/whoami                     这个凭证是什么
 curl -H "Authorization: Bearer hippo_…" "https://hippo.example/api/article?source=podcast&page_size=5"
 ```
 
+## 15. 私有知识库 `/api/knowledge-base` `/api/document`
+
+按用户隔离的私有 PDF/TXT 集合。**没有管理员特权**：每条记录都以 `current_user` 为唯一归属来源，
+别人的知识库与文档一律 `404`（而不是 `403`），id 不合法、不存在、已 tombstone 也一样。
+
+| 方法 | 路径 | 权限 | 用途 |
+|---|---|---|---|
+| GET | `/api/knowledge-base` | 登录 | 列出我的知识库 |
+| POST | `/api/knowledge-base` | 登录 | 新建知识库 |
+| GET | `/api/knowledge-base/{knowledge_base_id}` | 登录 | 知识库详情 |
+| PATCH | `/api/knowledge-base/{knowledge_base_id}` | 登录 | 重命名 |
+| DELETE | `/api/knowledge-base/{knowledge_base_id}` | 登录 | 删除（tombstone），`204` |
+| GET | `/api/knowledge-base/{knowledge_base_id}/document` | 登录 | 列出该库的文档 |
+| POST | `/api/knowledge-base/{knowledge_base_id}/document` | 登录 | 登记文档元数据，`201` |
+| GET | `/api/document/{document_id}` | 登录 | 文档详情（含 `state`）；未知/他人/已删均 `404` |
+| DELETE | `/api/document/{document_id}` | 登录 | 删除（tombstone），`204` |
+| PUT | `/api/document/{document_id}/file` | 登录 | 上传原始文件，`202` |
+| POST | `/api/document/{document_id}/retry` | 登录 | 准备重试一个 `failed` 文档 |
+| GET | `/api/document/{document_id}/content` | 登录 | 读已解析文本的分页块 |
+| GET | `/api/knowledge-base/{knowledge_base_id}/search` | 登录 | 在该库的已就绪文本内全文检索 |
+
+### 公开字段
+
+所有响应都是**白名单投影**，不会出现对象键、内容哈希、租约或归属 id：
+
+| 对象 | 字段 |
+|---|---|
+| 知识库 | `id`、`name`、`created_at`、`updated_at` |
+| 文档 | `id`、`knowledge_base_id`、`filename`、`mime_type`、`size_bytes`、`state`、`attempts`、`error_code`、`error_message`、`page_count`、`version`、`created_at`、`updated_at` |
+| 文本块 | `page_no`、`ordinal`、`text`、`chunk_type`、`heading_level`（不含内部 `document_id`） |
+| 搜索命中 | `document_id`、`knowledge_base_id`、`filename`、`version`、`page_no`、`ordinal`、`text`、`chunk_type`、`heading_level` |
+
+### 状态与上传
+
+`state` 的取值是 `pending_upload` → `uploading` → `queued` → `processing` → `ready`，失败时为 `failed`。
+只有 `ready` 的文档才有文本块，也只有 `ready` 的文档/库能被 `/search` 命中。
+
+| 方法 | 路径 | 请求体 |
+|---|---|---|
+| `POST /api/knowledge-base` | | `{"name": "研究报告"}` |
+| `POST /api/knowledge-base/{kb}/document` | | `{"filename": "report.pdf", "mime_type": "application/pdf"}` |
+| `PUT /api/document/{id}/file` | | 原始文件字节 |
+
+`filename` 与 `mime_type` 都必填，`mime_type` 只接受规范拼写的 `application/pdf` 或 `text/plain`，
+其他值是 `415`；两个端点都拒绝未知字段（`400`）。上传端点的请求体就是**原始字节**（不是 multipart）：
+
+```http
+PUT /api/document/00000000-0000-0000-0000-000000000000/file
+Content-Type: application/pdf
+
+<PDF 原始字节>
+```
+
+`Content-Type` 只接受缺失、`application/octet-stream` 或该文档自身的规范类型；`Content-Encoding` 必须是
+`identity`，压缩体会被拒。服务端统计实际收到的字节数，不信任 `Content-Length`。
+
+`202` 只表示**上传已受理**，不代表 `ready`：返回的文档 `state` 一般是 `queued`，客户端随后用
+`GET /api/document/{id}` 轮询。`state=ready` 之后才读 `/content`，否则 `409`。
+
+### 分页与限额
+
+| 端点 | 参数 | 默认 | 上限 |
+|---|---|---|---|
+| 列表类（知识库、文档） | `limit` / `offset` | `50` / `0` | `limit` ≤ `200`，`offset` 为 int8 范围 |
+| `/content` | `limit` / `offset` / `page_no` | `100` / `0` / 无 | `limit` ≤ `100`，`page_no` ≤ `1000` |
+| `/search` | `q` / `limit` / `offset` / `document_id` | — / `20` / `0` / 无 | `limit` ≤ `100`，`q` ≤ 500 字符 |
+
+列表返回 `{..., "limit": ..., "offset": ...}`；`/content` 与 `/search` 在**确实还有下一行**时才给
+`next_offset`，正好满一页不会被误报为还有后续。`q` 去空白后为空是 `400`；`document_id` 必须是同一知识库
+内、属于调用者且已 `ready` 的文档，否则 `404`（未就绪 `409`）。搜索返回的文本是**原文**（不转义 HTML，
+也不做高亮），`/search` 只接受 `GET`，是只读查询。
+
+单文件上限 **64 MiB**，PDF 最多 **1000 页**，文本最多 **2,000,000 字符**，总计最多 **50,000 块**，单块最多
+**4,000 字符**；超限直接失败并返回错误码，**不会静默截断**。解析只提取已有文本层，不做 OCR、向量化或 AI
+处理；扫描件以 `document.needs_ocr` 失败。
+
+### 错误
+
+错误体仍是统一的 `{"error": "…"}`，`error` 旁边可能带一个稳定的 `code`：
+
+| 状态码 | 何时 |
+|---|---|
+| `400` | 字段缺失/未知、名称或文件名非法、`Content-Length` 非法、`q` 为空 |
+| `404` | 知识库/文档不存在，或存在但不属于当前用户 |
+| `409` | 状态冲突：重试非 `failed`、上传非 `pending_upload`、读 `/content` 时未 `ready`、同库同内容重复 |
+| `413` | 单文件超过 64 MiB |
+| `415` | MIME 类型不在允许列表，或请求体被压缩 |
+| `408` | 读取请求体超过 120s 预算 |
+| `429` | 同一 app 已有 2 个上传在进行（原始上传与重试共用这个闸门） |
+| `502` | 对象存储传输失败 |
+| `503` | 结果无法确认（提交结果未知） |
+
+### 重试
+
+`POST /api/document/{id}/retry` 只接受 `failed` 文档，**没有请求体**，也**不会重新上传任何字节**：
+解析失败回到 `queued`（源对象保留），上传失败清除该次尝试的对象后回到 `pending_upload`（客户端必须
+重新发文件）。响应 `200` 表示「重试已准备好」，不是「已重新上传」。
+
+### 鉴权与 Key
+
+13 个路由全部要求**登录**（服务端会话 Cookie）。公开 API Key 同样可以读它们（只读端点在
+`current_user` 依赖里统一解析），但非 `GET`/`HEAD` 需要 `write` scope——当前控制台只签发 `read`，
+所以**只读 Key 不能创建、上传、重试或删除**任何知识库资源。
+
+### 删除语义
+
+`DELETE` 只写 tombstone：行不再可见、不再出现在任何列表或搜索结果里；对象存储中的原始文件是**分开的**
+后续清理动作。同样地，知识库目前只提供「解析后的文本阅读」，没有原 PDF 画布与文档标注。
+
+以上示例里的 id 均为合成占位符，不代表任何真实数据。
+
 ## 附录 A：端点总览
 
 | 方法 | 路径 | 权限 |
@@ -868,6 +980,19 @@ curl -H "Authorization: Bearer hippo_…" "https://hippo.example/api/article?sou
 | PATCH | `/api/group/{group_id}` | 登录 |
 | GET | `/api/image/{image_id}` | 登录 |
 | POST | `/api/image/{image_id}/block` | 登录 |
+| GET | `/api/knowledge-base` | 登录 |
+| POST | `/api/knowledge-base` | 登录 |
+| GET | `/api/knowledge-base/{knowledge_base_id}/document` | 登录 |
+| POST | `/api/knowledge-base/{knowledge_base_id}/document` | 登录 |
+| GET | `/api/knowledge-base/{knowledge_base_id}/search` | 登录 |
+| DELETE | `/api/knowledge-base/{knowledge_base_id}` | 登录 |
+| GET | `/api/knowledge-base/{knowledge_base_id}` | 登录 |
+| PATCH | `/api/knowledge-base/{knowledge_base_id}` | 登录 |
+| GET | `/api/document/{document_id}` | 登录 |
+| DELETE | `/api/document/{document_id}` | 登录 |
+| GET | `/api/document/{document_id}/content` | 登录 |
+| PUT | `/api/document/{document_id}/file` | 登录 |
+| POST | `/api/document/{document_id}/retry` | 登录 |
 | GET | `/api/llm/provider` | 管理员 |
 | POST | `/api/llm/provider` | 管理员 |
 | DELETE | `/api/llm/provider/{provider_id}` | 管理员 |
