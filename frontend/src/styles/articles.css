@@ -1232,8 +1232,9 @@ mark.hippo-highlight:hover {
 
 /* ---------------------------------------------------------------------------
    Video and podcast articles: a player above the transcript, and the timestamp
-   anchors the transcript is read with. Anchors are plain text until the reader
-   has something to seek (see RenderedContent).
+   anchors the transcript is read with. The video streams from our own storage;
+   an entry without an archived copy gets a notice and an original link instead
+   of a third-party embed.
 --------------------------------------------------------------------------- */
 
 .reader-video {
@@ -1246,46 +1247,34 @@ mark.hippo-highlight:hover {
   background: var(--surface-chip);
 }
 
-.reader-video iframe {
+.reader-video video {
   display: block;
   width: 100%;
   height: 100%;
-  border: 0;
+  object-fit: contain;
+  background: #000;
 }
 
-.reader-video-poster {
-  display: block;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  border: 0;
-  background: none;
-  cursor: pointer;
-}
-
-.reader-video-poster img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.reader-video-placeholder {
-  display: block;
-  width: 100%;
-  height: 100%;
-  background: var(--surface-chip);
-}
-
-.reader-video-play {
-  position: absolute;
-  inset: 0;
+/* No archived copy: say so instead of loading a third-party player. */
+.reader-video.is-missing {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #fff;
-  font-size: 26px;
-  text-shadow: 0 1px 6px rgb(0 0 0 / 55%);
+  gap: 10px;
+  padding: 18px;
+  aspect-ratio: auto;
+  text-align: center;
+}
+
+.reader-video-missing {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.reader-video-origin {
+  font-size: 13px;
 }
 
 .reader-audio {

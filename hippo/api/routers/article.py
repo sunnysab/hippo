@@ -5,10 +5,12 @@ import json
 import threading
 import time as time_module
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, Query, Request, Response
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from starlette.concurrency import iterate_in_threadpool
 
 from ...article_queries import (
@@ -293,24 +295,30 @@ async def stream_archived_media(
     """Stream an article's archived media, with range support so the reader can seek.
 
     Same handler for audio and video: both are an object in the store and a content
-    type. Without an archive the original URL is still the right answer; a missing
-    one is a 404 the reader turns into "no player".
+    type. Visibility comes first, so a foreign article never reaches the store.
+    Only audio keeps the original-URL fallback: for a video that URL is a
+    third-party page, not playable bytes, and a redirect would hand the reader
+    HTML instead of a 404 they can turn into "no player".
     """
     if kind not in archive_module.MEDIA_KINDS:
         raise ApiError(f'不认识的媒体类型：{kind}', status=404)
     await _assert_article_visible(storage, user.id, article_pk)
     asset = await storage.media_assets.get(article_pk, kind=kind)
-    if not asset or asset.get('state') != 'stored' or not asset.get('s3_key'):
-        if asset and asset.get('orig_url'):
-            return RedirectResponse(str(asset['orig_url']), status_code=302)
+    s3_key = str(asset.get('s3_key') or '').strip() if asset else ''
+    if not asset or asset.get('state') != 'stored' or not s3_key:
+        if kind == 'audio':
+            fallback = _original_media_url(asset) if asset else None
+            if fallback:
+                return RedirectResponse(fallback, status_code=302)
         raise ApiError(f'这篇文章没有留档{kind}', status=404)
 
+    total = _known_size(asset.get('size_bytes'))
     try:
-        start, end = archive_module.parse_range(request.headers.get('range'), asset.get('size_bytes'))
+        start, end = archive_module.parse_range(request.headers.get('range'), total)
     except archive_module.ArchiveError as exc:
-        raise ApiError(str(exc), status=416) from exc
+        return _range_not_satisfiable(str(exc), total)
     try:
-        stream = await asyncio.to_thread(archive_module.open_audio, str(asset['s3_key']), start=start, end=end)
+        stream = await asyncio.to_thread(archive_module.open_audio, s3_key, start=start, end=end)
     except archive_module.ArchiveError as exc:
         raise ApiError(str(exc), status=502, code='article.archive_unavailable') from exc
 
@@ -324,11 +332,79 @@ async def stream_archived_media(
         headers['Content-Range'] = f'bytes {start}-{start + stream.size - 1}/{stream.total}'
         status_code = 206
     return StreamingResponse(
-        iterate_in_threadpool(stream.body),
+        _close_body_when_done(stream.body),
         status_code=status_code,
         media_type=stream.content_type,
         headers=headers,
     )
+
+
+def _original_media_url(asset: dict[str, Any] | None) -> str | None:
+    """The source URL for an unarchived audio asset, when it is safe to redirect to.
+
+    ``orig_url`` is provider metadata we did not author, so a scheme the browser
+    cannot play (``javascript:``, ``data:``, ``file:``) or a URL without a host is
+    refused rather than handed out as a redirect. Only the audio path uses this: a
+    video's original URL points at a third-party page, not at bytes.
+    """
+    if not asset:
+        return None
+    raw = asset.get('orig_url')
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    text = raw.strip()
+    try:
+        parsed = urlparse(text)
+        hostname = parsed.hostname
+    except ValueError:
+        return None
+    if parsed.scheme not in ('http', 'https') or not hostname:
+        return None
+    return text
+
+
+def _known_size(value: Any) -> int | None:
+    """``article_media.size_bytes`` is nullable, and a range needs a real number."""
+    try:
+        total = int(value)
+    except TypeError, ValueError:
+        return None
+    return total if total >= 0 else None
+
+
+def _range_not_satisfiable(message: str, total: int | None) -> JSONResponse:
+    """416 with the real length, so the client can restart from the last byte.
+
+    Same ``{'error', 'code'}`` shape the API error handler produces; only this
+    response carries ``Content-Range``, which ``ApiError`` cannot. Without a known
+    total there is no length to report and the header is omitted rather than
+    invented.
+    """
+    headers = {'Content-Range': f'bytes */{total}'} if total is not None else None
+    return JSONResponse(
+        status_code=416,
+        content={'error': message, 'code': 'http_416'},
+        headers=headers,
+    )
+
+
+async def _close_body_when_done(body: Any) -> AsyncIterator[bytes]:
+    """Yield the S3 body and close it whatever happened.
+
+    Starlette stops iterating on a client disconnect and on a failed chunk, so
+    ``finally`` is the only place the upstream connection is reliably released.
+    """
+    try:
+        async for chunk in iterate_in_threadpool(body):
+            yield chunk
+    finally:
+        close = getattr(body, 'close', None)
+        if close is not None:
+            try:
+                # Closing can block on the upstream socket, so it is not done on the loop.
+                await asyncio.to_thread(close)
+            except Exception:
+                logger.warning('Failed to close archived media body', exc_info=True)
 
 
 @router.get('/image/{image_id}')

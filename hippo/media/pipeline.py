@@ -28,23 +28,29 @@ from typing import Any, Protocol
 import httpx
 
 from ..config import DEFAULT_USER_AGENT
-from ..downloader import parse_markdown_blocks
 from ..logger import get_logger
 from ..models import ArticleRecord
-from ..normalize_html import normalize_html
 from ..storage import PostgresStorage, fetchone_row
 from . import archive as archive_module
 from . import audio as audio_module
+from . import video as video_module
 from .asr import AsrClient, client_for
 from .validate import check
 
 logger = get_logger(__name__)
 
-#: Ceiling on one download. A 4 h episode at 128 kbps is roughly 230 MB, so this
-#: only exists to stop a wrong URL from filling the disk.
+#: Ceiling on everything one job downloads. A 4 h episode at 128 kbps is roughly 230 MB,
+#: so this only exists to stop a wrong URL from filling the disk. One job's tracks share
+#: it (``_download``'s ``start_offset``), because splitting a video into two files must
+#: not hand the second one a fresh budget.
 MAX_DOWNLOAD_BYTES = 2 * 1024**3
 
-#: Audio is fetched in ranged blocks, which is not cosmetic: googlevideo throttles a
+#: How the video asset is named in ``article_media`` and in the object store. The
+#: phase-1 contract fixed both strings.
+VIDEO_KIND = 'video'
+VIDEO_CONTENT_TYPE = 'video/mp4'
+
+#: Media files are fetched in ranged blocks, which is not cosmetic: googlevideo throttles a
 #: plain GET from a flagged exit IP to ~10 KB/s while serving ranged requests at
 #: 3-7 MB/s (measured on the production proxy). The block is also the retry unit, so
 #: a connection that dies halfway costs one block instead of the whole episode.
@@ -67,6 +73,7 @@ def _download_headers(headers: Mapping[str, str]) -> dict[str, str]:
     if not any(key.lower() == 'user-agent' for key in prepared):
         prepared['User-Agent'] = DEFAULT_USER_AGENT
     return prepared
+
 
 #: How the transcript is split for reading. One 300 s chunk is ~1900 characters,
 #: which is a wall of text; grouped sentences of about this size read better and
@@ -98,12 +105,19 @@ class ResolvedMedia:
 
     #: Direct URL of the audio to download. ``None`` when there is no audio.
     audio_url: str | None = None
+    #: Direct HTTP(S) URL of a progressive MP4/H.264 video the source resolved.
+    #: ``None`` when the source has no compatible track; never an HLS/DASH manifest.
+    video_url: str | None = None
+    #: Whether that progressive MP4 already carries its AAC audio. ``False`` means the
+    #: picture has to be muxed with ``audio_url`` before it is watchable.
+    video_has_audio: bool = False
     #: Request headers the host needs (Bilibili wants a Referer).
     headers: dict[str, str] = field(default_factory=dict)
     #: Proxy the download must go through (YouTube's CDN is unreachable without one).
     proxy: str | None = None
     duration_seconds: int | None = None
-    #: Player block for the reader: an iframe for video, a URL for a podcast.
+    #: The source's own player block. Video sources use it as metadata (the pipeline
+    #: drops ``embed_url`` and serves its own file); a podcast URL is still usable.
     embed_block: dict[str, Any] | None = None
     #: Set when the source already has a transcript, so no ASR is needed.
     subtitle: Subtitle | None = None
@@ -226,6 +240,30 @@ def _total_bytes(response: httpx.Response, current: int | None) -> int | None:
     return current
 
 
+def _range_bounds(response: httpx.Response) -> tuple[int, int | None]:
+    """The ``start`` and ``total`` a 206's ``Content-Range`` declares.
+
+    A block is only usable where it was asked for, so the start has to be readable
+    rather than assumed: a host that answers with someone else's range would have us
+    splice two unrelated pieces into one file.
+    """
+    header = response.headers.get('content-range') or ''
+    bounds, _, raw_total = header.partition('/')
+    value = bounds.strip()
+    if not value.startswith('bytes '):
+        raise MediaJobFailure('media server sent an unparsable Content-Range')
+    raw_start, _, raw_end = value[len('bytes ') :].partition('-')
+    if not raw_start.isdigit() or not raw_end.isdigit():
+        raise MediaJobFailure('media server sent an unparsable Content-Range')
+    start = int(raw_start)
+    end = int(raw_end)
+    if end < start:
+        # end < start is not a range; it is a claim that cannot be spliced in.
+        raise MediaJobFailure(f'media server sent a reversed Content-Range: {start}-{end}')
+    total = int(raw_total.strip()) if raw_total.strip().isdigit() else None
+    return start, total
+
+
 async def _download(
     url: str,
     target: Path,
@@ -234,64 +272,108 @@ async def _download(
     timeout: float,
     proxy: str | None = None,
     max_bytes: int = MAX_DOWNLOAD_BYTES,
+    start_offset: int = 0,
 ) -> int:
     """Fetch ``url`` into ``target`` in ranged blocks, keeping what arrived.
 
     A partial file is picked up where it stopped, so a block that fails after 7 MiB
     is re-requested for its last byte rather than for the whole episode.
+
+    ``start_offset`` is what earlier tracks of the same job already spent: the ceiling
+    is per job, so a second track must not get a fresh 2 GiB of its own. The budget is
+    recomputed as ``start_offset + written`` on every piece instead of being
+    accumulated, because a server that ignores ``Range`` rewinds ``written`` to 0 and
+    the bytes it already sent must not stay charged twice.
+
+    ``timeout`` bounds the whole download — every block, retry and backoff — rather
+    than one piece of it, so a host that trickles forever still ends in a failure.
     """
+    prior = max(int(start_offset), 0)
+    if prior >= max_bytes:
+        raise MediaJobFailure(f'media exceeds the {max_bytes} byte ceiling')
     written = target.stat().st_size if target.is_file() else 0
     total: int | None = None
     blocks = max_bytes // DOWNLOAD_BLOCK_BYTES + 2
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, proxy=proxy or None) as client:
-        for _ in range(blocks):
-            appended = 0
-            for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
-                # 每次尝试都按当前进度重算区间：上一次传到一半断掉时，续的是断点而不是重来。
-                request_headers = _download_headers(headers)
-                request_headers['Range'] = f'bytes={written}-{written + DOWNLOAD_BLOCK_BYTES - 1}'
-                appended = 0
-                try:
-                    async with client.stream('GET', url, headers=request_headers) as response:
-                        if response.status_code == 416:
-                            # 请求越界 = 服务器说「没有了」。正常收尾，但长度是否够由
-                            # 循环末尾统一判断（服务器先报过 59 分钟、之后只给 2 MB 的
-                            # 情况必须当场失败，而不是当完整的存下来）。
+    try:
+        async with asyncio.timeout(timeout):
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, proxy=proxy or None) as client:
+                for _ in range(blocks):
+                    appended = 0
+                    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+                        # 每次尝试都按当前进度重算区间：上一次传到一半断掉时，续的是断点而不是重来。
+                        request_headers = _download_headers(headers)
+                        request_headers['Range'] = f'bytes={written}-{written + DOWNLOAD_BLOCK_BYTES - 1}'
+                        appended = 0
+                        try:
+                            async with client.stream('GET', url, headers=request_headers) as response:
+                                if response.status_code == 416:
+                                    # 请求越界 = 服务器说「没有了」。正常收尾，但长度是否够由
+                                    # 循环末尾统一判断（服务器先报过 59 分钟、之后只给 2 MB 的
+                                    # 情况必须当场失败，而不是当完整的存下来）。
+                                    break
+                                if response.status_code not in (200, 206):
+                                    raise MediaJobFailure(f'media download failed: HTTP {response.status_code}')
+                                if response.status_code == 206:
+                                    start, range_total = _range_bounds(response)
+                                    if start != written:
+                                        raise MediaJobFailure(
+                                            f'media server answered from byte {start}, expected {written}'
+                                        )
+                                    if range_total is not None:
+                                        total = range_total
+                                else:
+                                    if written:
+                                        # 服务器不支持 Range，把半截文件丢掉重来，免得两段接在一起。
+                                        written = 0
+                                    total = _total_bytes(response, total)
+                                # 总长已经报出来的，不必先下几百兆再说超限。
+                                if total is not None and prior + total > max_bytes:
+                                    raise MediaJobFailure(f'media exceeds the {max_bytes} byte ceiling')
+                                with target.open('ab' if written else 'wb') as handle:
+                                    async for piece in response.aiter_bytes(1 << 16):
+                                        written += len(piece)
+                                        appended += len(piece)
+                                        if prior + written > max_bytes:
+                                            raise MediaJobFailure(f'media exceeds the {max_bytes} byte ceiling')
+                                        handle.write(piece)
                             break
-                        if response.status_code not in (200, 206):
-                            raise MediaJobFailure(f'音频下载失败：HTTP {response.status_code}')
-                        if response.status_code == 200 and written:
-                            # 服务器不支持 Range，把半截文件丢掉重来，免得两段接在一起。
-                            written = 0
-                        total = _total_bytes(response, total)
-                        with target.open('ab' if written else 'wb') as handle:
-                            async for piece in response.aiter_bytes(1 << 16):
-                                written += len(piece)
-                                appended += len(piece)
-                                if written > max_bytes:
-                                    raise MediaJobFailure(f'音频超过 {max_bytes // 1024**3} GiB 上限')
-                                handle.write(piece)
-                    break
-                except MediaJobFailure:
-                    raise
-                except httpx.HTTPError as exc:
-                    if attempt >= DOWNLOAD_ATTEMPTS:
-                        raise MediaJobFailure(f'音频下载失败：{exc}') from exc
-                    logger.warning('音频第 %d 字节起的分片第 %d 次失败：%s', written, attempt, exc)
-                    await asyncio.sleep(DOWNLOAD_RETRY_BACKOFF_SECONDS * attempt)
-            if total is not None and written >= total:
-                break
-            if not appended:
-                # 没有进度也问不出总数：再要下去只会是空转。
-                break
+                        except MediaJobFailure:
+                            raise
+                        except httpx.HTTPError as exc:
+                            if attempt >= DOWNLOAD_ATTEMPTS:
+                                raise MediaJobFailure(f'media download failed: {exc}') from exc
+                            logger.warning('媒体第 %d 字节起的分片第 %d 次失败：%s', written, attempt, exc)
+                            await asyncio.sleep(DOWNLOAD_RETRY_BACKOFF_SECONDS * attempt)
+                    if total is not None and written >= total:
+                        break
+                    if not appended:
+                        # 没有进度也问不出总数：再要下去只会是空转。
+                        break
+    except TimeoutError as exc:
+        raise MediaJobFailure(f'media download did not finish within {timeout:.0f}s') from exc
     if not written:
-        raise MediaJobFailure('音频下载得到了空文件')
+        raise MediaJobFailure('media download produced an empty file')
     if total is not None and written < total:
-        # 服务器先报了一个总长，之后却说「没有了」（416）或给了一个空片。曾经因此
-        # 把 2 MB 当成完整的 59 分钟节目留了档——这里把短文件当失败，让上层重试。
-        raise MediaJobFailure(f'音频被截断：只拿到 {written}/{total} 字节')
+        # The server announced a total, then said "no more" (416) or sent a short piece.
+        # That once stored 2 MB as a complete 59-minute episode; a short file is a failure
+        # so the queue retries, never a file that looks whole.
+        raise MediaJobFailure(f'media truncated: received {written} of {total} bytes')
     return written
 
+
+def _checked_size(path: Path, *, label: str, max_bytes: int) -> int:
+    """Non-empty and inside the ceiling, for a file about to be read or stored.
+
+    ``_download`` checks what it fetched, but a merged file and a stored object reach
+    the store without passing through it, so the property is asserted once more here
+    instead of being trusted to the producer.
+    """
+    size = path.stat().st_size if path.is_file() else 0
+    if not size:
+        raise MediaJobFailure(f'{label} is an empty file')
+    if size > max_bytes:
+        raise MediaJobFailure(f'{label} exceeds the {max_bytes} byte ceiling')
+    return size
 
 
 async def _transcribe_chunk(
@@ -352,16 +434,15 @@ def _show_notes(article: ArticleRecord) -> tuple[list[dict[str, Any]], str]:
     The digest already holds them (the listing stores the feed's description), so
     nothing has to travel through the job payload. They go above the transcript — it
     is what the episode says about itself, and the transcript's timestamps mark where
-    it ends
+    it ends.
+
+    The digest is the source's plain-text contract, so every non-empty line becomes a
+    paragraph exactly as written. It is never parsed again as HTML here: text that
+    merely looks like a tag (``Use <label> literally``) is content, not markup, and
+    guessing would delete it.
     """
-    html = str(article.digest or '')
-    if '<' not in html:
-        return [], ''
-    markdown = normalize_html(html, 'markdown').strip()
-    if not markdown:
-        return [], ''
-    _, _, blocks, _ = parse_markdown_blocks(markdown)
-    return blocks, markdown
+    lines = [line.strip() for line in str(article.digest or '').splitlines() if line.strip()]
+    return [{'type': 'paragraph', 'text': line} for line in lines], '\n'.join(lines)
 
 
 async def _progress(storage: PostgresStorage, job_id: int, *, stage: str, progress: int) -> None:
@@ -374,31 +455,87 @@ async def _progress(storage: PostgresStorage, job_id: int, *, stage: str, progre
     await storage.commit()
 
 
+def _video_block(resolved: ResolvedMedia, *, article_pk: int) -> dict[str, Any]:
+    """The native player for the video Hippo keeps.
+
+    The provider/video_id/cover metadata comes from the source's embed block; its
+    ``embed_url`` is dropped, because the player is ours and the file is ours.
+    """
+    embed = resolved.embed_block or {}
+    block: dict[str, Any] = {'type': 'video', 'url': f'/api/media/{article_pk}/{VIDEO_KIND}'}
+    for key in ('provider', 'video_id', 'cover_url'):
+        value = embed.get(key)
+        if value:
+            block[key] = value
+    return block
+
+
 def _media_blocks(
     resolved: ResolvedMedia,
     *,
     article_pk: int,
-    archived: bool,
+    audio_archived: bool,
+    video_stored: bool,
 ) -> list[dict[str, Any]]:
-    """The players that go above the text: the video, and the audio we kept.
+    """The players that go above the text: the video we keep, and the audio.
 
-    Both, when both exist — a video is watchable, and the archived audio is what
-    survives the original disappearing (and what makes a transcript anchor seek).
-    ``_save`` decides which of them the reader actually gets to see.
-
-    A resolved audio url with no archive (keep_media off) is still worth a player,
-    because it streams from wherever the source hosts it.
+    ``video_stored`` is passed in rather than derived here: the URL is only usable
+    once the object is really in the store, and only ``transcribe_job`` knows that.
+    A source's own video embed is never handed out — Hippo plays its own copy, and
+    an iframe would put the platform back in the reader's path.
     """
     blocks: list[dict[str, Any]] = []
-    if resolved.embed_block:
-        blocks.append(resolved.embed_block)
-    if archived:
+    embed = resolved.embed_block
+    if embed and embed.get('type') != 'video':
+        # 播客的播放器不是 iframe，照旧给出去。
+        blocks.append(embed)
+    if video_stored:
+        blocks.append(_video_block(resolved, article_pk=article_pk))
+    if audio_archived:
         blocks.append({'type': 'audio', 'url': f'/api/media/{article_pk}/audio'})
-    elif resolved.audio_url and not resolved.embed_block and not resolved.headers:
+    elif resolved.audio_url and not embed and not resolved.video_url and not resolved.headers:
         # 直接指向源站的播放器。带自定义头的源（B站 CDN 要 Referer）不能这样给：
         # 浏览器的 <audio> 加不了那些头，给出去也是个播不响的播放器。
         blocks.append({'type': 'audio', 'url': str(resolved.audio_url)})
     return blocks
+
+
+async def _store_video(
+    storage: PostgresStorage,
+    article_pk: int,
+    path: Path,
+    *,
+    job: Mapping[str, Any],
+    duration_seconds: float,
+) -> None:
+    """Upload the watchable MP4, or make the job fail trying.
+
+    Unlike the audio copy — which is a bonus next to the transcript — the video *is*
+    the article, so a failure marks the video failed and raises instead of letting
+    the job finish with a player that would point at nothing.
+    """
+    try:
+        await storage.media_jobs.update_progress(int(job['id']), stage='archive', progress=15)
+        key, size = await asyncio.to_thread(
+            archive_module.store_media,
+            article_pk=article_pk,
+            path=path,
+            kind=VIDEO_KIND,
+            content_type=VIDEO_CONTENT_TYPE,
+        )
+    except Exception as exc:
+        logger.warning('留档视频失败（article_pk=%s）：%s', article_pk, exc)
+        await storage.media_assets.mark_failed(article_pk, kind=VIDEO_KIND, error=str(exc))
+        raise MediaJobFailure(f'视频留档失败：{exc}') from exc
+    await storage.media_assets.save(
+        article_pk=article_pk,
+        kind=VIDEO_KIND,
+        orig_url=str(job.get('media_url') or ''),
+        content_type=VIDEO_CONTENT_TYPE,
+        size_bytes=size,
+        duration_seconds=int(duration_seconds) if duration_seconds else None,
+        s3_key=key,
+    )
 
 
 async def _save(
@@ -436,11 +573,17 @@ async def _save_subtitle(
     article_pk: int,
     resolved: ResolvedMedia,
     archived: bool,
+    video_kept: bool,
 ) -> dict[str, Any]:
     """Write a ready-made subtitle in as the body, with the player above it."""
     await _progress(storage, job_id, stage='subtitle', progress=90)
     show_notes, notes_markdown = _show_notes(article)
-    blocks = _media_blocks(resolved, article_pk=article_pk, archived=archived)
+    blocks = _media_blocks(
+        resolved,
+        article_pk=article_pk,
+        audio_archived=archived,
+        video_stored=video_kept,
+    )
     blocks.extend(show_notes)
     blocks.extend(resolved.subtitle.blocks)  # type: ignore[union-attr]
     markdown = '\n\n'.join(part for part in (notes_markdown, resolved.subtitle.markdown) if part)  # type: ignore[union-attr]
@@ -450,6 +593,7 @@ async def _save_subtitle(
         'segments': len(resolved.subtitle.blocks),  # type: ignore[union-attr]
         'subtitle': True,
         'archived': archived,
+        'video_stored': video_kept,
     }
 
 
@@ -469,7 +613,7 @@ async def transcribe_job(
     job_id = int(job['id'])
     ceiling = float(settings.get('max_duration_seconds') or 0)
 
-    async def keep_subtitle(*, archived: bool) -> dict[str, Any]:
+    async def keep_subtitle(*, archived: bool, video_kept: bool = False) -> dict[str, Any]:
         return await _save_subtitle(
             storage,
             job_id=job_id,
@@ -477,97 +621,213 @@ async def transcribe_job(
             article_pk=article_pk,
             resolved=resolved,
             archived=archived,
+            video_kept=video_kept,
         )
+
+    # 已经存在对象存储里的视频优先：那是别人手上就有的文件，不必再从网上下一遍，
+    # 也不必再传一次。时长闸门之前就看它，因为「不下载」不等于「没得看」。
+    stored = await storage.media_assets.get(article_pk, kind=VIDEO_KIND)
+    reused = bool(stored and stored.get('state') == 'stored' and stored.get('s3_key'))
 
     # 列表阶段就知道时长的，先拦下来，不必白下几十兆。字幕是平台给的，超长也照样用。
     known = float(resolved.duration_seconds or 0)
     if ceiling and known > ceiling:
         if subtitle is None:
-            raise MediaJobSkipped(f'音频 {known / 60:.0f} 分钟，超过 {ceiling / 60:.0f} 分钟上限')
-        return await keep_subtitle(archived=False)
+            raise MediaJobSkipped(f'media is {known / 60:.0f} minutes, over the {ceiling / 60:.0f} minute ceiling')
+        return await keep_subtitle(archived=False, video_kept=reused)
 
-    if not resolved.audio_url:
+    has_video = bool(resolved.video_url)
+    keep_media = bool(settings.get('keep_media'))
+    # A ready-made subtitle needs no ASR at all, and the client is built as late as
+    # possible: a job that a duration gate or a missing track skips must not open a
+    # connection it will never use.
+    needs_asr = subtitle is None
+    # 已经存在库里的视频可以自己当 ASR 的输入，不需要 resolver 再给一个音频轨。
+    has_audio_source = bool(resolved.audio_url) or (reused and needs_asr)
+    if not has_audio_source and not has_video:
         if subtitle is None:
-            raise MediaJobSkipped('这个条目没有可下载的音频')
+            raise MediaJobSkipped('this entry has no downloadable audio or video')
+        return await keep_subtitle(archived=False, video_kept=reused)
+    if subtitle is not None and not keep_media and not reused:
+        # 字幕已在手上，媒体又明确不要留：下载只会白花带宽和磁盘。
         return await keep_subtitle(archived=False)
 
-    tier = str(settings.get('asr_tier') or 'accurate')
-    transcriber = transcriber or client_for(dict(settings), tier)
     max_new_tokens = int(settings.get('asr_max_new_tokens') or 2048)
+    timeout = float(settings.get('asr_timeout_seconds') or 900)
 
     with tempfile.TemporaryDirectory(prefix=f'hippo-media-{article_pk}-') as temp_name:
         workdir = Path(temp_name)
-        source = workdir / 'source.bin'
         await _progress(storage, job_id, stage='download', progress=5)
-        # 已经存在对象存储里的视频优先：那是别人手上就有的文件，不必再从网上下一遍。
-        stored = await storage.media_assets.get(article_pk, kind='video')
-        if stored and stored.get('state') == 'stored' and stored.get('s3_key'):
+        if reused and subtitle is not None:
+            # 现成字幕 + 已经在库里的视频：两样都不必再动。
+            return await keep_subtitle(archived=False, video_kept=True)
+
+        video_path: Path | None = None
+        video_kept = reused
+        stored_bytes = 0
+        source: Path | None
+        audio_source: Path | None = None
+        if reused:
             logger.info('用留档视频作为源（article_pk=%s，%s 字节）', article_pk, stored.get('size_bytes'))
-            size = await asyncio.to_thread(archive_module.fetch_object, str(stored['s3_key']), source)
+            source = workdir / 'source.bin'
+            try:
+                stored_bytes = await asyncio.to_thread(
+                    archive_module.fetch_object,
+                    str(stored['s3_key']),
+                    source,
+                    max_bytes=MAX_DOWNLOAD_BYTES,
+                )
+            except archive_module.ArchiveError as exc:
+                # Same rule as a failed merge: an unreadable archive is retryable, not a
+                # silent success built on a source file that does not exist.
+                raise MediaJobFailure(f'could not read the archived video: {exc}') from exc
         else:
-            size = await _download(
-                str(resolved.audio_url),
-                source,
-                headers=resolved.headers,
-                proxy=resolved.proxy,
-                timeout=float(settings.get('asr_timeout_seconds') or 900),
-            )
+            # 视频轨只在我们打算留下它、或它是唯一的转写来源时才下。
+            audio_path: Path | None = None
+            bytes_used = 0
+            if has_video and (keep_media or not resolved.audio_url):
+                video_path = workdir / 'video.mp4'
+                bytes_used += await _download(
+                    str(resolved.video_url),
+                    video_path,
+                    headers=resolved.headers,
+                    proxy=resolved.proxy,
+                    timeout=timeout,
+                    start_offset=bytes_used,
+                )
+            if resolved.audio_url and (video_path is None or not resolved.video_has_audio):
+                audio_path = workdir / 'audio.bin'
+                # 分轨共享同一个 2 GiB 预算：分轨不是每轨各给一份。
+                bytes_used += await _download(
+                    str(resolved.audio_url),
+                    audio_path,
+                    headers=resolved.headers,
+                    proxy=resolved.proxy,
+                    timeout=timeout,
+                    start_offset=bytes_used,
+                )
+                # 只有真正的音频文件才能进 `_archive`：`original` 是原样拷贝，把
+                # 一个 MP4 改成 .mp3 存成 audio/mpeg 就是在对读者撒谎。
+                audio_source = audio_path
+            if video_path is not None and not resolved.video_has_audio:
+                if audio_path is None:
+                    raise MediaJobFailure('the video has no audio track and none could be merged in')
+                merged = workdir / 'merged.mp4'
+                try:
+                    await asyncio.to_thread(
+                        video_module.merge,
+                        video_path,
+                        audio_path,
+                        merged,
+                        max_bytes=MAX_DOWNLOAD_BYTES,
+                    )
+                except video_module.VideoError as exc:
+                    # A merge that cannot produce a watchable file is this article's
+                    # failure: it spends an attempt instead of becoming a fake success.
+                    raise MediaJobFailure(f'video merge failed: {exc}') from exc
+                video_path = merged
+            source = video_path if video_path is not None else audio_path
+            if source is None:
+                raise MediaJobSkipped('this entry has no downloadable audio or video')
+
         duration = float(resolved.duration_seconds or await asyncio.to_thread(audio_module.probe_duration, source))
         over_ceiling = bool(ceiling) and duration > ceiling
         if over_ceiling and subtitle is None:
-            raise MediaJobSkipped(f'音频 {duration / 60:.0f} 分钟，超过 {ceiling / 60:.0f} 分钟上限')
+            raise MediaJobSkipped(f'media is {duration / 60:.0f} minutes, over the {ceiling / 60:.0f} minute ceiling')
 
-        # 有字幕也要留档：字幕是平台给的，音频是这个条目里我们唯一能留下来的东西。
-        archived = None if over_ceiling else await _archive(storage, article_pk, source, job=job, settings=settings)
+        if video_path is not None and keep_media and not over_ceiling:
+            # 合并后的文件也得非空且在限额内，不因为下载被 fake 过就跳过这个校验。
+            _checked_size(video_path, label='video', max_bytes=MAX_DOWNLOAD_BYTES)
+            await _store_video(storage, article_pk, video_path, job=job, duration_seconds=duration)
+            video_kept = True
+        elif not reused:
+            _checked_size(source, label='media', max_bytes=MAX_DOWNLOAD_BYTES)
+
+        # 有字幕也要留档：字幕是平台给的，媒体是这个条目里我们唯一能留下来的东西。
+        # 视频已经把声音留下了，就不必再存一份重复的音频。
+        if over_ceiling or video_kept or audio_source is None:
+            archived = None
+        else:
+            archived = await _archive(storage, article_pk, audio_source, job=job, settings=settings)
 
         if subtitle is not None:
-            # 有现成字幕就不花 ASR 的钱，但下载、转码、留档照做。
+            # 有现成字幕就不花 ASR 的钱，但下载、合并、留档照做。
             # `bool`：留档失败时返回的是 False，写 `is not None` 会给出一个指向
             # 不存在对象的播放器。
-            return await keep_subtitle(archived=bool(archived))
+            return await keep_subtitle(archived=bool(archived), video_kept=video_kept)
 
-        await _progress(storage, job_id, stage='transcribe', progress=25)
+        # The client is built here, at the point the ASR is really entered: a job that a
+        # subtitle, a duration gate or a download failure stopped must never open a
+        # connection. An injected client belongs to the caller and is never closed here;
+        # one this function built is always closed, on success and on every failure.
+        owned = transcriber is None
+        if owned:
+            transcriber = client_for(dict(settings), str(settings.get('asr_tier') or 'accurate'))
+        try:
+            await _progress(storage, job_id, stage='transcribe', progress=25)
 
-        chunks = await asyncio.to_thread(
-            audio_module.prepare,
-            source,
-            workdir,
-            chunk_seconds=int(settings['chunk_seconds']),
-            min_tail_seconds=int(settings['min_tail_seconds']),
-            max_chunk_seconds=int(settings['max_chunk_seconds']),
-        )
-        paragraphs: list[tuple[float, str]] = []
-        for done, chunk in enumerate(chunks, start=1):
-            progress = 25 + int(done / len(chunks) * 65)
-            await _progress(storage, job_id, stage='transcribe', progress=progress)
-            paragraphs.extend(
-                await _transcribe_chunk(
-                    transcriber,
-                    chunk,
-                    settings=settings,
-                    workdir=workdir,
-                    max_new_tokens=max_new_tokens,
-                )
+            chunks = await asyncio.to_thread(
+                audio_module.prepare,
+                source,
+                workdir,
+                chunk_seconds=int(settings['chunk_seconds']),
+                min_tail_seconds=int(settings['min_tail_seconds']),
+                max_chunk_seconds=int(settings['max_chunk_seconds']),
             )
-        if not paragraphs:
-            raise MediaJobSkipped('整段音频都没有转写到内容')
+            paragraphs: list[tuple[float, str]] = []
+            for done, chunk in enumerate(chunks, start=1):
+                progress = 25 + int(done / len(chunks) * 65)
+                await _progress(storage, job_id, stage='transcribe', progress=progress)
+                paragraphs.extend(
+                    await _transcribe_chunk(
+                        transcriber,
+                        chunk,
+                        settings=settings,
+                        workdir=workdir,
+                        max_new_tokens=max_new_tokens,
+                    )
+                )
+            if not paragraphs:
+                raise MediaJobSkipped('the whole recording transcribed to nothing')
 
-        show_notes, notes_markdown = _show_notes(article)
-        blocks = _media_blocks(resolved, article_pk=article_pk, archived=archived)
-        blocks.extend(show_notes)
-        blocks.extend(_paragraph_blocks(paragraphs))
+            show_notes, notes_markdown = _show_notes(article)
+            blocks = _media_blocks(
+                resolved,
+                article_pk=article_pk,
+                audio_archived=archived,
+                video_stored=video_kept,
+            )
+            blocks.extend(show_notes)
+            blocks.extend(_paragraph_blocks(paragraphs))
 
-        await _progress(storage, job_id, stage='save', progress=95)
-        transcript = _text(paragraphs, with_time=False)
-        markdown = '\n\n'.join(part for part in (notes_markdown, transcript) if part)
-        await _save(storage, article, blocks=blocks, markdown=markdown)
+            await _progress(storage, job_id, stage='save', progress=95)
+            transcript = _text(paragraphs, with_time=False)
+            markdown = '\n\n'.join(part for part in (notes_markdown, transcript) if part)
+            await _save(storage, article, blocks=blocks, markdown=markdown)
+        finally:
+            if owned:
+                await _close_transcriber(transcriber)
         return {
             'article_pk': article_pk,
             'segments': len(paragraphs),
             'duration_seconds': round(duration, 1),
-            'bytes': size,
+            'bytes': stored_bytes or bytes_used,
             'archived': archived,
+            'video_stored': video_kept,
         }
+
+
+async def _close_transcriber(transcriber: AsrClient) -> None:
+    """Release a client this module built, without masking why the job ended.
+
+    A failing ``aclose`` is a connection-pool problem, not the article's: the caller
+    already holds the real error (or the real result), and a close error must not
+    replace it.
+    """
+    try:
+        await transcriber.aclose()
+    except Exception:
+        logger.warning('failed to close the ASR client')
 
 
 async def _archive(
@@ -611,6 +871,8 @@ __all__ = [
     'DOWNLOAD_BLOCK_BYTES',
     'MAX_DOWNLOAD_BYTES',
     'TARGET_PARAGRAPH_CHARS',
+    'VIDEO_CONTENT_TYPE',
+    'VIDEO_KIND',
     'DirectMediaResolver',
     'MediaJobFailure',
     'MediaJobSkipped',

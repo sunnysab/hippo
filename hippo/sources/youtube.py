@@ -56,6 +56,17 @@ LIST_TIMEOUT = 300.0
 #: invocation must not hold the queue forever.
 PROBE_TIMEOUT = 180.0
 
+#: Ceiling on the picture Hippo keeps: 720p is the best value the download budget and
+#: the reader's bandwidth want, so a taller track is not chosen at all.
+VIDEO_MAX_HEIGHT = 720
+#: The container the pipeline can mux and serve without re-encoding the video.
+VIDEO_EXTENSIONS = frozenset({'mp4', 'm4v'})
+#: yt-dlp's codec prefix for AAC, the audio an MP4 accepts without re-encoding.
+AAC_CODEC_PREFIX = 'mp4a'
+#: Protocols of a single downloadable file. HLS/DASH carry their own protocol, but a URL
+#: can still point at a manifest under ``https``, so the path is checked as well.
+_DIRECT_PROTOCOLS = frozenset({'http', 'https'})
+
 _CHANNEL_ID_RE = re.compile(r'^UC[0-9A-Za-z_-]{22}$')
 _VIDEO_ID_RE = re.compile(r'^[0-9A-Za-z_-]{11}$')
 
@@ -103,14 +114,99 @@ def video_block(video_id: str, *, cover_url: str | None = None) -> dict[str, Any
     return block
 
 
-def best_audio_format(formats: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
-    """The highest-bitrate audio-only format."""
+def _has_audio(fmt: dict[str, Any]) -> bool:
+    return str(fmt.get('acodec') or '').lower() not in {'', 'none'}
+
+
+def _is_h264(fmt: dict[str, Any]) -> bool:
+    return str(fmt.get('vcodec') or '').split('.')[0].lower() in {'avc1', 'avc', 'h264'}
+
+
+def _is_audio_only(fmt: dict[str, Any]) -> bool:
+    return _has_audio(fmt) and fmt.get('vcodec') in (None, 'none')
+
+
+def _matches_codec(fmt: dict[str, Any], codec: str | None) -> bool:
+    return codec is None or str(fmt.get('acodec') or '').startswith(codec)
+
+
+def best_audio_format(
+    formats: Sequence[dict[str, Any]], *, codec: str | None = None, urls_only: bool = False
+) -> dict[str, Any] | None:
+    """The highest-bitrate audio-only format.
+
+    ``codec`` narrows it to one family (``mp4a`` for the AAC that can be muxed into an
+    MP4 without re-encoding); by default any audio-only track is eligible. ``urls_only``
+    additionally requires a directly downloadable, non-manifest URL — the split mux
+    needs both, and a bad entry must not hide a usable lower-bitrate one.
+    """
     audio_only = [
-        fmt for fmt in formats if fmt.get('acodec') not in (None, 'none') and fmt.get('vcodec') in (None, 'none')
+        fmt
+        for fmt in formats
+        if _is_audio_only(fmt) and _matches_codec(fmt, codec) and (not urls_only or _is_direct_file(fmt))
     ]
     if not audio_only:
         return None
     return max(audio_only, key=lambda fmt: float(fmt.get('abr') or 0))
+
+
+def _direct_url(url: str) -> bool:
+    """An HTTP(S) URL with a host whose path is not an HLS/DASH manifest."""
+    if url.lower().split('?', 1)[0].endswith(('.m3u8', '.mpd')):
+        return False
+    parsed = urlparse(url)
+    return parsed.scheme in _DIRECT_PROTOCOLS and bool(parsed.hostname)
+
+
+def _is_direct_file(fmt: dict[str, Any]) -> bool:
+    """A single HTTP(S) file, never a manifest or a fragment-only entry.
+
+    A DRM stream has no URL a plain GET can use. HLS/DASH carry their own protocol, but
+    an ``https`` protocol does not prove the URL is a file: the path still has to name a
+    host and must not end in ``.m3u8``/``.mpd``.
+    """
+    if fmt.get('has_drm') or fmt.get('manifest_url') or fmt.get('fragments'):
+        return False
+    if str(fmt.get('protocol') or '').lower() not in _DIRECT_PROTOCOLS:
+        return False
+    return _direct_url(str(fmt.get('url') or ''))
+
+
+def _video_height(fmt: dict[str, Any]) -> int:
+    try:
+        return int(fmt.get('height') or 0)
+    except TypeError, ValueError:
+        return 0
+
+
+def _mp4_video(fmt: dict[str, Any]) -> bool:
+    """A directly downloadable H.264 MP4 at most ``VIDEO_MAX_HEIGHT`` tall."""
+    return (
+        str(fmt.get('ext') or '').lower() in VIDEO_EXTENSIONS
+        and _is_h264(fmt)
+        and _is_direct_file(fmt)
+        and 0 < _video_height(fmt) <= VIDEO_MAX_HEIGHT
+    )
+
+
+def _progressive_aac(fmt: dict[str, Any]) -> bool:
+    """The picture carries its own AAC, so it plays as a native MP4 with no muxing."""
+    return _has_audio(fmt) and _matches_codec(fmt, AAC_CODEC_PREFIX)
+
+
+def best_video_format(formats: Sequence[dict[str, Any]], *, require_audio: bool = False) -> dict[str, Any] | None:
+    """The best H.264 MP4 the pipeline can download, mux and serve.
+
+    The picture must be H.264 in an MP4/M4V, a direct HTTP(S) file (not DRM, not an
+    HLS/DASH manifest), and at most ``VIDEO_MAX_HEIGHT`` tall: a taller track is
+    skipped, never rounded down. The tallest wins; at equal height a file that already
+    carries AAC wins, then any file with audio, because it needs the least work.
+    ``require_audio`` keeps only progressive tracks whose own audio is AAC.
+    """
+    eligible = [fmt for fmt in formats if _mp4_video(fmt) and (not require_audio or _progressive_aac(fmt))]
+    if not eligible:
+        return None
+    return max(eligible, key=lambda fmt: (_video_height(fmt), _progressive_aac(fmt), _has_audio(fmt)))
 
 
 def ytdlp_bin() -> str:
@@ -312,15 +408,35 @@ class YoutubeResolver:
         if not entries:
             raise MediaJobSkipped(f'视频 {video_id} 取不到信息（可能已删除或受限）')
         entry = entries[0]
-        track = best_audio_format(entry.get('formats') or [])
-        if track is None:
+        formats = entry.get('formats') or []
+        video = best_video_format(formats)
+        audio = best_audio_format(formats)
+        fallback_audio = ''
+        if video is not None and not _progressive_aac(video):
+            # The picture is silent, or carries audio that is not AAC: it needs an
+            # external AAC to mux. One unfetchable high-bitrate entry must not hide a
+            # usable lower-bitrate one, so the whole set is filtered before the max.
+            mux_audio = best_audio_format(formats, codec=AAC_CODEC_PREFIX, urls_only=True)
+            if mux_audio is None:
+                # Nothing to mux: drop the picture, but keep whatever audio exists —
+                # a progressive file still transcribes even when it cannot be served.
+                fallback_audio = str(video.get('url') or '') if _has_audio(video) else ''
+                video = None
+            else:
+                audio = mux_audio
+        has_audio = video is not None and _progressive_aac(video)
+        video_url = str(video.get('url') or '') if video is not None else ''
+        # A progressive AAC file is its own audio source (also when keep_media is
+        # false); a split picture pairs with the AAC picked above.
+        split_url = str(audio.get('url') or '') if audio is not None else ''
+        audio_url = video_url if has_audio else (split_url or fallback_audio)
+        if not audio_url:
             raise MediaJobSkipped(f'视频 {video_id} 没有可下载的音轨')
-        url = str(track.get('url') or '')
-        if not url:
-            raise MediaJobSkipped(f'视频 {video_id} 的音轨没有地址')
         duration = int(entry.get('duration') or 0) or None
         return ResolvedMedia(
-            audio_url=url,
+            audio_url=audio_url,
+            video_url=video_url or None,
+            video_has_audio=has_audio,
             headers={'User-Agent': 'Mozilla/5.0'},
             proxy=self._proxy or None,
             duration_seconds=duration,
@@ -336,6 +452,7 @@ __all__ = [
     'YoutubeResolver',
     'YoutubeSource',
     'best_audio_format',
+    'best_video_format',
     'channel_id_from_url',
     'embed_url',
     'parse_json_lines',

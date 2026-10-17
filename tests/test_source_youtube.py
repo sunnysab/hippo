@@ -18,6 +18,7 @@ from hippo.sources.youtube import (
     YoutubeResolver,
     YoutubeSource,
     best_audio_format,
+    best_video_format,
     channel_id_from_url,
     parse_json_lines,
     run_ytdlp,
@@ -67,6 +68,136 @@ class BestAudioTest(unittest.TestCase):
 
     def test_a_muxed_only_video_has_no_audio_track(self) -> None:
         self.assertIsNone(best_audio_format([{'acodec': 'avc1', 'vcodec': 'avc1', 'url': 'x'}]))
+
+    def test_the_codec_filter_keeps_only_aac(self) -> None:
+        formats = [
+            {'acodec': 'opus', 'vcodec': 'none', 'abr': 130.0, 'url': 'opus'},
+            {'acodec': 'mp4a.40.2', 'vcodec': 'none', 'abr': 129.5, 'url': 'aac'},
+        ]
+
+        self.assertEqual('aac', best_audio_format(formats, codec='mp4a')['url'])
+        # 不带过滤时旧行为不变：最高码率的音轨胜出。
+        self.assertEqual('opus', best_audio_format(formats)['url'])
+
+    def test_the_url_filter_skips_a_manifest_without_hiding_a_usable_track(self) -> None:
+        formats = [
+            {'acodec': 'mp4a.40.2', 'vcodec': 'none', 'abr': 160.0, 'protocol': 'https', 'url': 'https://cdn/x.m3u8'},
+            {'acodec': 'mp4a.40.2', 'vcodec': 'none', 'abr': 64.0, 'protocol': 'https', 'url': 'https://cdn/x.m4a'},
+        ]
+
+        self.assertEqual('https://cdn/x.m4a', best_audio_format(formats, codec='mp4a', urls_only=True)['url'])
+        # 不过滤 URL 时旧默认语义不变。
+        self.assertEqual('https://cdn/x.m3u8', best_audio_format(formats, codec='mp4a')['url'])
+
+
+def _video(**overrides) -> dict:
+    """A yt-dlp video format as it really looks (fields that matter here)."""
+    fmt = {
+        'format_id': '137',
+        'ext': 'mp4',
+        'vcodec': 'avc1.640028',
+        'acodec': 'none',
+        'width': 1280,
+        'height': 720,
+        'protocol': 'https',
+        'url': 'https://googlevideo/video',
+    }
+    fmt.update(overrides)
+    return fmt
+
+
+def _audio_only(**overrides) -> dict:
+    fmt = {
+        'format_id': '140',
+        'ext': 'm4a',
+        'vcodec': 'none',
+        'acodec': 'mp4a.40.2',
+        'abr': 129.5,
+        'protocol': 'https',
+        'url': 'https://googlevideo/aac',
+    }
+    fmt.update(overrides)
+    return fmt
+
+
+class BestVideoTest(unittest.TestCase):
+    """Only a track the pipeline can download, mux and serve may be picked."""
+
+    def test_a_track_above_720p_is_refused(self) -> None:
+        self.assertIsNone(best_video_format([_video(height=1080)]))
+
+    def test_the_tallest_track_within_the_ceiling_wins(self) -> None:
+        formats = [
+            _video(height=720, url='https://cdn.test/720.mp4'),
+            _video(height=360, url='https://cdn.test/360.mp4'),
+            _video(height=1080, url='https://cdn.test/1080.mp4'),
+        ]
+
+        self.assertEqual('https://cdn.test/720.mp4', best_video_format(formats)['url'])
+
+    def test_vp9_is_refused(self) -> None:
+        self.assertIsNone(best_video_format([_video(vcodec='vp09.00.51.08', ext='webm')]))
+
+    def test_a_drm_track_is_refused(self) -> None:
+        self.assertIsNone(best_video_format([_video(has_drm=True)]))
+
+    def test_an_hls_manifest_is_refused_despite_an_https_url(self) -> None:
+        # HLS 的 URL 也以 https 开头：只看协议名，不能只看链接。
+        hls = _video(protocol='m3u8_native', url='https://manifest.googlevideo.com/api/index.m3u8')
+
+        self.assertIsNone(best_video_format([hls]))
+
+    def test_a_dash_manifest_and_a_fragment_list_are_refused(self) -> None:
+        self.assertIsNone(
+            best_video_format(
+                [
+                    _video(protocol='https', manifest_url='https://manifest.googlevideo.com/dash'),
+                    _video(protocol='https', fragments=[{'url': 'https://googlevideo/frag-0'}]),
+                ]
+            )
+        )
+
+    def test_a_progressive_track_with_its_own_audio_is_eligible(self) -> None:
+        progressive = _video(acodec='mp4a.40.2', ext='mp4', height=720)
+
+        self.assertEqual('https://googlevideo/video', best_video_format([progressive])['url'])
+
+    def test_an_empty_or_foreign_url_is_refused(self) -> None:
+        self.assertIsNone(best_video_format([_video(url='')]))
+        self.assertIsNone(best_video_format([_video(url='rtmp://googlevideo/live')]))
+        self.assertIsNone(best_video_format([_video(url=None)]))
+
+    def test_a_manifest_path_under_https_is_refused(self) -> None:
+        # protocol 填 https 也不能放过路径就是清单的条目（即便带查询串）。
+        self.assertIsNone(best_video_format([_video(url='https://cdn.test/index.m3u8?token=1')]))
+        self.assertIsNone(best_video_format([_video(url='https://cdn.test/index.mpd')]))
+
+    def test_a_url_without_a_host_is_refused(self) -> None:
+        self.assertIsNone(best_video_format([_video(url='https:///video.mp4')]))
+
+    def test_a_non_aac_progressive_is_first_chosen_for_a_split_mux(self) -> None:
+        # 图轨包着 opus 的渐进式仍然可选：拿到视频轨后由 resolver 拿独立 AAC 合流。
+        track = best_video_format([_video(acodec='opus')])
+
+        self.assertIsNotNone(track)
+        self.assertEqual('opus', track['acodec'])
+
+    def test_at_the_same_height_aac_in_the_file_wins(self) -> None:
+        formats = [
+            _video(acodec='opus', url='https://cdn.test/opus.mp4'),
+            _video(acodec='mp4a.40.2', url='https://cdn.test/aac.mp4'),
+        ]
+
+        self.assertEqual('https://cdn.test/aac.mp4', best_video_format(formats)['url'])
+
+    def test_require_audio_demands_aac_in_the_same_file(self) -> None:
+        self.assertIsNone(best_video_format([_video(acodec='opus')], require_audio=True))
+        self.assertIsNone(best_video_format([_video()], require_audio=True))
+        self.assertEqual(720, best_video_format([_video(acodec='mp4a.40.2')], require_audio=True)['height'])
+
+    def test_the_height_field_must_be_usable(self) -> None:
+        self.assertIsNone(best_video_format([_video(height=None)]))
+        self.assertIsNone(best_video_format([_video(height='')]))
 
 
 class ParseJsonLinesTest(unittest.TestCase):
@@ -170,6 +301,7 @@ class ResolverTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('/embed/WrCjAAl9okA', media.embed_block['embed_url'])
 
     async def test_a_muxed_only_video_is_skipped(self) -> None:
+        # 渐进式以外的 muxed 条目按老行为仍然跳过（拿不到可靠形状）。
         entry = _flat_entry(formats=[{'acodec': 'avc1', 'vcodec': 'avc1', 'url': 'x'}])
         with (
             patch('hippo.sources.youtube.run_ytdlp', new=_ytdlp(entry)),
@@ -187,6 +319,140 @@ class ResolverTest(unittest.IsolatedAsyncioTestCase):
             await YoutubeResolver(proxy='http://proxy:8082').resolve(self._JOB)
 
         self.assertEqual('http://proxy:8082', runner.call_args.kwargs['proxy'])
+
+    async def test_the_cookie_and_the_metadata_only_command_are_unchanged(self) -> None:
+        entry = _flat_entry(formats=[_audio_only()])
+        with patch('hippo.sources.youtube.run_ytdlp', new=_ytdlp(entry)) as runner:
+            await YoutubeResolver(cookies='# Netscape HTTP Cookie File\n').resolve(self._JOB)
+
+        self.assertEqual('# Netscape HTTP Cookie File\n', runner.call_args.kwargs['cookies'])
+        # 只取元数据，从不改成下载命令。
+        self.assertEqual(
+            ['--dump-json', '--no-playlist', 'https://www.youtube.com/watch?v=WrCjAAl9okA'],
+            list(runner.call_args.args[0]),
+        )
+
+    async def test_a_height_limited_h264_track_is_picked_and_muxed_with_aac(self) -> None:
+        entry = _flat_entry(
+            formats=[
+                _video(height=1080, url='https://googlevideo/1080'),
+                _video(height=720, url='https://googlevideo/720'),
+                _audio_only(url='https://googlevideo/aac'),
+                _audio_only(acodec='opus', ext='webm', abr=160.0, url='https://googlevideo/opus'),
+            ]
+        )
+        with patch('hippo.sources.youtube.run_ytdlp', new=_ytdlp(entry)):
+            media = await YoutubeResolver().resolve(self._JOB)
+
+        self.assertEqual('https://googlevideo/720', media.video_url)
+        # 分轨的音轨必须是能合进 MP4 的 AAC，而不是码率更高的 opus。
+        self.assertEqual('https://googlevideo/aac', media.audio_url)
+        self.assertFalse(media.video_has_audio)
+
+    async def test_a_progressive_mp4_with_aac_is_used_as_the_single_source(self) -> None:
+        entry = _flat_entry(formats=[_video(acodec='mp4a.40.2', url='https://googlevideo/progressive.mp4')])
+        with patch('hippo.sources.youtube.run_ytdlp', new=_ytdlp(entry)):
+            media = await YoutubeResolver().resolve(self._JOB)
+
+        self.assertEqual('https://googlevideo/progressive.mp4', media.video_url)
+        self.assertTrue(media.video_has_audio)
+        # keep_media=False 时仍拿这个渐进式文件去转写。
+        self.assertEqual('https://googlevideo/progressive.mp4', media.audio_url)
+
+    async def test_a_video_only_split_track_without_aac_falls_back_to_audio(self) -> None:
+        # 没有 AAC 可合流：不给出一个合不成 MP4 的图轨，退回纯音频转写。
+        entry = _flat_entry(
+            formats=[
+                _video(height=720, url='https://googlevideo/720'),
+                _audio_only(acodec='opus', ext='webm', url='https://googlevideo/opus'),
+            ]
+        )
+        with patch('hippo.sources.youtube.run_ytdlp', new=_ytdlp(entry)):
+            media = await YoutubeResolver().resolve(self._JOB)
+
+        self.assertIsNone(media.video_url)
+        self.assertFalse(media.video_has_audio)
+        self.assertEqual('https://googlevideo/opus', media.audio_url)
+
+    async def test_a_progressive_video_with_opus_is_not_claimed_playable(self) -> None:
+        # 渐进式里包着 opus，Hippo 不能原样当原生 MP4 播，不给 video_url。
+        entry = _flat_entry(formats=[_video(acodec='opus', url='https://googlevideo/progressive.mp4')])
+        with patch('hippo.sources.youtube.run_ytdlp', new=_ytdlp(entry)):
+            media = await YoutubeResolver().resolve(self._JOB)
+
+        self.assertIsNone(media.video_url)
+        self.assertFalse(media.video_has_audio)
+        self.assertEqual('https://googlevideo/progressive.mp4', media.audio_url)
+
+    async def test_a_progressive_video_with_opus_uses_a_split_aac(self) -> None:
+        # 能配上独立 AAC 时明确分轨（视频带声但需合流）。
+        entry = _flat_entry(
+            formats=[
+                _video(acodec='opus', url='https://googlevideo/progressive.mp4'),
+                _audio_only(),
+            ]
+        )
+        with patch('hippo.sources.youtube.run_ytdlp', new=_ytdlp(entry)):
+            media = await YoutubeResolver().resolve(self._JOB)
+
+        self.assertEqual('https://googlevideo/progressive.mp4', media.video_url)
+        self.assertFalse(media.video_has_audio)
+        self.assertEqual('https://googlevideo/aac', media.audio_url)
+
+    async def test_the_split_mux_skips_a_manifest_aac_and_takes_the_next_one(self) -> None:
+        # 高码率的 AAC 是清单：不能遮住真正可下的低码率 AAC，也不能只因为“有这个格式”就当可合流。
+        entry = _flat_entry(
+            formats=[
+                _video(height=720, url='https://googlevideo/720'),
+                _audio_only(abr=160.0, protocol='https', url='https://manifest.googlevideo.com/api/index.m3u8'),
+                _audio_only(abr=64.0, protocol='https', url='https://googlevideo/low.m4a'),
+            ]
+        )
+        with patch('hippo.sources.youtube.run_ytdlp', new=_ytdlp(entry)):
+            media = await YoutubeResolver().resolve(self._JOB)
+
+        self.assertEqual('https://googlevideo/720', media.video_url)
+        self.assertEqual('https://googlevideo/low.m4a', media.audio_url)
+        self.assertFalse(media.video_has_audio)
+
+    async def test_an_incompatible_video_keeps_the_original_audio(self) -> None:
+        formats = [
+            _video(height=1080, url='https://googlevideo/1080'),
+            _video(vcodec='vp09.00.51.08', ext='webm', height=720, url='https://googlevideo/vp9'),
+            _audio_only(),
+        ]
+        with patch('hippo.sources.youtube.run_ytdlp', new=_ytdlp(_flat_entry(formats=formats))):
+            media = await YoutubeResolver().resolve(self._JOB)
+
+        self.assertIsNone(media.video_url)
+        self.assertFalse(media.video_has_audio)
+        self.assertEqual('https://googlevideo/aac', media.audio_url)
+
+    async def test_a_format_without_a_url_is_not_a_track(self) -> None:
+        entry = _flat_entry(formats=[_video(url=''), _audio_only(url='')])
+        with (
+            patch('hippo.sources.youtube.run_ytdlp', new=_ytdlp(entry)),
+            self.assertRaises(MediaJobSkipped),
+        ):
+            await YoutubeResolver().resolve(self._JOB)
+
+    async def test_a_video_only_entry_without_any_audio_is_skipped(self) -> None:
+        # 图轨没有声音，也配不到音轨：这样的条目转写不了，整条跳过。
+        entry = _flat_entry(formats=[_video(height=720, url='https://googlevideo/720')])
+        with (
+            patch('hippo.sources.youtube.run_ytdlp', new=_ytdlp(entry)),
+            self.assertRaises(MediaJobSkipped),
+        ):
+            await YoutubeResolver().resolve(self._JOB)
+
+    async def test_the_embed_block_stays_metadata_only(self) -> None:
+        entry = _flat_entry(formats=[_video(acodec='mp4a.40.2')])
+        with patch('hippo.sources.youtube.run_ytdlp', new=_ytdlp(entry)):
+            media = await YoutubeResolver().resolve(self._JOB)
+
+        self.assertEqual('youtube', media.embed_block['provider'])
+        self.assertEqual('WrCjAAl9okA', media.embed_block['video_id'])
+        self.assertEqual(370, media.duration_seconds)
 
 
 class VideoBlockTest(unittest.TestCase):

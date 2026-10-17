@@ -2,15 +2,18 @@
 
 The feed fixtures mirror what real feeds actually contain — several namespaces,
 CDATA, both duration spellings, an item without an enclosure, and the
-Podcasting 2.0 transcript tag — because that variety is the whole difficulty.
+Podcasting 2.0 transcript tag — because that variety is the whole difficulty. A
+summary that arrives as markup is fixture coverage of its own: the digest the
+reader's card and the RSS export show has to come out as text.
 """
 
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from defusedxml.common import DefusedXmlException
 
 from hippo.media.pipeline import MediaJobSkipped
+from hippo.normalize_html import normalize_html
 from hippo.sources.podcast import (
     PodcastClient,
     PodcastError,
@@ -98,6 +101,124 @@ SRT = """1
 2
 00:00:04,000 --> 00:00:06,000
 第二句
+"""
+
+#: The same description field in every shape a real feed ships it: CDATA HTML,
+#: escaped HTML, an escaped XML wrapper, and plain text with entities.
+CDATA_FEED = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>Feed A</title>
+    <link>https://cdata.example</link>
+    <item>
+      <title>cdata</title>
+      <guid>cdata-1</guid>
+      <description><![CDATA[<p>first &amp; second</p><p>next paragraph</p><script>bad()</script><style>.x{display:none}</style>]]></description>
+      <enclosure url="https://cdn.example/cdata.mp3" type="audio/mpeg"/>
+    </item>
+    <item>
+      <title>escaped</title>
+      <guid>cdata-2</guid>
+      <description>&lt;p&gt;escaped line&lt;/p&gt;&lt;script&gt;bad()&lt;/script&gt;</description>
+      <enclosure url="https://cdn.example/cdata2.mp3" type="audio/mpeg"/>
+    </item>
+    <item>
+      <title>wrapped</title>
+      <guid>cdata-3</guid>
+      <description>&lt;article&gt;&lt;body&gt;&lt;p&gt;wrapped text&lt;/p&gt;&lt;/body&gt;&lt;/article&gt;</description>
+      <enclosure url="https://cdn.example/cdata3.mp3" type="audio/mpeg"/>
+    </item>
+    <item>
+      <title>plain</title>
+      <guid>cdata-4</guid>
+      <description>5 &lt; 6 and 7 &gt; 4, AT&amp;T</description>
+      <enclosure url="https://cdn.example/cdata4.mp3" type="audio/mpeg"/>
+    </item>
+  </channel>
+</rss>
+"""
+
+#: A text feed: one item with both a summary and a body, one with only a body.
+CONTENT_FEED = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Feed B</title>
+    <link>https://blog.example</link>
+    <item>
+      <title>summary and body</title>
+      <guid>post-1</guid>
+      <link>https://blog.example/post-1</link>
+      <description><![CDATA[<p>summary &amp; more</p>]]></description>
+      <content:encoded><![CDATA[<h2>subhead</h2><p>body one</p><p>body two</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>body only</title>
+      <guid>post-2</guid>
+      <link>https://blog.example/post-2</link>
+      <content:encoded><![CDATA[<p>only content</p><p>second line</p><script>bad()</script>]]></content:encoded>
+    </item>
+  </channel>
+</rss>
+"""
+
+#: Atom spells the summary ``<summary>``, in either markup type, and may leave it empty.
+ATOM_SUMMARY = """<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Atom summaries</title>
+  <entry>
+    <title>html summary</title>
+    <id>tag:atom,2026:summary-html</id>
+    <link rel="alternate" href="https://atom.example/summary-html"/>
+    <summary type="html">&lt;p&gt;one &amp; summary&lt;/p&gt;</summary>
+  </entry>
+  <entry>
+    <title>xhtml summary</title>
+    <id>tag:atom,2026:summary-xhtml</id>
+    <link rel="alternate" href="https://atom.example/summary-xhtml"/>
+    <summary type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><p>structured summary</p><p>second line</p></div></summary>
+  </entry>
+  <entry>
+    <title>type-less summary</title>
+    <id>tag:atom,2026:summary-default</id>
+    <link rel="alternate" href="https://atom.example/summary-default"/>
+    <summary>a &lt;b&gt; c</summary>
+  </entry>
+  <entry>
+    <title>empty summary</title>
+    <id>tag:atom,2026:summary-empty</id>
+    <link rel="alternate" href="https://atom.example/summary-empty"/>
+    <summary type="text"> </summary>
+  </entry>
+</feed>
+"""
+
+#: Atom bodies: ``type="html"`` arrives escaped, ``xhtml`` as real child nodes, and
+#: the type-less default is literal text — which is exactly where the markup lives
+#: that must not be parsed. The RSS body below has no type either, and there markup
+#: is the convention, so the same shape means text in one document and markup in the
+#: other.
+ATOM_BODY = """<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Atom bodies</title>
+  <entry>
+    <title>xhtml body</title>
+    <id>tag:atom,2026:body-xhtml</id>
+    <link rel="alternate" href="https://atom.example/body-xhtml"/>
+    <content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><p>first line</p><p>second line</p></div></content>
+  </entry>
+  <entry>
+    <title>html body</title>
+    <id>tag:atom,2026:body-html</id>
+    <link rel="alternate" href="https://atom.example/body-html"/>
+    <content type="html">&lt;p&gt;body &amp; text&lt;/p&gt;</content>
+  </entry>
+  <entry>
+    <title>type-less body</title>
+    <id>tag:atom,2026:body-text</id>
+    <link rel="alternate" href="https://atom.example/body-text"/>
+    <content>a &lt;b&gt; c &amp; d</content>
+  </entry>
+</feed>
 """
 
 
@@ -207,6 +328,173 @@ class ParseFeedTest(unittest.TestCase):
             parse_feed(b'<rss><channel><title>x</title></channel></rss>')
 
 
+class SummaryExtractionTest(unittest.TestCase):
+    """The digest is text and the body keeps its structure.
+
+    A feed ships the same summary as CDATA HTML, escaped HTML, an escaped XML
+    wrapper or plain text; all four used to reach the digest — and from there the
+    RSS export — with their tags intact.
+    """
+
+    def test_a_cdata_html_description_becomes_text(self) -> None:
+        episode = parse_feed(CDATA_FEED).episodes[0]
+
+        self.assertEqual('first & second\nnext paragraph', episode.description)
+
+    def test_an_escaped_html_description_loses_its_tags(self) -> None:
+        episode = parse_feed(CDATA_FEED).episodes[1]
+
+        self.assertEqual('escaped line', episode.description)
+
+    def test_an_escaped_xml_wrapper_is_not_visible_text(self) -> None:
+        episode = parse_feed(CDATA_FEED).episodes[2]
+
+        self.assertEqual('wrapped text', episode.description)
+        for wrapper in ('<article', '</article>', '<body', '</body>'):
+            self.assertNotIn(wrapper, episode.description)
+
+    def test_plain_text_entities_are_decoded_once(self) -> None:
+        episode = parse_feed(CDATA_FEED).episodes[3]
+
+        self.assertEqual('5 < 6 and 7 > 4, AT&T', episode.description)
+
+    def test_script_and_style_never_reach_the_digest(self) -> None:
+        feed = parse_feed(CDATA_FEED)
+
+        for episode in feed.episodes:
+            self.assertNotIn('bad()', episode.description or '')
+            self.assertNotIn('display:none', episode.description or '')
+
+    def test_an_atom_html_summary_is_read(self) -> None:
+        episode = parse_feed(ATOM_SUMMARY).episodes[0]
+
+        self.assertEqual('one & summary', episode.description)
+
+    def test_an_atom_xhtml_summary_keeps_its_paragraphs(self) -> None:
+        episode = parse_feed(ATOM_SUMMARY).episodes[1]
+
+        self.assertEqual('structured summary\nsecond line', episode.description)
+
+    def test_a_type_less_atom_summary_is_literal_text(self) -> None:
+        # Atom's default is text: what looks like a tag was written by the author and
+        # must survive as written instead of being parsed away.
+        episode = parse_feed(ATOM_SUMMARY).episodes[2]
+
+        self.assertEqual('a <b> c', episode.description)
+
+    def test_an_empty_atom_summary_is_no_summary(self) -> None:
+        episode = parse_feed(ATOM_SUMMARY).episodes[3]
+
+        self.assertIsNone(episode.description)
+
+    def test_a_summary_does_not_replace_the_body(self) -> None:
+        episode = parse_feed(CONTENT_FEED).episodes[0]
+
+        self.assertEqual('summary & more', episode.description)
+        self.assertIn('<h2>subhead</h2>', episode.body_html)
+        self.assertIn('<p>body two</p>', episode.body_html)
+
+    def test_a_missing_summary_falls_back_to_the_body_text(self) -> None:
+        episode = parse_feed(CONTENT_FEED).episodes[1]
+
+        self.assertEqual('only content\nsecond line', episode.description)
+        # The body stays complete after a summary was derived from it.
+        self.assertIn('<p>second line</p>', episode.body_html)
+        self.assertNotIn('bad()', episode.description)
+
+    def test_an_html_atom_body_is_read_as_markup(self) -> None:
+        episode = parse_feed(ATOM_BODY).episodes[1]
+
+        self.assertEqual('body & text', episode.description)
+        self.assertIn('<p>body & text</p>', episode.body_html)
+
+    def test_an_xhtml_atom_body_keeps_paragraph_structure(self) -> None:
+        episode = parse_feed(ATOM_BODY).episodes[0]
+
+        self.assertEqual('first line\nsecond line', episode.description)
+        body = episode.body_html or ''
+        self.assertLess(body.index('<p>first line</p>'), body.index('<p>second line</p>'))
+        # The feed's own <content> wrapper and namespace are not part of the body.
+        self.assertNotIn('<content', body)
+        self.assertNotIn('Atom', body)
+
+    def test_an_xhtml_atom_body_still_normalizes(self) -> None:
+        episode = parse_feed(ATOM_BODY).episodes[0]
+
+        markdown = normalize_html(episode.body_html, 'markdown')
+
+        self.assertIn('first line', markdown)
+        self.assertIn('second line', markdown)
+        self.assertNotIn('xmlns', markdown)
+
+    def test_a_type_less_atom_body_keeps_its_angle_brackets(self) -> None:
+        # The same shape in RSS means markup, so the default has to be decided by the
+        # document's namespace rather than by the element alone.
+        episode = parse_feed(ATOM_BODY).episodes[2]
+
+        self.assertEqual('a <b> c & d', episode.description)
+        self.assertIn('a &lt;b&gt; c &amp; d', episode.body_html)
+
+    def test_a_type_less_rss_body_is_still_markup(self) -> None:
+        # No type and no namespace: RSS's convention applies, so the angle brackets
+        # are markup and stay unescaped in the body the reader renders.
+        feed = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">'
+            '<channel><title>r</title><item><title>i</title><guid>g</guid>'
+            '<content:encoded>a &lt;b&gt; c</content:encoded></item></channel></rss>'
+        )
+
+        episode = parse_feed(feed).episodes[0]
+
+        self.assertIn('<b>', episode.body_html or '')
+
+    def test_a_deeply_nested_xhtml_body_does_not_blow_the_stack(self) -> None:
+        # A feed can nest its body hundreds of levels deep; serializing it has to
+        # stop rather than run into the recursion limit.
+        depth = 200
+        body = '<div>' * depth + 'deep text' + '</div>' * depth
+        feed = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<feed xmlns="http://www.w3.org/2005/Atom"><title>deep</title><entry>'
+            '<title>deep</title><id>tag:atom,2026:deep</id>'
+            f'<content type="xhtml">{body}</content></entry></feed>'
+        )
+
+        episode = parse_feed(feed).episodes[0]
+
+        self.assertIn('deep text', episode.description)
+        self.assertNotIn('</div>' * depth, episode.body_html or '')
+
+
+class GzipLimitTest(unittest.TestCase):
+    """A compressed feed is read with a ceiling: a bomb must not expand first."""
+
+    def test_a_gzipped_feed_is_unpacked(self) -> None:
+        import gzip
+
+        feed = (
+            '<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>x</title>'
+            '<item><title>i</title><guid>g</guid></item></channel></rss>'
+        )
+
+        self.assertEqual(1, len(parse_feed(gzip.compress(feed.encode('utf-8'))).episodes))
+
+    def test_a_gzip_bomb_is_refused_before_it_expands(self) -> None:
+        import gzip
+
+        # A few KB compressed, far past the limit once expanded: the ceiling applies
+        # while reading, not after a full expansion.
+        bomb = gzip.compress(b'a' * (64 * 1024))
+        with (
+            patch('hippo.sources.podcast.MAX_FEED_BYTES', 4096),
+            self.assertRaises(PodcastError) as ctx,
+        ):
+            parse_feed(bomb)
+
+        self.assertIn('上限', str(ctx.exception))
+
+
 def _client(**overrides) -> PodcastClient:
     client = PodcastClient.__new__(PodcastClient)
     client._client = None  # type: ignore[assignment]
@@ -250,6 +538,21 @@ class SourceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(3557, first.duration_seconds)
         # 转录稿地址跟着任务走，解析阶段不必再拉一遍 feed
         self.assertEqual('https://cdn.example/ep1.vtt', first.raw['transcript_url'])
+        # 卡片和 RSS 导出读的是 digest：CDATA HTML 在这里必须是纯文本
+        self.assertEqual('第一期简介', first.digest)
+
+    async def test_a_text_feed_keeps_the_body_and_summarizes_it(self) -> None:
+        client = _client(feed=AsyncMock(return_value=parse_feed(CONTENT_FEED)))
+
+        listing = await PodcastSource(client).list_items(source_key='https://blog.example/rss', limit=5)
+
+        first, second = listing.items
+        self.assertEqual('summary & more', first.digest)
+        self.assertIn('<h2>subhead</h2>', first.content_html or '')
+        self.assertEqual('only content\nsecond line', second.digest)
+        self.assertIn('only content', second.content_html or '')
+        # 有正文就不排转写任务（原来就没有音频）
+        self.assertEqual('', second.media_url)
 
     async def test_a_window_larger_than_the_feed_ends_the_listing(self) -> None:
         client = _client(feed=AsyncMock(return_value=parse_feed(RSS)))

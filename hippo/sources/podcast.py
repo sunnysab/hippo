@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import io
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
+from xml.sax.saxutils import escape, quoteattr
 
 import httpx
+from bs4 import BeautifulSoup
 from defusedxml import ElementTree
 
 from ..logger import get_logger
@@ -148,6 +151,124 @@ def _text(element: Any) -> str:
     return ''.join(element.itertext()).strip() if element is not None else ''
 
 
+#: Elements a feed puts in a text field that a reader never sees. Script and style
+#: matter most: their contents would otherwise land in the digest as visible text.
+_INVISIBLE_TAGS = ('script', 'style', 'noscript', 'template', 'head', 'title', 'meta', 'link')
+#: Block boundaries become line breaks, so two paragraphs do not read as one sentence.
+_BLOCK_TAGS = (
+    'p',
+    'div',
+    'br',
+    'hr',
+    'li',
+    'ul',
+    'ol',
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'h5',
+    'h6',
+    'blockquote',
+    'pre',
+    'table',
+    'tr',
+    'td',
+    'th',
+    'section',
+    'article',
+    'figure',
+    'figcaption',
+)
+#: A feed that nests its body thousands of levels deep does so to blow the recursion
+#: limit; past this the subtree is flattened back to text instead.
+_MAX_MARKUP_DEPTH = 50
+_VOID_TAGS = ('br', 'hr', 'img', 'input')
+
+
+def _lines(text: str) -> str:
+    """Whitespace-normalized lines, blank lines dropped."""
+    return '\n'.join(line for line in (' '.join(raw.split()) for raw in (text or '').splitlines()) if line)
+
+
+def _visible_text(fragment: str) -> str:
+    """Plain text of a markup fragment: entities decoded once, paragraphs kept.
+
+    BeautifulSoup parses but never fetches anything, and one parse cannot loop the
+    way repeated unescaping would. Scripts, styles and the other non-rendered
+    elements go, and block boundaries become line breaks. Fragments without markup
+    skip the parser entirely: there is nothing to decode or remove.
+    """
+    if '<' not in fragment and '&' not in fragment:
+        return _lines(fragment)
+    soup = BeautifulSoup(fragment, 'html.parser')
+    for element in soup.find_all(_INVISIBLE_TAGS):
+        element.decompose()
+    for element in soup.find_all(_BLOCK_TAGS):
+        element.append('\n')
+    return _lines(soup.get_text(''))
+
+
+def _serialize(node: Any, depth: int = 0) -> str:
+    """One real child node back into markup, keeping its local tag and attributes."""
+    tag = node.tag
+    if not isinstance(tag, str):
+        # Comments and processing instructions are not reader content.
+        return escape(node.tail or '')
+    if depth >= _MAX_MARKUP_DEPTH:
+        return escape(''.join(node.itertext()) + (node.tail or ''))
+    tag = tag.rsplit('}', 1)[-1]
+    attributes = ''.join(f' {name.rsplit("}", 1)[-1]}={quoteattr(str(value))}' for name, value in node.attrib.items())
+    tail = escape(node.tail or '')
+    if tag in _VOID_TAGS:
+        return f'<{tag}{attributes}/>{tail}'
+    outer = escape(node.text or '') + ''.join(_serialize(child, depth + 1) for child in node)
+    return f'<{tag}{attributes}>{outer}</{tag}>{tail}'
+
+
+def _markup_type(element: Any) -> str:
+    """What a summary/body field says it holds.
+
+    RSS has no media type: ``description`` and ``content:encoded`` are markup by
+    convention, so a missing type there still means markup. Atom's default is
+    ``text``, which means an Atom field that declares nothing holds literal text —
+    parsing it as HTML would silently eat anything in it that looks like a tag.
+    """
+    declared = (element.get('type') or '').split(';')[0].strip().lower()
+    if declared:
+        return declared
+    return 'text' if str(element.tag).startswith(f'{{{_NS["atom"]}}}') else 'html'
+
+
+def _inner_markup(element: Any) -> str:
+    """An element's content as markup, never the element itself.
+
+    RSS ``description``/``content:encoded`` and an Atom ``type="html"`` field hold
+    escaped markup as text, which the XML parser has already decoded. An Atom
+    ``type="xhtml"`` field instead holds real child nodes: flattening those with
+    ``itertext`` throws the paragraph structure away, and re-serializing the whole
+    ``<content>`` element would hand the feed's own wrapper to the reader as body.
+    A ``text`` field (Atom's default) is literal, so it is escaped on the way out:
+    ``a <b> c`` is three words around a written-out angle bracket, not a bold ``b``.
+    """
+    if element is None:
+        return ''
+    if _markup_type(element) == 'text':
+        return escape(''.join(element.itertext()))
+    if len(element) == 0:
+        return element.text or ''
+    return escape(element.text or '') + ''.join(_serialize(child) for child in element)
+
+
+def _summary_text(element: Any) -> str:
+    """Text of a summary-ish element: ``text`` is literal, everything else markup."""
+    if element is None:
+        return ''
+    if _markup_type(element) == 'text':
+        return _lines(''.join(element.itertext()))
+    return _visible_text(_inner_markup(element))
+
+
 def _find(parent: Any, *names: str) -> Any:
     """The first of ``names`` that exists, understanding both plain and namespaced tags.
 
@@ -234,6 +355,22 @@ def _episode(item: Any, channel: Any) -> Episode | None:
         guid = audio_url or hashlib.sha1(f'{title}{_text(item.find("pubDate"))}'.encode()).hexdigest()[:16]
     published = parse_published(_text(item.find('pubDate')) or _text(item.find(f'{{{_NS["atom"]}}}published')))
     duration = parse_duration(_text(_find(item, 'itunes:duration')))
+    # RSS spells the summary ``description``, Atom spells it ``summary``; both are
+    # "what this episode says about itself". The digest is text, so the tags a feed
+    # ships in there must not become part of it. An empty one falls through to the
+    # next spelling rather than shadowing it.
+    summary = ''
+    for name in ('description', 'summary', 'itunes:summary'):
+        summary = _summary_text(_find(item, name))
+        if summary:
+            break
+    # The body stays markup, because that is what the reader renders: RSS keeps it in
+    # ``content:encoded``, Atom in ``<content>``.
+    body_html = _inner_markup(_find(item, 'content:encoded', 'content')).strip() or None
+    if not summary and body_html:
+        # With no summary the body is the only thing to summarize from. The body
+        # itself is kept in full either way.
+        summary = _visible_text(body_html)
     return Episode(
         guid=guid,
         title=title,
@@ -243,12 +380,25 @@ def _episode(item: Any, channel: Any) -> Episode | None:
         published_at=published,
         duration_seconds=duration,
         image_url=_image_url(channel, item),
-        description=_text(item.find('description')) or None,
+        description=summary or None,
         transcript_url=transcript_url,
         transcript_type=transcript_type,
-        # RSS 把正文放在 content:encoded，Atom 放在 <content>（type="html" 时是全文）。
-        body_html=_text(_find(item, 'content:encoded')) or _text(item.find(f'{{{_NS["atom"]}}}content')) or None,
+        body_html=body_html,
     )
+
+
+def _decompress(payload: bytes, *, limit: int) -> bytes:
+    """Un-gzip with a ceiling on what comes out.
+
+    ``gzip.decompress`` would expand a bomb in one go, after which a size check is
+    pointless. The stream is read a block at a time and stopped at the limit, so the
+    memory a feed can ask for stays bounded.
+    """
+    with gzip.GzipFile(fileobj=io.BytesIO(payload)) as handle:
+        data = handle.read(limit + 1)
+    if len(data) > limit:
+        raise PodcastError(f'解压后超过 {max(limit // 1024 // 1024, 1)} MB 上限')
+    return data
 
 
 def parse_feed(payload: bytes | str) -> Feed:
@@ -260,7 +410,7 @@ def parse_feed(payload: bytes | str) -> Feed:
     shape.
     """
     if isinstance(payload, bytes) and payload[:2] == b'\x1f\x8b':
-        payload = gzip.decompress(payload)
+        payload = _decompress(payload, limit=MAX_FEED_BYTES)
     text = payload.decode('utf-8', 'replace') if isinstance(payload, bytes) else payload
     try:
         root = ElementTree.fromstring(text)
@@ -325,7 +475,7 @@ class PodcastClient:
     async def transcript(self, url: str) -> str:
         payload = await self._fetch(url, limit=MAX_TRANSCRIPT_BYTES, timeout=TRANSCRIPT_TIMEOUT)
         if payload[:2] == b'\x1f\x8b':
-            payload = gzip.decompress(payload)
+            payload = _decompress(payload, limit=MAX_TRANSCRIPT_BYTES)
         return payload.decode('utf-8', 'replace')
 
 

@@ -12,7 +12,7 @@ except Exception:  # pragma: no cover - optional fallback
     jieba = None
 
 from .exceptions import ApiError
-from .image_hashes import ensure_image_hash, fetch_image_bytes
+from .image_hashes import IMAGE_HASH_ALGO, compute_image_content_hash, ensure_image_hash, fetch_image_bytes
 from .logger import get_logger
 from .storage import PostgresStorage, fetchall_rows, fetchone_row
 from .utils import normalize_value, parse_iso_date_to_timestamp
@@ -189,6 +189,33 @@ STAR_JOIN = ' LEFT JOIN article_star st ON st.article_pk = a.id AND st.user_id =
 #: must join accounts. The join itself binds no parameter.
 ACCOUNTS_JOIN = ' JOIN accounts acc ON acc.biz = a.biz'
 
+#: The list thumbnail: one image id per article, so the card can point at
+#: ``/api/image/{id}`` instead of a third-party CDN URL.
+#:
+#: A published cover counts even before its bytes are archived — the image route
+#: fetches those on demand — otherwise every article whose cover was registered
+#: but not downloaded yet came back coverless. An unarchived *body* image is
+#: still not a thumbnail: WeChat ships dozens per article, and a list request
+#: must not turn into a download of all of them. Whatever its bytes, a candidate
+#: whose known hash is globally blocked is never handed out. Cover first, then
+#: whatever is already archived, then reading order.
+#: (``blocked_image_hashes`` matching is NULL-safe by design: an image whose hash
+#: is not known yet cannot be matched here and is decided by the image route.)
+ARTICLE_THUMB_IMAGE_SQL = (
+    'LEFT JOIN LATERAL ('
+    '  SELECT id FROM article_images i'
+    '  WHERE i.article_pk = a.id'
+    "    AND ((i.s3_key IS NOT NULL AND i.s3_key <> '')"
+    "         OR (i.kind = 'cover' AND i.orig_url IS NOT NULL AND i.orig_url <> ''))"
+    '    AND NOT EXISTS ('
+    '      SELECT 1 FROM blocked_image_hashes b'
+    '      WHERE b.hash_algo = i.hash_algo AND b.content_hash = i.content_hash'
+    '    )'
+    "  ORDER BY (i.kind = 'cover') DESC, (i.s3_key IS NOT NULL AND i.s3_key <> '') DESC, i.position ASC"
+    '  LIMIT 1'
+    ') img ON TRUE'
+)
+
 
 #: Sources are an open set — the column is a discriminator, not an enum — so the
 #: filter is parsed, not validated against a registry.
@@ -333,14 +360,6 @@ def _build_article_query(
 
     limit_sql = 'LIMIT %s OFFSET %s'
 
-    image_sql = (
-        'LEFT JOIN LATERAL ('
-        '  SELECT id FROM article_images i'
-        "  WHERE i.article_pk = a.id AND i.s3_key IS NOT NULL AND i.s3_key <> ''"
-        "  ORDER BY (i.kind = 'cover') DESC, i.position ASC"
-        '  LIMIT 1'
-        ') img ON TRUE'
-    )
     image_select = 'img.id AS image_id'
 
     query_sql = (
@@ -357,7 +376,7 @@ def _build_article_query(
         f'{READ_STATE_JOIN}'
         f'{STAR_JOIN}'
         ' LEFT JOIN account_groups g ON g.id = sub.group_id'
-        f' {image_sql}'
+        f' {ARTICLE_THUMB_IMAGE_SQL}'
         f' {where_sql}'
         f' {order_sql}'
         f' {limit_sql}'
@@ -626,15 +645,38 @@ async def _get_article(storage: PostgresStorage, user_id: int, article_id: int) 
     else:
         content_status = 'invalid'
 
-    if content_status == 'missing':
+    images, blocked_image_ids = await _get_visible_article_images(storage, article_id)
+    visible_image_ids = {int(image['id']) for image in images}
+    if isinstance(content_json, list):
+        if blocked_image_ids:
+            content_json = _filter_blocked_content_blocks(content_json, blocked_image_ids)
+        content_json = _proxy_content_posters(
+            content_json,
+            cover=article.get('cover'),
+            visible_image_ids=visible_image_ids,
+        )
+
+    # A stored file plays natively even when the transcript never arrived, which is
+    # the whole point of archiving before transcribing. A damaged transcript is not
+    # a hole to fill: it keeps its honest status and no player is shown above it.
+    media_url = None
+    if content_status in ('missing', 'empty', 'ok'):
+        media_url = await _stored_archived_video_url(storage, article, content_json)
+    if media_url is not None:
+        content_json = _attach_archived_video(
+            content_json,
+            url=media_url,
+            poster=_canonical_cover_path(article.get('cover'), visible_image_ids),
+        )
+        if content_status in ('missing', 'empty'):
+            # The response carries playable content, so the status says so; it
+            # describes this payload, never the transcription job's progress.
+            content_status = 'ok'
+    elif content_status == 'missing':
         # 视频/播客的正文由转写补，别让读者以为「没同步」是坏了。
         media_state = (await storage.media_jobs.states_for_articles([article_id])).get(article_id)
         if media_state in ('pending', 'processing'):
             content_status = 'processing'
-
-    images, blocked_image_ids = await _get_visible_article_images(storage, article_id)
-    if isinstance(content_json, list) and blocked_image_ids:
-        content_json = _filter_blocked_content_blocks(content_json, blocked_image_ids)
 
     fetch_diagnostic = None
     if content_status != 'ok':
@@ -713,6 +755,159 @@ def _filter_blocked_content_blocks(
     ]
 
 
+def _cover_image_id(cover: Any) -> int | None:
+    """``articles.cover`` holds an image id; legacy rows still hold a URL.
+
+    Metadata is untrusted: ``'²'.isdigit()`` is true though ``int('²')`` raises,
+    so only an ASCII decimal (and a positive one) is an id. Bad values are not
+    an id — they must never turn a response into a 500.
+    """
+    if cover is None or isinstance(cover, bool):
+        return None
+    text = str(cover).strip()
+    if not text.isascii() or not text.isdecimal():
+        return None
+    image_id = int(text)
+    return image_id if image_id > 0 else None
+
+
+#: Blocks whose poster is a URL the reader would otherwise fetch from the source.
+_POSTER_BLOCK_TYPES = frozenset({'video', 'audio'})
+
+#: Our own protected image route — the only poster we ever serve ourselves.
+_HIPPO_IMAGE_PATH_RE = re.compile(r'^/api/image/([0-9]+)$')
+
+
+def _canonical_cover_path(cover: Any, visible_image_ids: set[int]) -> str | None:
+    """The protected route for this article's cover, or ``None`` when the reader
+    has no cover to see. Both the poster mapping and the video hydration need the
+    same answer, so the visibility rule lives in one place.
+    """
+    cover_id = _cover_image_id(cover)
+    if cover_id is None or cover_id not in visible_image_ids:
+        return None
+    return f'/api/image/{cover_id}'
+
+
+def _proxy_content_posters(
+    blocks: list[dict[str, Any]],
+    *,
+    cover: Any,
+    visible_image_ids: set[int],
+) -> list[dict[str, Any]]:
+    """Point every video/audio poster at the protected image route.
+
+    A provider poster (Bilibili, YouTube) is the same cover metadata at another
+    resolution or with a fresh signature, so it is not compared against the
+    stored ``orig_url``: the article's canonical cover id is what the reader gets.
+    Without a visible cover the external URL is dropped rather than kept as a
+    fallback — the browser must not fetch an image we refused to serve, and a
+    blocked cover is refused here even when some poster already points at our own
+    route. A block with no poster is left alone: there is nothing to protect and
+    no reason to invent one. The stored content is never edited; the same list is
+    returned when nothing changed and copies only where a poster changed.
+    """
+    canonical = _canonical_cover_path(cover, visible_image_ids)
+    changed = False
+    updated: list[dict[str, Any]] = []
+    for block in blocks:
+        poster = block.get('cover_url') if block.get('type') in _POSTER_BLOCK_TYPES else None
+        if not poster:
+            updated.append(block)
+            continue
+        own = _HIPPO_IMAGE_PATH_RE.match(str(poster))
+        replacement = canonical
+        if own:
+            # Already ours: keep it, unless the reader has blocked that image.
+            replacement = poster if int(own.group(1)) in visible_image_ids else None
+        if replacement == poster:
+            updated.append(block)
+            continue
+        changed = True
+        copied = dict(block)
+        if replacement is None:
+            copied.pop('cover_url', None)
+        else:
+            copied['cover_url'] = replacement
+        updated.append(copied)
+    return updated if changed else blocks
+
+
+def _block_is_video(block: Any) -> bool:
+    return isinstance(block, dict) and block.get('type') == 'video'
+
+
+def _has_video_block(blocks: Any) -> bool:
+    return isinstance(blocks, list) and any(_block_is_video(block) for block in blocks)
+
+
+def _attach_archived_video(
+    blocks: list[dict[str, Any]] | None,
+    *,
+    url: str,
+    poster: str | None,
+) -> list[dict[str, Any]]:
+    """Give this article's own video a native player, without touching the stored JSON.
+
+    An existing video block is rewritten where it sits — its ``embed_url`` removed
+    so the reader gets our file rather than the provider's iframe, its provider
+    metadata kept. An article whose transcript has no video block gets one in
+    front, which is what a reader waiting on the transcript needs. The caller's
+    list is never mutated: the stored ``content_json`` stays embed-only.
+    """
+    native: dict[str, Any] = {'type': 'video', 'url': url}
+    if poster:
+        native['cover_url'] = poster
+    if blocks is None:
+        return [native]
+    replaced = False
+    updated: list[dict[str, Any]] = []
+    for block in blocks:
+        if not _block_is_video(block):
+            updated.append(block)
+            continue
+        copied = {key: value for key, value in block.items() if key != 'embed_url'}
+        copied['url'] = url
+        if poster:
+            copied['cover_url'] = poster
+        updated.append(copied)
+        replaced = True
+    if replaced:
+        return updated
+    return [native, *blocks]
+
+
+async def _stored_archived_video_url(
+    storage: PostgresStorage,
+    article: dict[str, Any],
+    content_json: Any,
+) -> str | None:
+    """``/api/media/{id}/video`` when this article's video is already in the store.
+
+    Only asked for a video entry or an article that already carries a video block:
+    a plain text article does not pay a media lookup on every read. The original
+    URL is never the fallback here — a redirect to a third-party page is not a
+    native player, and the front end keeps its old block when we hold no bytes.
+    """
+    if article.get('content_kind') != 'video' and not _has_video_block(content_json):
+        return None
+    article_pk = int(article['id'])
+    asset = await storage.media_assets.get(article_pk, kind='video')
+    if not asset or asset.get('state') != 'stored' or not str(asset.get('s3_key') or '').strip():
+        return None
+    return f'/api/media/{article_pk}/video'
+
+
+async def _is_blocked_content_hash(storage: PostgresStorage, hash_algo: str, content_hash: str) -> bool:
+    """Global block list membership, by content hash rather than by image id."""
+    row = await fetchone_row(
+        storage,
+        'SELECT 1 AS blocked FROM blocked_image_hashes WHERE hash_algo = %s AND content_hash = %s LIMIT 1',
+        [hash_algo, content_hash],
+    )
+    return row is not None
+
+
 async def _ensure_image_hash(
     storage: PostgresStorage, image_id: int, *, allow_origin_fetch: bool = True
 ) -> dict[str, Any]:
@@ -730,20 +925,16 @@ async def _ensure_image_visible(storage: PostgresStorage, user_id: int, image_id
 
     Images are addressed by a global id, so without this check any signed-in
     user could walk the ids and read (or block) images from other people's
-    subscriptions.
+    subscriptions. The subscription has to be enabled, the same rule the article
+    and media routes apply — a disabled feed is not a grant to its images.
     """
     row = await fetchone_row(
         storage,
-        (
-            'SELECT 1 FROM article_images i'
-            ' JOIN articles a ON a.id = i.article_pk'
-            ' JOIN subscription s ON s.biz = a.biz AND s.user_id = %s'
-            ' WHERE i.id = %s'
-        ),
+        (f'SELECT 1 FROM article_images i JOIN articles a ON a.id = i.article_pk{SUBSCRIPTION_JOIN} WHERE i.id = %s'),
         [user_id, image_id],
     )
     if not row:
-        raise ApiError('图片不存在', status=404)
+        raise ApiError('Image not found', status=404)
 
 
 async def _block_image(storage: PostgresStorage, user_id: int, image_id: int) -> dict[str, Any]:
@@ -764,13 +955,32 @@ async def _block_image(storage: PostgresStorage, user_id: int, image_id: int) ->
 
 
 async def _fetch_image(storage: PostgresStorage, user_id: int, image_id: int) -> tuple[bytes, str]:
+    # Visibility first: an image from someone else's subscription is a 404 before
+    # we even look at the block list.
     await _ensure_image_visible(storage, user_id, image_id)
+    hash_row = await fetchone_row(
+        storage,
+        'SELECT hash_algo, content_hash FROM article_images WHERE id = %s',
+        [image_id],
+    )
+    hash_algo = str(hash_row.get('hash_algo') or '') if hash_row else ''
+    content_hash = str(hash_row.get('content_hash') or '') if hash_row else ''
+    if hash_algo and content_hash and await _is_blocked_content_hash(storage, hash_algo, content_hash):
+        # A blocked image is indistinguishable from one that does not exist.
+        raise ApiError('Image not found', status=404)
     try:
-        return await fetch_image_bytes(storage, image_id)
+        payload, content_type = await fetch_image_bytes(storage, image_id)
     except LookupError as exc:
         raise ApiError(str(exc), status=404) from exc
     except RuntimeError as exc:
         raise ApiError(str(exc), status=502, code='image.unavailable') from exc
+    # Unknown hash: decide from the bytes we are already sending, so a blocked
+    # image is never written out and the picture is not fetched twice.
+    if not (hash_algo and content_hash) and await _is_blocked_content_hash(
+        storage, IMAGE_HASH_ALGO, compute_image_content_hash(payload)
+    ):
+        raise ApiError('Image not found', status=404)
+    return payload, content_type
 
 
 async def _list_feed(

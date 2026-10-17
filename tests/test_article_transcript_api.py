@@ -5,6 +5,7 @@ player talks to — which is why the range handling gets its own tests: without 
 progress bar cannot be dragged.
 """
 
+import json
 import unittest
 from types import SimpleNamespace
 from typing import ClassVar
@@ -53,9 +54,7 @@ class TranscriptExportTest(unittest.IsolatedAsyncioTestCase):
             patch('hippo.api.routers.article._assert_article_visible', new=AsyncMock()),
             patch('hippo.api.routers.article.fetchone_row', new=AsyncMock(return_value=_row(blocks))),
         ):
-            return await article_api.export_transcript(
-                article_id=7, format=fmt, storage=storage, user=_user()
-            )
+            return await article_api.export_transcript(article_id=7, format=fmt, storage=storage, user=_user())
 
     async def test_markdown_carries_the_anchors(self) -> None:
         response = await self._export(fmt='md')
@@ -107,6 +106,24 @@ def _request(range_header: str | None = None) -> SimpleNamespace:
     return SimpleNamespace(headers={'range': range_header} if range_header else {})
 
 
+class _FakeBody:
+    """The bits of ``botocore``'s StreamingBody the media route relies on."""
+
+    def __init__(self, chunks, *, fail_at: int | None = None) -> None:
+        self._chunks = list(chunks)
+        self._fail_at = fail_at
+        self.closed = False
+
+    def __iter__(self):
+        for index, chunk in enumerate(self._chunks):
+            if self._fail_at is not None and index >= self._fail_at:
+                raise OSError('connection reset')
+            yield chunk
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class OnDemandTranscribeTest(unittest.IsolatedAsyncioTestCase):
     _JOB: ClassVar[dict] = {
         'id': 1,
@@ -151,6 +168,8 @@ class OnDemandTranscribeTest(unittest.IsolatedAsyncioTestCase):
 
 
 class AudioStreamingTest(unittest.IsolatedAsyncioTestCase):
+    _STORED_VIDEO: ClassVar[dict] = {'state': 'stored', 's3_key': 'media/video/7.mp4', 'size_bytes': 100}
+
     async def _stream(self, *, asset, range_header=None, stream=None):
         storage = _storage(asset=asset)
         with (
@@ -158,8 +177,7 @@ class AudioStreamingTest(unittest.IsolatedAsyncioTestCase):
             patch(
                 'hippo.api.routers.article.archive_module.open_audio',
                 new=Mock(
-                    return_value=stream
-                    or AudioStream(body=iter([b'x']), content_type='audio/mpeg', size=10, total=100)
+                    return_value=stream or AudioStream(body=iter([b'x']), content_type='audio/mpeg', size=10, total=100)
                 ),
             ),
         ):
@@ -170,6 +188,25 @@ class AudioStreamingTest(unittest.IsolatedAsyncioTestCase):
                 storage=storage,
                 user=_user(),
             )
+
+    async def _stream_video(self, *, asset, range_header=None, stream=None):
+        """Stream a video and hand back the ``open_audio`` spy and the storage."""
+        storage = _storage(asset=asset)
+        opened = Mock(
+            return_value=stream or AudioStream(body=iter([b'x']), content_type='video/mp4', size=10, total=100)
+        )
+        with (
+            patch('hippo.api.routers.article._assert_article_visible', new=AsyncMock()),
+            patch('hippo.api.routers.article.archive_module.open_audio', new=opened),
+        ):
+            response = await article_api.stream_archived_media(
+                kind='video',
+                article_pk=7,
+                request=_request(range_header),
+                storage=storage,
+                user=_user(),
+            )
+        return response, opened, storage
 
     async def test_a_stored_asset_streams_with_range_support(self) -> None:
         response = await self._stream(asset={'state': 'stored', 's3_key': 'media/audio/7.mp3'})
@@ -201,11 +238,7 @@ class AudioStreamingTest(unittest.IsolatedAsyncioTestCase):
             patch('hippo.api.routers.article._assert_article_visible', new=AsyncMock()),
             patch(
                 'hippo.api.routers.article.archive_module.open_audio',
-                new=Mock(
-                    return_value=AudioStream(
-                        body=iter([b'x']), content_type='video/mp4', size=2048, total=2048
-                    )
-                ),
+                new=Mock(return_value=AudioStream(body=iter([b'x']), content_type='video/mp4', size=2048, total=2048)),
             ),
         ):
             response = await article_api.stream_archived_media(
@@ -235,14 +268,111 @@ class AudioStreamingTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(404, ctx.exception.status)
 
-    async def test_a_range_past_the_end_is_a_416(self) -> None:
-        with self.assertRaises(ApiError) as ctx:
-            await self._stream(
-                asset={'state': 'stored', 's3_key': 'k', 'size_bytes': 100},
-                range_header='bytes=500-600',
+    async def test_a_range_past_the_end_is_a_416_with_the_real_length(self) -> None:
+        response, opened, _ = await self._stream_video(
+            asset={'state': 'stored', 's3_key': 'k', 'size_bytes': 100},
+            range_header='bytes=500-600',
+        )
+
+        self.assertEqual(416, response.status_code)
+        self.assertEqual('bytes */100', response.headers['content-range'])
+        self.assertEqual({'error': '请求的范围超出文件大小', 'code': 'http_416'}, json.loads(response.body))
+        opened.assert_not_called()
+
+    async def test_a_suffix_range_asks_the_store_for_the_last_bytes(self) -> None:
+        stream = AudioStream(body=iter([b'x' * 10]), content_type='video/mp4', size=10, total=100)
+
+        response, opened, _ = await self._stream_video(
+            asset={'state': 'stored', 's3_key': 'k', 'size_bytes': 100},
+            range_header='bytes=-10',
+            stream=stream,
+        )
+
+        self.assertEqual(206, response.status_code)
+        self.assertEqual('bytes 90-99/100', response.headers['content-range'])
+        self.assertEqual('10', response.headers['content-length'])
+        self.assertEqual('private, max-age=3600', response.headers['cache-control'])
+        opened.assert_called_once_with('k', start=90, end=99)
+
+    async def test_a_suffix_range_without_a_known_size_serves_the_whole_file(self) -> None:
+        # The length cannot be computed from an unknown total, and a made-up 206
+        # would hand the player a range it never asked the store for.
+        response, opened, _ = await self._stream_video(
+            asset={'state': 'stored', 's3_key': 'k', 'size_bytes': None},
+            range_header='bytes=-10',
+        )
+
+        self.assertEqual(200, response.status_code)
+        opened.assert_called_once_with('k', start=None, end=None)
+
+    async def test_a_video_without_stored_bytes_never_redirects_to_the_source_page(self) -> None:
+        # The original URL of a video is a third-party HTML page: a 302 would hand
+        # the reader markup instead of the "no player" answer.
+        storage = _storage(asset={'state': 'failed', 's3_key': None, 'orig_url': 'https://www.bilibili.com/video/BV1'})
+        opened = Mock()
+        with (
+            patch('hippo.api.routers.article._assert_article_visible', new=AsyncMock()),
+            patch('hippo.api.routers.article.archive_module.open_audio', new=opened),
+            self.assertRaises(ApiError) as ctx,
+        ):
+            await article_api.stream_archived_media(
+                kind='video',
+                article_pk=7,
+                request=_request(),
+                storage=storage,
+                user=_user(),
             )
 
-        self.assertEqual(416, ctx.exception.status)
+        self.assertEqual(404, ctx.exception.status)
+        opened.assert_not_called()
+        self.assertEqual('video', storage.media_assets.get.await_args.kwargs['kind'])
+
+    async def test_a_foreign_article_is_refused_before_the_store_is_touched(self) -> None:
+        storage = _storage(asset=self._STORED_VIDEO)
+        with (
+            patch(
+                'hippo.api.routers.article._assert_article_visible',
+                new=AsyncMock(side_effect=ApiError('Article not found', status=404)),
+            ),
+            self.assertRaises(ApiError) as ctx,
+        ):
+            await article_api.stream_archived_media(
+                kind='video',
+                article_pk=7,
+                request=_request(),
+                storage=storage,
+                user=_user(),
+            )
+
+        self.assertEqual(404, ctx.exception.status)
+        storage.media_assets.get.assert_not_awaited()
+
+    async def test_a_client_that_stops_iterating_closes_the_upstream_body(self) -> None:
+        body = _FakeBody([b'a', b'b', b'c'])
+        response, _opened, _ = await self._stream_video(
+            asset=self._STORED_VIDEO,
+            stream=AudioStream(body=body, content_type='video/mp4', size=3, total=3),
+        )
+        iterator = response.body_iterator
+        self.assertEqual(b'a', await iterator.__anext__())
+
+        await iterator.aclose()  # what Starlette does when the client disconnects
+
+        self.assertTrue(body.closed)
+
+    async def test_a_broken_upstream_body_is_closed_before_the_error_surfaces(self) -> None:
+        body = _FakeBody([b'a', b'b'], fail_at=1)
+        response, _opened, _ = await self._stream_video(
+            asset=self._STORED_VIDEO,
+            stream=AudioStream(body=body, content_type='video/mp4', size=10, total=10),
+        )
+        iterator = response.body_iterator
+        self.assertEqual(b'a', await iterator.__anext__())
+
+        with self.assertRaises(OSError):
+            await iterator.__anext__()
+
+        self.assertTrue(body.closed)
 
 
 if __name__ == '__main__':

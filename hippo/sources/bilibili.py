@@ -9,6 +9,11 @@ not have. Two things about this source are worth knowing before reading the code
   The per-video endpoints (``view``, ``playurl``) answer fine without one.
 * **Playback URLs expire.** ``playurl`` hands out signed CDN links, so the audio
   is resolved at transcription time from the page URL, never stored in the queue.
+* **Only a 720p-or-below AVC track becomes a video.** One ``playurl`` reply is read
+  for both tracks; the picture is taken only when it is H.264 (this round's browser
+  support), at or below this project's 720p ceiling, and has an AAC track with a
+  direct file URL to be muxed with. HEVC/AV1, DRM replies, oversized tracks and
+  manifests are left alone, and the ordinary audio route is what remains.
 """
 
 from __future__ import annotations
@@ -192,15 +197,99 @@ def duration_from_length(value: Any) -> int | None:
     return seconds
 
 
+#: DASH video code ids: 7 is H.264/AVC, 12 is HEVC, 13 is AV1. The latter two fit in an
+#: MP4 just as well, but they are outside this round's browser support, so only AVC is
+#: taken.
+_H264_CODEC_ID = 7
+#: This project's own resource ceiling on a queued picture. It is not a paid-tier
+#: check: anything taller is simply not what we download, and audio takes over.
+_MAX_VIDEO_HEIGHT = 720
+
+
+def _as_int(value: Any) -> int | None:
+    """A reply's number as an int, or ``None`` when it is missing or not one."""
+    try:
+        return int(value)
+    except TypeError, ValueError:
+        return None
+
+
 def best_audio_track(playurl: dict[str, Any]) -> dict[str, Any] | None:
-    """The highest-bandwidth ordinary DASH audio track."""
+    """The highest-bandwidth ordinary DASH audio track.
+
+    A track whose ``id`` or ``bandwidth`` did not arrive as a number is never fatal:
+    it just cannot win, and the ordinary/preferred split stays as it was.
+    """
     data = playurl.get('data') or {}
     tracks = ((data.get('dash') or {}).get('audio')) or []
-    ordinary = [track for track in tracks if int(track.get('id') or 0) in _ORDINARY_AUDIO_IDS]
+    ordinary = [track for track in tracks if _as_int(track.get('id')) in _ORDINARY_AUDIO_IDS]
     candidates = ordinary or tracks
     if not candidates:
         return None
-    return max(candidates, key=lambda track: int(track.get('bandwidth') or 0))
+    return max(candidates, key=lambda track: _as_int(track.get('bandwidth')) or 0)
+
+
+def _is_aac(track: Mapping[str, Any]) -> bool:
+    """AAC, by codec string, or by being one of the ordinary (always AAC) ids."""
+    codecs = str(track.get('codecs') or '').lower()
+    if codecs:
+        return codecs.startswith('mp4a')
+    return _as_int(track.get('id')) in _ORDINARY_AUDIO_IDS
+
+
+def _aac_audio_track(playurl: dict[str, Any]) -> dict[str, Any] | None:
+    """The highest-bandwidth AAC track that is a direct file: the only muxable kind."""
+    data = playurl.get('data') or {}
+    tracks = [track for track in ((data.get('dash') or {}).get('audio') or []) if _is_aac(track) and _direct_url(track)]
+    if not tracks:
+        return None
+    return max(tracks, key=lambda track: _as_int(track.get('bandwidth')) or 0)
+
+
+def _is_h264(track: Mapping[str, Any]) -> bool:
+    """AVC, by code id or by the codec string a reply spells out instead."""
+    if _as_int(track.get('codecid')) == _H264_CODEC_ID:
+        return True
+    return str(track.get('codecs') or '').lower().startswith(('avc1', 'h264'))
+
+
+def _direct_url(track: Mapping[str, Any]) -> str | None:
+    """The track's own CDN link, or ``None`` for anything that is not a file URL.
+
+    ``baseUrl`` is a plain HTTP(S) file with a host; ``.m3u8``/``.mpd`` are manifests,
+    and the pipeline downloads one file rather than following a stream.
+    """
+    url = str(track.get('baseUrl') or track.get('base_url') or '')
+    parsed = urlparse(url)
+    if parsed.scheme not in {'http', 'https'} or not parsed.hostname:
+        return None
+    return None if parsed.path.lower().endswith(('.m3u8', '.mpd')) else url
+
+
+def best_video_track(playurl: dict[str, Any]) -> dict[str, Any] | None:
+    """The tallest usable picture at or below 720p, or ``None``.
+
+    Usable means the reader's browser and this pipeline can both take it: H.264 with a
+    direct file URL. HEVC/AV1 would sit in the same MP4 but are out of this round's
+    browser support, and the 720p line is this project's own resource ceiling rather
+    than a statement about which tiers the account may fetch. Filters run on the
+    candidates so one unusable tall track cannot hide a good shorter one; a reply with
+    broken metadata is skipped, never fatal.
+    """
+    dash = (playurl.get('data') or {}).get('dash') or {}
+    if dash.get('drm_tech_type'):
+        return None
+    candidates = [
+        track
+        for track in (dash.get('video') or [])
+        if _is_h264(track) and _direct_url(track) and 0 < (_as_int(track.get('height')) or 0) <= _MAX_VIDEO_HEIGHT
+    ]
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda track: (_as_int(track.get('height')) or 0, _as_int(track.get('bandwidth')) or 0),
+    )
 
 
 def embed_url(video_id: str) -> str:
@@ -493,42 +582,57 @@ class BilibiliResolver:
         # 「强制重转」把 skip_subtitle 放进任务 payload：CC 字幕质量差时用它换回 ASR。
         payload = job.get('payload') if isinstance(job, Mapping) else None
         skip_subtitle = bool((payload or {}).get('skip_subtitle')) if isinstance(payload, dict) else False
-        if self._use_cc_subtitle and not skip_subtitle:
-            subtitle = await self._cc_subtitle(bvid, cid)
-            if subtitle is not None:
-                audio = await self._audio(identity=bvid, cid=cid)
-                if audio is None:
-                    # 音频拿不到也不该丢掉现成的 CC 字幕。
-                    return ResolvedMedia(embed_block=embed, subtitle=subtitle, duration_seconds=duration)
-                return ResolvedMedia(
-                    audio_url=audio[0],
-                    headers=audio[1],
-                    # 有 CC 也不省留档：字幕来自平台，音频是我们唯一能留下来的东西。
-                    embed_block=embed,
-                    subtitle=subtitle,
-                    duration_seconds=duration,
-                )
+        subtitle = await self._cc_subtitle(bvid, cid) if self._use_cc_subtitle and not skip_subtitle else None
 
-        audio = await self._audio(identity=bvid, cid=cid)
-        if audio is None:
+        # 两个分支原本各取一次 playurl，拿的是同一份带签名的答复。
+        audio_url, video_url = await self._tracks(identity=bvid, cid=cid)
+        # 没有 Referer/User-Agent 的话 CDN 会 403，两轨共用这份头。
+        headers = {'Referer': REFERER, 'User-Agent': USER_AGENT} if audio_url or video_url else {}
+
+        if subtitle is not None:
+            # 有 CC 也照旧把音视频带出来：字幕来自平台，媒体才是这个条目里我们能留下的东西；
+            # 音视频取不到也不该把现成的字幕一起丢掉。
+            return ResolvedMedia(
+                audio_url=audio_url,
+                video_url=video_url,
+                headers=headers,
+                embed_block=embed,
+                subtitle=subtitle,
+                duration_seconds=duration,
+            )
+        if audio_url is None and video_url is None:
             raise MediaJobSkipped(f'视频 {bvid} 没有可下载的音频轨')
         return ResolvedMedia(
-            audio_url=audio[0],
-            headers=audio[1],
+            audio_url=audio_url,
+            video_url=video_url,
+            headers=headers,
             duration_seconds=duration,
             embed_block=embed,
         )
 
-    async def _audio(self, *, identity: str, cid: int) -> tuple[str, dict[str, str]] | None:
-        """The audio track's URL and the headers its CDN demands."""
+    async def _tracks(self, *, identity: str, cid: int) -> tuple[str | None, str | None]:
+        """The audio URL and a video URL, from the one ``playurl`` reply this job gets.
+
+        The video only comes back when an AAC track can be paired with it: the pipeline
+        muxes the two, and a split DASH picture without a muxable track would be
+        watchable-but-silent, which is worse than no video at all.
+        """
         data = await self._client.playurl(identity, cid)
-        track = best_audio_track({'data': data})
-        url = str((track or {}).get('baseUrl') or (track or {}).get('base_url') or '')
-        if not url:
+        playurl = {'data': data}
+        audio = best_audio_track(playurl)
+        video = best_video_track(playurl)
+        video_url = _direct_url(video) if video is not None else None
+        if video_url is not None:
+            paired = _aac_audio_track(playurl)
+            if paired is None:
+                video_url = None
+            else:
+                audio = paired
+        audio_url = str((audio or {}).get('baseUrl') or (audio or {}).get('base_url') or '') or None
+        if audio_url is None:
             logger.info('视频 %s 没有可用的音频地址', identity)
-            return None
-        # 没有 Referer 的话 CDN 会 403。
-        return url, {'Referer': REFERER, 'User-Agent': USER_AGENT}
+            video_url = None
+        return audio_url, video_url
 
     async def _cc_subtitle(self, bvid: str, cid: int) -> Subtitle | None:
         """The cheap path: a subtitle the uploader already provided."""
@@ -563,6 +667,7 @@ __all__ = [
     'BilibiliResolver',
     'BilibiliSource',
     'best_audio_track',
+    'best_video_track',
     'duration_from_length',
     'embed_url',
     'mixin_key',

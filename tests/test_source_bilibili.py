@@ -14,6 +14,7 @@ from hippo.sources.bilibili import (
     BilibiliResolver,
     BilibiliSource,
     best_audio_track,
+    best_video_track,
     duration_from_length,
     embed_url,
     mixin_key,
@@ -106,6 +107,101 @@ class AudioTrackTest(unittest.TestCase):
 
     def test_no_dash_audio_is_none(self) -> None:
         self.assertIsNone(best_audio_track({'data': {'durl': [{'url': 'x'}]}}))
+
+    def test_a_broken_field_does_not_hide_the_valid_track(self) -> None:
+        # A bandwidth string with a decimal point used to raise ValueError and take
+        # the usable track down with it.
+        payload = {
+            'data': {
+                'dash': {
+                    'audio': [
+                        {'id': 30280, 'bandwidth': '175518.5', 'baseUrl': 'https://cdn/broken.m4s'},
+                        {'id': 30216, 'bandwidth': 65685, 'baseUrl': 'https://cdn/a.m4s'},
+                    ]
+                }
+            }
+        }
+
+        self.assertEqual('https://cdn/a.m4s', best_audio_track(payload)['baseUrl'])
+
+
+#: Shared DASH pieces for the track tests: a real 720p AVC track, the ordinary AAC
+#: track, and a Dolby one that outranks it in bandwidth.
+_AVC_720 = {'id': 64, 'codecid': 7, 'height': 720, 'bandwidth': 1_500_000, 'baseUrl': 'https://cdn/v720.mp4'}
+_AAC_AUDIO = {'id': 30280, 'bandwidth': 175_518, 'baseUrl': 'https://cdn/a.m4s'}
+_DOLBY_AUDIO = {'id': 30250, 'bandwidth': 999_999, 'baseUrl': 'https://cdn/dolby.m4s'}
+
+
+def _dash(*, video=(), audio=()) -> dict:
+    return {'data': {'dash': {'video': list(video), 'audio': list(audio)}}}
+
+
+def _dash_data(*, video=(), audio=()) -> dict:
+    """What ``BilibiliClient.playurl`` returns: the ``data`` half, without the wrapper."""
+    return _dash(video=video, audio=audio)['data']
+
+
+class VideoTrackTest(unittest.TestCase):
+    def test_the_tallest_720p_h264_track_wins(self) -> None:
+        tracks = [
+            {'id': 80, 'codecid': 7, 'height': 1080, 'bandwidth': 3_000_000, 'baseUrl': 'https://cdn/v1080.mp4'},
+            _AVC_720,
+            {'id': 32, 'codecid': 7, 'height': 480, 'bandwidth': 900_000, 'baseUrl': 'https://cdn/v480.mp4'},
+        ]
+
+        self.assertEqual('https://cdn/v720.mp4', best_video_track(_dash(video=tracks))['baseUrl'])
+
+    def test_1080p_leaves_no_compatible_video(self) -> None:
+        track = {'id': 80, 'codecid': 7, 'height': 1080, 'bandwidth': 3_000_000, 'baseUrl': 'https://cdn/v1080.mp4'}
+
+        self.assertIsNone(best_video_track(_dash(video=[track])))
+
+    def test_a_playlist_above_the_ceiling_does_not_hide_a_good_track(self) -> None:
+        # 坏的高轨必须在候选阶段就被筛掉，不能遮住合法的低轨。
+        tracks = [
+            {'id': 80, 'codecid': 7, 'height': 1080, 'bandwidth': 3_000_000, 'baseUrl': 'https://cdn/v1080.mp4'},
+            {**_AVC_720, 'baseUrl': 'https://cdn/master.m3u8'},
+            {**_AVC_720, 'height': 480, 'bandwidth': 900_000, 'baseUrl': 'https://cdn/v480.mp4'},
+        ]
+
+        self.assertEqual('https://cdn/v480.mp4', best_video_track(_dash(video=tracks))['baseUrl'])
+
+    def test_a_broken_metadata_field_is_skipped_not_fatal(self) -> None:
+        tracks = [{**_AVC_720, 'height': 'auto'}, {**_AVC_720, 'bandwidth': None}, _AVC_720]
+
+        self.assertEqual('https://cdn/v720.mp4', best_video_track(_dash(video=tracks))['baseUrl'])
+
+    def test_hevc_and_av1_are_refused(self) -> None:
+        tracks = [
+            {'id': 64, 'codecid': 12, 'height': 720, 'bandwidth': 2_000_000, 'baseUrl': 'https://cdn/hevc.mp4'},
+            {'id': 65, 'codecid': 13, 'height': 720, 'bandwidth': 2_000_000, 'baseUrl': 'https://cdn/av1.mp4'},
+        ]
+
+        self.assertIsNone(best_video_track(_dash(video=tracks)))
+
+    def test_the_codec_string_can_stand_in_for_the_code_id(self) -> None:
+        track = {**_AVC_720, 'codecid': 0, 'codecs': 'avc1.640028'}
+
+        self.assertEqual('https://cdn/v720.mp4', best_video_track(_dash(video=[track]))['baseUrl'])
+
+    def test_a_drm_reply_is_refused(self) -> None:
+        payload = _dash(video=[_AVC_720])
+        payload['data']['dash']['drm_tech_type'] = 1
+
+        self.assertIsNone(best_video_track(payload))
+
+    def test_a_playlist_url_is_not_a_direct_file(self) -> None:
+        track = {**_AVC_720, 'baseUrl': 'https://cdn/master.m3u8'}
+
+        self.assertIsNone(best_video_track(_dash(video=[track])))
+
+    def test_a_url_without_a_host_is_not_a_direct_file(self) -> None:
+        track = {**_AVC_720, 'baseUrl': 'https:///v.mp4'}
+
+        self.assertIsNone(best_video_track(_dash(video=[track])))
+
+    def test_audonly_dash_has_no_video(self) -> None:
+        self.assertIsNone(best_video_track(_dash(audio=[_AAC_AUDIO])))
 
 
 class SubtitleTest(unittest.TestCase):
@@ -285,19 +381,125 @@ class ResolverTest(unittest.IsolatedAsyncioTestCase):
         media = await BilibiliResolver(client).resolve(self._JOB)
 
         self.assertIsNone(media.audio_url)
+        self.assertIsNone(media.video_url)
         self.assertEqual('字幕', media.subtitle.blocks[0]['text'])
+
+    async def test_a_cc_subtitle_survives_a_broken_audio_field(self) -> None:
+        # A bandwidth that is not a number only costs that field, not the track: the
+        # URL is still good, so the audio survives and no ValueError may escape — and
+        # the CC subtitle has to come out either way.
+        client = _FakeClient(
+            video={'bvid': 'BV1gHps6yEHL', 'duration': 800, 'pages': [{'cid': 42}]},
+            player={'subtitle': {'subtitles': [{'subtitle_url': '//cdn/sub.json'}]}},
+            fetch_json={'body': [{'from': 0.0, 'content': '字幕'}]},
+            playurl=_dash_data(audio=[{'id': 30280, 'bandwidth': '175518.5', 'baseUrl': 'https://cdn/a.m4s'}]),
+        )
+
+        media = await BilibiliResolver(client).resolve(self._JOB)
+
+        self.assertEqual('https://cdn/a.m4s', media.audio_url)
+        self.assertIsNone(media.video_url)
+        self.assertEqual('字幕', media.subtitle.blocks[0]['text'])
+
+    async def test_a_compatible_video_comes_back_with_its_aac_audio(self) -> None:
+        # 视频轨与 AAC 配对：Dolby 带宽更高，但不能拿来合流。
+        client = _FakeClient(
+            video={'bvid': 'BV1gHps6yEHL', 'duration': 800, 'pages': [{'cid': 42}]},
+            player={'subtitle': {'subtitles': []}},
+            playurl=_dash_data(video=[_AVC_720], audio=[_AAC_AUDIO, _DOLBY_AUDIO]),
+        )
+
+        media = await BilibiliResolver(client).resolve(self._JOB)
+
+        self.assertEqual('https://cdn/v720.mp4', media.video_url)
+        self.assertFalse(media.video_has_audio)
+        self.assertEqual('https://cdn/a.m4s', media.audio_url)
+        self.assertIn('Referer', media.headers)
+        self.assertIn('User-Agent', media.headers)
+
+    async def test_a_video_without_an_aac_track_is_not_offered(self) -> None:
+        # 只有 Dolby 音频时不能配对：给不出声音的视频还不如不给。
+        client = _FakeClient(
+            video={'bvid': 'BV1gHps6yEHL', 'pages': [{'cid': 42}]},
+            player={'subtitle': {'subtitles': []}},
+            playurl=_dash_data(video=[_AVC_720], audio=[_DOLBY_AUDIO]),
+        )
+
+        media = await BilibiliResolver(client).resolve(self._JOB)
+
+        self.assertIsNone(media.video_url)
+        self.assertEqual('https://cdn/dolby.m4s', media.audio_url)
+
+    async def test_a_track_above_the_resource_ceiling_is_not_offered(self) -> None:
+        track = {'id': 80, 'codecid': 7, 'height': 1080, 'bandwidth': 3_000_000, 'baseUrl': 'https://cdn/v1080.mp4'}
+        client = _FakeClient(
+            video={'bvid': 'BV1gHps6yEHL', 'pages': [{'cid': 42}]},
+            player={'subtitle': {'subtitles': []}},
+            playurl=_dash_data(video=[track], audio=[_AAC_AUDIO]),
+        )
+
+        media = await BilibiliResolver(client).resolve(self._JOB)
+
+        self.assertIsNone(media.video_url)
+        self.assertEqual('https://cdn/a.m4s', media.audio_url)
+
+    async def test_a_drm_reply_keeps_a_cc_subtitle_and_the_audio(self) -> None:
+        payload = _dash_data(video=[_AVC_720], audio=[_AAC_AUDIO])
+        payload['dash']['drm_tech_type'] = 1
+        client = _FakeClient(
+            video={'bvid': 'BV1gHps6yEHL', 'duration': 800, 'pages': [{'cid': 42}]},
+            player={'subtitle': {'subtitles': [{'subtitle_url': '//cdn/sub.json'}]}},
+            fetch_json={'body': [{'from': 0.0, 'content': '字幕'}]},
+            playurl=payload,
+        )
+
+        media = await BilibiliResolver(client).resolve(self._JOB)
+
+        self.assertIsNone(media.video_url)
+        self.assertEqual('https://cdn/a.m4s', media.audio_url)
+        self.assertEqual('字幕', media.subtitle.blocks[0]['text'])
+
+    async def test_a_cc_subtitle_still_carries_the_video(self) -> None:
+        client = _FakeClient(
+            video={'bvid': 'BV1gHps6yEHL', 'duration': 800, 'pages': [{'cid': 42}]},
+            player={'subtitle': {'subtitles': [{'subtitle_url': '//cdn/sub.json'}]}},
+            fetch_json={'body': [{'from': 0.0, 'content': '字幕'}]},
+            playurl=_dash_data(video=[_AVC_720], audio=[_AAC_AUDIO]),
+        )
+
+        media = await BilibiliResolver(client).resolve(self._JOB)
+
+        self.assertEqual('字幕', media.subtitle.blocks[0]['text'])
+        self.assertEqual('https://cdn/v720.mp4', media.video_url)
+        self.assertEqual('https://cdn/a.m4s', media.audio_url)
+
+    async def test_the_cc_subtitle_is_read_without_a_second_playurl(self) -> None:
+        # 字幕与音频走的是同一份带签名的答复，playurl 只该被调一次。
+        client = _FakeClient(
+            video={'bvid': 'BV1gHps6yEHL', 'duration': 800, 'pages': [{'cid': 42}]},
+            player={'subtitle': {'subtitles': [{'subtitle_url': '//cdn/sub.json'}]}},
+            fetch_json={'body': [{'from': 0.0, 'content': '字幕'}]},
+            playurl=_dash_data(video=[_AVC_720], audio=[_AAC_AUDIO]),
+        )
+
+        await BilibiliResolver(client).resolve(self._JOB)
+
+        client.playurl.assert_awaited_once()
 
     async def test_cc_can_be_turned_off(self) -> None:
         client = _FakeClient(
             video={'bvid': 'BV1gHps6yEHL', 'pages': [{'cid': 42}]},
             player={'subtitle': {'subtitles': [{'subtitle_url': '//cdn/sub.json'}]}},
             fetch_json={'body': [{'from': 0.0, 'content': '字幕'}]},
-            playurl={'dash': {'audio': [{'id': 30216, 'bandwidth': 65685, 'baseUrl': 'https://cdn/a.m4s'}]}},
+            playurl=_dash_data(video=[_AVC_720], audio=[_AAC_AUDIO]),
         )
 
         media = await BilibiliResolver(client, use_cc_subtitle=False).resolve(self._JOB)
 
         self.assertEqual('https://cdn/a.m4s', media.audio_url)
+        self.assertEqual('https://cdn/v720.mp4', media.video_url)
+        self.assertIsNone(media.subtitle)
+        client.player.assert_not_awaited()
 
     async def test_force_asr_skips_a_cc_subtitle(self) -> None:
         client = _FakeClient(
@@ -312,6 +514,8 @@ class ResolverTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual('https://cdn/a.m4s', media.audio_url)
         self.assertIsNone(media.subtitle)
+        client.player.assert_not_awaited()
+        client.playurl.assert_awaited_once()
 
     async def test_a_video_without_a_page_is_skipped(self) -> None:
         from hippo.media.pipeline import MediaJobSkipped

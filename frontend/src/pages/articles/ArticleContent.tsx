@@ -1,4 +1,4 @@
-import { createContext, memo, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, memo, useContext, useEffect, useMemo, useRef } from 'react';
 import { useI18n } from '../../i18n';
 import { renderInlineNodes } from '../../utils/markdown';
 import { EmptyState } from '../../components/EmptyState';
@@ -13,18 +13,37 @@ import { headingAnchorId } from './outline';
  * holds that little bit of state here instead of threading it through every block.
  */
 interface PlayerControls {
-  /** False when the article has no player, which is when anchors are plain text. */
+  /** False when the article has nothing playable, which is when anchors are plain text. */
   canSeek: boolean;
   seek: (seconds: number) => void;
+  /** Stops whichever player is not `active`, so video and audio never overlap. */
+  pauseOther: (active: HTMLMediaElement) => void;
   /**
-   * Where to open the original at a timestamp, for entries whose player is a
-   * third-party iframe: Bilibili and YouTube both read `?t=<seconds>` on the video
-   * page, which is the only offset a reader can follow without an iframe API.
+   * The article's page on its platform, for entries whose video was never
+   * archived: Bilibili and YouTube both read `?t=<seconds>` there, so an anchor
+   * can still point at the right moment of the original.
    */
-  videoHref?: (seconds: number) => string | null;
+  originalHref: string | null;
 }
 
-const PlayerContext = createContext<PlayerControls>({ canSeek: false, seek: () => {} });
+// Only render-time values live here; the two media refs travel down as props so
+// that no ref is touched while a block renders.
+const PlayerContext = createContext<PlayerControls>({
+  canSeek: false,
+  seek: () => {},
+  pauseOther: () => {},
+  originalHref: null,
+});
+
+/**
+ * The archived-video path the backend hands out is exactly `/api/media/<id>/video`.
+ * Anything else is not our media: a protocol URL, `//host`, `/arbitrary`, or a
+ * backslash the browser rewrites into a remote host (`/\evil.test`).
+ */
+const ARCHIVED_VIDEO_PATH = /^\/api\/media\/[1-9]\d*\/video$/;
+
+const isArchivedVideoUrl = (url: string | undefined): url is string =>
+  typeof url === 'string' && ARCHIVED_VIDEO_PATH.test(url);
 
 interface ArticleContentProps {
   payload: ArticlePayload;
@@ -113,55 +132,58 @@ const ArticleImageBlock = memo(function ArticleImageBlock({
   );
 });
 
-const ArticleVideoBlock = memo(function ArticleVideoBlock({ block }: { block: ArticleContentBlock }) {
-  const { t } = useI18n();
-  const [playing, setPlaying] = useState(false);
+interface PlayerRefProps {
+  audioRef: React.RefObject<HTMLAudioElement | null>;
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+}
 
-  // 我们自己留档的视频（对象存储里的文件）直接播，没有第三方 iframe 也没有
-  // 「点一下才加载」的必要：它就在我们自己的服务器上。
-  if (!block.embed_url && block.url) {
+const ArticleVideoBlock = memo(function ArticleVideoBlock({
+  block,
+  videoRef,
+}: {
+  block: ArticleContentBlock;
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+}) {
+  const { t } = useI18n();
+  const { originalHref, pauseOther } = useContext(PlayerContext);
+
+  // The archived copy streams from Hippo with Range support, so it plays at once
+  // and never contacts the provider — even when a legacy block still carries an
+  // `embed_url`.
+  if (isArchivedVideoUrl(block.url)) {
     return (
-      <div className="reader-video">
+      <div className="reader-video" data-provider={block.provider || ''}>
         <video
+          ref={videoRef}
           src={block.url}
           controls
           preload='metadata'
+          playsInline
           poster={block.cover_url || undefined}
+          onPlay={(event) => pauseOther(event.currentTarget)}
           data-testid='reader-video-file'
         />
       </div>
     );
   }
 
-  if (!block.embed_url) return null;
-
-  // The poster stays until the reader asks for the video: loading a third-party
-  // player for every article would be a lot of JavaScript nobody watched.
-  if (!playing) {
-    return (
-      <div className="reader-video" data-provider={block.provider || ''}>
-        <button
-          className="reader-video-poster"
-          type="button"
-          onClick={() => setPlaying(true)}
-          aria-label={t('articles.playVideo', '播放视频')}
-        >
-          {block.cover_url ? <img src={block.cover_url} alt="" loading="lazy" /> : <span className="reader-video-placeholder" />}
-          <span className="reader-video-play" aria-hidden="true">▶</span>
-        </button>
-      </div>
-    );
-  }
-
+  // Nothing was archived, and a third-party embed is never loaded in its place:
+  // say what is missing and leave the original a link away.
   return (
-    <div className="reader-video">
-      <iframe
-        src={block.embed_url}
-        title={block.video_id || t('articles.video', '视频')}
-        allowFullScreen
-        referrerPolicy="no-referrer"
-        loading="lazy"
-      />
+    <div className="reader-video is-missing" data-provider={block.provider || ''}>
+      <p className="reader-video-missing">
+        {t('articles.videoNotArchived', 'Video not archived yet. Retry it from the transcribe action.')}
+      </p>
+      {originalHref ? (
+        <a
+          className="reader-video-origin"
+          href={originalHref}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {t('articles.openOriginalVideo', 'Open original video')}
+        </a>
+      ) : null}
     </div>
   );
 });
@@ -173,12 +195,19 @@ const ArticleAudioBlock = memo(function ArticleAudioBlock({
   block: ArticleContentBlock;
   audioRef: React.RefObject<HTMLAudioElement | null>;
 }) {
+  const { pauseOther } = useContext(PlayerContext);
   if (!block.url) return null;
   return (
     <div className="reader-audio">
       {/* No <track>: for a podcast the transcript below the player *is* the
           caption, and the feed does not ship one in a caption format. */}
-      <audio ref={audioRef} controls preload='metadata' src={block.url} />
+      <audio
+        ref={audioRef}
+        controls
+        preload='metadata'
+        src={block.url}
+        onPlay={(event) => pauseOther(event.currentTarget)}
+      />
     </div>
   );
 });
@@ -190,17 +219,18 @@ const ContentBlock = memo(function ContentBlock({
   hideSmall,
   onImageContextMenu,
   audioRef,
-}: AnchorableBlockProps & { audioRef: React.RefObject<HTMLAudioElement | null> }) {
-  const player = useContext(PlayerContext);
+  videoRef,
+}: AnchorableBlockProps & PlayerRefProps) {
+  const { canSeek, seek, originalHref } = useContext(PlayerContext);
 
   if (block.type === 'paragraph') {
     const label = anchorLabel(block.t);
     const text = renderInlineNodes(block.text || '');
     if (!label) return <p>{text}</p>;
-    if (!player.canSeek) {
-      // 视频条目的播放器是第三方 iframe，够不到它的进度轴，所以锚点指向原视频的
-      // 对应时刻（新标签打开）；有留档音频时上面的分支会就地跳转。
-      const href = player.videoHref?.(block.t || 0) || null;
+    if (!canSeek) {
+      // Nothing is archived here, so the anchor opens the original at that moment
+      // instead of seeking a player that does not exist.
+      const href = originalHref ? timestampHref(originalHref, block.t || 0) : null;
       if (!href) {
         return (
           <p>
@@ -223,7 +253,7 @@ const ContentBlock = memo(function ContentBlock({
         <button
           className="reader-anchor is-action"
           type="button"
-          onClick={() => player.seek(block.t || 0)}
+          onClick={() => seek(block.t || 0)}
           title={label}
         >
           {label}
@@ -234,7 +264,7 @@ const ContentBlock = memo(function ContentBlock({
   }
 
   if (block.type === 'video') {
-    return <ArticleVideoBlock block={block} />;
+    return <ArticleVideoBlock block={block} videoRef={videoRef} />;
   }
 
   if (block.type === 'audio') {
@@ -321,30 +351,42 @@ interface RenderedContentProps extends ArticleContentProps {
 }
 
 /**
- * Renders the blocks and owns the one piece of cross-block state: the player the
- * transcript anchors seek. Audio seeks in place; a video has no timeline to touch
- * from here, so its anchors stay plain text until a provider-specific offset
- * parameter has been verified.
+ * Renders the blocks and owns the one piece of cross-block state: the players the
+ * transcript anchors seek. An archived video wins over a podcast audio track when
+ * both exist, and the two never play at the same time. A video without an archived
+ * copy has no timeline to touch, so its anchors open the original instead.
  */
 function RenderedContent({ payload, content, hideSmall, onImageContextMenu }: RenderedContentProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
-  const canSeek = content.some((block) => block.type === 'audio' && Boolean(block.url));
-  const originalLink = payload.article?.link || '';
-  const controls = useMemo<PlayerControls>(
-    () => ({
-      canSeek,
-      seek: (seconds: number) => {
-        const audio = audioRef.current;
-        if (!audio) return;
-        audio.currentTime = seconds;
-        void audio.play().catch(() => {
-          // 浏览器可能拒绝自动播放；位置已经设好，读者自己按播放键即可。
-        });
-      },
-      videoHref: (seconds: number) => timestampHref(originalLink, seconds),
-    }),
-    [canSeek, originalLink],
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canSeek = content.some(
+    (block) =>
+      (block.type === 'video' && isArchivedVideoUrl(block.url)) ||
+      (block.type === 'audio' && Boolean(block.url)),
   );
+  const originalHref = payload.article?.link || null;
+
+  const controls = useMemo<PlayerControls>(() => {
+    const pauseOther = (active: HTMLMediaElement) => {
+      const other = active === videoRef.current ? audioRef.current : videoRef.current;
+      if (other && !other.paused) other.pause();
+    };
+
+    return {
+      canSeek,
+      originalHref,
+      pauseOther,
+      seek: (seconds: number) => {
+        const target: HTMLMediaElement | null = videoRef.current || audioRef.current;
+        if (!target) return;
+        pauseOther(target);
+        target.currentTime = seconds;
+        // Browsers may refuse the autoplay; the position is set, so the reader can
+        // press play themselves. The rejection must still be consumed.
+        void target.play().catch(() => {});
+      },
+    };
+  }, [canSeek, originalHref]);
   const contentKeys = buildContentBlockKeys(content);
 
   return (
@@ -358,6 +400,7 @@ function RenderedContent({ payload, content, hideSmall, onImageContextMenu }: Re
           hideSmall={hideSmall}
           onImageContextMenu={onImageContextMenu}
           audioRef={audioRef}
+          videoRef={videoRef}
         />
       ))}
     </PlayerContext.Provider>

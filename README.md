@@ -81,20 +81,12 @@ daemon 掉线或会话失效时，同步会整体暂停（不把这种错记成�
 | YouTube | `youtube` | `youtube:<UC…>` | yt-dlp | 下载音频转写 |
 | RSS 播客 | `podcast` | `podcast:<feed 的短哈希>` | feed 本身 | `podcast:transcript` 优先，否则转写 |
 
-订阅任意一个地址（视频、频道、feed 都行）：
-
-```bash
-uv run python -m hippo source add https://space.bilibili.com/946974/video
-uv run python -m hippo source add https://feeds.megaphone.fm/darknetdiaries
-uv run python -m hippo source list          # 只看媒体来源
-uv run python -m hippo source cookie        # 自己的 B站 Cookie（管理台也可设实例级的）
-```
-
-接口等价于 `GET /api/source/preview` + `POST /api/source/channel`；订阅会立刻投递一轮列表同步。
+订阅任意一个地址（视频、频道、feed 都行）：在「分组」页点「添加订阅」粘贴地址即可，
+这一步与微信来源共用同一个 `POST /api/source/channel`；订阅会立刻投递一轮列表同步。
 
 ### 转写
 
-一个 `media_job` 一条任务，由 `sync-worker` 里与正文抓取并行的常驻循环消费：
+一个 `media_job` 一条任务，由 `hippo.sync_worker` 里与正文抓取并行的常驻循环消费：
 
 1. **现成字幕优先**：播客的 `podcast:transcript`、B站的 CC 字幕。时间戳是真的，且不花算力。
 2. 否则**下载音频 → 留档（128k mp3，不设体积上限）→ 切片 → 逐片转写 → 校验 → 落 blocks**。
@@ -111,6 +103,47 @@ uv run python -m hippo source cookie        # 自己的 B站 Cookie（管理台�
 需要的外部组件：`ffmpeg`/`ffprobe`（切片、转码）、`yt-dlp`（仅 YouTube）、以及上面那个 ASR 端点
 （本实例跑在 archlinux31 上的 [CrispASR](https://github.com/CrispStrobe/CrispASR) `--server`）。
 `deploy.sh` 会在远端检查前两个。
+
+### 原生视频与留档
+
+视频和音频走同一条流水线，只是归档对象不同（`article_media.kind` 为 `video` 或 `audio`）：
+
+- **播放。** 留档成功的视频由 Hippo 自己的路由提供：`GET /api/media/{article_pk}/video`。
+  它与音频共用订阅鉴权与 Range 语义（`Accept-Ranges`、206/`Content-Range`、越界 416），
+  播放器可以拖动进度；对象已经是 `stored` 时，转写还没完成也能先播，阅读器不再加载第三方 iframe。
+- **工具链。** 除 `ffmpeg`/`ffprobe` 与 `yt-dlp`（仅 YouTube）外，给经 ffmpeg 的下载/合并设
+  `util-linux` 的 `prlimit` 资源与时长上限。部署前逐条确认即可，不需要现在安装：
+
+  ```bash
+  ffmpeg -version && ffprobe -version
+  prlimit --version        # util-linux
+  yt-dlp --version         # 仅 YouTube 来源需要
+  ```
+
+- **媒体设置。** 实例级开关在管理台「媒体与转写」（存 `meta`，默认值见 `hippo/media_settings.py`）：
+  `enabled` 关掉整个媒体流水线，`keep_media` 决定下载的文件是否留档到对象存储。
+  视频轨优先选 H.264 + AAC、分辨率不超过 720p 的兼容轨；视频轨**原样 copy**（不重编码），
+  只有音频按 `keep_media_bitrate`（`original` 或 64k–256k）归档，两者的设置不要混用。
+  单任务的下载总量上限 2 GiB，单条时长上限 `max_duration_seconds`（默认 14400 秒），
+  超限的任务失败或跳过，而不是无限重试。
+- **处理时机。** 新条目进队列后由 `hippo.sync_worker` 自动处理；历史条目只按需单篇重试
+  （阅读器里的「转写这篇」），不对全库回填。
+
+验证（不连真实平台，用短本地 fixture 与假 S3/HTTP）：
+
+```bash
+uv run pytest tests/test_media_delivery.py tests/test_article_transcript_api.py
+uv run pytest                     # 全量用例，媒体流水线在其中
+uv run ruff check hippo tests
+```
+
+预期：已留档视频在 `_get_article` 响应里是 `type=video`、`url=/api/media/{article_pk}/video`、
+不带 `embed_url`；`GET /api/media/{pk}/video` 返回 200/206，越界范围返回 416；
+未留档的条目不出现播放器。
+
+限制：本轮只保证**单个媒体消费者**。多实例 worker 的长任务缺少心跳/租约，同一任务可能被
+重复领取，所以不要并行启动多个消费者。平台 cookie、地区可用性与账号权限仍会限制能否取到资源，
+这里**不包含 DRM 或付费绕过**。来源没有兼容视频轨时会退回音频/字幕，此时不能声称视频留档成功。
 
 ### 多源约定
 

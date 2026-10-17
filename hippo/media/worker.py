@@ -18,7 +18,7 @@ from ..logger import get_logger
 from ..media_settings import get_media_settings
 from ..sources.registry import build_media_sources
 from ..storage import PostgresStorage
-from .asr import AsrError, client_for
+from .asr import AsrError
 from .audio import AudioError
 from .pipeline import (
     MediaJobFailure,
@@ -75,17 +75,15 @@ async def drain_media_once(
         job = batch[0]
         job_id = int(job['id'])
         try:
-            transcriber = client_for(settings, str(settings.get('asr_tier') or 'accurate'))
-            try:
-                outcome = await transcribe_job(
-                    storage=storage,
-                    job=job,
-                    settings=settings,
-                    resolver=resolver,
-                    transcriber=transcriber,
-                )
-            finally:
-                await transcriber.aclose()
+            # No client is built here: the pipeline creates one only when a job really
+            # reaches the ASR, so an unconfigured endpoint no longer blocks a subtitle
+            # or a video archive that needs no transcription at all.
+            outcome = await transcribe_job(
+                storage=storage,
+                job=job,
+                settings=settings,
+                resolver=resolver,
+            )
             await storage.media_jobs.mark_done(job_id)
             result.done += 1
             consecutive = 0
