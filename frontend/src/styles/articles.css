@@ -1,6 +1,6 @@
 .article-layout {
   display: grid;
-  grid-template-columns: minmax(360px, var(--article-list-width, 400px)) 10px minmax(0, 1fr);
+  grid-template-columns: minmax(360px, var(--article-list-width, 400px)) 6px minmax(0, 1fr);
   flex: 1;
   gap: 12px;
   min-height: 0;
@@ -39,6 +39,18 @@
 
 .article-sidebar-actions {
   justify-content: flex-end;
+  /* Keep the toggles on the header's first line: the summary may shrink, the
+     buttons must not wrap under it. */
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+
+.article-sidebar-header > div {
+  min-width: 0;
+}
+
+.article-sidebar-actions .btn {
+  white-space: nowrap;
 }
 
 .article-filter-toggle {
@@ -131,8 +143,16 @@
   justify-content: flex-start;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  /* One line: the tags clip instead of pushing the header onto two rows. */
+  flex-wrap: nowrap;
+  overflow: hidden;
   min-height: 34px;
+}
+
+.article-filter-summary .meta-note,
+.article-filter-summary .meta-note-button {
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .article-filter-summary strong {
@@ -431,9 +451,11 @@
   transition: background-size 0.16s ease-out;
 }
 
-.article-resizer:hover {
+/* A pointer only widens the seam a little; the column itself stays narrow. */
+.article-resizer:hover,
+.article-resizer:focus-visible {
   background-image: linear-gradient(var(--accent), var(--accent));
-  background-size: 3px 100%;
+  background-size: 2px 100%;
 }
 
 .article-preview-toolbar {
@@ -1320,7 +1342,7 @@ mark.hippo-highlight:hover {
 --------------------------------------------------------------------------- */
 
 .article-layout.with-rail {
-  grid-template-columns: 200px minmax(320px, 360px) 10px minmax(0, 1fr);
+  grid-template-columns: 200px minmax(320px, var(--article-list-width, 400px)) 6px minmax(0, 1fr);
 }
 
 .article-layout.with-rail.is-collapsed {

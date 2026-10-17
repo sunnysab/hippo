@@ -98,12 +98,12 @@
   --overlay-ink: #ffffff;
 
   --app-topbar-height: 64px;
-  /* The app is a bounded column, not a full-bleed canvas. Past this width a
-     two-field form floats in a screen-wide panel and every page reads as a
-     left-aligned strip. One bound for every page keeps them consistent. */
-  --app-width: 1760px;
-  /* Keeps the fixed top bar aligned with the column above. */
-  --app-inset: max(12px, calc((100vw - var(--app-width)) / 2 + 12px));
+  /* The app fills the viewport; wide screens get more room for the panels
+     instead of a centred strip with dead gutters. */
+  --app-width: 100%;
+  /* Keeps the fixed top bar aligned with the content column (the same 12px
+     gutter the app itself pads with). */
+  --app-inset: 12px;
   /* 760px at 17px is ~44 CJK characters per line; the reader is justified, so
      a wider column both tires the eye and amplifies stretched word gaps. */
   --reader-width: 760px;
@@ -111,7 +111,9 @@
   --reader-line: 1.8;
   --reader-letter: 0.2px;
   --reader-family: var(--font-sans);
-  --article-list-width: 28%;
+  /* The list column: a share of the viewport, capped so an ultrawide screen
+     does not give the list half the page. Dragging writes a px value here. */
+  --article-list-width: min(28%, 520px);
 }
 
 :root[data-theme='dark'] {
