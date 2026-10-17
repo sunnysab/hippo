@@ -268,7 +268,7 @@ export function AdminMediaPage() {
             />
           </label>
           <label className="auth-field">
-            <span>{t('admin.media.maxDuration', '最长音频（秒）')}</span>
+            <span>{t('admin.media.maxDuration', 'Max media duration (seconds)')}</span>
             <input
               className="input"
               type="number"
@@ -277,7 +277,7 @@ export function AdminMediaPage() {
             />
           </label>
           <label className="auth-field">
-            <span>{t('admin.media.bitrate', '留档码率')}</span>
+            <span>{t('admin.media.bitrate', 'Archived audio bitrate')}</span>
             <select
               className="input"
               value={settings.keep_media_bitrate}
@@ -295,12 +295,12 @@ export function AdminMediaPage() {
             checked={settings.keep_media}
             onChange={(event) => void save({ keep_media: event.target.checked })}
           />
-          <span>{t('admin.media.keepMedia', '留档音频并允许在页面播放')}</span>
+          <span>{t('admin.media.keepMedia', 'Archive audio and video for playback')}</span>
         </label>
         <p className="muted admin-note">
           {t(
             'admin.media.keepMediaHint',
-            '留档不设体积上限：转写好的内容删掉就再也找不回来了。',
+            'Audio is transcoded at the bitrate above; video is copied as-is up to 720p. Each download is capped at 2 GiB and by the media duration setting above, so longer entries are not archived. Existing entries are not backfilled automatically; retry a single article from its page.',
           )}
         </p>
       </section>
