@@ -3,7 +3,7 @@ import { useI18n } from '../../i18n';
 import { getSourceLabel } from '../../utils/source';
 
 /** Follow the instance default, connect directly, or use a proxy of one's own. */
-const SOURCES = ['bilibili', 'youtube', 'podcast'] as const;
+const SOURCES = ['weixin', 'bilibili', 'youtube', 'podcast'] as const;
 
 type Mode = 'default' | 'direct' | 'custom';
 
