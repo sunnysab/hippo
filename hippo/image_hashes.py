@@ -11,6 +11,7 @@ from .http import MPClient
 from .logger import get_logger
 from .s3 import build_image_key, fetch_object_bytes, get_s3_client, upload_object_bytes
 from .storage import PostgresStorage, close_pool, fetchone_row, open_storage
+from .utils import sanitize_image_url
 
 IMAGE_HASH_ALGO = 'sha256'
 logger = get_logger(__name__)
@@ -60,12 +61,14 @@ async def fetch_image_bytes(
                     raise RuntimeError(f'Stored image fetch failed for {image_id}') from exc
     if not allow_origin_fetch:
         raise RuntimeError(f'Image {image_id} is not stored yet')
-    orig_url = row.get('orig_url')
+    # A row written before the ingest repair may still hold a malformed address;
+    # repair it here too so the picture loads without rewriting the row.
+    orig_url = sanitize_image_url(row.get('orig_url'))
     if not orig_url:
         raise LookupError(f'Image {image_id} data missing')
     referer = row.get('referer')
     try:
-        payload, fetched_type = await _download_image_from_origin(str(orig_url), referer=referer)
+        payload, fetched_type = await _download_image_from_origin(orig_url, referer=referer)
     except Exception as exc:
         logger.warning('Origin image fetch failed (id=%s url=%s): %s', image_id, orig_url, exc)
         raise RuntimeError(f'Image fetch failed for {image_id}') from exc

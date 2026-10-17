@@ -12,7 +12,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from ..models import ArticleRecord
-from ..utils import utc_now_dt
+from ..utils import sanitize_image_url, utc_now_dt
 
 ARTICLE_CONTENT_PRESENT_SQL = """
 (
@@ -284,9 +284,10 @@ class ArticleRepository:
                 await cur.execute('DELETE FROM article_images WHERE article_pk = %s', (article_pk,))
                 seen_orig_urls: set[str] = set()
                 for image in images:
-                    orig_url = image.get('orig_url')
+                    # Repair a malformed scraped address once, before it becomes a row
+                    # every later fetch (backfill or on-demand) would have to repeat.
+                    orig_url = sanitize_image_url(image.get('orig_url'))
                     if orig_url:
-                        orig_url = str(orig_url)
                         if orig_url in seen_orig_urls:
                             continue
                         seen_orig_urls.add(orig_url)
@@ -315,8 +316,10 @@ class ArticleRepository:
             updated_blocks: list[dict] = []
             for block in content_blocks:
                 if block.get('type') == 'image':
-                    orig_url = block.get('orig_url')
-                    image_id = image_id_map.get(str(orig_url)) if orig_url else None
+                    # Match the key the image rows were registered under (they are
+                    # sanitized), so a repaired address still finds its image id.
+                    orig_url = sanitize_image_url(block.get('orig_url'))
+                    image_id = image_id_map.get(orig_url) if orig_url else None
                     updated = dict(block)
                     if image_id is not None:
                         updated['image_id'] = image_id

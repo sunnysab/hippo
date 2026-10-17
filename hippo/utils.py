@@ -61,6 +61,45 @@ def is_http_url(url: str) -> bool:
     return parsed.scheme in ('http', 'https')
 
 
+#: A WeChat image URL whose ``?`` was lost in the source HTML: ``/640&wxfrom=5``
+#: instead of ``/640?wxfrom=5``. The origin answers 400 for the broken form.
+_LOST_QUERY_MARKER = re.compile(r'/(\d+)&')
+
+
+def sanitize_image_url(url: Any) -> str | None:
+    """Clean up an image URL scraped from article HTML, or ``None``.
+
+    Article HTML is untrusted and its image attributes are frequently malformed:
+    a trailing ``"name"`` or a space-separated alt text after the address, or the
+    ``?`` of the query string lost so the path reads ``.../640&wxfrom=5``. The
+    origin rejects those forms with a 400, which the reader turns into a broken
+    picture, so the address is repaired once here instead of at every fetch.
+
+    Only http(s) addresses that survive the cleanup are returned; a Windows path
+    or an empty value is not an address and yields ``None``.
+    """
+    if not isinstance(url, str):
+        return None
+    candidate = url.strip()
+    if not candidate:
+        return None
+    # Trim a trailing label glued to the address: a space-separated one
+    # (``.../640 "1.png"``) or a quote with the name after it (``...png"1.png``).
+    # Splitting on the first quote keeps a URL-encoded or well-formed address whole.
+    candidate = candidate.split(' ', 1)[0]
+    quote = candidate.find('"')
+    if quote != -1 and candidate[:quote].startswith(('http://', 'https://')):
+        candidate = candidate[:quote]
+    candidate = candidate.strip().strip('"\'')
+    if not is_http_url(candidate):
+        return None
+    # Restore the query marker the source HTML lost: ``/640&wxfrom=5`` -> ``/640?wxfrom=5``.
+    match = _LOST_QUERY_MARKER.search(candidate)
+    if match and '?' not in candidate:
+        candidate = f'{candidate[: match.start()]}/{match.group(1)}?{candidate[match.end() :]}'
+    return candidate
+
+
 def build_set_clause(
     mapping: dict[str, str],
     updates: dict[str, Any],
@@ -213,6 +252,7 @@ __all__ = [
     'parse_iso_datetime_to_timestamp',
     'resolve_auto_interval',
     'resolve_sync_interval',
+    'sanitize_image_url',
     'should_skip_by_interval',
     'should_skip_by_time',
     'slugify',

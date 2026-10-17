@@ -19,7 +19,7 @@ from .file_storage import FileStorageError, S3FileStorage
 from .http import MPClient
 from .image_store import ArticleImageService
 from .storage import PostgresStorage
-from .utils import is_http_url
+from .utils import is_http_url, sanitize_image_url
 
 
 def _build_image_store(storage: PostgresStorage) -> ArticleImageService | None:
@@ -34,12 +34,8 @@ def _build_image_store(storage: PostgresStorage) -> ArticleImageService | None:
 
 
 def _normalize_image_url(url: str) -> str:
-    trimmed = url.strip().strip('"\'')
-    if ' ' in trimmed:
-        trimmed = trimmed.split(' ', 1)[0]
-    if trimmed.endswith('"'):
-        trimmed = trimmed.rstrip('"')
-    return trimmed
+    """Repair a scraped address; keep a non-http value as-is for the caller's filter."""
+    return sanitize_image_url(url) or url.strip()
 
 
 def _format_http_error(exc: Exception) -> str:
