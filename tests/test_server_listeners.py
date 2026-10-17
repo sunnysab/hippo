@@ -1,3 +1,4 @@
+import asyncio
 import socket
 import tempfile
 import unittest
@@ -5,9 +6,7 @@ import warnings
 from pathlib import Path
 from unittest.mock import patch
 
-import typer
-
-from hippo import cli, server
+from hippo import server, sync_worker
 
 
 @unittest.skipUnless(hasattr(socket, 'AF_UNIX'), 'AF_UNIX is not available on this platform')
@@ -132,35 +131,125 @@ class ServerListenerTest(unittest.TestCase):
                 sock.close()
 
 
-class CliServeTest(unittest.TestCase):
+class EntrypointTest(unittest.TestCase):
     def test_parse_octal_mode_rejects_negative_value(self) -> None:
-        with self.assertRaisesRegex(typer.BadParameter, 'Unix socket mode must be between 000 and 777'):
-            cli._parse_octal_mode('-1')
+        with self.assertRaisesRegex(ValueError, 'Unix socket mode must be between 000 and 777'):
+            server._parse_octal_mode('-1')
 
     def test_parse_octal_mode_rejects_bits_outside_permission_range(self) -> None:
-        with self.assertRaisesRegex(typer.BadParameter, 'Unix socket mode must be between 000 and 777'):
-            cli._parse_octal_mode('1777')
+        with self.assertRaisesRegex(ValueError, 'Unix socket mode must be between 000 and 777'):
+            server._parse_octal_mode('1777')
+
+    def test_help_does_not_read_settings_or_bind_a_listener(self) -> None:
+        with (
+            patch.object(server, 'serve') as serve,
+            patch.object(server, 'get_settings') as get_settings,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            server.main(['--help'])
+
+        self.assertEqual(0, ctx.exception.code)
+        serve.assert_not_called()
+        get_settings.assert_not_called()
+
+    def test_invalid_port_does_not_bind_a_listener(self) -> None:
+        with (
+            patch.object(server, 'serve') as serve,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            server.main(['--host', '127.0.0.1', '--port', '70000'])
+
+        self.assertEqual(2, ctx.exception.code)
+        serve.assert_not_called()
+
+    def test_no_listener_does_not_read_settings_or_bind_a_listener(self) -> None:
+        with (
+            patch.object(server, 'serve') as serve,
+            patch.object(server, 'get_settings') as get_settings,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            server.main([])
+
+        self.assertEqual(2, ctx.exception.code)
+        serve.assert_not_called()
+        get_settings.assert_not_called()
+
+    def test_host_only_does_not_bind_a_listener(self) -> None:
+        with (
+            patch.object(server, 'serve') as serve,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            server.main(['--host', '127.0.0.1'])
+
+        self.assertEqual(2, ctx.exception.code)
+        serve.assert_not_called()
+
+    def test_port_only_does_not_bind_a_listener(self) -> None:
+        with (
+            patch.object(server, 'serve') as serve,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            server.main(['--port', '8000'])
+
+        self.assertEqual(2, ctx.exception.code)
+        serve.assert_not_called()
+
+    def test_host_and_port_without_socket_still_binds(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_serve(**kwargs):
+            captured.update(kwargs)
+
+        with patch.object(server, 'serve', fake_serve):
+            server.main(['--host', '127.0.0.1', '--port', '8000'])
+
+        self.assertEqual('127.0.0.1', captured['host'])
+        self.assertEqual(8000, captured['port'])
+        self.assertIsNone(captured['unix_socket'])
+
+    def test_socket_only_still_binds_without_tcp_options(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_serve(**kwargs):
+            captured.update(kwargs)
+
+        with patch.object(server, 'serve', fake_serve):
+            server.main(['--unix-socket', '/run/hippo/hippo.sock'])
+
+        self.assertIsNone(captured['host'])
+        self.assertIsNone(captured['port'])
+        self.assertEqual(Path('/run/hippo/hippo.sock'), captured['unix_socket'])
+
+    def test_blank_socket_does_not_read_settings_or_bind_a_listener(self) -> None:
+        with (
+            patch.object(server, 'serve') as serve,
+            patch.object(server, 'get_settings') as get_settings,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            server.main(['--no-tcp', '--unix-socket', '  '])
+
+        self.assertEqual(2, ctx.exception.code)
+        serve.assert_not_called()
+        get_settings.assert_not_called()
 
     def test_serve_requires_unix_socket_when_tcp_is_disabled(self) -> None:
-        with self.assertRaisesRegex(typer.BadParameter, '--unix-socket is required when --no-tcp is set'):
-            cli.serve(
-                host='127.0.0.1',
-                port=8000,
-                no_tcp=True,
-                unix_socket=None,
-                unix_socket_mode='660',
-                static_dir=Path('frontend/dist'),
-                inprocess_sync=False,
-            )
+        with (
+            patch.object(server, 'serve') as serve,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            server.main(['--no-tcp'])
+
+        self.assertEqual(2, ctx.exception.code)
+        serve.assert_not_called()
 
     def test_a_tcp_listener_needs_both_host_and_port(self) -> None:
-        self.assertEqual(('0.0.0.0', 2000), cli._resolve_tcp_listener('0.0.0.0', 2000))
-        self.assertEqual((None, None), cli._resolve_tcp_listener(None, None))
+        self.assertEqual(('0.0.0.0', 2000), server._resolve_tcp_listener('0.0.0.0', 2000))
+        self.assertEqual((None, None), server._resolve_tcp_listener(None, None))
         # A port alone must not resurrect the listener the options no longer name.
-        self.assertEqual((None, None), cli._resolve_tcp_listener(None, 2000))
-        self.assertEqual((None, None), cli._resolve_tcp_listener('  ', 2000))
+        self.assertEqual((None, None), server._resolve_tcp_listener(None, 2000))
+        self.assertEqual((None, None), server._resolve_tcp_listener('  ', 2000))
 
-    def test_serve_only_binds_a_socket_when_no_host_is_given(self) -> None:
+    def test_main_only_binds_a_socket_when_no_host_is_given(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             uds_path = Path(tmpdir) / 'hippo.sock'
             captured: dict[str, object] = {}
@@ -168,16 +257,114 @@ class CliServeTest(unittest.TestCase):
             def fake_serve(**kwargs):
                 captured.update(kwargs)
 
-            with patch.object(cli, 'run_server', fake_serve):
-                cli.serve(
-                    host='127.0.0.1',
-                    port=8000,
-                    no_tcp=False,
-                    unix_socket=uds_path,
-                    unix_socket_mode='660',
-                    static_dir=Path('frontend/dist'),
-                    inprocess_sync=False,
+            with patch.object(server, 'serve', fake_serve):
+                server.main(
+                    [
+                        '--host',
+                        '127.0.0.1',
+                        '--port',
+                        '8000',
+                        '--unix-socket',
+                        str(uds_path),
+                        '--unix-socket-mode',
+                        '660',
+                    ]
                 )
 
             self.assertEqual('127.0.0.1', captured['host'])
             self.assertEqual(8000, captured['port'])
+            self.assertEqual(uds_path, captured['unix_socket'])
+            self.assertEqual(0o660, captured['unix_socket_mode'])
+
+    def test_main_drops_the_tcp_listener_with_no_tcp(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_serve(**kwargs):
+            captured.update(kwargs)
+
+        with patch.object(server, 'serve', fake_serve):
+            server.main(['--no-tcp', '--unix-socket', '/run/hippo/hippo.sock'])
+
+        self.assertIsNone(captured['host'])
+        self.assertIsNone(captured['port'])
+
+
+class WorkerEntrypointTest(unittest.TestCase):
+    def test_help_does_not_start_the_worker(self) -> None:
+        with (
+            patch('hippo.sync_worker.run_sync_worker') as run_worker,
+            patch('hippo.sync_worker.asyncio.run') as asyncio_run,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            sync_worker.main(['--help'])
+
+        self.assertEqual(0, ctx.exception.code)
+        run_worker.assert_not_called()
+        asyncio_run.assert_not_called()
+
+    def test_rejects_a_poll_interval_below_the_floor(self) -> None:
+        with (
+            patch('hippo.sync_worker.run_sync_worker') as run_worker,
+            patch('hippo.sync_worker.asyncio.run') as asyncio_run,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            sync_worker.main(['--poll-interval', '0.1'])
+
+        self.assertEqual(2, ctx.exception.code)
+        run_worker.assert_not_called()
+        asyncio_run.assert_not_called()
+
+    def test_rejects_a_non_finite_poll_interval(self) -> None:
+        for value in ('nan', 'inf', '-inf'):
+            with self.subTest(value=value):
+                with (
+                    patch('hippo.sync_worker.run_sync_worker') as run_worker,
+                    patch('hippo.sync_worker.asyncio.run') as asyncio_run,
+                    self.assertRaises(SystemExit) as ctx,
+                ):
+                    sync_worker.main(['--poll-interval', value])
+
+                self.assertEqual(2, ctx.exception.code)
+                run_worker.assert_not_called()
+                asyncio_run.assert_not_called()
+
+    def test_passes_the_poll_interval_and_closes_the_pool_on_a_live_loop(self) -> None:
+        captured: dict[str, object] = {}
+        loop_states: list[bool] = []
+
+        async def fake_run_sync_worker(**kwargs) -> None:
+            captured.update(kwargs)
+            loop_states.append(asyncio.get_running_loop().is_running())
+
+        async def fake_close_pool() -> None:
+            # close_pool must run while the loop is still alive: asyncio.run tears
+            # the loop down with a connection in flight, which hangs the process.
+            loop_states.append(asyncio.get_running_loop().is_running())
+
+        with (
+            patch('hippo.sync_worker.run_sync_worker', fake_run_sync_worker),
+            patch('hippo.sync_worker.close_pool', fake_close_pool),
+        ):
+            code = sync_worker.main(['--poll-interval', '2.5'])
+
+        self.assertEqual(0, code)
+        self.assertEqual({'poll_interval': 2.5}, captured)
+        self.assertEqual([True, True], loop_states)
+
+    def test_closes_the_pool_even_when_the_worker_raises(self) -> None:
+        closed: list[bool] = []
+
+        async def fake_run_sync_worker(**kwargs) -> None:
+            raise RuntimeError('worker failed')
+
+        async def fake_close_pool() -> None:
+            closed.append(asyncio.get_running_loop().is_running())
+
+        with (
+            patch('hippo.sync_worker.run_sync_worker', fake_run_sync_worker),
+            patch('hippo.sync_worker.close_pool', fake_close_pool),
+            self.assertRaises(RuntimeError),
+        ):
+            sync_worker.main(['--poll-interval', '2.5'])
+
+        self.assertEqual([True], closed, 'a failure must still release the pool on a live loop')

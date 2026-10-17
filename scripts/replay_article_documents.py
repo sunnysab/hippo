@@ -16,7 +16,7 @@
 `--repair-images` 是给正文丢图那类事故用的：图片块里出现了 `article_images` 里没有的
 URL（历史上正文渲染漏掉的图）时补一行待下载的记录，并删掉 URL 已经不成立的废行（例如
 曾经把 Markdown 的 title 当成 URL 写进去的 `https://mp.weixin.qq.com/s/"1.png"`）。
-配合 `hippo article backfill-images` 把这些图抓回来。
+配合 `hippo.sync_worker` 的图片回填循环把这些图抓回来。
 
 用法::
 
@@ -289,7 +289,7 @@ async def main() -> int:
 
     log(f'完成：补 {done} 篇，跳过 {skipped} 篇（渲染不出文字），失败 {failed} 篇')
     if args.repair_images and not (args.check or args.dry_run):
-        log('图片行已就绪，用 `hippo article backfill-images` 把缺的图抓回来')
+        log('图片行已就绪，`hippo.sync_worker` 的图片回填循环会把缺的图抓回来')
     return 0
 
 

@@ -6,7 +6,7 @@ After=network.target postgresql.service
 Type=simple
 User=sab
 WorkingDirectory=/home/sab/hippo
-ExecStart=/home/sab/hippo/.venv/bin/python -m hippo sync-worker
+ExecStart=/home/sab/hippo/.venv/bin/python -m hippo.sync_worker
 # Everything else (PG DSN, daemon address, log level and file) comes from config.toml.
 Environment=PYTHONUNBUFFERED=1
 Restart=always

@@ -33,5 +33,5 @@ RUN uv sync --frozen --no-dev
 
 EXPOSE 8000
 
-ENTRYPOINT ["hippo"]
-CMD ["serve", "--host", "0.0.0.0", "--port", "8000", "--static-dir", "/app/frontend/dist"]
+ENTRYPOINT ["/app/.venv/bin/python", "-m", "hippo.server"]
+CMD ["--host", "0.0.0.0", "--port", "8000", "--static-dir", "/app/frontend/dist"]

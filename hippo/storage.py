@@ -274,14 +274,14 @@ class PostgresStorage(AbstractAsyncContextManager):
                 await cur.execute("SELECT to_regclass('public.meta')")
                 table_name = (await cur.fetchone())[0]
                 if not table_name:
-                    raise StorageInitError('Database not initialized. Run `python -m hippo db init`.')
+                    raise StorageInitError('Database not initialized. Run `python -m hippo.ops init-db`.')
                 await cur.execute('SELECT value FROM meta WHERE key = %s', ('schema_version',))
                 row = await cur.fetchone()
                 if not row:
-                    raise StorageInitError('Database not initialized. Run `python -m hippo db init`.')
+                    raise StorageInitError('Database not initialized. Run `python -m hippo.ops init-db`.')
                 current_version = row[0]
                 if current_version != SCHEMA_VERSION:
-                    raise StorageInitError('Database schema out of date. Run `python -m hippo db init` to migrate.')
+                    raise StorageInitError('Database schema out of date. Run `python -m hippo.ops init-db` to migrate.')
             await self.conn.rollback()
         except Exception:
             await self.conn.rollback()

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import logging
 import os
 import socket
 import stat
+import sys
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -274,3 +276,79 @@ def serve(
     finally:
         for candidate in listen_sockets:
             candidate.close()
+
+
+def _resolve_tcp_listener(host: str | None, port: int | None) -> tuple[str | None, int | None]:
+    """Resolve the ``serve`` TCP options into what the listener layer expects.
+
+    Host and port travel together: either both name a listener or neither does,
+    so a stale port without a host cannot silently open one.
+    """
+    if not host or not host.strip() or not port:
+        return None, None
+    return host.strip(), port
+
+
+def _parse_octal_mode(value: str) -> int:
+    normalized = value.strip().lower()
+    if normalized.startswith('0o'):
+        normalized = normalized[2:]
+    if not normalized:
+        raise ValueError('Unix socket mode cannot be empty')
+    try:
+        mode = int(normalized, 8)
+    except ValueError as exc:
+        raise ValueError('Unix socket mode must be an octal value such as 660') from exc
+    if mode < 0 or mode > 0o777:
+        raise ValueError('Unix socket mode must be between 000 and 777')
+    return mode
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point for ``python -m hippo.server``.
+
+    Argument parsing stays pure: ``--help`` and invalid arguments never read
+    ``config.toml`` or open a listener.
+    """
+    parser = argparse.ArgumentParser(
+        prog='python -m hippo.server',
+        description='Hippo API + SPA server.',
+    )
+    parser.add_argument('--host', help='TCP listen address; omit to bind only the Unix socket')
+    parser.add_argument('--port', type=int, help='TCP listen port; used only when --host is given')
+    parser.add_argument('--no-tcp', action='store_true', help='Disable TCP and use only the Unix socket')
+    parser.add_argument('--unix-socket', help='Unix socket path, e.g. /run/hippo/hippo.sock')
+    parser.add_argument('--unix-socket-mode', default='660', help='Unix socket file mode, octal (default 660)')
+    parser.add_argument('--static-dir', default='frontend/dist', help='Static asset directory')
+    parser.add_argument('--inprocess-sync', action='store_true', help='Run the sync loops inside the web process')
+    args = parser.parse_args(argv)
+
+    unix_socket = _normalize_unix_socket_path(args.unix_socket)
+    if args.no_tcp and unix_socket is None:
+        parser.error('--unix-socket is required when --no-tcp is set')
+    if args.port is not None and not 1 <= args.port <= 65535:
+        parser.error('--port must be between 1 and 65535')
+    try:
+        mode = _parse_octal_mode(args.unix_socket_mode)
+    except ValueError as exc:
+        parser.error(str(exc))
+    host, port = (None, None) if args.no_tcp else _resolve_tcp_listener(args.host, args.port)
+    if unix_socket is None and (host is None or port is None):
+        parser.error('at least one listener is required: pass --unix-socket, or both --host and --port')
+    try:
+        serve(
+            host=host,
+            port=port,
+            static_dir=Path(args.static_dir),
+            unix_socket=unix_socket,
+            unix_socket_mode=mode,
+            enable_inprocess_sync=args.inprocess_sync,
+        )
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

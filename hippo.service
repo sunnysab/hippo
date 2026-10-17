@@ -8,7 +8,7 @@ User=sab
 WorkingDirectory=/home/sab/hippo
 RuntimeDirectory=hippo
 RuntimeDirectoryMode=0755
-ExecStart=/home/sab/hippo/.venv/bin/python -m hippo serve --unix-socket /run/hippo/hippo.sock --unix-socket-mode 666 --static-dir /home/sab/hippo/frontend/dist
+ExecStart=/home/sab/hippo/.venv/bin/python -m hippo.server --unix-socket /run/hippo/hippo.sock --unix-socket-mode 666 --static-dir /home/sab/hippo/frontend/dist
 # Everything else (PG DSN, S3 keys, log level and file) comes from config.toml.
 Environment=PYTHONUNBUFFERED=1
 Restart=always

@@ -18,7 +18,6 @@ classifiers = [
 ]
 dependencies = [
   "fastapi>=0.110.0",
-  "typer>=0.21.0",
   "httpx[http2,socks]>=0.28.0",
   "beautifulsoup4>=4.14.0",
   "markdownify>=1.2.0",
@@ -54,9 +53,6 @@ weixin = ["msgpack>=1.0.0"]
 # 且不参与部署（deploy.sh 用 --no-dev --extra weixin）。
 dev = ["pytest>=8", "ruff>=0.15.0"]
 
-[project.scripts]
-hippo = "hippo.cli:app"
-
 [tool.ruff]
 target-version = "py314"
 line-length = 120
@@ -82,4 +78,6 @@ docstring-code-format = true
 
 [tool.setuptools]
 py-modules = ["__init__"]
-packages = ["hippo", "hippo.controllers"]
+
+[tool.setuptools.packages.find]
+include = ["hippo*"]

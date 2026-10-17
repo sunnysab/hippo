@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import contextlib
+import math
 import os
 import socket
 import time
@@ -21,7 +23,7 @@ from .observability.metrics import instrument as metric
 from .observability.otel import add_span_attributes, init_telemetry, span, traced
 from .sources import body_adapters
 from .sources.weixin import SOURCE as WEIXIN_SOURCE
-from .storage import PostgresStorage, open_storage, save_meta_json
+from .storage import PostgresStorage, close_pool, open_storage, save_meta_json
 from .sync_core import request_sync_cancel
 from .sync_service import (
     SyncJobResult,
@@ -628,8 +630,8 @@ async def run_sync_worker(
 ) -> None:
     resolved_worker_id = worker_id or f'{socket.gethostname()}-{os.getpid()}'
     telemetry = init_telemetry(SERVICE_NAME)
-    # cli 在 import 阶段已经按 CLI 的名字建过日志管线；这里重建才能指向本进程自己的
-    # 日志文件（deploy 时两个服务共用一份 config.toml），并把 OTLP log handler 挂上
+    # 进程启动后重建日志管线，指向本进程自己的日志文件
+    # （deploy 时两个服务共用一份 config.toml），并把 OTLP log handler 挂上
     setup_logger(service=SERVICE_NAME, extra_handlers=telemetry.log_handlers if telemetry else None)
     # 正文抓取跑在独立 task：它经常被 daemon 的节奏闸门挡住几十秒，
     # 不能拖住主循环里「入队新文章 / 执行同步 job」的响应。
@@ -681,3 +683,30 @@ __all__ = [
     'run_sync_worker',
     'run_worker_once',
 ]
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point for ``python -m hippo.sync_worker``."""
+    parser = argparse.ArgumentParser(
+        prog='python -m hippo.sync_worker',
+        description='Hippo dedicated sync worker.',
+    )
+    parser.add_argument('--poll-interval', type=float, default=5.0, help='Queue poll interval in seconds')
+    args = parser.parse_args(argv)
+    if not math.isfinite(args.poll_interval) or args.poll_interval < 0.2:
+        parser.error('--poll-interval must be a finite number of at least 0.2')
+
+    async def run() -> None:
+        try:
+            await run_sync_worker(poll_interval=args.poll_interval)
+        finally:
+            # Close the pool while the loop is alive: after asyncio.run tears the
+            # loop down a connection still in flight hangs the exit.
+            await close_pool()
+
+    asyncio.run(run())
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

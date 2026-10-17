@@ -1,6 +1,4 @@
-"""Command line utilities for managing and downloading WeChat articles."""
+"""Hippo: a self-hosted WeChat article manager and exporter."""
 
-from .cli import app
-
-__all__ = ['__version__', 'app']
+__all__ = ['__version__']
 __version__ = '0.1.0'
