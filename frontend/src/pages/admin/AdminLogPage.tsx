@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { apiGet, apiSend } from '../../api';
+import { apiGet } from '../../api';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
 import { formatDateTime } from '../../utils/format';
@@ -82,7 +82,8 @@ export function AdminLogPage() {
 
   const openSignoz = async () => {
     try {
-      const payload = await apiSend('/api/admin/log/link', 'POST', { minutes: Number(range) || 60 });
+      // The link is a GET with the window in the query: posting to it is a 405.
+      const payload = await apiGet(`/api/admin/log/link?minutes=${Number(range) || 60}`);
       if (!payload.available) {
         showToast(String(payload.reason ?? t('admin.log.noSignoz', '未配置 SignOz')));
         return;

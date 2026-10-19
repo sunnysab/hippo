@@ -28,6 +28,7 @@ LOGIN_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'auth' / 'LoginPage.tsx'
 SYNC_RUN_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useSyncRun.ts'
 ADMIN_SYNC_SECTION = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminSyncSection.tsx'
 SYNC_SETTINGS_PANEL = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'SyncSettingsPanel.tsx'
+ADMIN_LOG_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminLogPage.tsx'
 
 
 def _mark_path_data(source: str) -> str:
@@ -228,6 +229,13 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertIn("'/api/settings/admin/run'", hook)
         # 只有共享 hook 会轮询任务，页面里那份手写的定时循环已经删掉。
         self.assertNotIn('maxAttempts', SYNC_SETTINGS_PANEL.read_text(encoding='utf-8'))
+
+    def test_the_signoz_link_is_read_with_a_get(self) -> None:
+        source = ADMIN_LOG_PAGE.read_text(encoding='utf-8')
+
+        # 端点是 GET /api/admin/log/link?minutes=…；POST 过去只会拿到 405。
+        self.assertIn('/api/admin/log/link?minutes=', source)
+        self.assertNotIn("apiSend('/api/admin/log/link'", source)
 
     def test_groups_page_syncs_selected_group_with_route_query(self) -> None:
         source = GROUPS_PAGE.read_text(encoding='utf-8')
