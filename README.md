@@ -1,7 +1,8 @@
 # Hippo
 
-管理微信公众号文章的自托管工具：把订阅的公众号文章同步到自己的 PostgreSQL，提供阅读器、全文检索、
-高亮标注、每日邮件摘要、RSS 与「对单篇文章提问」的 AI 对话。后端 Python + FastAPI，前端 React + Vite。
+自托管的多来源知识平台：把订阅的公众号、B站 / YouTube 频道与 RSS 播客同步到自己的 PostgreSQL，
+提供统一阅读器、中文全文检索、高亮标注、媒体转写、每日邮件摘要、私有知识库、RSS，
+以及「对单篇文章提问」的 AI 对话。后端 Python + FastAPI，前端 React + Vite。
 
 ## 架构
 
@@ -48,9 +49,20 @@ uv run python -m hippo.knowledge.worker            # 可选：需要私有知识
 ```
 
 打开页面 → 用刚建的管理员登录 → **管理 → 来源 → 微信公众号** 扫码（`POST /api/login/qr` + `/api/login/wait`）
-→ **公众号** 页搜索并添加要同步的号。添加后会投递一条历史回填任务，worker 自动从新到旧翻完。
+→ **账号** 页搜索并添加要同步的号（其他来源在**分组**页粘一个链接即可，见「数据来源」）。
+添加后会投递一条历史回填任务，worker 自动从新到旧翻完。
+
+**更新有两种触发方式，不互相替代：**
+
+- **自动更新。** `hippo.sync_worker` 内的调度器按管理台「同步设置」里的 `interval_minutes` 周期跑全量与增量
+  （代码默认 60 分钟，可按实例调到 120 分钟等）；`enabled` 关掉时调度循环不跑。调度只管“什么时候跑”，
+  每个账号仍受 `skip_minutes` 短冷却与各自的 `sync_interval_days` 约束。
+- **手动更新。** 任意登录用户可在「分组」页对自己订阅的账号手动触发（`POST /api/settings/run`），
+  管理员可对全站目录触发（`POST /api/settings/admin/run`）；手动触发会跳过日频次间隔，但仍受短冷却限制。
 
 验证：`GET /api/settings/status` 里 `status` 在同步时变为 `running`；`GET /api/article?page=1` 能返回文章。
+头像（`GET /api/account/{biz}/avatar`）与文章封面图首次访问可能回源并落库/对象存储，稍后才变快；
+封面与内文图片由 worker 的图片回填循环异步补全（`queue.images` 是待办水位）。
 
 ## 私有知识库
 
@@ -423,6 +435,9 @@ hippo-knowledge-worker.service              # 知识导入 worker 的 systemd �
 hippo/knowledge/worker.py                   # 知识导入 worker（python -m hippo.knowledge.worker 入口）
 ```
 
+> 集成注记：目录名以基线为准。`weixin_*` 模块向 `sources/` 下多来源适配器的重命名属于待集成改动；
+> 合并后以新的模块名为准，本文档不先写成尚未落地的名字。
+
 ## 部署
 
 自托管按「rsync 源码 + systemd」即可：构建前端后把仓库同步到目标机，
@@ -430,13 +445,22 @@ hippo/knowledge/worker.py                   # 知识导入 worker（python -m hi
 `hippo.server`、`hippo.sync_worker` 与（需要知识库时）`hippo.knowledge.worker`。注意顺序：先迁移（`init-db`）、
 后重启服务，schema 版本不匹配时服务会拒绝启动。
 
-知识库上线前还有几件必须做的事，**在真实隔离环境验证完成并经授权后再执行**：
+上线（含 schema 31）前还有几件必须做的事，**在真实隔离环境验证完成并经授权后再执行**：
 
-1. 候选 schema 版本是 29，尚未在真实 PostgreSQL 上跑过。上线前必须在隔离 PG 上验证 DDL、`pg_jieba`、
-   GIN 索引、UUID 类型、CAS 语义与并发锁行为，并验证 S3 的上传/下载/删除。
-2. 正式迁移流程：**先备份**，然后**停掉 Web、sync worker 与知识 worker 三个进程**，再人工跑
-   `python -m hippo.ops init-db`，确认无误后重启。不要让旧进程在新 schema 上继续跑。
-3. 仓库里被 git 忽略的 `deploy.sh` **没有自动安装新 unit，也不会停知识 worker**；部署流程仍需人工
+1. 当前代码 `SCHEMA_VERSION = '31'`（在 schema 30 基础上给 `sync_jobs` 追加了 `requester_user_id` 列与两个索引）。
+   迁移是**纯追加、幂等**的 `ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`，不含 `DROP`/`DELETE`/`TRUNCATE`；
+   但仍需在隔离 PG 上验证 DDL、`pg_jieba`/`pg_trgm`、GIN 索引、UUID 类型、CAS 语义、部分唯一索引与并发锁行为，
+   并验证 S3 的上传/下载/删除。
+2. 正式迁移流程：**先备份**（`pg_dump -Fc`），然后**停掉 Web、sync worker 与知识 worker 三个进程**（
+   知识 worker 持有 lease/长事务，迁移前必须停），再人工跑 `python -m hippo.ops init-db`，确认库 `schema_version=31`
+   后再重启。不要让旧进程在新 schema 上继续跑。
+3. **schema 只能前进**：库一旦升到 31，回退到 schema 30 的代码会因 `SCHEMA_VERSION(30) != meta.schema_version(31)`
+   拒绝启动；回退必须恢复迁移前的 `pg_dump`，不能靠改 `meta.schema_version` 蒙过去。
+4. **发布窗口压自动同步**：生产 `sync:settings` 当前为 `enabled=false`、`interval_minutes=120`，调度循环不会自动跑；
+   需要更新时用管理台或 `POST /api/settings/run` 手动触发。改回前先确认没有别的调用方依赖自动调度。
+5. **`systemctl is-active` 不等于功能健康**：验收要看 sync worker 新日志（如图片回填是否仍有持续失败）、
+   页面 `frontend/dist/assets/` 的哈希是否与新 build 一致，以及只启一个媒体消费者。
+6. 仓库里被 git 忽略的 `deploy.sh` **没有自动安装新 unit，也不会停知识 worker**；部署流程仍需人工
    接入这一步。本文档不修改、也不代替那个本地脚本。
 
 ```bash

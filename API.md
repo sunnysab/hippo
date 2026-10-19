@@ -1,6 +1,6 @@
 # Hippo API 参考
 
-面向 `hippo.server` 暴露的 HTTP 接口。文中所有端点都以 `/api` 开头，覆盖当前全部 **110** 个端点。
+面向 `hippo.server` 暴露的 HTTP 接口。文中所有端点都以 `/api` 开头。
 服务同时提供框架自带的 OpenAPI 描述与交互界面：`GET /openapi.json`、`GET /docs`（Swagger UI）。
 本文件是它们的说明：约定、权限、参数语义与响应结构。
 
@@ -56,14 +56,17 @@
 
 ### 错误
 
-所有业务错误统一为：
+所有失败响应统一为同一信封，`code` 是稳定的机器标识：
 
 ```json
-{ "error": "错误描述" }
+{ "error": "错误描述", "code": "request.invalid" }
 ```
 
-HTTP 状态码表示类别，不把错误塞进 `200`。未预期异常返回 `500` 与 `{"error": "Internal server error"}`。
-参数校验失败（如非法 `sort`、日期格式错误、缺少必填字段）是 `400`；越权访问别人的资源一律 `404` 而不是 `403`，避免泄露存在性。
+HTTP 状态码表示类别，不把错误塞进 `200`。未预期异常返回 `500` 与 `{"error": "Internal server error", "code": "internal_error"}`。
+
+**请求的形状错误是 `422`**：未知字段、类型不对、缺少必填字段、超出取值范围等由请求模型拦截，返回 `422`
+与 `code: "request.invalid"`，`error` 里点名失败的字段。**业务语义错误仍是 `400`**（如日期非法、业务范围不合法），
+由路由自己抛出；两者不要混为一谈。越权访问别人的资源一律 `404` 而不是 `403`，避免泄露存在性。
 
 ### 分页与时间
 
@@ -190,20 +193,24 @@ DELETE /api/group/3 → 204
 
 新建/重命名时 `name` 为空是 `400`；删除不存在的分组是 `404`。**分组按用户隔离**，别人的 `group_id` 对你是 `404`。
 
-## 4. 公众号 `/api/account`
+## 4. 订阅账号 `/api/account`
+
+一个 `account` 是一份**订阅的频道（账号）**，不限微信：`accounts.source` 区分来源
+（`weixin` / `bilibili` / `youtube` / `podcast` / `feed`）。本节描述账号/订阅的通用语义；
+带微信专属字样的地方（`gh_…`/fakeid 解析、H5 搜索、`item_show_type`）只适用于 `weixin` 来源。
 
 | 方法 | 路径 | 权限 | 用途 |
 |---|---|---|---|
-| GET | `/api/account` | 登录 | 已关注公众号列表（可筛选、分页） |
-| POST | `/api/account` | 登录 | 添加公众号（同时订阅） |
-| GET | `/api/account/{biz}` | 登录 | 公众号详情 |
+| GET | `/api/account` | 登录 | 已关注账号列表（可筛选、分页） |
+| POST | `/api/account` | 登录 | 添加账号（同时订阅） |
+| GET | `/api/account/{biz}` | 登录 | 账号详情 |
 | PATCH | `/api/account/{biz}` | 登录 | 更新昵称/别名/头像/分组/停用/同步间隔 |
 | DELETE | `/api/account/{biz}` | 登录 | 取消关注 |
 | POST | `/api/account/move` | 登录 | 批量移动到分组 |
 | POST | `/api/account/batch` | 登录 | 批量设置同步间隔 |
-| GET | `/api/account/search` | 登录 | 搜索公众号（候选） |
-| GET | `/api/account/search/{gh_id}/avatar` | 登录 | 候选头像 |
-| GET | `/api/account/{biz}/avatar` | 登录 | 已关注公众号头像 |
+| GET | `/api/account/search` | 登录 | 搜索账号（候选，仅微信来源） |
+| GET | `/api/account/search/{gh_id}/avatar` | 登录 | 候选头像（仅微信来源） |
+| GET | `/api/account/{biz}/avatar` | 登录 | 已关注账号头像 |
 
 ### 列表
 
@@ -243,7 +250,7 @@ PATCH /api/account/Mz123
 
 字段分两类：`nickname`/`alias`/`round_head_img` 是**全站共享**的目录字段；
 `group_id`/`is_disabled`/`sync_interval_days` 属于**你自己的订阅**。`group_id: null` 会落回默认分组。
-没有任何可更新字段时 `400`，公众号不存在（或不在你的订阅里）时 `404`。
+没有任何可更新字段时 `400`，账号不存在（或不在你的订阅里）时 `404`。
 
 ```
 POST /api/account/move  { "biz_list": ["Mz1", "Mz2"], "group_id": 3 }
@@ -252,7 +259,9 @@ POST /api/account/batch { "biz_list": ["Mz1"], "sync_interval_days": 3 }
 
 `sync_interval_days: null` 表示清除覆盖、回到按发文历史自动推导。两者都返回受影响条数。
 
-### 搜索候选
+### 搜索候选（仅微信来源）
+
+微信 H5 搜索只适用于 `weixin` 来源，其他来源用 `GET /api/source/preview`（见第 13 节）。
 
 ```
 GET /api/account/search?q=中投&page=1&page_size=10
@@ -456,12 +465,13 @@ JSON 形态返回 `{"articles": [...]}`；`format=rss` 时返回 `application/rs
 
 | 方法 | 路径 | 权限 | 用途 |
 |---|---|---|---|
-| GET | `/api/settings` | 管理员 | 全站同步配置 + SMTP |
+| GET | `/api/settings` | 管理员 | 全站同步配置 + SMTP（密码只回显掩码）|
 | PATCH | `/api/settings` | 管理员 | 更新同步配置 |
 | GET | `/api/settings/preferences` | 登录 | 我的阅读偏好 |
 | PATCH | `/api/settings/preferences` | 登录 | 更新我的阅读偏好 |
-| POST | `/api/settings/run` | 登录 | 手动触发同步 |
-| GET | `/api/settings/status` | 登录 | 同步总体状态 + 队列水位 |
+| POST | `/api/settings/run` | 登录 | 手动触发同步（只限自己订阅的账号）|
+| POST | `/api/settings/admin/run` | 管理员 | 显式触发全站同步 |
+| GET | `/api/settings/status` | 管理员 | 同步总体状态 + 队列水位 |
 | GET | `/api/settings/tasks` | 管理员 | 任务列表 |
 | GET | `/api/settings/tasks/{task_id}` | 管理员 | 任务进度 |
 | POST | `/api/settings/tasks/{task_id}/cancel` | 管理员 | 取消任务 |
@@ -472,15 +482,23 @@ JSON 形态返回 `{"articles": [...]}`；`format=rss` 时返回 `application/rs
 ```
 GET /api/settings
 → { "enabled": true, "interval_minutes": 30, "sleep_seconds": 3, "skip_minutes": 0,
-    "download_content": true, "download_images": true,
+    "download_content": true, "download_images": true, "article_exclude_keywords": "",
     "alert_enabled": false, "alert_email": "",
-    "email": { "smtp_host": "", "smtp_port": 587, "smtp_user": "", "smtp_password": "",
-               "smtp_tls": true, "from_email": "" } }
+    "email": { "smtp_host": "smtp.example.com", "smtp_port": 587, "smtp_user": "alerts",
+               "smtp_password": "••••word", "smtp_password_set": true,
+               "smtp_tls": true, "from_email": "no-reply@example.com" } }
 ```
 
+**SMTP 密码是只写的。** 读接口只返回掩码（`••••` + 末四位，未配置时为空串），并用
+`smtp_password_set` 告诉前端“库里到底有没有密码”；明文永远不出现在响应、日志或本文档里。
+写回时，若 `smtp_password` 里还带着掩码（前端把回显值原样提交），服务端会**丢弃该字段**，不会把已存密码
+覆盖成一串圆点；传空串才是“清除密码”，传新值才是“替换”。
+
 `PATCH /api/settings` 只更新传入的字段（`enabled`、`interval_minutes`、`sleep_seconds`、`skip_minutes`、
-`download_content`、`download_images`、`alert_enabled`、`alert_email`）；`email` 传对象时按其子字段更新 SMTP。
-仅传小数范围内的字段也接受，但 `smtp_port` 非法会 `400`。打开 `enabled` 会立即唤醒调度器。
+`download_content`、`download_images`、`article_exclude_keywords`、`alert_enabled`、`alert_email`）；`email` 传对象时
+按其子字段更新 SMTP。
+请求体是封闭的：**未知字段、类型不对、`smtp_port < 1`、`interval_minutes < 1`、`skip_minutes < 0` 都返回
+`422`（`request.invalid`）**，不会静默忽略或夹紧成最小值。打开 `enabled` 会立即唤醒调度器。
 
 ### 阅读偏好
 
@@ -490,35 +508,75 @@ PATCH /api/settings/preferences { "timezone": "Asia/Shanghai", "article_exclude_
 ```
 
 `timezone` 同时决定日报的「今天」与发送时刻；`article_exclude_keywords` 是文章列表的默认排除词。
+只写入请求里出现的字段（未传的字段保持原值），未知字段是 `422`。
 
 ### 手动同步
 
 ```
-POST /api/settings/run                        # 同步我订阅的全部
-POST /api/settings/run { "group_id": 2 }      # 只同步某个分组
-POST /api/settings/run { "biz_list": ["Mz1"] } # 只同步指定公众号
+POST /api/settings/run                          # 同步我订阅的全部
+POST /api/settings/run { "group_id": 2 }        # 只同步某个分组
+POST /api/settings/run { "biz_list": ["Mz1"] }  # 只同步指定账号
 POST /api/settings/run { "source": "bilibili" } # 只同步某个来源（我订阅的那些）
+POST /api/settings/admin/run                    # 管理员：全站目录同步
+POST /api/settings/admin/run { "source": "podcast" }  # 全站目录里只看某个来源
 ```
 
-`202` 返回 `{"status": "...", "task_id": "...", ...}`（附带回显的 `group_id` / `biz_list` / `source`）。
-`group_id` 不属于你、`biz_list` 里有未订阅的号、或 `source` 下没有你的订阅都是 `404`；请求体字段非法 `400`。
-`source` 会把「我订阅的该来源频道」展开成 `biz_list` 写进任务，任务行上的 `source` 用于按来源筛历史。
+**“自己”和“全站”是两条显式路由，不靠角色改变同一条路径的含义。**
+`POST /api/settings/run`（任意登录用户）只会触及自己已启用的订阅：`group_id` / `source` / `biz_list`
+取交集，空请求表示「我的全部订阅」，**不会**变成全站同步；没有可同步的订阅返回 `404`。全站语义只在
+管理员专用的 `POST /api/settings/admin/run` 出现。路由与权限见上表。
+
+`202` 返回 `SyncRunResponse`：`task_id`、`status`、`scope`（`own` / `site`），并回显 `group_id` / `biz_list` / `source`。
+
+**冲突（409）**：同一个用户已有一条活动的手动任务时，`POST /api/settings/run` 不会静默丢第二次请求。
+作用域相同则返回那条旧任务（`task_id`/`status`/`scope` 均为旧任务真实值，`202`）；作用域不同则返回 `409`
+与 `code: sync.task_conflict`，提示先等它结束或取消。
+
+**冷却（`skip_minutes` 对手动同步同样生效）**：手动触发只跳过“按账号日频次间隔”，不会跳过短冷却——
+最近 `skip_minutes` 内同步过的账号仍会被跳过（`skip_reason: recently_synced`），避免每次点按都把源站打一遍。
+
+`group_id` 不属于你、`biz_list` 里有未订阅的号、或 `source` 下没有你的订阅都是 `404`；
+显式传空的 `biz_list` 是 `400`；请求体字段未知或类型不对是 `422`。`source` 会把「我订阅的该来源频道」
+展开成 `biz_list` 写进任务，任务行上的 `source` 用于按来源筛历史。
 
 ### 状态与任务
 
+`GET /api/settings/status` 是**管理员**接口（队列水位与 worker 心跳是全站视角）。响应为封闭模型：
+
 ```
 GET /api/settings/status?limit=5
-→ { "status": "idle"|"running"|..., "last_started_at": "...", "last_finished_at": "...",
-    "last_ingest_at": "...", "last_error": "", "history": [ … ],
-    "queue": { "articles": {…}, "images": {…}, "media": { "<source>": {…} },
-               "failed_items": [ … ] }, "worker_heartbeat_at": "..." }
+→ {
+    "status": "idle"|"running"|...,
+    "last_started_at": "...", "last_finished_at": "...", "last_ingest_at": "...",
+    "last_error": "",
+    "history": [ { "started_at": "...", "finished_at": "...", "status": "success",
+                   "error": "", "saved": 12, "downloaded": 3, "skipped_accounts": 1,
+                   "failed_accounts": 0, "accounts_total": 8, "accounts_done": 8,
+                   "current_account": {…}|null }, … ],
+    "queue": {
+      "articles": { "pending": 5, "processing": 1, "failed": 0, "done": 40 },
+      "images":   { "pending": 12, "failed": 2 },
+      "media":    { "<source>": { "pending": 0, "processing": 1, "failed": 0, "done": 9 } },
+      "failed_items": [ { "biz": "...", "nickname": "...", "sn": "...",
+                          "attempts": 3, "retryable": false, "last_error": "...",
+                          "updated_at": "..." } ]
+    },
+    "worker_heartbeat_at": "..."
+  }
+```
 
+队列分三个固定子对象：`articles` 与每个 `media.<source>` 都是 `pending/processing/failed/done` 四态计数，
+`images` 只有 `pending/failed`。`media` 以**来源名**为键，是开放集合（由后端来源注册表决定），所以是动态字典；
+`history` 与 `failed_items` 的元素字段固定。
+
+```
 GET /api/settings/tasks?limit=5&detail=false   → { "tasks": [ … ] }
 GET /api/settings/tasks?source=bilibili        # 只看某个来源的任务
-GET /api/settings/tasks/{task_id}             → 任务完整状态（404 表示不存在）
+GET /api/settings/tasks/{task_id}             → 任务完整状态（不存在或不是你的任务都是 404）
 POST /api/settings/tasks/{task_id}/cancel     → 可取消状态返回更新后的任务，否则 404
 ```
 
+任务列表只给当前用户自己的任务（管理员看全部）；`detail=false` 返回精简摘要，`detail=true` 才带逐账号进度。
 任务状态字段：`task_id`、`status`、`trigger_type`（`manual`/`scheduled`/`backfill`）、`phase`、
 `accounts_total`、`accounts_done`、`current_account`、`current_article`、`last_log`、`report`、`error`、
 `created_at`/`started_at`/`finished_at`，`detail=false` 时返回精简摘要。取消是协作式的：worker 在下一个检查点停下。
@@ -529,7 +587,9 @@ POST /api/settings/tasks/{task_id}/cancel     → 可取消状态返回更新后
 POST /api/settings/test-email { "to_email": "me@example.com", "email": { "smtp_host": "…" } }
 ```
 
-不给 `to_email` 时回落到配置里的 `alert_email`；两者都空则 `400`。传 `email` 对象则用这份临时 SMTP 配置发送而不落库。
+不给 `to_email` 时回落到配置里的 `alert_email`；两者都空则 `400`。传 `email` 对象则用这份临时 SMTP 配置发送
+而不落库；`email` 里的 `smtp_password` 同样是只写的，放回回显掩码会被丢弃。成功为 `200` 与
+`{"status": "sent", "to_email": "…"}`；`smtp_port` 非法或字段未知是 `422`；邮件服务器侧失败是 `502`，超时是 `504`。
 
 ## 9. 日报 `/api/report`
 
@@ -751,19 +811,25 @@ B站投稿列表接口有风控，需要 SESSDATA。**实例级**的在管理台
 走的是同一份优先级。
 
 ```
-GET    /api/source/credential                    -> {"bilibili": {"configured": true}}
-PUT    /api/source/credential/bilibili            {"secret": "SESSDATA=…"}  -> 204
-DELETE /api/source/credential/bilibili            -> 204
+GET    /api/source/credential                     -> {"bilibili": {"configured": true}}
+PUT    /api/source/credential/bilibili             {"secret": "SESSDATA=…"}  -> 204
+DELETE /api/source/credential/bilibili             -> 204
+POST   /api/source/credential/bilibili/test[?scope=user|instance] -> 探测是否可用
 ```
 
-### 留档音频
+`POST …/test` 只回答凭证能不能用，不回显凭证本身：返回 `{source, credential, ok, detail, account}`，
+`credential` 是 `user`/`instance`/`none`（哪一份被采用），`account` 是它被接受为的账号。
+默认 `scope=user`（自己的凭证，没有再退到实例凭证），`scope=instance` 只有管理员能用（否则 `403`）。
+`scope` 不是 `user`/`instance` 为 `422`；不支持的来源为 `400`。
+
+### 留档媒体
 
 ```
-GET /api/media/{article_pk}/audio
+GET /api/media/{article_pk}/{kind}        # kind = audio | video
 ```
 
-`200`（或带 `Range` 时的 `206`，浏览器拖动进度条靠它）。没有留档时 `302` 到原始地址，
-既没有留档也没有原始地址时 `404`，范围越界 `416`。
+`audio` 与 `video` 共用同一套订阅鉴权与 Range 语义。`200`（或带 `Range` 时的 `206`，浏览器拖动进度条
+靠它）。没有留档时 `302` 到原始地址，既没有留档也没有原始地址时 `404`，范围越界 `416`。
 
 ### 转写稿
 
@@ -796,9 +862,13 @@ POST  /api/admin/media/test     逐档探测 ASR 端点可达性
 
 | 限制 | 说明 |
 |---|---|
-| 管理接口 | `/api/admin`、`/api/apikey`、`/api/auth`、`/api/login`、`/api/source/credential` 一律 `403`——一个泄露的 key 不能给自己签一个更大的 |
+| 管理接口 | `/api/admin`、`/api/settings`（及 `/api/settings/*`）、`/api/apikey`、`/api/auth`、`/api/login`、`/api/source/credential` 一律 `403`——一个泄露的 key 不能给自己签一个更大的 |
 | 写操作 | 非 `GET`/`HEAD` 需要 `write` scope，当前控制台只签发 `read` |
 | 使用记录 | `last_used_at` 每 5 分钟最多写一次，避免每次读都变成一次写 |
+
+> 集成注记：上表是目标契约。基线里 `require_admin` 只检查角色，若某一管理员用户的 API Key 被带到
+> `/api/settings`，可能仍被放行；让 `require_admin` 也拒 API Key 的改动在核心 writer 一侧，本文档
+> 按集成后的契约写。
 
 ### 端点
 
@@ -869,7 +939,7 @@ curl -H "Authorization: Bearer hippo_…" "https://hippo.example/api/article?sou
 | `PUT /api/document/{id}/file` | | 原始文件字节 |
 
 `filename` 与 `mime_type` 都必填，`mime_type` 只接受规范拼写的 `application/pdf` 或 `text/plain`，
-其他值是 `415`；两个端点都拒绝未知字段（`400`）。上传端点的请求体就是**原始字节**（不是 multipart）：
+其他值是 `415`；两个端点都拒绝未知字段（`422`）。上传端点的请求体就是**原始字节**（不是 multipart）：
 
 ```http
 PUT /api/document/00000000-0000-0000-0000-000000000000/file
@@ -907,11 +977,12 @@ Content-Type: application/pdf
 
 | 状态码 | 何时 |
 |---|---|
-| `400` | 字段缺失/未知、名称或文件名非法、`Content-Length` 非法、`q` 为空 |
+| `400` | 名称或文件名非法、`Content-Length` 非法、`q` 为空等业务校验 |
 | `404` | 知识库/文档不存在，或存在但不属于当前用户 |
 | `409` | 状态冲突：重试非 `failed`、上传非 `pending_upload`、读 `/content` 时未 `ready`、同库同内容重复 |
 | `413` | 单文件超过 64 MiB |
 | `415` | MIME 类型不在允许列表，或请求体被压缩 |
+| `422` | 字段缺失/未知、类型不对等请求形状错误（`code: request.invalid`）|
 | `408` | 读取请求体超过 120s 预算 |
 | `429` | 同一 app 已有 2 个上传在进行（原始上传与重试共用这个闸门） |
 | `502` | 对象存储传输失败 |
@@ -1028,7 +1099,7 @@ Content-Type: application/pdf
 | POST | `/api/login/auto` | 登录 |
 | POST | `/api/login/qr` | 登录 |
 | POST | `/api/login/wait` | 登录 |
-| GET | `/api/media/{article_pk}/audio` | 登录 |
+| GET | `/api/media/{article_pk}/{kind}` | 登录 |
 | GET | `/api/report/setting` | 登录 |
 | PATCH | `/api/report/setting` | 登录 |
 | GET | `/api/report/{date}` | 登录 |
@@ -1036,6 +1107,7 @@ Content-Type: application/pdf
 | POST | `/api/report/{date}/send` | 登录 |
 | GET | `/api/settings` | 管理员 |
 | PATCH | `/api/settings` | 管理员 |
+| POST | `/api/settings/admin/run` | 管理员 |
 | GET | `/api/settings/preferences` | 登录 |
 | PATCH | `/api/settings/preferences` | 登录 |
 | POST | `/api/settings/run` | 登录 |
@@ -1049,6 +1121,7 @@ Content-Type: application/pdf
 | GET | `/api/source/credential` | 登录 |
 | DELETE | `/api/source/credential/{source}` | 登录 |
 | PUT | `/api/source/credential/{source}` | 登录 |
+| POST | `/api/source/credential/{source}/test` | 登录 |
 | GET | `/api/source/preview` | 登录 |
 | GET | `/api/whoami` | 登录 / API Key |
 
@@ -1060,8 +1133,9 @@ Content-Type: application/pdf
 | `201` | 创建成功（分组、公众号、标注、用户、LLM Provider、会话） |
 | `202` | 已受理：注册、找回密码、手动同步、日报发送、重新抓取 |
 | `204` | 成功且无响应体（登录、注销、删除、更新类操作） |
-| `400` | 参数缺失或非法（密码太短、`send_hour` 越界、日期/排序非法等） |
+| `400` | 业务参数非法（密码太短、`send_hour` 越界、日期/排序非法、显式空 `biz_list` 等） |
 | `401` | 未登录或会话过期 |
+| `422` | 请求形状错误：未知字段、类型不对、缺必填字段、超出取值范围（`code: request.invalid`） |
 | `403` | 权限不足：非管理员访问管理接口、账号被禁用、邮箱未验证、注册未开放 |
 | `404` | 资源不存在，或存在但不属于当前用户 |
 | `409` | 冲突：用户名/邮箱已被占用 |

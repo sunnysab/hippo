@@ -24,6 +24,7 @@ from hippo.api.schemas.settings import (
     EmailTestRequest,
     PreferencesUpdateRequest,
     SyncSettingsUpdateRequest,
+    SyncStatusOut,
 )
 
 SYNC_DEFAULTS: dict[str, object] = {
@@ -186,6 +187,47 @@ class SettingsHttpContractTest(unittest.TestCase):
 
         self.assertEqual(422, response.status_code)
         self.assertEqual(VALIDATION_FAILED, response.json()['code'])
+
+
+class SyncStatusShapeTest(unittest.TestCase):
+    def test_the_status_keeps_every_queue_key(self) -> None:
+        # The worker writes the queue watermark into meta; a response model that
+        # dropped a key would silently blank a card on the ops panel.
+        payload = {
+            'status': 'idle',
+            'history': [
+                {
+                    'started_at': '2026-01-01T00:00:00+00:00',
+                    'finished_at': '2026-01-01T00:00:10+00:00',
+                    'status': 'success',
+                    'current_account': None,
+                }
+            ],
+            'queue': {
+                'articles': {'pending': 1, 'processing': 2, 'failed': 3, 'done': 4},
+                'images': {'pending': 5, 'failed': 6},
+                'media': {'bilibili': {'pending': 7, 'processing': 8, 'failed': 9, 'done': 10}},
+                'failed_items': [
+                    {
+                        'biz': 'b',
+                        'nickname': 'n',
+                        'sn': 's',
+                        'attempts': 1,
+                        'retryable': True,
+                        'last_error': 'e',
+                        'updated_at': '2026-01-01T00:00:00+00:00',
+                    }
+                ],
+            },
+        }
+
+        out = SyncStatusOut.model_validate(payload).model_dump()
+
+        self.assertEqual({'pending': 1, 'processing': 2, 'failed': 3, 'done': 4}, out['queue']['articles'])
+        self.assertEqual({'pending': 5, 'failed': 6}, out['queue']['images'])
+        self.assertEqual({'pending': 7, 'processing': 8, 'failed': 9, 'done': 10}, out['queue']['media']['bilibili'])
+        self.assertEqual('2026-01-01T00:00:00+00:00', out['queue']['failed_items'][0]['updated_at'])
+        self.assertEqual('2026-01-01T00:00:00+00:00', out['history'][0]['started_at'])
 
 
 if __name__ == '__main__':
