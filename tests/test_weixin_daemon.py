@@ -74,15 +74,17 @@ class _ListBot:
 class WeixinSourceListTest(unittest.TestCase):
     def test_strips_nul_characters_that_postgres_would_reject(self) -> None:
         source = WeixinSource(auto_login=False)
-        source._bot = _ListBot([
-            {
-                'title': 'a\x00b',
-                'digest': 'x\x00',
-                'url': 'https://mp.weixin.qq.com/s?__biz=Mz1&sn=abc',
-                'publish_time': 1,
-                'cover_url': 'https://example.invalid/c\x00.png',
-            }
-        ])
+        source._bot = _ListBot(
+            [
+                {
+                    'title': 'a\x00b',
+                    'digest': 'x\x00',
+                    'url': 'https://mp.weixin.qq.com/s?__biz=Mz1&sn=abc',
+                    'publish_time': 1,
+                    'cover_url': 'https://example.invalid/c\x00.png',
+                }
+            ]
+        )
 
         listed = asyncio.run(source.list_articles('gh_1', 'Mz1'))
 
@@ -142,7 +144,9 @@ class CoverSelectionTest(unittest.TestCase):
     def test_an_older_daemon_single_image_is_kept(self) -> None:
         self.assertEqual('https://cdn/main.png', select_cover_url(None, 'https://cdn/main.png'))
         self.assertEqual('https://cdn/main.png', select_cover_url([], 'https://cdn/main.png'))
-        self.assertEqual('https://cdn/main.png', select_cover_url([{'ratio': '1:1', 'url': ''}], 'https://cdn/main.png'))
+        self.assertEqual(
+            'https://cdn/main.png', select_cover_url([{'ratio': '1:1', 'url': ''}], 'https://cdn/main.png')
+        )
 
     def test_no_cover_at_all_is_none(self) -> None:
         self.assertIsNone(select_cover_url(None, None))
@@ -157,7 +161,10 @@ class CoverSelectionTest(unittest.TestCase):
                     'title': 'a',
                     'url': 'https://mp.weixin.qq.com/s?__biz=Mz1&sn=abc',
                     'cover_url': 'https://cdn/main.png',
-                    'cover_urls': [{'ratio': 'main', 'url': 'https://cdn/main.png'}, {'ratio': '16:9', 'url': 'https://cdn/wide.png'}],
+                    'cover_urls': [
+                        {'ratio': 'main', 'url': 'https://cdn/main.png'},
+                        {'ratio': '16:9', 'url': 'https://cdn/wide.png'},
+                    ],
                 }
             ]
         )
@@ -172,7 +179,10 @@ class CoverSelectionTest(unittest.TestCase):
                 'short_link': 'https://mp.weixin.qq.com/s/a',
                 'slug': 'a',
                 'cover_url': 'https://cdn/main.png',
-                'cover_urls': [{'ratio': 'main', 'url': 'https://cdn/main.png'}, {'ratio': '16:9', 'url': 'https://cdn/wide.png'}],
+                'cover_urls': [
+                    {'ratio': 'main', 'url': 'https://cdn/main.png'},
+                    {'ratio': '16:9', 'url': 'https://cdn/wide.png'},
+                ],
             }
         )
 
@@ -222,18 +232,19 @@ class DaemonErrorBoundaryTest(unittest.TestCase):
     def test_an_sdk_rpc_error_becomes_the_local_unavailable_error(self) -> None:
         sdk = _fake_sdk(_SdkBotError(-13, 'session expired, need relogin'))
 
-        with patch.dict(sys.modules, {'weixin_bot': sdk}):
-            with self.assertRaises(WeixinUnavailableError) as caught:
-                asyncio.run(WeixinSource(auto_login=True).__aenter__())
+        with (
+            patch.dict(sys.modules, {'weixin_bot': sdk}),
+            self.assertRaises(WeixinUnavailableError) as caught,
+        ):
+            asyncio.run(WeixinSource(auto_login=True).__aenter__())
 
         self.assertIn('[-13] session expired', str(caught.exception))
 
     def test_a_programming_error_still_propagates(self) -> None:
         sdk = _fake_sdk(ValueError('programming bug'))
 
-        with patch.dict(sys.modules, {'weixin_bot': sdk}):
-            with self.assertRaises(ValueError):
-                asyncio.run(WeixinSource(auto_login=True).__aenter__())
+        with patch.dict(sys.modules, {'weixin_bot': sdk}), self.assertRaises(ValueError):
+            asyncio.run(WeixinSource(auto_login=True).__aenter__())
 
 
 class _Client:
