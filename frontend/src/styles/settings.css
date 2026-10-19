@@ -10,23 +10,6 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
-/* The sync console: settings the admin edits on the left, live state on the
-   right. Two columns rather than one stack so a wide window is not a column
-   of forms with half a screen of nothing beside it. */
-.sync-columns {
-  display: grid;
-  grid-template-columns: minmax(420px, 1fr) minmax(420px, 1fr);
-  align-items: start;
-  gap: 12px;
-}
-
-.sync-column {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-}
-
 /* One panel per row: the filter blocks are read as a list of settings, and
    side by side they leave one panel short and half the row empty. */
 .settings-filter-grid {
@@ -263,6 +246,14 @@
   border: none;
   border-bottom: 1px solid var(--border);
   background: none;
+  color: inherit;
+  text-decoration: none;
+}
+
+/* A row that links somewhere should read as one: the underline appears on hover
+   rather than colour, so the name keeps its place in the tone palette. */
+a.sync-progress-item:hover .account-name {
+  text-decoration: underline;
 }
 
 .sync-progress-copy {
@@ -381,7 +372,6 @@
 }
 
 @media (max-width: 1180px) {
-  .sync-columns,
   .settings-filter-grid,
   .settings-single-column {
     grid-template-columns: 1fr;

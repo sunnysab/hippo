@@ -5,12 +5,14 @@ import { apiSend, isAuthError } from '../../api';
 import { useToast } from '../../hooks/useToast';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { ConfirmModal } from '../../components/ConfirmModal';
+import { useNavigate } from 'react-router-dom';
 import { emitRefresh } from '../../utils/events';
 
 export function BatchActions() {
   const { state, dispatch } = useGroupsState();
   const { t } = useI18n();
   const { showToast } = useToast();
+  const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
   const [targetGroupId, setTargetGroupId] = useState('');
   const [syncBatchInterval, setSyncBatchInterval] = useState<number | null>(null);
@@ -76,7 +78,7 @@ export function BatchActions() {
     }
     try {
       await apiSend('/api/settings/run', 'POST', { biz_list: state.selectedAccounts });
-      window.location.hash = '#/admin/sync';
+      navigate('/admin/sync');
       showToast(t('accounts.syncTriggered', 'Selected accounts sync started.'));
     } catch (err) {
       if (isAuthError(err)) return;

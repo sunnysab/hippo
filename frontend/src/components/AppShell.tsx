@@ -137,7 +137,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, []);
 
   const handleBannerLogin = () => {
-    navigate('/admin/login');
+    // 扫码重登是公众号这个来源的能力，所以落在它的来源页上。
+    navigate('/admin/source/weixin');
   };
 
   const handleBannerDismiss = () => {

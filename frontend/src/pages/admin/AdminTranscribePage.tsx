@@ -2,9 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiGet, apiSend } from '../../api';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
-import { ProxyFields } from './ProxyFields';
 
-interface MediaSettings {
+interface TranscribeSettings {
   enabled: boolean;
   asr_tier: string;
   asr_endpoints: Record<string, string>;
@@ -22,13 +21,6 @@ interface MediaSettings {
   keep_media: boolean;
   keep_media_bitrate: string;
   bilibili_cc_subtitle: boolean;
-  bilibili_cookie: string;
-  bilibili_cookie_set: boolean;
-  youtube_cookies: string;
-  proxy_default: string;
-  proxy_bilibili: string;
-  proxy_youtube: string;
-  proxy_podcast: string;
 }
 
 interface ProbeResult {
@@ -37,7 +29,7 @@ interface ProbeResult {
   detail: string;
 }
 
-const EMPTY: MediaSettings = {
+const EMPTY: TranscribeSettings = {
   enabled: true,
   asr_tier: 'accurate',
   asr_endpoints: { accurate: '', fast: '' },
@@ -55,35 +47,35 @@ const EMPTY: MediaSettings = {
   keep_media: true,
   keep_media_bitrate: '128k',
   bilibili_cc_subtitle: true,
-  bilibili_cookie: '',
-  bilibili_cookie_set: false,
-  youtube_cookies: '',
-  proxy_default: '',
-  proxy_bilibili: '',
-  proxy_youtube: '',
-  proxy_podcast: '',
 };
 
 const BITRATES = ['original', '64k', '96k', '128k', '192k', '256k'];
 const TIERS = ['accurate', 'fast'];
 
 /** Normalise the payload so a missing key from the API cannot blank a field. */
-const fromPayload = (payload: Record<string, unknown>): MediaSettings => ({
+const fromPayload = (payload: Record<string, unknown>): TranscribeSettings => ({
   ...EMPTY,
   ...payload,
   asr_endpoints: {
     accurate: String((payload.asr_endpoints as Record<string, string> | undefined)?.accurate ?? ''),
     fast: String((payload.asr_endpoints as Record<string, string> | undefined)?.fast ?? ''),
   },
-}) as MediaSettings;
+}) as TranscribeSettings;
 
-export function AdminMediaPage() {
+/**
+ * The transcription backend and the archive policy: the parameters every media
+ * source shares.
+ *
+ * Deliberately not on a source's page. The ASR endpoint, the chunk length and the
+ * kept bitrate are one pipeline serving Bilibili, YouTube and podcasts alike, so
+ * editing them from inside one source's card would change the other two as well.
+ */
+export function AdminTranscribePage() {
   const { t } = useI18n();
   const { showToast } = useToast();
-  const [settings, setSettings] = useState<MediaSettings>(EMPTY);
+  const [settings, setSettings] = useState<TranscribeSettings>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [newApiKey, setNewApiKey] = useState('');
-  const [newCookie, setNewCookie] = useState('');
   const [probes, setProbes] = useState<ProbeResult[] | null>(null);
   const [testing, setTesting] = useState(false);
 
@@ -110,7 +102,7 @@ export function AdminMediaPage() {
     }
   };
 
-  const saveNumber = (key: keyof MediaSettings, raw: string) => {
+  const saveNumber = (key: keyof TranscribeSettings, raw: string) => {
     const parsed = Number.parseInt(raw, 10);
     if (Number.isNaN(parsed) || parsed === settings[key]) {
       return;
@@ -180,6 +172,14 @@ export function AdminMediaPage() {
               ))}
             </select>
           </label>
+          <label className="auth-field">
+            <span>{t('admin.media.language', '语言')}</span>
+            <input
+              className="input"
+              defaultValue={settings.asr_language}
+              onBlur={(event) => void save({ asr_language: event.target.value.trim() })}
+            />
+          </label>
         </div>
 
         <div className="form-grid">
@@ -213,21 +213,9 @@ export function AdminMediaPage() {
               }}
             />
           </label>
-          <label className="auth-field">
-            <span>{t('admin.media.language', '语言')}</span>
-            <input
-              className="input"
-              defaultValue={settings.asr_language}
-              onBlur={(event) => void save({ asr_language: event.target.value.trim() })}
-            />
-          </label>
         </div>
         {settings.asr_api_key_set ? (
-          <button
-            className="btn ghost"
-            type="button"
-            onClick={() => void save({ asr_api_key: '' })}
-          >
+          <button className="btn ghost" type="button" onClick={() => void save({ asr_api_key: '' })}>
             {t('admin.media.clearApiKey', '清除 API Key')}
           </button>
         ) : null}
@@ -303,58 +291,6 @@ export function AdminMediaPage() {
             'Audio is transcoded at the bitrate above; video is copied as-is up to 720p. Each download is capped at 2 GiB and by the media duration setting above, so longer entries are not archived. Existing entries are not backfilled automatically; retry a single article from its page.',
           )}
         </p>
-      </section>
-
-      <section className="panel">
-        <div className="panel-header">
-          <h2 className="panel-title">{t('admin.media.credentials', '来源凭证与代理')}</h2>
-        </div>
-        <p className="muted admin-note">
-          {t(
-            'admin.media.credentialsHint',
-            'B站投稿列表与 CC 字幕都需要 SESSDATA；YouTube 必须走代理，B站不能走代理。',
-          )}
-        </p>
-        <div className="form-grid">
-          <label className="auth-field">
-            <span>{t('admin.media.bilibiliCookie', 'B站 Cookie')}</span>
-            <input
-              className="input"
-              type="password"
-              value={newCookie}
-              placeholder={settings.bilibili_cookie_set
-                ? settings.bilibili_cookie || t('admin.media.secretSet', '已配置（留空则不改）')
-                : t('admin.media.secretUnset', '未配置')}
-              onChange={(event) => setNewCookie(event.target.value)}
-              onBlur={() => {
-                if (newCookie) {
-                  void save({ bilibili_cookie: newCookie });
-                  setNewCookie('');
-                }
-              }}
-            />
-          </label>
-          <label className="auth-field">
-            <span>{t('admin.media.youtubeCookies', 'YouTube cookies（Netscape cookies.txt 内容）')}</span>
-            <textarea
-              className="input"
-              rows={4}
-              spellCheck={false}
-              placeholder={t('admin.media.youtubeCookiesPlaceholder', '留空则不使用登录态；提交后不会回显')}
-              defaultValue={settings.youtube_cookies}
-              onBlur={(event) => void save({ youtube_cookies: event.target.value })}
-            />
-          </label>
-          <ProxyFields
-            values={{
-              proxy_default: settings.proxy_default,
-              proxy_bilibili: settings.proxy_bilibili,
-              proxy_youtube: settings.proxy_youtube,
-              proxy_podcast: settings.proxy_podcast,
-            }}
-            onSave={save}
-          />
-        </div>
         <label className="auth-check">
           <input
             type="checkbox"

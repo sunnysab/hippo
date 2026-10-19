@@ -22,11 +22,12 @@ import { SourcesPanel } from './pages/settings/SourcesPanel';
 import { AdminPage } from './pages/admin/AdminPage';
 import { AdminLayout } from './pages/admin/AdminLayout';
 import { AdminLlmPage } from './pages/admin/AdminLlmPage';
-import { AdminMediaPage } from './pages/admin/AdminMediaPage';
 import { AdminSitePage } from './pages/admin/AdminSitePage';
 import { AdminLogPage } from './pages/admin/AdminLogPage';
 import { AdminSyncPage } from './pages/admin/AdminSyncPage';
-import { AdminLoginPage } from './pages/admin/AdminLoginPage';
+import { AdminTranscribePage } from './pages/admin/AdminTranscribePage';
+import { AdminSourcePage } from './pages/admin/AdminSourcePage';
+import { SourceDetailPage } from './pages/admin/SourceDetailPage';
 import { ChatPage } from './pages/chat/ChatPage';
 import { ReportPage } from './pages/report/ReportPage';
 import { KnowledgePage } from './pages/knowledge/KnowledgePage';
@@ -100,10 +101,14 @@ function AppRoutes() {
                     }
                   >
                     <Route index element={<AdminPage />} />
+                    <Route path="source" element={<AdminSourcePage />} />
+                    <Route path="source/:source" element={<SourceDetailPage />} />
                     <Route path="sync" element={<AdminSyncPage />} />
-                    <Route path="login" element={<AdminLoginPage />} />
+                    <Route path="transcribe" element={<AdminTranscribePage />} />
+                    {/* The WeChat sign-in moved onto its source page. */}
+                    <Route path="login" element={<Navigate to="/admin/source/weixin" replace />} />
                     <Route path="llm" element={<AdminLlmPage />} />
-                    <Route path="media" element={<AdminMediaPage />} />
+                    <Route path="media" element={<Navigate to="/admin/transcribe" replace />} />
                     <Route path="site" element={<AdminSitePage />} />
                     <Route path="log" element={<AdminLogPage />} />
                   </Route>

@@ -11,6 +11,10 @@ interface ProxyFieldsProps {
   /** `proxy_default` plus one `proxy_<source>` per source, as the API stores them. */
   values: Record<string, string>;
   onSave: (patch: Record<string, string>) => Promise<void>;
+  /** Narrow the form to one source (its own page); every source by default. */
+  sources?: readonly string[];
+  /** Hide the instance-wide default, which belongs to no single source. */
+  showDefault?: boolean;
 }
 
 /** `''`/`default` are "follow the default", `direct` is a direct connection. */
@@ -32,7 +36,7 @@ const without = <T,>(record: Record<string, T>, key: string): Record<string, T> 
  * proxied, and a podcast feed is somewhere in between — so a single instance-wide
  * proxy is not enough, and neither is a blank field meaning two things at once.
  */
-export function ProxyFields({ values, onSave }: ProxyFieldsProps) {
+export function ProxyFields({ values, onSave, sources = SOURCES, showDefault = true }: ProxyFieldsProps) {
   const { t } = useI18n();
   // 正在输入的文本；pending 记录「已选了自定义，但值还没输入完」。
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -94,18 +98,20 @@ export function ProxyFields({ values, onSave }: ProxyFieldsProps) {
 
   return (
     <>
-      <label className="auth-field">
-        <span>{t('admin.media.proxyDefault', '默认代理')}</span>
-        <input
-          className="input"
-          id="proxy_default"
-          value={valueOf('proxy_default')}
-          placeholder={t('admin.media.proxyDefaultPlaceholder', 'http://host:port，留空则默认直连')}
-          onChange={(event) => setDrafts((previous) => ({ ...previous, proxy_default: event.target.value }))}
-          onBlur={() => void commit('proxy_default')}
-        />
-      </label>
-      {SOURCES.map((source) => {
+      {showDefault ? (
+        <label className="auth-field">
+          <span>{t('admin.media.proxyDefault', '默认代理')}</span>
+          <input
+            className="input"
+            id="proxy_default"
+            value={valueOf('proxy_default')}
+            placeholder={t('admin.media.proxyDefaultPlaceholder', 'http://host:port，留空则默认直连')}
+            onChange={(event) => setDrafts((previous) => ({ ...previous, proxy_default: event.target.value }))}
+            onBlur={() => void commit('proxy_default')}
+          />
+        </label>
+      ) : null}
+      {sources.map((source) => {
         const key = `proxy_${source}`;
         const custom = modeOfKey(key) === 'custom';
         return (

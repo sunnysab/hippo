@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useGroupsState, useGroupsActions } from '../../store/groups';
 import { GroupList } from './GroupList';
 import { GroupHeader } from './GroupHeader';
@@ -37,6 +37,7 @@ export function GroupsPage() {
   const { loadGroups } = useGroupsActions();
   const { t } = useI18n();
   const { showToast } = useToast();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [accountQuery, setAccountQuery] = useState('');
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
@@ -106,7 +107,7 @@ export function GroupsPage() {
   const handleGroupSync = async (groupId: number) => {
     try {
       await apiSend('/api/settings/run', 'POST', { group_id: groupId });
-      window.location.hash = '#/admin/sync';
+      navigate('/admin/sync');
       showToast(t('groups.syncTriggered', 'Group sync triggered.'));
     } catch (err) {
       if (isAuthError(err)) return;

@@ -172,3 +172,28 @@
   color: var(--muted);
   word-break: break-all;
 }
+
+/* Source console. The list is a table (scanned), the detail page is a stack of
+   panels (edited), so it needs no bespoke layout beyond these two hooks. */
+.admin-page-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-page-head .panel-title {
+  margin: 0;
+}
+
+.admin-source-link {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.admin-source-link:hover {
+  text-decoration: underline;
+}
+
+.admin-actions .btn {
+  text-decoration: none;
+}

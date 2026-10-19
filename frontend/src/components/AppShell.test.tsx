@@ -210,7 +210,7 @@ describe('AppShell', () => {
     expect(screen.getByText(zhCN['banner.weixinLoginExpired'])).toBeTruthy();
     const relogin = screen.getByRole('button', { name: zhCN['login.relogin'] });
     fireEvent.click(relogin);
-    expect(screen.getByTestId('location').textContent).toBe('/admin/login');
+    expect(screen.getByTestId('location').textContent).toBe('/admin/source/weixin');
   });
 
   it('keeps the expired banner and relogin when a stale sync error is also stored', async () => {

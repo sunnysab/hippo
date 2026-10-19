@@ -8,8 +8,9 @@ import { onRefresh } from '../../utils/events';
 import { ActiveTaskPanel } from './ActiveTaskPanel';
 import { FailureAlertPanel } from './FailureAlertPanel';
 import { QueuePanel } from './QueuePanel';
-import { SyncHistoryPanel } from './SyncHistoryPanel';
+import { AdminSyncSection } from './AdminSyncSection';
 import { SyncSettingsPanel } from './SyncSettingsPanel';
+import { SourceSyncOverview } from './SourceSyncOverview';
 
 const buildSyncStatusFingerprint = (payload: Record<string, unknown> | null): string => {
   if (!payload) return '';
@@ -38,6 +39,14 @@ const buildSyncTasksFingerprint = (tasks: SyncTask[]): string => {
   })));
 };
 
+/**
+ * The sync console, in one column: which source is doing what, then the global
+ * schedule, then the live task and the backlog.
+ *
+ * A single column rather than two: the schedule above the backlog is a sequence
+ * an operator reads top to bottom, and side-by-side panels of unequal height left
+ * half a wide window empty.
+ */
 export function AdminSyncPage() {
   const { state, dispatch } = useSettingsState();
   const { isAdmin } = useAuth();
@@ -148,16 +157,13 @@ function AdminSyncPanels({ initialFormState }: { initialFormState: SyncSettingsF
   const [formState, setFormState] = useState(initialFormState);
 
   return (
-    <div className="sync-columns">
-      <div className="sync-column">
-        <SyncSettingsPanel formState={formState} setFormState={setFormState} />
-        <FailureAlertPanel formState={formState} setFormState={setFormState} />
-      </div>
-      <div className="sync-column">
-        <ActiveTaskPanel />
-        <QueuePanel />
-        <SyncHistoryPanel />
-      </div>
+    <div className="admin-page">
+      <SourceSyncOverview />
+      <SyncSettingsPanel formState={formState} setFormState={setFormState} />
+      <FailureAlertPanel formState={formState} setFormState={setFormState} />
+      <ActiveTaskPanel />
+      <QueuePanel />
+      <AdminSyncSection />
     </div>
   );
 }

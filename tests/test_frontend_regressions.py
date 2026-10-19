@@ -14,6 +14,11 @@ MEDIA_QUERY_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useMediaQuery.ts'
 ARTICLE_FILTER_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useArticleFilters.ts'
 ARTICLE_READER_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useArticleReader.ts'
 I18N_ZH = ROOT / 'frontend' / 'src' / 'i18n' / 'zh-CN.json'
+ADMIN_LAYOUT = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminLayout.tsx'
+ADMIN_SOURCE_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminSourcePage.tsx'
+ADMIN_SYNC_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminSyncPage.tsx'
+ADMIN_APP = ROOT / 'frontend' / 'src' / 'App.tsx'
+SETTINGS_CSS = ROOT / 'frontend' / 'src' / 'styles' / 'settings.css'
 
 
 class FrontendRegressionTest(unittest.TestCase):
@@ -80,6 +85,38 @@ class FrontendRegressionTest(unittest.TestCase):
         source = GROUP_HEADER.read_text(encoding='utf-8')
 
         self.assertNotIn('confirm(', source)
+
+    def test_admin_navigation_follows_the_source_model(self) -> None:
+        # 来源是一等公民：凭证、代理、扫码登录都归到各自的来源页，
+        # 共享的转写参数单独一页，不再挂在某个来源下。
+        layout = ADMIN_LAYOUT.read_text(encoding='utf-8')
+        app = ADMIN_APP.read_text(encoding='utf-8')
+
+        self.assertIn("path: '/admin/source'", layout)
+        self.assertIn("path: '/admin/transcribe'", layout)
+        self.assertNotIn("path: '/admin/login'", layout)
+        self.assertNotIn("path: '/admin/media'", layout)
+        self.assertIn("path=\"source/:source\" element={<SourceDetailPage />}", app)
+        # 旧地址仍然可达：书签与横幅不该撞上空白页。
+        self.assertIn('path="login" element={<Navigate to="/admin/source/weixin" replace />}', app)
+        self.assertIn('path="media" element={<Navigate to="/admin/transcribe" replace />}', app)
+
+    def test_the_sync_console_stacks_in_one_column(self) -> None:
+        # 两栏在宽屏留下半屏空白，窄屏又塌成一栏：同步页改成单列。
+        admin_css = (ROOT / 'frontend' / 'src' / 'styles' / 'settings.css').read_text(encoding='utf-8')
+        sync_page = ADMIN_SYNC_PAGE.read_text(encoding='utf-8')
+
+        self.assertNotIn('sync-columns', admin_css)
+        self.assertNotIn('sync-columns', sync_page)
+        self.assertIn('admin-page', sync_page)
+
+    def test_admin_source_page_lists_what_the_backend_reports(self) -> None:
+        source = ADMIN_SOURCE_PAGE.read_text(encoding='utf-8')
+
+        # 来源清单来自后端，前端不再自己维护一份。
+        self.assertIn('/api/admin/source', (ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'sources.ts').read_text(encoding='utf-8'))
+        self.assertIn('/api/settings/run', source)
+        self.assertIn('{ source }', source)
 
     def test_groups_page_syncs_selected_group_with_route_query(self) -> None:
         source = GROUPS_PAGE.read_text(encoding='utf-8')
