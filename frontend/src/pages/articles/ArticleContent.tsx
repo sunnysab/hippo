@@ -33,8 +33,6 @@ interface PlayerControls {
    * can still point at the right moment of the original.
    */
   originalHref: string | null;
-  /** Index of the paragraph the player is currently inside, -1 before the first. */
-  activeIndex: number;
 }
 
 // Only render-time values live here; the two media refs travel down as props so
@@ -44,7 +42,6 @@ const PlayerContext = createContext<PlayerControls>({
   seek: () => {},
   pauseOther: () => {},
   originalHref: null,
-  activeIndex: -1,
 });
 
 /**
@@ -460,7 +457,6 @@ function RenderedContent({ payload, content, hideSmall, onImageContextMenu }: Re
     return {
       canSeek,
       originalHref,
-      activeIndex,
       pauseOther,
       seek: (seconds: number) => {
         const target: HTMLMediaElement | null = videoRef.current || audioRef.current;
@@ -475,7 +471,7 @@ function RenderedContent({ payload, content, hideSmall, onImageContextMenu }: Re
         void target.play().catch(() => {});
       },
     };
-  }, [activeIndex, canSeek, markAt, originalHref]);
+  }, [canSeek, markAt, originalHref]);
   const contentKeys = buildContentBlockKeys(content);
 
   return (
