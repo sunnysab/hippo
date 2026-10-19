@@ -139,8 +139,16 @@ async def current_user(user: User | None = Depends(current_user_optional)) -> Us
     return user
 
 
-async def require_admin(user: User = Depends(current_user)) -> User:
-    """Require the admin role."""
+async def require_admin(request: Request, user: User = Depends(current_user)) -> User:
+    """Require the admin role from a web session, never from an API key.
+
+    A key is a long-lived programmatic credential, so letting one reach the
+    admin surface would turn a leaked key into an admin console. The check is
+    on the authentication context rather than a path list, so a new admin route
+    is covered by construction.
+    """
+    if getattr(request.state, 'api_key', None) is not None:
+        raise ApiError('API Key 不能用于管理接口，请用网页登录', status=403)
     if user.role != 'admin':
         raise ApiError('需要管理员权限', status=403)
     return user
