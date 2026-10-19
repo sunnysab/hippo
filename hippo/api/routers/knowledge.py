@@ -43,6 +43,14 @@ from ...models import User
 from ...repositories.knowledge import DEFAULT_PAGE_SIZE, MAX_OFFSET, MAX_PAGE_SIZE, MAX_QUERY_LENGTH
 from ...storage import PostgresStorage
 from ..deps import current_user, get_storage
+from ..schemas.knowledge import (
+    DocumentContentOut,
+    DocumentCreatedOut,
+    DocumentListOut,
+    KnowledgeBaseCreatedOut,
+    KnowledgeBaseListOut,
+    SearchPageOut,
+)
 
 router = APIRouter(tags=['knowledge'])
 
@@ -166,7 +174,7 @@ def _canonical_mime(body: dict[str, Any]) -> str:
     return value
 
 
-@router.get('/knowledge-base')
+@router.get('/knowledge-base', response_model=KnowledgeBaseListOut)
 async def list_knowledge_bases(
     limit: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     offset: int = Query(0, ge=0, le=MAX_OFFSET),
@@ -177,7 +185,7 @@ async def list_knowledge_bases(
     return {'knowledge_bases': [_public_knowledge_base(row) for row in rows], 'limit': limit, 'offset': offset}
 
 
-@router.post('/knowledge-base', status_code=201)
+@router.post('/knowledge-base', status_code=201, response_model=KnowledgeBaseCreatedOut)
 async def create_knowledge_base(
     body: dict[str, Any] = Body(...),
     storage: PostgresStorage = Depends(get_storage),
@@ -192,7 +200,7 @@ async def create_knowledge_base(
     return {'knowledge_base': _public_knowledge_base(created)}
 
 
-@router.get('/knowledge-base/{knowledge_base_id}')
+@router.get('/knowledge-base/{knowledge_base_id}', response_model=KnowledgeBaseCreatedOut)
 async def get_knowledge_base(
     knowledge_base_id: str,
     storage: PostgresStorage = Depends(get_storage),
@@ -204,7 +212,7 @@ async def get_knowledge_base(
     return {'knowledge_base': _public_knowledge_base(row)}
 
 
-@router.patch('/knowledge-base/{knowledge_base_id}')
+@router.patch('/knowledge-base/{knowledge_base_id}', response_model=KnowledgeBaseCreatedOut)
 async def rename_knowledge_base(
     knowledge_base_id: str,
     body: dict[str, Any] = Body(...),
@@ -238,7 +246,7 @@ async def delete_knowledge_base(
     return Response(status_code=204)
 
 
-@router.get('/knowledge-base/{knowledge_base_id}/document')
+@router.get('/knowledge-base/{knowledge_base_id}/document', response_model=DocumentListOut)
 async def list_documents(
     knowledge_base_id: str,
     limit: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
@@ -255,7 +263,7 @@ async def list_documents(
     return {'documents': [_public_document(row) for row in rows], 'limit': limit, 'offset': offset}
 
 
-@router.post('/knowledge-base/{knowledge_base_id}/document', status_code=201)
+@router.post('/knowledge-base/{knowledge_base_id}/document', status_code=201, response_model=DocumentCreatedOut)
 async def create_document(
     knowledge_base_id: str,
     body: dict[str, Any] = Body(...),
@@ -279,7 +287,7 @@ async def create_document(
     return {'document': _public_document(created)}
 
 
-@router.get('/document/{document_id}')
+@router.get('/document/{document_id}', response_model=DocumentCreatedOut)
 async def get_document(
     document_id: str,
     storage: PostgresStorage = Depends(get_storage),
@@ -304,7 +312,7 @@ async def delete_document(
     return Response(status_code=204)
 
 
-@router.get('/document/{document_id}/content')
+@router.get('/document/{document_id}/content', response_model=DocumentContentOut)
 async def get_document_content(
     document_id: str,
     limit: int = Query(CONTENT_PAGE_SIZE, ge=1, le=MAX_CONTENT_PAGE_SIZE),
@@ -344,7 +352,7 @@ async def get_document_content(
     }
 
 
-@router.get('/knowledge-base/{knowledge_base_id}/search')
+@router.get('/knowledge-base/{knowledge_base_id}/search', response_model=SearchPageOut)
 async def search_knowledge_base(
     knowledge_base_id: str,
     q: str = Query(..., min_length=1, max_length=MAX_QUERY_LENGTH),
@@ -531,7 +539,7 @@ def _upload_failure(error: DocumentUploadError) -> ApiError:
     return ApiError(error.message, status=status, code=error.code)
 
 
-@router.post('/document/{document_id}/retry')
+@router.post('/document/{document_id}/retry', response_model=DocumentCreatedOut)
 async def retry_failed_document(
     document_id: str,
     request: Request,
@@ -559,7 +567,7 @@ async def retry_failed_document(
     return {'document': _public_document(row)}
 
 
-@router.put('/document/{document_id}/file', status_code=202)
+@router.put('/document/{document_id}/file', status_code=202, response_model=DocumentCreatedOut)
 async def upload_document_file(
     document_id: str,
     request: Request,

@@ -30,6 +30,7 @@ from hippo import server
 from hippo.api import deps
 from hippo.api.errors import install_exception_handlers
 from hippo.api.routers import admin as admin_api
+from hippo.api.routers import knowledge as knowledge_api
 from hippo.api.schemas.admin import (
     MediaSettingsUpdateRequest,
     UserCreateRequest,
@@ -62,6 +63,15 @@ def _admin_client(storage: SimpleNamespace) -> TestClient:
     app.include_router(admin_api.router, prefix='/api')
     app.dependency_overrides[deps.get_storage] = lambda: storage
     app.dependency_overrides[deps.require_admin] = lambda: SimpleNamespace(id=1, username='root', role='admin')
+    return TestClient(app)
+
+
+def _knowledge_client(storage: SimpleNamespace, user: SimpleNamespace) -> TestClient:
+    app = FastAPI()
+    install_exception_handlers(app)
+    app.include_router(knowledge_api.router, prefix='/api')
+    app.dependency_overrides[deps.get_storage] = lambda: storage
+    app.dependency_overrides[deps.current_user] = lambda: user
     return TestClient(app)
 
 
@@ -146,6 +156,94 @@ class AdminResponseContractTest(unittest.TestCase):
         self.assertIn('asr_api_key', schema['properties'])
         self.assertIn('asr_api_key_set', schema['properties'])
         self.assertNotIn('bilibili_cookie_value', schema['properties'])
+
+
+class KnowledgeResponseContractTest(unittest.TestCase):
+    #: Storage columns that must never appear as a response key or value.
+    SERVER_OWNED = ('s3_key', 'sha256', 'user_id', 'lease_token', 'locked_by', 'deleted_at')
+
+    @staticmethod
+    def _document_row() -> dict[str, Any]:
+        return {
+            'id': '11111111-1111-4111-8111-111111111111',
+            'knowledge_base_id': '22222222-2222-4222-8222-222222222222',
+            'filename': 'a.pdf',
+            'mime_type': 'application/pdf',
+            'size_bytes': 10,
+            'state': 'ready',
+            'attempts': 1,
+            'error_code': None,
+            'error_message': None,
+            'page_count': 1,
+            'version': 2,
+            'created_at': '2026-01-02T03:04:05+00:00',
+            'updated_at': '2026-01-02T03:04:05+00:00',
+            # Internal storage the HTTP projection must drop.
+            's3_key': 'knowledge/secret-object.pdf',
+            'sha256': 'a' * 64,
+            'user_id': 1,
+            'lease_token': '33333333-3333-4333-8333-333333333333',
+            'locked_by': 'worker-1',
+            'deleted_at': None,
+        }
+
+    def test_a_document_response_drops_the_storage_columns(self) -> None:
+        storage = SimpleNamespace(
+            knowledge=SimpleNamespace(get_document=AsyncMock(return_value=self._document_row()))
+        )
+        user = SimpleNamespace(id=1, username='alice', role='user')
+
+        response = _knowledge_client(storage, user).get('/api/document/11111111-1111-4111-8111-111111111111')
+        payload = response.json()
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual('a.pdf', payload['document']['filename'])
+        for key in self.SERVER_OWNED:
+            self.assertNotIn(key, payload)
+        self.assertNotIn('knowledge/secret-object.pdf', str(payload))
+        self.assertNotIn('a' * 64, str(payload))
+
+    def test_the_document_schemas_publish_no_storage_column(self) -> None:
+        spec = _document()
+        document = _resolve(
+            spec,
+            _resolve(
+                spec,
+                spec['paths']['/api/document/{document_id}']['get']['responses']['200']['content']['application/json'][
+                    'schema'
+                ],
+            )['properties']['document'],
+        )
+
+        self.assertNotEqual(True, document.get('additionalProperties'))
+        self.assertIn('filename', document['properties'])
+        self.assertIn('state', document['properties'])
+        for key in self.SERVER_OWNED:
+            self.assertNotIn(key, document['properties'])
+
+    def test_the_search_hit_publishes_no_storage_column(self) -> None:
+        spec = _document()
+        page = _resolve(
+            spec,
+            spec['paths']['/api/knowledge-base/{knowledge_base_id}/search']['get']['responses']['200']['content'][
+                'application/json'
+            ]['schema'],
+        )
+        hit = _resolve(spec, page['properties']['hits']['items'])
+
+        self.assertEqual(
+            {'document_id', 'knowledge_base_id', 'filename', 'version', 'page_no', 'ordinal', 'text', 'chunk_type', 'heading_level'},
+            set(hit['properties']),
+        )
+        for key in self.SERVER_OWNED:
+            self.assertNotIn(key, hit['properties'])
+
+    def test_the_upload_answers_the_public_document_projection(self) -> None:
+        spec = _document()
+        response = spec['paths']['/api/document/{document_id}/file']['put']['responses']['202']
+        schema = _resolve(spec, response['content']['application/json']['schema'])
+
+        self.assertIn('document', schema['properties'])
 
 
 if __name__ == '__main__':
