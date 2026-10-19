@@ -221,19 +221,28 @@ class SyncJobRepository:
             )
 
     async def recover_stale_running_jobs(self, *, stale_after_minutes: int = 15) -> int:
+        # A stale ``cancelling`` job is cancelled, not failed: it has already been
+        # asked to stop, and both statuses must leave the active window or the
+        # partial unique index keeps the requester's next manual run out.
         async with self._conn.cursor() as cur:
             await cur.execute(
                 """
                 UPDATE sync_jobs
-                SET status = 'failed',
-                    error = 'worker_stopped',
+                SET status = CASE status
+                        WHEN 'cancelling' THEN 'cancelled'
+                        ELSE 'failed'
+                    END,
+                    error = CASE status
+                        WHEN 'cancelling' THEN error
+                        ELSE 'worker_stopped'
+                    END,
                     phase = NULL,
                     current_account = NULL,
                     current_article = NULL,
                     finished_at = clock_timestamp(),
                     locked_by = NULL,
                     locked_at = NULL
-                WHERE status = 'running'
+                WHERE status IN ('running', 'cancelling')
                   AND locked_at < NOW() - (%s * INTERVAL '1 minute')
                 """,
                 (max(int(stale_after_minutes), 1),),

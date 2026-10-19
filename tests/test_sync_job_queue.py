@@ -408,9 +408,12 @@ class SyncJobQueueTest(unittest.TestCase):
 
         self.assertEqual(recovered, 3)
         joined = '\n'.join(conn.queries)
-        self.assertIn("WHERE status = 'running'", joined)
+        # Both active statuses are recovered; a stale cancellation releases the
+        # manual unique index by landing in ``cancelled``, a dead run in ``failed``.
+        self.assertIn("WHERE status IN ('running', 'cancelling')", joined)
         self.assertIn("locked_at < NOW() - (%s * INTERVAL '1 minute')", joined)
-        self.assertIn("status = 'failed'", joined)
+        self.assertIn("WHEN 'cancelling' THEN 'cancelled'", joined)
+        self.assertIn("ELSE 'failed'", joined)
 
     def test_worker_recovers_stale_running_jobs_before_processing(self) -> None:
         from hippo.sync_worker import recover_stale_running_jobs
