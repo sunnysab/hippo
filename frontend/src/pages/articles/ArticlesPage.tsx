@@ -17,6 +17,8 @@ import { LoadingIndicator } from '../../components/LoadingIndicator';
 import { copyToClipboard } from '../../utils/clipboard';
 import { articleToMarkdown } from './exportMarkdown';
 import { buildOutline } from './outline';
+import { useSyncRun } from '../../hooks/useSyncRun';
+import { getSyncRunLabel } from '../../utils/sync';
 
 export function ArticlesPage() {
   const { state, dispatch } = useArticlesState();
@@ -46,6 +48,7 @@ export function ArticlesPage() {
     mobileReading,
     getSelectedArticleLink,
   } = useArticleReader();
+  const { runSync, task: syncTask, running: isSyncing } = useSyncRun();
   // The outline button is only meaningful when the article has headings.
   const outline = buildOutline(state.currentArticlePayload?.content);
   // Media entries are the ones with a transcription queue behind them; the button
@@ -87,6 +90,23 @@ export function ArticlesPage() {
               />
             </div>
             <div className="toolbar article-sidebar-actions">
+              {/* The scope is whatever the list is filtered to: one source, one
+                  group, or every subscription the reader has. */}
+              <button
+                className="btn ghost"
+                id="btn-articles-sync"
+                type="button"
+                disabled={isSyncing}
+                title={t('articles.updateNowHint', 'Update the current scope')}
+                onClick={() => { void runSync({ source: filters.source, groupId: filters.groupId }); }}
+              >
+                {t('articles.updateNow', 'Update now')}
+              </button>
+              {syncTask ? (
+                <span className="meta-note" id="article-sync-status" role="status">
+                  {getSyncRunLabel(syncTask.status, t)}
+                </span>
+              ) : null}
               <button
                 className={`btn ghost article-filter-toggle${state.filtersCollapsed ? '' : ' is-active'}`}
                 id="btn-article-filter-toggle"

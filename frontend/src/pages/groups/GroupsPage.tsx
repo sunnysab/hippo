@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useGroupsState, useGroupsActions } from '../../store/groups';
 import { GroupList } from './GroupList';
 import { GroupHeader } from './GroupHeader';
@@ -10,8 +10,8 @@ import { AddSubscriptionModal } from './AddSubscriptionModal';
 import { GroupNameModal } from './GroupNameModal';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { useI18n } from '../../i18n';
-import { apiSend, isAuthError } from '../../api';
-import { useToast } from '../../hooks/useToast';
+import { apiSend } from '../../api';
+import { useSyncRun } from '../../hooks/useSyncRun';
 import { onRefresh } from '../../utils/events';
 
 interface GroupNameDialogState {
@@ -36,8 +36,7 @@ export function GroupsPage() {
   const { state, dispatch } = useGroupsState();
   const { loadGroups } = useGroupsActions();
   const { t } = useI18n();
-  const { showToast } = useToast();
-  const navigate = useNavigate();
+  const { runSync } = useSyncRun();
   const [searchParams, setSearchParams] = useSearchParams();
   const [accountQuery, setAccountQuery] = useState('');
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
@@ -105,14 +104,8 @@ export function GroupsPage() {
 
   // Handle group sync actions
   const handleGroupSync = async (groupId: number) => {
-    try {
-      await apiSend('/api/settings/run', 'POST', { group_id: groupId });
-      navigate('/admin/sync');
-      showToast(t('groups.syncTriggered', 'Group sync triggered.'));
-    } catch (err) {
-      if (isAuthError(err)) return;
-      showToast(t('groups.syncTriggerFailed', 'Failed to trigger group sync.'));
-    }
+    // The group is the scope: the reader stays where they are.
+    await runSync({ groupId });
   };
 
   const handleSubmitGroupName = async (name: string) => {

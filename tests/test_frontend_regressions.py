@@ -25,6 +25,7 @@ ARTICLES_CSS = ROOT / 'frontend' / 'src' / 'styles' / 'articles.css'
 BRAND_MARK = ROOT / 'frontend' / 'src' / 'components' / 'BrandMark.tsx'
 FAVICON = ROOT / 'frontend' / 'public' / 'favicon.svg'
 LOGIN_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'auth' / 'LoginPage.tsx'
+SYNC_RUN_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useSyncRun.ts'
 
 
 def _mark_path_data(source: str) -> str:
@@ -186,6 +187,33 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertIn('aspect-ratio: 16 / 9;', rule)
         self.assertIn('object-fit: cover;', rule)
         self.assertNotIn('aspect-ratio: auto', rule)
+
+    def test_one_hook_owns_manual_runs_and_their_task_polling(self) -> None:
+        hook = SYNC_RUN_HOOK.read_text(encoding='utf-8')
+
+        # 手动同步只有一份实现：触发、轮询、结束刷新都在这里。
+        self.assertIn("'/api/settings/run'", hook)
+        self.assertIn("`/api/settings/tasks/${taskId}`", hook)
+        self.assertIn('emitRefresh()', hook)
+        # 只轮询活动任务，卸载与新的运行都会让旧答案作废。
+        self.assertIn('ACTIVE_STATUSES', hook)
+        self.assertIn('generationRef', hook)
+        self.assertIn('sync.task_conflict', hook)
+
+    def test_reader_pages_trigger_sync_without_a_trip_to_the_console(self) -> None:
+        articles = ARTICLES_PAGE.read_text(encoding='utf-8')
+        batch = BATCH_ACTIONS.read_text(encoding='utf-8')
+        groups = GROUPS_PAGE.read_text(encoding='utf-8')
+
+        # 读者页面共用 hook，不再各自拼 /api/settings/run，也不跳管理台。
+        for page in (articles, batch, groups):
+            self.assertIn('useSyncRun', page)
+            self.assertNotIn("'/api/settings/run'", page)
+            self.assertNotIn("navigate('/admin/sync')", page)
+        self.assertIn('articles.updateNow', articles)
+        self.assertIn('runSync({ source: filters.source, groupId: filters.groupId })', articles)
+        self.assertIn('runSync({ bizList: state.selectedAccounts })', batch)
+        self.assertIn('runSync({ groupId })', groups)
 
     def test_groups_page_syncs_selected_group_with_route_query(self) -> None:
         source = GROUPS_PAGE.read_text(encoding='utf-8')

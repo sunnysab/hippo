@@ -4,15 +4,15 @@ import { useI18n } from '../../i18n';
 import { apiSend, isAuthError } from '../../api';
 import { useToast } from '../../hooks/useToast';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
+import { useSyncRun } from '../../hooks/useSyncRun';
 import { ConfirmModal } from '../../components/ConfirmModal';
-import { useNavigate } from 'react-router-dom';
 import { emitRefresh } from '../../utils/events';
 
 export function BatchActions() {
   const { state, dispatch } = useGroupsState();
   const { t } = useI18n();
   const { showToast } = useToast();
-  const navigate = useNavigate();
+  const { runSync } = useSyncRun();
   const [expanded, setExpanded] = useState(false);
   const [targetGroupId, setTargetGroupId] = useState('');
   const [syncBatchInterval, setSyncBatchInterval] = useState<number | null>(null);
@@ -76,14 +76,8 @@ export function BatchActions() {
       showToast(t('accounts.syncSelectAccounts', 'Select accounts to sync.'));
       return;
     }
-    try {
-      await apiSend('/api/settings/run', 'POST', { biz_list: state.selectedAccounts });
-      navigate('/admin/sync');
-      showToast(t('accounts.syncTriggered', 'Selected accounts sync started.'));
-    } catch (err) {
-      if (isAuthError(err)) return;
-      showToast(t('accounts.syncTriggerFailed', 'Failed to start selected accounts sync.'));
-    }
+    // The selected subscriptions are the scope: no trip through the console.
+    await runSync({ bizList: state.selectedAccounts });
   };
 
   const handleDelete = async () => {
