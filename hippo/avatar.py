@@ -106,8 +106,10 @@ async def _fetch_and_cache_avatar(storage: PostgresStorage, biz: str, url: str) 
     proxy = await _avatar_proxy(storage, biz)
     try:
         # The avatar URL is untrusted (feed or channel metadata), so the fetch is
-        # pinned to a checked public IP per hop; the source's proxy is kept.
-        async with MPClient(timeout=10.0, proxy=proxy or None) as client:
+        # pinned to a checked public IP per hop; the source's proxy is kept. No
+        # keep-alive, so each hop opens its own TLS channel and the original
+        # hostname is certified every time instead of reusing a pooled IP channel.
+        async with MPClient(timeout=10.0, proxy=proxy or None, keepalive_connections=0) as client:
             fetched = await fetch_public_image(client.client, url, headers=headers)
         if fetched is None:
             return None

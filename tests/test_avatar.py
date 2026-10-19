@@ -18,6 +18,7 @@ import httpx
 
 from hippo import avatar as avatar_module
 from hippo.avatar import _avatar_proxy, _fetch_and_cache_avatar
+from hippo.http import MPClient
 from hippo.media_settings import default_media_settings
 
 SETTINGS = {
@@ -60,9 +61,16 @@ class AvatarFetchTest(unittest.IsolatedAsyncioTestCase):
             self._seen = seen
             self.client = object()
 
-        def __call__(self, *, timeout: float | None = None, proxy: str | None = None):
+        def __call__(
+            self,
+            *,
+            timeout: float | None = None,
+            proxy: str | None = None,
+            keepalive_connections: int | None = None,
+        ):
             self._seen['proxy'] = proxy
             self._seen['timeout'] = timeout
+            self._seen['keepalive_connections'] = keepalive_connections
             return self
 
         async def __aenter__(self):
@@ -115,6 +123,8 @@ class AvatarFetchTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((b'avatar-bytes', 'image/png'), result)
         self.assertEqual('http://youtube:2', seen['proxy'])
         self.assertEqual(10.0, seen['timeout'])
+        # Keep-alive off: every hop must certify its own original hostname.
+        self.assertEqual(0, seen['keepalive_connections'])
         self.assertEqual('https://yt3/x=s88.jpg', seen['url'])
         self.assertIn('User-Agent', seen['headers'])
         store.assert_awaited_once()
@@ -158,6 +168,25 @@ class AvatarFetchTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
         warning.assert_called_once()
+
+
+class MPClientKeepaliveTest(unittest.IsolatedAsyncioTestCase):
+    """The avatar flag must reach the connection pool, not just be passed along."""
+
+    async def _pool_keepalive(self, *, keepalive_connections: int | None) -> int | None:
+        client = MPClient(
+            proxy='http://proxy.example:1',
+            article_worker=None,
+            keepalive_connections=keepalive_connections,
+        )
+        self.addAsyncCleanup(client.aclose)
+        return client.client._transport._pool._max_keepalive_connections
+
+    async def test_the_flag_reaches_the_connection_pool(self) -> None:
+        self.assertEqual(0, await self._pool_keepalive(keepalive_connections=0))
+
+    async def test_without_the_flag_the_default_pool_is_kept(self) -> None:
+        self.assertEqual(20, await self._pool_keepalive(keepalive_connections=None))
 
 
 if __name__ == '__main__':

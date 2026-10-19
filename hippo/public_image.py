@@ -21,10 +21,43 @@ import httpx
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 #: Redirect chains an avatar server may take us through before we give up.
 MAX_REDIRECTS = 5
+#: Wall-clock budget for one fetch, covering DNS, every redirect and the body.
+#: httpx timeouts bound connect/read but not the DNS thread, so this bounds the
+#: whole guard. Cancelling the lookup only stops the wait: the OS resolver thread
+#: is left to finish on its own, a bounded and loop-free residual.
+MAX_FETCH_SECONDS = 15.0
 
 _ALLOWED_SCHEMES = ('http', 'https')
 #: A malformed or unsupported URL is refused, never raised out of the guard.
 _URL_ERRORS = (httpx.InvalidURL, ValueError)
+#: Raster types a browser renders safely inline. SVG (and any unknown image/*)
+#: is refused: served same-origin it can carry active content.
+_ALLOWED_IMAGE_TYPES = frozenset(
+    {
+        'image/apng',
+        'image/avif',
+        'image/bmp',
+        'image/gif',
+        'image/jpeg',
+        'image/png',
+        'image/tiff',
+        'image/vnd.microsoft.icon',
+        'image/webp',
+        'image/x-icon',
+    }
+)
+#: IPv6 prefixes that tunnel or translate an IPv4 address. We do not fetch
+#: avatars over them, and their embedded private address would otherwise pass
+#: the global check (an IPv4-mapped address is judged as its embedded IPv4).
+_TUNNEL_OR_TRANSLATION = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        '64:ff9b::/96',  # NAT64 well-known
+        '64:ff9b:1::/48',  # NAT64 local-use
+        '2002::/16',  # 6to4
+        '2001::/32',  # Teredo
+    )
+)
 
 
 class _Plan(NamedTuple):
@@ -57,6 +90,8 @@ def _is_public_ip(value: str) -> bool:
     mapped = getattr(ip, 'ipv4_mapped', None)
     if mapped is not None:
         ip = mapped
+    if isinstance(ip, ipaddress.IPv6Address) and any(ip in net for net in _TUNNEL_OR_TRANSLATION):
+        return False
     if ip.is_multicast or ip.is_reserved or ip.is_link_local or ip.is_unspecified:
         return False
     return ip.is_global
@@ -143,13 +178,36 @@ async def fetch_public_image(
     headers: dict[str, str] | None = None,
     max_bytes: int = MAX_IMAGE_BYTES,
     max_redirects: int = MAX_REDIRECTS,
+    total_timeout: float = MAX_FETCH_SECONDS,
 ) -> tuple[bytes, str] | None:
     """Fetch an image from ``url`` without letting it reach the private network.
 
     Redirects are followed by hand so every hop passes the same check; ``client``
     must not follow them itself. Returns ``(data, content_type)`` or ``None``
-    when the URL, any hop, the type or the size is refused.
+    when the URL, any hop, the type or the size is refused, or the whole fetch
+    outlasts ``total_timeout``.
     """
+    try:
+        async with asyncio.timeout(total_timeout):
+            return await _fetch_public_image(
+                client,
+                url,
+                headers=headers,
+                max_bytes=max_bytes,
+                max_redirects=max_redirects,
+            )
+    except TimeoutError:
+        return None
+
+
+async def _fetch_public_image(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    headers: dict[str, str] | None,
+    max_bytes: int,
+    max_redirects: int,
+) -> tuple[bytes, str] | None:
     base_headers = dict(headers or {})
     current = url
     for _ in range(max_redirects + 1):
@@ -176,7 +234,7 @@ async def fetch_public_image(
             if response.status_code != 200:
                 return None
             media_type = _media_type(response)
-            if not media_type.startswith('image/'):
+            if media_type not in _ALLOWED_IMAGE_TYPES:
                 return None
             data = await _read_capped(response, max_bytes)
             if data is None:
@@ -185,4 +243,4 @@ async def fetch_public_image(
     return None
 
 
-__all__ = ['MAX_IMAGE_BYTES', 'MAX_REDIRECTS', 'fetch_public_image']
+__all__ = ['MAX_FETCH_SECONDS', 'MAX_IMAGE_BYTES', 'MAX_REDIRECTS', 'fetch_public_image']
