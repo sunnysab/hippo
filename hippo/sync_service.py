@@ -394,12 +394,17 @@ async def run_sync_job(
                     enable_download=bool(settings.get('download_content')),
                     enable_images=bool(settings.get('download_images')),
                     media_settings=media_settings,
+                    # Only build the sources this run actually selected: a task with
+                    # no WeChat account must not open the daemon at all.
+                    sources={account.source or 'weixin' for account in accounts},
                 )
             except FileStorageError as exc:
                 error = str(exc)
 
             if error is None and container:
                 async with container as app:
+                    if app.weixin_unavailable:
+                        job_observer.on_log(f'WeChat source unavailable: {app.weixin_unavailable}')
                     config = _build_sync_config(settings, force=force)
                     service = ArticleSyncService(
                         storage=storage,
