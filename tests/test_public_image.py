@@ -11,6 +11,7 @@ backend backs the connection-isolation test.
 from __future__ import annotations
 
 import asyncio
+import ssl
 import time
 import unittest
 from unittest.mock import patch
@@ -18,6 +19,7 @@ from unittest.mock import patch
 import httpcore
 import httpx
 
+from hippo.avatar_transport import PinnedProxyTransport
 from hippo.public_image import MAX_REDIRECTS, fetch_public_image
 
 CDN = 'cdn.example.com'
@@ -505,6 +507,201 @@ class ConnectionIsolationTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([('93.184.216.34', 443)], backend.connects)
         self.assertEqual(['a.example'], backend.handshakes)
+
+
+class _FakeProxyStream(httpcore.AsyncNetworkStream):
+    """A proxy socket that answers CONNECT, then an origin image."""
+
+    def __init__(self, backend: _FakeProxyBackend) -> None:
+        self._backend = backend
+        self._to_read = bytearray()
+
+    async def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        data = bytes(self._to_read[:max_bytes])
+        del self._to_read[:max_bytes]
+        return data
+
+    async def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        self._backend.writes.append(bytes(buffer))
+        if bytes(buffer).startswith(b'CONNECT '):
+            self._to_read += b'HTTP/1.1 200 Connection established\r\n\r\n'
+        else:
+            self._to_read += b'HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 3\r\n\r\nabc'
+
+    async def aclose(self) -> None:
+        self._backend.closes += 1
+
+    async def start_tls(
+        self,
+        ssl_context: ssl.SSLContext,
+        server_hostname: str | None = None,
+        timeout: float | None = None,
+    ) -> _FakeProxyStream:
+        self._backend.handshakes.append((server_hostname, ssl_context.verify_mode, ssl_context.check_hostname))
+        if self._backend.fail_tls:
+            raise ssl.SSLCertVerificationError('certificate verify failed')
+        return self
+
+    def get_extra_info(self, info: str) -> object:
+        return None
+
+
+class _FakeProxyBackend(httpcore.AsyncNetworkBackend):
+    def __init__(self, *, fail_tls: bool = False) -> None:
+        self.connects: list[tuple[str, int]] = []
+        self.handshakes: list[tuple[str | None, ssl.VerifyMode, bool]] = []
+        self.writes: list[bytes] = []
+        self.closes = 0
+        self.fail_tls = fail_tls
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: object = None,
+    ) -> _FakeProxyStream:
+        self.connects.append((host, port))
+        return _FakeProxyStream(self)
+
+    async def connect_unix_socket(self, path: str, timeout: float | None = None, socket_options: object = None):
+        raise NotImplementedError
+
+    async def sleep(self, seconds: float) -> None:
+        await asyncio.sleep(seconds)
+
+
+class PinnedProxyTunnelTest(unittest.IsolatedAsyncioTestCase):
+    """The pinned tunnel: CONNECT to the checked IP, TLS to the original name."""
+
+    async def _client(self, transport: httpx.AsyncBaseTransport) -> httpx.AsyncClient:
+        client = httpx.AsyncClient(transport=transport, follow_redirects=False)
+        self.addAsyncCleanup(client.aclose)
+        return client
+
+    @staticmethod
+    def _transport(proxy: str, backend: _FakeProxyBackend) -> PinnedProxyTransport:
+        return PinnedProxyTransport(
+            proxy,
+            limits=httpx.Limits(max_keepalive_connections=0),
+            network_backend=backend,
+        )
+
+    @staticmethod
+    def _connect_line(backend: _FakeProxyBackend) -> bytes:
+        return backend.writes[0].split(b'\r\n', 1)[0]
+
+    async def test_ipv4_connect_targets_the_pinned_ip_and_certifies_the_hostname(self) -> None:
+        backend = _FakeProxyBackend()
+        client = await self._client(self._transport('http://proxy.example:1', backend))
+
+        response = await client.get(
+            'https://93.184.216.34:443/avatar.png',
+            headers={'Host': 'cdn.example.com'},
+            extensions={'sni_hostname': 'cdn.example.com'},
+        )
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(b'abc', response.content)
+        self.assertEqual(b'CONNECT 93.184.216.34:443 HTTP/1.1', self._connect_line(backend))
+        self.assertEqual([('cdn.example.com', ssl.CERT_REQUIRED, True)], backend.handshakes)
+
+    async def test_ipv6_connect_target_is_bracketed(self) -> None:
+        backend = _FakeProxyBackend()
+        client = await self._client(self._transport('http://proxy.example:1', backend))
+
+        response = await client.get(
+            'https://[2606:4700::1111]:443/avatar.png',
+            headers={'Host': 'cdn.example.com'},
+            extensions={'sni_hostname': 'cdn.example.com'},
+        )
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(b'CONNECT [2606:4700::1111]:443 HTTP/1.1', self._connect_line(backend))
+        self.assertEqual('cdn.example.com', backend.handshakes[0][0])
+
+    async def test_https_proxy_certifies_the_proxy_and_then_the_origin(self) -> None:
+        backend = _FakeProxyBackend()
+        client = await self._client(self._transport('https://proxy.example:8443', backend))
+
+        response = await client.get(
+            'https://93.184.216.34:443/avatar.png',
+            headers={'Host': 'cdn.example.com'},
+            extensions={'sni_hostname': 'cdn.example.com'},
+        )
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(['proxy.example', 'cdn.example.com'], [handshake[0] for handshake in backend.handshakes])
+        self.assertEqual([ssl.CERT_REQUIRED, ssl.CERT_REQUIRED], [handshake[1] for handshake in backend.handshakes])
+        self.assertTrue(all(handshake[2] for handshake in backend.handshakes))
+        self.assertEqual(b'CONNECT 93.184.216.34:443 HTTP/1.1', self._connect_line(backend))
+
+    async def test_proxy_auth_stays_on_the_connect_request(self) -> None:
+        backend = _FakeProxyBackend()
+        client = await self._client(self._transport('http://user:secret@proxy.example:1', backend))
+
+        response = await client.get(
+            'https://93.184.216.34:443/avatar.png',
+            headers={'Host': 'cdn.example.com'},
+            extensions={'sni_hostname': 'cdn.example.com'},
+        )
+
+        self.assertEqual(200, response.status_code)
+        self.assertIn(b'Proxy-Authorization', backend.writes[0])
+        origin_request = backend.writes[1]
+        self.assertNotIn(b'Proxy-Authorization', origin_request)
+        self.assertNotIn(b'secret', origin_request)
+
+    async def test_each_hostname_on_the_same_ip_gets_its_own_tunnel(self) -> None:
+        backend = _FakeProxyBackend()
+        client = await self._client(self._transport('http://proxy.example:1', backend))
+
+        for host, path in (('a.example', '/a'), ('b.example', '/b')):
+            await client.get(
+                f'https://93.184.216.34:443{path}',
+                headers={'Host': host},
+                extensions={'sni_hostname': host},
+            )
+
+        self.assertEqual([('proxy.example', 1)] * 2, backend.connects)
+        self.assertEqual(['a.example', 'b.example'], [handshake[0] for handshake in backend.handshakes])
+        self.assertEqual(2, sum(1 for write in backend.writes if write.startswith(b'CONNECT ')))
+
+    async def test_a_certificate_failure_is_not_swallowed(self) -> None:
+        backend = _FakeProxyBackend(fail_tls=True)
+        client = await self._client(self._transport('http://proxy.example:1', backend))
+
+        with self.assertRaises((httpx.ConnectError, ssl.SSLCertVerificationError)):
+            await client.get(
+                'https://93.184.216.34:443/avatar.png',
+                headers={'Host': 'cdn.example.com'},
+                extensions={'sni_hostname': 'cdn.example.com'},
+            )
+
+        # The verifying context was used; nothing downgraded it.
+        self.assertEqual([('cdn.example.com', ssl.CERT_REQUIRED, True)], backend.handshakes)
+
+    async def test_fetch_public_image_pins_an_ipv4_address(self) -> None:
+        backend = _FakeProxyBackend()
+        client = await self._client(self._transport('http://proxy.example:1', backend))
+
+        with patch('hippo.public_image._host_addresses', return_value=['93.184.216.34']):
+            result = await fetch_public_image(client, 'https://cdn.example.com/avatar.png')
+
+        self.assertEqual((b'abc', 'image/png'), result)
+        self.assertEqual(b'CONNECT 93.184.216.34:443 HTTP/1.1', self._connect_line(backend))
+        self.assertEqual('cdn.example.com', backend.handshakes[0][0])
+
+    async def test_fetch_public_image_pins_an_ipv6_address(self) -> None:
+        backend = _FakeProxyBackend()
+        client = await self._client(self._transport('http://proxy.example:1', backend))
+
+        with patch('hippo.public_image._host_addresses', return_value=['2606:4700::1111']):
+            result = await fetch_public_image(client, 'https://cdn.example.com/avatar.png')
+
+        self.assertEqual((b'abc', 'image/png'), result)
+        self.assertEqual(b'CONNECT [2606:4700::1111]:443 HTTP/1.1', self._connect_line(backend))
 
 
 if __name__ == '__main__':

@@ -10,6 +10,7 @@ from urllib.parse import quote, urlparse
 import certifi
 import httpx
 
+from .avatar_transport import PinnedProxyTransport, is_http_proxy
 from .config import DEFAULT_USER_AGENT, get_settings
 from .logger import get_logger
 
@@ -90,7 +91,7 @@ class MPClient(AbstractAsyncContextManager):
         article_worker: str | None = None,
         article_worker_proxy: str | None = None,
         article_max_connections: int | None = None,
-        keepalive_connections: int | None = None,
+        pinned_proxy_sni: bool = False,
     ) -> None:
         # No instance-wide proxy: every caller names the proxy for its own source
         # (see media_settings.resolve_proxy), because a WeChat fetch and a YouTube
@@ -106,13 +107,20 @@ class MPClient(AbstractAsyncContextManager):
             'headers': HEADERS,
             'follow_redirects': True,
         }
-        if proxy:
+        if pinned_proxy_sni:
+            # Avatar profile: each hop is pinned to a checked public IP and its
+            # original hostname must be certified, so no keep-alive reuse across
+            # a shared IP, and the environment must not pick another proxy.
+            limits = httpx.Limits(max_keepalive_connections=0)
+            client_kwargs['trust_env'] = False
+            if proxy and is_http_proxy(proxy):
+                client_kwargs['transport'] = PinnedProxyTransport(proxy, limits=limits)
+            else:
+                client_kwargs['limits'] = limits
+                if proxy:
+                    client_kwargs['proxy'] = proxy
+        elif proxy:
             client_kwargs['proxy'] = proxy
-        if keepalive_connections is not None:
-            # The avatar guard pins each hop to a checked IP, so the pool keys by
-            # that IP: a kept-alive channel could serve a different hostname
-            # without a fresh handshake, skipping its certificate check.
-            client_kwargs['limits'] = httpx.Limits(max_keepalive_connections=keepalive_connections)
         self.client = self._build_async_client(**client_kwargs)
         self.article_worker = article_worker.rstrip('/') if article_worker else None
         self.article_client: httpx.AsyncClient | None = None
