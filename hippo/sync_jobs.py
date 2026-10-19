@@ -30,6 +30,7 @@ def _row_to_state(row: dict[str, Any] | None) -> SyncTaskState | None:
             accounts[biz] = AccountProgress(
                 biz=biz,
                 nickname=item.get('nickname') or biz,
+                source=item.get('source') or '',
                 status=item.get('status') or 'pending',
                 phase=item.get('phase'),
                 saved=item.get('saved') or 0,
@@ -50,6 +51,7 @@ def _row_to_state(row: dict[str, Any] | None) -> SyncTaskState | None:
         error=row.get('error'),
         group_id=row.get('group_id'),
         biz_list=tuple(str(item) for item in biz_list_raw) if isinstance(biz_list_raw, list) else None,
+        source=str(row['source']) if row.get('source') else None,
         trigger_type=str(row.get('trigger_type') or 'manual'),
         phase=row.get('phase'),
         accounts_total=int(row.get('accounts_total') or 0),
@@ -72,6 +74,7 @@ class SyncJobRepository:
         trigger_type: str,
         group_id: int | None = None,
         biz_list: list[str] | None = None,
+        source: str | None = None,
     ) -> SyncTaskState:
         task_id = uuid.uuid4().hex
         now = utc_now_dt()
@@ -84,10 +87,11 @@ class SyncJobRepository:
                     trigger_type,
                     group_id,
                     biz_list,
+                    source,
                     accounts,
                     created_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING *
                 """,
                 (
@@ -96,6 +100,7 @@ class SyncJobRepository:
                     trigger_type,
                     group_id,
                     Json(biz_list) if biz_list is not None else None,
+                    source,
                     Json([]),
                     now,
                 ),
@@ -105,17 +110,22 @@ class SyncJobRepository:
             raise RuntimeError('Failed to create sync job')
         return _row_to_state(dict(row))  # type: ignore[arg-type]
 
-    async def list_jobs(self, *, limit: int = 5) -> list[SyncTaskState]:
+    async def list_jobs(
+        self,
+        *,
+        limit: int = 5,
+        source: str | None = None,
+    ) -> list[SyncTaskState]:
+        """Recent jobs, optionally narrowed to one source."""
+        query = 'SELECT * FROM sync_jobs'
+        params: list[Any] = []
+        if source:
+            query += ' WHERE source = %s'
+            params.append(source)
+        query += ' ORDER BY created_at DESC LIMIT %s'
+        params.append(max(int(limit), 1))
         async with self._conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(
-                """
-                SELECT *
-                FROM sync_jobs
-                ORDER BY created_at DESC
-                LIMIT %s
-                """,
-                (max(int(limit), 1),),
-            )
+            await cur.execute(query, params)
             rows = await cur.fetchall()
         return [_row_to_state(dict(row)) for row in rows if row]  # type: ignore[arg-type]
 

@@ -89,6 +89,8 @@ async def publish_worker_state(storage: PostgresStorage) -> None:
     queue_stats = {
         'articles': await storage.article_queue.stats(),
         'images': await storage.images.count_backlog(),
+        # 媒体源的积压走自己的表（微信那条队列里看不到），按来源分开统计。
+        'media': await storage.media_jobs.stats_by_source(),
     }
     async with storage.transaction():
         await storage.meta.set(WORKER_HEARTBEAT_KEY, utc_now_iso())
@@ -146,6 +148,7 @@ class _WorkerProgressTracker:
             progress = AccountProgress(
                 biz=account.biz,
                 nickname=account.nickname or account.biz,
+                source=account.source or 'weixin',
             )
             self._accounts[account.biz] = progress
         return progress
@@ -164,6 +167,7 @@ class _WorkerProgressTracker:
         self._current_account = {
             'biz': account.biz,
             'nickname': account.nickname or account.biz,
+            'source': account.source or 'weixin',
         }
         self._current_article = None
         self._phase = 'listing'
@@ -448,6 +452,7 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
                 result = await run_sync_job(
                     group_id=job.group_id,
                     biz_list=list(job.biz_list) if job.biz_list else None,
+                    source=job.source,
                     observer_factory=lambda account, _: _WorkerObserver(tracker=tracker, account=account),
                     observer=tracker,
                 )

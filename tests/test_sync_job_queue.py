@@ -29,11 +29,13 @@ class _FakeSyncJobs:
         trigger_type: str,
         group_id: int | None = None,
         biz_list: list[str] | None = None,
+        source: str | None = None,
     ):
         payload = {
             'trigger_type': trigger_type,
             'group_id': group_id,
             'biz_list': biz_list,
+            'source': source,
         }
         self.created.append(payload)
         return self.queued_state
@@ -191,7 +193,7 @@ class SyncJobQueueTest(unittest.TestCase):
         self.assertEqual(payload, {'status': 'queued', 'task_id': 'job-1'})
         self.assertEqual(
             storage.sync_jobs.created,
-            [{'trigger_type': 'manual', 'group_id': None, 'biz_list': None}],
+            [{'trigger_type': 'manual', 'group_id': None, 'biz_list': None, 'source': None}],
         )
 
     def test_run_sync_normalizes_biz_list_before_queueing(self) -> None:
@@ -217,7 +219,12 @@ class SyncJobQueueTest(unittest.TestCase):
         self.assertEqual(payload['biz_list'], ['biz-a', 'biz-b'])
         self.assertEqual(
             storage.sync_jobs.created,
-            [{'trigger_type': 'manual', 'group_id': None, 'biz_list': ['biz-a', 'biz-b']}],
+            [{
+                'trigger_type': 'manual',
+                'group_id': None,
+                'biz_list': ['biz-a', 'biz-b'],
+                'source': None,
+            }],
         )
 
     def test_sync_job_state_serializes_like_legacy_task_shape(self) -> None:
@@ -247,6 +254,7 @@ class SyncJobQueueTest(unittest.TestCase):
                 'finished_at': None,
                 'error': None,
                 'group_id': 7,
+                'source': None,
                 'phase': 'content',
                 'accounts_total': 2,
                 'accounts_done': 1,

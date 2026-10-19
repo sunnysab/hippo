@@ -54,13 +54,14 @@ async def sync_status(
 async def list_sync_tasks(
     limit: int = 5,
     detail: bool = False,
+    source: str | None = None,
     storage: PostgresStorage = Depends(get_storage),
     _: User = Depends(require_admin),
 ) -> dict[str, Any]:
     """
-    获取同步任务列表。
+    获取同步任务列表。`source` 只看某个来源的任务。
     """
-    tasks = await storage.sync_jobs.list_jobs(limit=max(int(limit), 1))
+    tasks = await storage.sync_jobs.list_jobs(limit=max(int(limit), 1), source=source or None)
     formatter = (lambda task: task.to_dict()) if detail else (lambda task: task.to_summary_dict())
     return {
         'tasks': [formatter(task) for task in tasks],
@@ -323,12 +324,13 @@ async def run_sync(
     手动触发同步操作。
 
     Args:
-        body (dict): 可选的 'group_id' 用于同步指定分组。
+        body (dict): 可选的 'group_id' 同步指定分组，或 'source' 只同步某个来源。
 
     Returns:
         dict: 触发操作的状态。
     """
     group_id = body.get('group_id')
+    source = str(body.get('source') or '').strip() or None
     raw_biz_list = body.get('biz_list')
     biz_list: list[str] | None = None
     if group_id is not None:
@@ -362,11 +364,18 @@ async def run_sync(
         if missing_biz:
             raise ApiError(f'Account not found: {missing_biz[0]}', status=404)
         biz_list = normalized_biz_list
+    if source is not None and biz_list is None:
+        # 按来源同步就是「挑这个源里我订阅的号」：来源页的按钮不该惊动别的源。
+        followed = await storage.accounts.list_followed_accounts(user.id)
+        biz_list = [account.biz for account in followed if (account.source or 'weixin') == source]
+        if not biz_list:
+            raise ApiError(f'来源 {source} 下没有可同步的订阅', status=404)
     async with storage.transaction():
         task_state = await storage.sync_jobs.create_job(
             trigger_type='manual',
             group_id=group_id,
             biz_list=biz_list,
+            source=source,
         )
     response: dict[str, Any] = {
         'status': task_state.status,
@@ -376,4 +385,6 @@ async def run_sync(
         response['group_id'] = group_id
     if biz_list is not None:
         response['biz_list'] = biz_list
+    if source is not None:
+        response['source'] = source
     return response

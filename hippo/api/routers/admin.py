@@ -18,11 +18,19 @@ from fastapi import APIRouter, Body, Depends, Query, Request, status
 from ...config import WEB_SERVICE, get_settings
 from ...exceptions import ApiError
 from ...media.asr import health_url
-from ...media_settings import ASR_TIERS, get_media_settings, set_media_settings
+from ...media_settings import (
+    ASR_TIERS,
+    INSTANCE_CREDENTIALS,
+    get_media_settings,
+    instance_credential,
+    resolve_proxy,
+    set_media_settings,
+)
 from ...models import User
 from ...repositories.llm import mask_key
 from ...security import hash_password
 from ...site_settings import get_site_settings, set_site_settings
+from ...sources.registry import source_names
 from ...storage import PostgresStorage
 from ..deps import client_ip, get_storage, require_admin
 
@@ -462,3 +470,47 @@ async def signoz_link(
 def _log_file_path() -> Path | None:
     target = get_settings().logging.file_for(WEB_SERVICE)
     return Path(target) if target else None
+
+
+@router.get('/admin/source')
+async def source_overview(
+    _: User = Depends(require_admin),
+    storage: PostgresStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Every source hippo knows about, with what the console needs to show it.
+
+    The source list is assembled here rather than in the browser: which sources
+    exist, which accept a credential and which one owns the WeChat daemon are
+    facts about the backend, and the page should not keep a copy of them.
+    """
+    settings = await get_media_settings(storage)
+    overview = {row['source']: row for row in await storage.accounts.overview_by_source()}
+    backlog = await storage.media_jobs.stats_by_source()
+
+    sources: list[dict[str, Any]] = []
+    for source in source_names():
+        row = overview.get(source, {})
+        # 没订阅之前也要出现在列表里：它可能只是还没配凭证。
+        sources.append(
+            {
+                'source': source,
+                'channels': int(row.get('channels') or 0),
+                'enabled_channels': int(row.get('enabled_channels') or 0),
+                'followers': int(row.get('followers') or 0),
+                'last_synced_at': row.get('last_synced_at'),
+                'credential': (
+                    {
+                        'field': INSTANCE_CREDENTIALS[source],
+                        'configured': bool(instance_credential(settings, source)),
+                    }
+                    if source in INSTANCE_CREDENTIALS
+                    else None
+                ),
+                'proxy': resolve_proxy(settings, source),
+                'backlog': backlog.get(source),
+            }
+        )
+    return {
+        'sources': sources,
+        'media_enabled': bool(settings.get('enabled')),
+    }

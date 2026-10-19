@@ -247,6 +247,13 @@ ON sync_jobs (status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sync_jobs_trigger_type_status
 ON sync_jobs (trigger_type, status, created_at DESC);
 
+-- 一次只同步某个来源：来源页上的「立即同步」把 source 写进任务，
+-- 任务列表也按它筛选（空值 = 全站同步，与旧任务一致）。
+ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS source TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_sync_jobs_source_created_at
+ON sync_jobs (source, created_at DESC);
+
 CREATE INDEX IF NOT EXISTS idx_accounts_nickname_trgm
 ON accounts USING GIN (nickname gin_trgm_ops);
 

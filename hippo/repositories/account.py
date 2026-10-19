@@ -9,7 +9,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from ..models import AccountCredential, AccountGroup
-from ..utils import build_set_clause, utc_now_dt
+from ..utils import build_set_clause, normalize_value, utc_now_dt
 
 
 def _row_to_account(row: dict[str, Any]) -> AccountCredential:
@@ -115,11 +115,47 @@ class AccountRepository:
             rows = await cur.fetchall()
         return [{'source': str(row['source']), 'channels': int(row['channels'])} for row in rows]
 
+    async def overview_by_source(self) -> list[dict[str, Any]]:
+        """One row per source, for the admin source page.
+
+        ``channels`` counts the catalogue (not one user's subscriptions): the
+        console answers "how much is hippo following from here", which is what the
+        background sync acts on. ``followers`` is the number of subscriptions, so a
+        catalogue nobody follows yet is still visible as such.
+        """
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT a.source,
+                       COUNT(*) AS channels,
+                       COUNT(*) FILTER (WHERE a.is_disabled = FALSE) AS enabled_channels,
+                       MAX(a.last_synced_at) AS last_synced_at,
+                       (SELECT COUNT(*) FROM subscription s
+                          JOIN accounts sa ON sa.biz = s.biz
+                         WHERE sa.source = a.source) AS followers
+                  FROM accounts a
+                 GROUP BY a.source
+                 ORDER BY a.source
+                """
+            )
+            rows = await cur.fetchall()
+        return [
+            {
+                'source': str(row['source']),
+                'channels': int(row['channels']),
+                'enabled_channels': int(row['enabled_channels']),
+                'followers': int(row['followers']),
+                'last_synced_at': normalize_value(row['last_synced_at']),
+            }
+            for row in rows
+        ]
+
     async def list_syncable_accounts(
         self,
         *,
         group_ids: list[int] | None = None,
         biz_list: list[str] | None = None,
+        source: str | None = None,
     ) -> list[AccountCredential]:
         """Accounts that at least one user still follows.
 
@@ -152,6 +188,10 @@ class AccountRepository:
         if biz_list:
             query += ' AND a.biz = ANY(%s)'
             params.append(list(biz_list))
+        if source:
+            # 按来源同步：来源页面上的「立即同步」只应挑动这个源的账号。
+            query += ' AND a.source = %s'
+            params.append(source)
         query += ' ORDER BY a.nickname ASC'
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(query, params)
@@ -278,6 +318,7 @@ class AccountRepository:
         user_id: int,
         group_ids: list[int] | None = None,
         search_tokens: list[str] | None = None,
+        source: str | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, Any]:
@@ -286,6 +327,10 @@ class AccountRepository:
         if group_ids is not None:
             where.append('s.group_id = ANY(%s)')
             params.append(group_ids)
+        if source:
+            # 来源页只列这个源下的订阅。
+            where.append('a.source = %s')
+            params.append(source)
         if search_tokens:
             clauses: list[str] = []
             for term in search_tokens:
@@ -306,7 +351,7 @@ class AccountRepository:
         # the account row only contributes the shared catalogue fields.
         query_sql = (
             'WITH filtered_accounts AS ('
-            ' SELECT a.biz, a.nickname, a.alias, a.round_head_img, s.group_id,'
+            ' SELECT a.biz, a.nickname, a.source, a.alias, a.round_head_img, s.group_id,'
             ' s.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days,'
             ' s.sync_interval_days, a.article_count, a.backfill_state'
             ' FROM accounts a'
@@ -315,7 +360,7 @@ class AccountRepository:
             ' ORDER BY a.nickname ASC'
             ' LIMIT %s OFFSET %s'
             ')'
-            ' SELECT a.biz, a.nickname, a.alias, a.round_head_img, a.group_id,'
+            ' SELECT a.biz, a.nickname, a.source, a.alias, a.round_head_img, a.group_id,'
             ' a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,'
             ' a.sync_interval_days,'
             ' COALESCE(a.article_count, 0) AS article_count,'
@@ -350,7 +395,7 @@ class AccountRepository:
     async def get_account_detail(self, biz: str, *, user_id: int) -> dict[str, Any]:
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                'SELECT a.biz, a.nickname, a.alias, a.round_head_img, s.group_id,'
+                'SELECT a.biz, a.nickname, a.source, a.alias, a.round_head_img, s.group_id,'
                 ' s.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days,'
                 ' s.sync_interval_days, g.name AS group_name,'
                 ' COALESCE(a.article_count, 0) AS article_count,'

@@ -34,10 +34,13 @@ class SyncSummary:
 class SyncAccountResult:
     biz: str
     nickname: str
-    saved: int
-    completed: bool
-    skipped: bool
-    skip_reason: str | None
+    #: 结果自带来源：观察者收到它时可能没有账号对象（worker 的进度没有加载阶段），
+    #: 靠它才能把结果归到正确的来源分块里。
+    source: str = ''
+    saved: int = 0
+    completed: bool = False
+    skipped: bool = False
+    skip_reason: str | None = None
     failed: bool = False
     error: str | None = None
 
@@ -61,6 +64,9 @@ class SyncReport:
 class AccountProgress:
     biz: str
     nickname: str
+    #: 该账号属于哪个来源。同步页面按它分块，所以它必须跟着进度走，
+    #: 而不是让界面拿 biz 去反查（媒体源才有 `source:` 前缀，反查不可靠）。
+    source: str = ''
     status: str = 'pending'
     phase: str | None = None
     saved: int = 0
@@ -88,6 +94,8 @@ class SyncTaskState:
     error: str | None = None
     group_id: int | None = None
     biz_list: tuple[str, ...] | None = None
+    #: 这次任务限定在哪个来源；空值表示全站同步。
+    source: str | None = None
     trigger_type: str = 'manual'
     phase: str | None = None
     accounts_total: int = 0

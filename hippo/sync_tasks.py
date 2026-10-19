@@ -40,7 +40,11 @@ class SyncTaskObserver(SyncObserver):
     async def _progress(self) -> AccountProgress:
         progress = self._state.accounts.get(self._account.biz)
         if not progress:
-            progress = AccountProgress(biz=self._account.biz, nickname=self._account.nickname or self._account.biz)
+            progress = AccountProgress(
+                biz=self._account.biz,
+                nickname=self._account.nickname or self._account.biz,
+                source=self._account.source or 'weixin',
+            )
             self._state.accounts[self._account.biz] = progress
         return progress
 
@@ -101,7 +105,11 @@ class _SyncTaskJobObserver:
             for account in accounts:
                 self._state.accounts.setdefault(
                     account.biz,
-                    AccountProgress(biz=account.biz, nickname=account.nickname or account.biz),
+                    AccountProgress(
+                        biz=account.biz,
+                        nickname=account.nickname or account.biz,
+                        source=account.source or 'weixin',
+                    ),
                 )
 
     async def on_account_start(self, account: AccountCredential) -> None:
@@ -109,12 +117,17 @@ class _SyncTaskJobObserver:
             self._state.current_account = {
                 'biz': account.biz,
                 'nickname': account.nickname or account.biz,
+                'source': account.source or 'weixin',
             }
             self._state.phase = 'listing'
             self._state.current_article = None
             progress = self._state.accounts.setdefault(
                 account.biz,
-                AccountProgress(biz=account.biz, nickname=account.nickname or account.biz),
+                AccountProgress(
+                    biz=account.biz,
+                    nickname=account.nickname or account.biz,
+                    source=account.source or 'weixin',
+                ),
             )
             progress.status = 'running'
             progress.phase = 'listing'
@@ -135,7 +148,11 @@ class _SyncTaskJobObserver:
         with self._manager._lock:
             progress = self._state.accounts.setdefault(
                 result.biz,
-                AccountProgress(biz=result.biz, nickname=result.nickname or result.biz),
+                AccountProgress(
+                    biz=result.biz,
+                    nickname=result.nickname or result.biz,
+                    source=result.source or 'weixin',
+                ),
             )
             if result.skipped:
                 progress.status = 'skipped'

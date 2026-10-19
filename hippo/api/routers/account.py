@@ -68,6 +68,7 @@ async def _list_accounts(
     *,
     group_ids: list[int] | None,
     query: str | None,
+    source: str | None = None,
     page: int,
     page_size: int,
 ) -> dict[str, Any]:
@@ -80,6 +81,7 @@ async def _list_accounts(
         user_id=user_id,
         group_ids=group_ids,
         search_tokens=search_tokens,
+        source=source,
         page=page,
         page_size=page_size,
     )
@@ -368,6 +370,7 @@ async def get_search_avatar(
 async def list_accounts(
     group_id: int | None = None,
     group_ids: str | None = None,
+    source: str | None = None,
     q: str | None = None,
     page: int = 1,
     page_size: int = 20,
@@ -380,6 +383,7 @@ async def list_accounts(
     Args:
         group_id (int | None): 按单个分组 ID 筛选 (向后兼容)。
         group_ids (str | None): 按多个分组 ID 筛选，逗号分隔 (如 "1,2,3")。
+        source (str | None): 只看某个来源下的订阅。
         q (str | None): 按关键词搜索 (昵称、微信号或 biz)。
         page (int): 页码。
         page_size (int): 每页数量。
@@ -391,6 +395,7 @@ async def list_accounts(
         storage,
         user.id,
         group_ids=parse_group_ids(group_ids, group_id),
+        source=source or None,
         query=q or None,
         page=max(page, 1),
         page_size=min(max(page_size, 1), 200),

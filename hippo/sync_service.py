@@ -91,6 +91,7 @@ class ArticleSyncService:
                 SyncAccountResult(
                     biz=account.biz,
                     nickname=account.nickname,
+                    source=account.source or 'weixin',
                     saved=0,
                     completed=False,
                     skipped=True,
@@ -107,6 +108,7 @@ class ArticleSyncService:
                     SyncAccountResult(
                         biz=account.biz,
                         nickname=account.nickname,
+                        source=account.source or 'weixin',
                         saved=0,
                         completed=False,
                         skipped=True,
@@ -121,6 +123,7 @@ class ArticleSyncService:
                     SyncAccountResult(
                         biz=account.biz,
                         nickname=account.nickname,
+                        source=account.source or 'weixin',
                         saved=0,
                         completed=False,
                         skipped=True,
@@ -139,6 +142,7 @@ class ArticleSyncService:
                 SyncAccountResult(
                     biz=account.biz,
                     nickname=account.nickname,
+                    source=account.source or 'weixin',
                     saved=0,
                     completed=False,
                     skipped=True,
@@ -160,6 +164,7 @@ class ArticleSyncService:
                 SyncAccountResult(
                     biz=account.biz,
                     nickname=account.nickname or account.biz,
+                    source=account.source or 'weixin',
                     saved=0,
                     completed=False,
                     skipped=True,
@@ -178,6 +183,7 @@ class ArticleSyncService:
                 SyncAccountResult(
                     biz=account.biz,
                     nickname=account.nickname or account.biz,
+                    source=account.source or 'weixin',
                     saved=0,
                     completed=False,
                     skipped=False,
@@ -196,6 +202,7 @@ class ArticleSyncService:
             SyncAccountResult(
                 biz=account.biz,
                 nickname=account.nickname or account.biz,
+                source=account.source or 'weixin',
                 saved=stats.enqueued,
                 completed=True,
                 skipped=False,
@@ -261,6 +268,7 @@ class ArticleSyncService:
                 cancelled_result = SyncAccountResult(
                     biz=account.biz,
                     nickname=account.nickname or account.biz,
+                    source=account.source or 'weixin',
                     saved=0,
                     completed=False,
                     skipped=False,
@@ -325,6 +333,7 @@ async def run_sync_job(
     *,
     group_id: int | None = None,
     biz_list: list[str] | None = None,
+    source: str | None = None,
     observer_factory: Callable[[AccountCredential, bool], SyncObserver] | None = None,
     observer: SyncJobObserver | None = None,
     lock: asyncio.Lock | None = None,
@@ -336,6 +345,7 @@ async def run_sync_job(
             return await run_sync_job(
                 group_id=group_id,
                 biz_list=biz_list,
+                source=source,
                 observer_factory=observer_factory,
                 observer=job_observer,
                 lock=None,
@@ -357,6 +367,7 @@ async def run_sync_job(
             accounts = await storage.accounts.list_syncable_accounts(
                 group_ids=[group_id] if group_id is not None else None,
                 biz_list=biz_list,
+                source=source,
             )
             job_observer.on_accounts_loaded(accounts)
 
