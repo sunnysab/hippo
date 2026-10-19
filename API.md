@@ -863,7 +863,7 @@ POST  /api/admin/media/test     逐档探测 ASR 端点可达性
 | 限制 | 说明 |
 |---|---|
 | 管理接口 | 所有 `require_admin` 接口（包括 LLM 配置、同步配置、全站任务），以及 `/api/admin`、`/api/apikey`、`/api/auth`、`/api/login`、`/api/source/credential` 均拒绝 API Key，返回 `403` |
-| 本人设置与任务 | `/api/settings/preferences`、本人 `/api/settings/tasks` 可按密钥权限访问；`POST /api/settings/run` 需要 `write` scope，且始终限于本人订阅 |
+| 本人设置与任务 | `/api/settings/preferences`、本人 `/api/settings/tasks` 可按密钥权限访问；管理员签发的 API Key 也只可读取和取消本人任务。全站任务访问要求管理员会话；`POST /api/settings/run` 需要 `write` scope，且始终限于本人订阅 |
 | 写操作 | 非 `GET`/`HEAD` 需要 `write` scope，当前控制台只签发 `read` |
 | 使用记录 | `last_used_at` 每 5 分钟最多写一次，避免每次读都变成一次写 |
 

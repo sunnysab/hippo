@@ -7,6 +7,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from fastapi import Request
+
 from hippo.api.routers.settings import (
     cancel_sync_task,
     get_sync_task,
@@ -289,6 +291,9 @@ class SyncRunScopeTest(unittest.TestCase):
 
 
 class SyncTaskAccessTest(unittest.TestCase):
+    def _request(self) -> Request:
+        return Request({'type': 'http'})
+
     def _two_tasks(self) -> _Jobs:
         jobs = _Jobs()
         jobs.states['mine'] = SyncTaskState(task_id='mine', status='running', created_at='x', requester_user_id=7)
@@ -298,7 +303,11 @@ class SyncTaskAccessTest(unittest.TestCase):
     def test_a_user_only_lists_their_own_tasks(self) -> None:
         storage = _Storage(self._two_tasks(), [])
 
-        payload = asyncio.run(list_sync_tasks(limit=10, detail=False, source=None, storage=storage, user=_user(7)))
+        payload = asyncio.run(
+            list_sync_tasks(
+                request=self._request(), limit=10, detail=False, source=None, storage=storage, user=_user(7)
+            )
+        )
 
         self.assertIsInstance(payload, SyncTaskListResponse)
         self.assertEqual([task.task_id for task in payload.tasks], ['mine'])
@@ -306,14 +315,22 @@ class SyncTaskAccessTest(unittest.TestCase):
     def test_an_admin_lists_every_task(self) -> None:
         storage = _Storage(self._two_tasks(), [])
 
-        payload = asyncio.run(list_sync_tasks(limit=10, detail=False, source=None, storage=storage, user=_admin()))
+        payload = asyncio.run(
+            list_sync_tasks(
+                request=self._request(), limit=10, detail=False, source=None, storage=storage, user=_admin()
+            )
+        )
 
         self.assertEqual({task.task_id for task in payload.tasks}, {'mine', 'theirs'})
 
     def test_detail_false_keeps_the_summary_shape(self) -> None:
         storage = _Storage(self._two_tasks(), [])
 
-        payload = asyncio.run(list_sync_tasks(limit=10, detail=False, source=None, storage=storage, user=_user(7)))
+        payload = asyncio.run(
+            list_sync_tasks(
+                request=self._request(), limit=10, detail=False, source=None, storage=storage, user=_user(7)
+            )
+        )
         dumped = payload.model_dump(exclude_unset=True)['tasks'][0]
 
         self.assertEqual(dumped['task_id'], 'mine')
@@ -328,7 +345,9 @@ class SyncTaskAccessTest(unittest.TestCase):
         state.accounts['biz'] = AccountProgress(biz='biz', nickname='Biz')
         storage = _Storage(jobs, [])
 
-        payload = asyncio.run(list_sync_tasks(limit=10, detail=True, source=None, storage=storage, user=_user(7)))
+        payload = asyncio.run(
+            list_sync_tasks(request=self._request(), limit=10, detail=True, source=None, storage=storage, user=_user(7))
+        )
         dumped = payload.model_dump(exclude_unset=True)['tasks'][0]
 
         self.assertEqual(dumped['accounts'][0]['biz'], 'biz')
@@ -337,7 +356,7 @@ class SyncTaskAccessTest(unittest.TestCase):
         storage = _Storage(self._two_tasks(), [])
 
         with self.assertRaises(ApiError) as caught:
-            asyncio.run(get_sync_task(task_id='theirs', storage=storage, user=_user(7)))
+            asyncio.run(get_sync_task(task_id='theirs', request=self._request(), storage=storage, user=_user(7)))
 
         self.assertEqual(caught.exception.status, 404)
 
@@ -347,7 +366,7 @@ class SyncTaskAccessTest(unittest.TestCase):
         storage = _Storage(jobs, [])
 
         with self.assertRaises(ApiError) as caught:
-            asyncio.run(cancel_sync_task(task_id='theirs', storage=storage, user=_user(7)))
+            asyncio.run(cancel_sync_task(task_id='theirs', request=self._request(), storage=storage, user=_user(7)))
 
         self.assertEqual(caught.exception.status, 404)
         self.assertEqual(jobs.states['theirs'].status, 'queued')
@@ -357,7 +376,7 @@ class SyncTaskAccessTest(unittest.TestCase):
         jobs.states['mine'] = SyncTaskState(task_id='mine', status='queued', created_at='x', requester_user_id=7)
         storage = _Storage(jobs, [])
 
-        payload = asyncio.run(cancel_sync_task(task_id='mine', storage=storage, user=_user(7)))
+        payload = asyncio.run(cancel_sync_task(task_id='mine', request=self._request(), storage=storage, user=_user(7)))
 
         self.assertEqual(payload.status, 'cancelled')
 

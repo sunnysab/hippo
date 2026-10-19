@@ -59,6 +59,24 @@ class _Accounts:
 class _SyncJobs:
     def __init__(self) -> None:
         self.created: list[dict[str, Any]] = []
+        self.states: dict[str, SyncTaskState] = {}
+
+    async def list_jobs(self, *, limit: int, source: str | None, requester_user_id: int | None) -> list[SyncTaskState]:
+        return [
+            state
+            for state in self.states.values()
+            if requester_user_id is None or state.requester_user_id == requester_user_id
+        ][:limit]
+
+    async def get_job(self, task_id: str) -> SyncTaskState | None:
+        return self.states.get(task_id)
+
+    async def cancel_job(self, task_id: str) -> bool:
+        state = self.states.get(task_id)
+        if state is None:
+            return False
+        state.status = 'cancelled'
+        return True
 
     async def create_job(self, **kwargs: Any) -> SyncTaskState:
         self.created.append(kwargs)
@@ -140,6 +158,42 @@ class AdminApiKeyIsolationTest(unittest.TestCase):
 
         response = client.get('/api/llm/provider')
 
+        self.assertEqual(200, response.status_code, response.text)
+
+    def test_an_admin_key_cannot_inherit_site_wide_task_access(self) -> None:
+        storage = _Storage(api_key=_ADMIN_KEY, user=_admin())
+        for task_id, owner in (('mine', 1), ('theirs', 8), ('site', None)):
+            storage.sync_jobs.states[task_id] = SyncTaskState(
+                task_id=task_id,
+                status='queued',
+                created_at='2026-03-20T04:00:00+00:00',
+                requester_user_id=owner,
+            )
+        client = _client(storage)
+        headers = {'X-API-Key': 'sk-secret'}
+
+        response = client.get('/api/settings/tasks', headers=headers)
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual(['mine'], [item['task_id'] for item in response.json()['tasks']])
+        for task_id in ('theirs', 'site'):
+            with self.subTest(task_id=task_id):
+                response = client.get(f'/api/settings/tasks/{task_id}', headers=headers)
+                self.assertEqual(404, response.status_code, response.text)
+                response = client.post(f'/api/settings/tasks/{task_id}/cancel', headers=headers)
+                self.assertEqual(404, response.status_code, response.text)
+                self.assertEqual('queued', storage.sync_jobs.states[task_id].status)
+
+        response = client.get('/api/settings/tasks/mine', headers=headers)
+        self.assertEqual(200, response.status_code, response.text)
+        response = client.post('/api/settings/tasks/mine/cancel', headers=headers)
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual('cancelled', response.json()['status'])
+
+        client.cookies.set(deps.SESSION_COOKIE, 'session-token')
+        response = client.get('/api/settings/tasks', headers=headers)
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual({'mine', 'theirs', 'site'}, {item['task_id'] for item in response.json()['tasks']})
+        response = client.post('/api/settings/tasks/theirs/cancel', headers=headers)
         self.assertEqual(200, response.status_code, response.text)
 
     def test_a_normal_key_still_runs_its_own_subscriptions(self) -> None:

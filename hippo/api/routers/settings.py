@@ -5,7 +5,7 @@ import time as time_module
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, Body, Depends, status
+from fastapi import APIRouter, Body, Depends, Request, status
 
 from ...article_queries import _normalize_record
 from ...emailer import get_email_settings, send_email, set_email_settings
@@ -21,7 +21,7 @@ from ...sync_settings import get_sync_settings as load_sync_settings
 from ...sync_settings import get_sync_status as load_sync_status
 from ...sync_settings import set_sync_settings as save_sync_settings
 from ...sync_types import SyncTaskState
-from ..deps import current_user, get_storage, get_sync_scheduler, require_admin
+from ..deps import current_user, get_storage, get_sync_scheduler, is_admin_session, require_admin
 from ..schemas.settings import (
     EmailSettingsUpdate,
     EmailTestRequest,
@@ -96,22 +96,22 @@ async def sync_status(
 
 @router.get('/settings/tasks', response_model_exclude_unset=True)
 async def list_sync_tasks(
+    request: Request,
     limit: int = 5,
     detail: bool = False,
     source: str | None = None,
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
 ) -> SyncTaskListResponse:
-    """
-    获取同步任务列表。
+    """List the caller's tasks, or all tasks for an administrator web session.
 
-    管理员看到全部任务；普通用户只看到自己发起的任务（``requester_user_id``），
-    所以任务列表不会泄漏其他人的数据。`source` 只看某个来源的任务。
+    API keys remain owner-scoped even when their owner has the admin role.
+    ``source`` narrows either scope to that source.
     """
     tasks = await storage.sync_jobs.list_jobs(
         limit=max(int(limit), 1),
         source=source or None,
-        requester_user_id=None if user.role == 'admin' else user.id,
+        requester_user_id=None if is_admin_session(request, user) else user.id,
     )
     formatter = (lambda task: task.to_dict()) if detail else (lambda task: task.to_summary_dict())
     return SyncTaskListResponse(tasks=[formatter(task) for task in tasks])
@@ -120,16 +120,16 @@ async def list_sync_tasks(
 @router.get('/settings/tasks/{task_id}')
 async def get_sync_task(
     task_id: str,
+    request: Request,
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
 ) -> SyncTaskDetail:
-    """
-    获取指定同步任务的进度与状态。
+    """Return one owned task; only an administrator web session may cross owners.
 
-    普通用户只能读自己的任务；不是自己的任务返回 404（不暴露它是否存在）。
+    Unknown and foreign tasks both return 404, including for admin-owned keys.
     """
     state = await storage.sync_jobs.get_job(task_id)
-    if not state or (user.role != 'admin' and state.requester_user_id != user.id):
+    if not state or (not is_admin_session(request, user) and state.requester_user_id != user.id):
         raise ApiError('Task not found', status=404)
     return SyncTaskDetail.model_validate(state.to_dict())
 
@@ -137,16 +137,18 @@ async def get_sync_task(
 @router.post('/settings/tasks/{task_id}/cancel')
 async def cancel_sync_task(
     task_id: str,
+    request: Request,
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
 ) -> SyncTaskDetail:
     """Cancel a running or queued sync task.
 
-    Ownership follows the read endpoints: an admin may cancel any task, a normal
-    user only their own, and a foreign task looks missing rather than forbidden.
+    Ownership follows the read endpoints: an administrator web session may
+    cancel any task, all other credentials only their own. A foreign task looks
+    missing rather than forbidden.
     """
     state = await storage.sync_jobs.get_job(task_id)
-    if not state or (user.role != 'admin' and state.requester_user_id != user.id):
+    if not state or (not is_admin_session(request, user) and state.requester_user_id != user.id):
         raise ApiError('Task not found', status=404)
     async with storage.transaction():
         cancelled = await storage.sync_jobs.cancel_job(task_id)
