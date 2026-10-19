@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from hippo.api.routers import admin as admin_api
+from hippo.api.schemas.admin import MediaSettingsUpdateRequest
 from hippo.media_settings import default_media_settings
 
 
@@ -86,7 +87,7 @@ class MediaSettingsEndpointTest(unittest.IsolatedAsyncioTestCase):
         ):
             await admin_api.update_media_settings(
                 SimpleNamespace(headers={}, client=SimpleNamespace(host='127.0.0.1')),
-                body={'asr_api_key': '••••efgh', 'items_per_sync': 9},
+                body=MediaSettingsUpdateRequest(asr_api_key='••••efgh', items_per_sync=9),
                 actor=SimpleNamespace(id=7),
                 storage=storage,
             )

@@ -9,7 +9,14 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from hippo.api.routers import admin as admin_api
+from hippo.api.schemas.admin import (
+    PasswordResetRequest,
+    SiteSettingsUpdateRequest,
+    UserCreateRequest,
+    UserUpdateRequest,
+)
 from hippo.exceptions import ApiError
+from pydantic import ValidationError
 
 
 def _user(user_id: int = 1, role: str = 'admin') -> SimpleNamespace:
@@ -45,7 +52,7 @@ class AdminGuardTest(unittest.IsolatedAsyncioTestCase):
             await admin_api.update_user(
                 '1',
                 SimpleNamespace(headers={}, client=SimpleNamespace(host='127.0.0.1')),
-                body={'is_disabled': True},
+                body=UserUpdateRequest(is_disabled=True),
                 actor=_user(1),
                 storage=storage,
             )
@@ -58,7 +65,7 @@ class AdminGuardTest(unittest.IsolatedAsyncioTestCase):
             await admin_api.update_user(
                 '1',
                 SimpleNamespace(headers={}, client=SimpleNamespace(host='127.0.0.1')),
-                body={'role': 'user'},
+                body=UserUpdateRequest(role='user'),
                 actor=_user(1),
                 storage=storage,
             )
@@ -69,7 +76,7 @@ class AdminGuardTest(unittest.IsolatedAsyncioTestCase):
         request = SimpleNamespace(headers={}, client=SimpleNamespace(host='10.0.0.1'))
 
         await admin_api.update_user(
-            '7', request, body={'is_disabled': True}, actor=_user(1), storage=storage
+            '7', request, body=UserUpdateRequest(is_disabled=True), actor=_user(1), storage=storage
         )
 
         storage.sessions.revoke_all_for_user.assert_awaited_once_with(7)
@@ -81,7 +88,7 @@ class AdminGuardTest(unittest.IsolatedAsyncioTestCase):
         request = SimpleNamespace(headers={}, client=SimpleNamespace(host='10.0.0.1'))
 
         await admin_api.reset_password(
-            '7', request, body={'password': 'a-good-password'}, actor=_user(1), storage=storage
+            '7', request, body=PasswordResetRequest(password='a-good-password'), actor=_user(1), storage=storage
         )
 
         storage.users.set_password.assert_awaited_once()
@@ -94,7 +101,7 @@ class AdminGuardTest(unittest.IsolatedAsyncioTestCase):
             await admin_api.reset_password(
                 '7',
                 SimpleNamespace(headers={}, client=None),
-                body={'password': 'short'},
+                body=PasswordResetRequest(password='short'),
                 actor=_user(1),
                 storage=storage,
             )
@@ -149,7 +156,7 @@ class AdminGuardTest(unittest.IsolatedAsyncioTestCase):
         ):
             result = await admin_api.update_site_settings(
                 SimpleNamespace(headers={}, client=None),
-                body={'registration_enabled': True},
+                body=SiteSettingsUpdateRequest(registration_enabled=True),
                 actor=_user(1),
                 storage=storage,
             )
@@ -166,7 +173,7 @@ class AdminGuardTest(unittest.IsolatedAsyncioTestCase):
         ):
             await admin_api.update_site_settings(
                 SimpleNamespace(headers={}, client=None),
-                body={'site_name': 'Hippo'},
+                body=SiteSettingsUpdateRequest(site_name='Hippo'),
                 actor=_user(1),
                 storage=storage,
             )
@@ -174,15 +181,10 @@ class AdminGuardTest(unittest.IsolatedAsyncioTestCase):
         storage.audit.record.assert_not_awaited()
 
     async def test_unknown_role_is_rejected(self) -> None:
-        storage = _storage(target=_user(7, role='user'))
-        with self.assertRaises(ApiError):
-            await admin_api.update_user(
-                '7',
-                SimpleNamespace(headers={}, client=None),
-                body={'role': 'superuser'},
-                actor=_user(1),
-                storage=storage,
-            )
+        # ``role`` is an enum in the request model, so an unknown value never
+        # reaches the route as a string the guard could inspect.
+        with self.assertRaises(ValidationError):
+            UserUpdateRequest(role='superuser')  # type: ignore[arg-type]
 
 
 class AdminCreateUserTest(unittest.IsolatedAsyncioTestCase):
@@ -202,7 +204,7 @@ class AdminCreateUserTest(unittest.IsolatedAsyncioTestCase):
 
         await admin_api.create_user(
             request,
-            body={'username': 'u5', 'password': 'a-good-password'},
+            body=UserCreateRequest(username='u5', password='a-good-password'),
             actor=_user(1),
             storage=storage,
         )

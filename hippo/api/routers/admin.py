@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Body, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
 from ...config import WEB_SERVICE, get_settings
 from ...exceptions import ApiError
@@ -33,11 +33,28 @@ from ...site_settings import get_site_settings, set_site_settings
 from ...sources.registry import source_names
 from ...storage import PostgresStorage
 from ..deps import client_ip, get_storage, require_admin
+from ..schemas.admin import (
+    AdminUserCreatedOut,
+    AdminUserListOut,
+    AdminUserUpdatedOut,
+    AuditActionsOut,
+    AuditPageOut,
+    LogTailOut,
+    MediaSettingsOut,
+    MediaSettingsUpdateRequest,
+    MediaTestOut,
+    PasswordResetRequest,
+    SignozLinkOut,
+    SiteSettingsOut,
+    SiteSettingsUpdateRequest,
+    SourceOverviewListOut,
+    UserCreateRequest,
+    UserUpdateRequest,
+)
 
 router = APIRouter()
 
 _MIN_PASSWORD_LENGTH = 8
-_ROLES = {'user', 'admin'}
 
 
 def _target_id(user_id: str) -> int:
@@ -53,7 +70,7 @@ def _guard_self(actor: User, target_id: int, action: str) -> None:
         raise ApiError(f'不能对自己执行{action}', status=400)
 
 
-@router.get('/admin/user')
+@router.get('/admin/user', response_model=AdminUserListOut)
 async def list_users(
     _: User = Depends(require_admin),
     storage: PostgresStorage = Depends(get_storage),
@@ -62,28 +79,26 @@ async def list_users(
     return {'items': await storage.users.list_with_stats()}
 
 
-@router.post('/admin/user', status_code=status.HTTP_201_CREATED)
+@router.post('/admin/user', status_code=status.HTTP_201_CREATED, response_model=AdminUserCreatedOut)
 async def create_user(
     request: Request,
-    body: dict[str, Any] = Body(default={}),
+    body: UserCreateRequest,
     actor: User = Depends(require_admin),
     storage: PostgresStorage = Depends(get_storage),
 ) -> dict[str, Any]:
     """Create an account. The password is set directly, so e-mail is optional."""
-    username = str(body.get('username') or '').strip()
-    password = str(body.get('password') or '')
-    email = str(body.get('email') or '').strip() or None
-    role = str(body.get('role') or 'user')
+    username = body.username.strip()
+    password = body.password
+    email = (body.email or '').strip() or None
+    role = body.role
     # The admin vouches for the account and no verification mail is sent here,
     # so a fresh account has to be usable right away.
-    email_verified = bool(body.get('email_verified', True))
+    email_verified = body.email_verified
 
     if not username:
         raise ApiError('用户名不能为空', status=400)
     if len(password) < _MIN_PASSWORD_LENGTH:
         raise ApiError(f'密码至少 {_MIN_PASSWORD_LENGTH} 位', status=400)
-    if role not in _ROLES:
-        raise ApiError(f'未知角色: {role}', status=400)
     if await storage.users.count() and await _username_taken(storage, username):
         raise ApiError('用户名已存在', status=409)
     if email and await storage.users.get_by_email(email):
@@ -108,11 +123,11 @@ async def create_user(
     return {'id': user.id, 'username': user.username, 'role': user.role}
 
 
-@router.patch('/admin/user/{user_id}')
+@router.patch('/admin/user/{user_id}', response_model=AdminUserUpdatedOut)
 async def update_user(
     user_id: str,
     request: Request,
-    body: dict[str, Any] = Body(default={}),
+    body: UserUpdateRequest,
     actor: User = Depends(require_admin),
     storage: PostgresStorage = Depends(get_storage),
 ) -> dict[str, Any]:
@@ -122,32 +137,31 @@ async def update_user(
     if target is None:
         raise ApiError('用户不存在', status=404)
 
+    updates = body.model_dump(exclude_unset=True)
     changes: dict[str, Any] = {}
     async with storage.transaction():
-        if 'is_disabled' in body:
-            disabled = bool(body['is_disabled'])
+        if 'is_disabled' in updates:
+            disabled = bool(updates['is_disabled'])
             if disabled:
                 _guard_self(actor, target_id, '禁用')
                 await storage.sessions.revoke_all_for_user(target_id)
             await storage.users.set_disabled(target_id, disabled)
             changes['is_disabled'] = disabled
 
-        if 'role' in body:
-            role = str(body['role'])
-            if role not in _ROLES:
-                raise ApiError(f'未知角色: {role}', status=400)
+        if 'role' in updates:
+            role = str(updates['role'])
             if role != 'admin':
                 _guard_self(actor, target_id, '降级')
             await storage.users.set_role(target_id, role)
             changes['role'] = role
 
-        if 'email_verified' in body:
-            verified = bool(body['email_verified'])
+        if 'email_verified' in updates:
+            verified = bool(updates['email_verified'])
             await storage.users.set_email_verified(target_id, verified)
             changes['email_verified'] = verified
 
-        if 'timezone' in body:
-            timezone = str(body['timezone'])
+        if 'timezone' in updates:
+            timezone = str(updates['timezone'])
             if not timezone:
                 raise ApiError('时区不能为空', status=400)
             await storage.users.set_timezone(target_id, timezone)
@@ -170,13 +184,13 @@ async def update_user(
 async def reset_password(
     user_id: str,
     request: Request,
-    body: dict[str, Any] = Body(default={}),
+    body: PasswordResetRequest,
     actor: User = Depends(require_admin),
     storage: PostgresStorage = Depends(get_storage),
 ) -> None:
     """Set a new password and drop every existing session for that account."""
     target_id = _target_id(user_id)
-    password = str(body.get('password') or '')
+    password = body.password
     if len(password) < _MIN_PASSWORD_LENGTH:
         raise ApiError(f'密码至少 {_MIN_PASSWORD_LENGTH} 位', status=400)
     target = await storage.users.get(target_id)
@@ -223,7 +237,7 @@ async def _username_taken(storage: PostgresStorage, username: str) -> bool:
         return await storage.users.get_with_password(username) is not None
 
 
-@router.get('/admin/site')
+@router.get('/admin/site', response_model=SiteSettingsOut)
 async def read_site_settings(
     _: User = Depends(require_admin),
     storage: PostgresStorage = Depends(get_storage),
@@ -232,10 +246,10 @@ async def read_site_settings(
     return await get_site_settings(storage)
 
 
-@router.patch('/admin/site')
+@router.patch('/admin/site', response_model=SiteSettingsOut)
 async def update_site_settings(
     request: Request,
-    body: dict[str, Any] = Body(default={}),
+    body: SiteSettingsUpdateRequest,
     actor: User = Depends(require_admin),
     storage: PostgresStorage = Depends(get_storage),
 ) -> dict[str, Any]:
@@ -245,7 +259,7 @@ async def update_site_settings(
     only stops new ones from being created.
     """
     before = await get_site_settings(storage)
-    settings = await set_site_settings(storage, body)
+    settings = await set_site_settings(storage, body.model_dump(exclude_unset=True))
     changed = {key: value for key, value in settings.items() if before.get(key) != value}
     if changed:
         async with storage.transaction():
@@ -284,7 +298,7 @@ def _without_round_tripped_masks(body: dict[str, Any]) -> dict[str, Any]:
     return cleaned
 
 
-@router.get('/admin/media')
+@router.get('/admin/media', response_model=MediaSettingsOut)
 async def read_media_settings(
     _: User = Depends(require_admin),
     storage: PostgresStorage = Depends(get_storage),
@@ -293,16 +307,17 @@ async def read_media_settings(
     return _public_media_settings(await get_media_settings(storage))
 
 
-@router.patch('/admin/media')
+@router.patch('/admin/media', response_model=MediaSettingsOut)
 async def update_media_settings(
     request: Request,
-    body: dict[str, Any] = Body(default={}),
+    body: MediaSettingsUpdateRequest,
     actor: User = Depends(require_admin),
     storage: PostgresStorage = Depends(get_storage),
 ) -> dict[str, Any]:
     """Merge media settings; a field left at its mask keeps the stored value."""
     before = _public_media_settings(await get_media_settings(storage))
-    settings = await set_media_settings(storage, _without_round_tripped_masks(body))
+    submitted = _without_round_tripped_masks(body.model_dump(exclude_unset=True))
+    settings = await set_media_settings(storage, submitted)
     after = _public_media_settings(settings)
     changed = {key: value for key, value in after.items() if before.get(key) != value}
     if changed:
@@ -340,7 +355,7 @@ async def _probe_asr_tier(tier: str, settings: dict[str, Any]) -> dict[str, Any]
     return {'tier': tier, 'ok': True, 'detail': f'backend={backend}' if backend else 'ok'}
 
 
-@router.post('/admin/media/test')
+@router.post('/admin/media/test', response_model=MediaTestOut)
 async def test_media_settings(
     _: User = Depends(require_admin),
     storage: PostgresStorage = Depends(get_storage),
@@ -370,7 +385,7 @@ def _parse_time(raw: str | None) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-@router.get('/admin/audit')
+@router.get('/admin/audit', response_model=AuditPageOut)
 async def list_audit(
     action: str | None = None,
     user_id: str | None = None,
@@ -403,7 +418,7 @@ async def list_audit(
     }
 
 
-@router.get('/admin/audit/action')
+@router.get('/admin/audit/action', response_model=AuditActionsOut)
 async def list_audit_actions(
     _: User = Depends(require_admin),
     storage: PostgresStorage = Depends(get_storage),
@@ -412,7 +427,7 @@ async def list_audit_actions(
     return {'items': await storage.audit.actions()}
 
 
-@router.get('/admin/log/tail')
+@router.get('/admin/log/tail', response_model=LogTailOut, response_model_exclude_none=True)
 async def tail_log(
     lines: int | None = Query(default=None, ge=1, le=5000),
     _: User = Depends(require_admin),
@@ -446,7 +461,7 @@ async def tail_log(
     }
 
 
-@router.get('/admin/log/link')
+@router.get('/admin/log/link', response_model=SignozLinkOut, response_model_exclude_none=True)
 async def signoz_link(
     minutes: int = Query(default=60, ge=1, le=1440),
     _: User = Depends(require_admin),
@@ -472,7 +487,7 @@ def _log_file_path() -> Path | None:
     return Path(target) if target else None
 
 
-@router.get('/admin/source')
+@router.get('/admin/source', response_model=SourceOverviewListOut)
 async def source_overview(
     _: User = Depends(require_admin),
     storage: PostgresStorage = Depends(get_storage),
