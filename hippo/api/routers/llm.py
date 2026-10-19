@@ -10,13 +10,14 @@ import time
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Body, Depends, Request, status
+from fastapi import APIRouter, Depends, Request, status
 
 from ...exceptions import ApiError
 from ...logger import get_logger
 from ...models import User
 from ...storage import PostgresStorage
 from ..deps import client_ip, get_storage, require_admin
+from ..schemas.llm import ProviderCreateRequest, ProviderListOut, ProviderOut, ProviderTestOut, ProviderUpdateRequest
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -36,7 +37,7 @@ def _normalize_base_url(raw: str) -> str:
     return raw.strip().rstrip('/')
 
 
-@router.get('/llm/provider')
+@router.get('/llm/provider', response_model=ProviderListOut)
 async def list_providers(
     _: User = Depends(require_admin),
     storage: PostgresStorage = Depends(get_storage),
@@ -45,17 +46,17 @@ async def list_providers(
     return {'items': await storage.llm.list_all()}
 
 
-@router.post('/llm/provider', status_code=status.HTTP_201_CREATED)
+@router.post('/llm/provider', status_code=status.HTTP_201_CREATED, response_model=ProviderOut)
 async def create_provider(
     request: Request,
-    body: dict[str, Any] = Body(default={}),
+    body: ProviderCreateRequest,
     actor: User = Depends(require_admin),
     storage: PostgresStorage = Depends(get_storage),
 ) -> dict[str, Any]:
-    name = str(body.get('name') or '').strip()
-    base_url = _normalize_base_url(str(body.get('base_url') or ''))
-    api_key = str(body.get('api_key') or '')
-    model = str(body.get('model') or '').strip()
+    name = body.name.strip()
+    base_url = _normalize_base_url(body.base_url)
+    api_key = body.api_key
+    model = body.model.strip()
     if not name or not base_url or not api_key or not model:
         raise ApiError('name、base_url、api_key、model 均为必填', status=400)
 
@@ -65,8 +66,8 @@ async def create_provider(
             base_url=base_url,
             api_key=api_key,
             model=model,
-            is_default=bool(body.get('is_default')),
-            enabled=bool(body.get('enabled', True)),
+            is_default=body.is_default,
+            enabled=body.enabled,
         )
         await storage.audit.record(
             actor.id,
@@ -78,29 +79,31 @@ async def create_provider(
     return provider
 
 
-@router.patch('/llm/provider/{provider_id}')
+@router.patch('/llm/provider/{provider_id}', response_model=ProviderOut)
 async def update_provider(
     provider_id: str,
     request: Request,
-    body: dict[str, Any] = Body(default={}),
+    body: ProviderUpdateRequest,
     actor: User = Depends(require_admin),
     storage: PostgresStorage = Depends(get_storage),
 ) -> dict[str, Any]:
-    """Patch a provider. An omitted or empty ``api_key`` keeps the stored one."""
+    """Patch a provider. An omitted, null or empty ``api_key`` keeps the stored one."""
     target_id = _provider_id(provider_id)
     if await storage.llm.get(target_id) is None:
         raise ApiError('provider 不存在', status=404)
 
+    sent = body.model_fields_set
     changes: dict[str, Any] = {}
     for column in ('name', 'model', 'enabled', 'is_default'):
-        if column in body:
-            changes[column] = body[column]
-    if 'base_url' in body:
-        changes['base_url'] = _normalize_base_url(str(body['base_url']))
+        value = getattr(body, column)
+        if column in sent and value is not None:
+            changes[column] = value
+    if 'base_url' in sent and body.base_url is not None:
+        changes['base_url'] = _normalize_base_url(body.base_url)
 
-    # Blank means "unchanged"; the client never receives the stored key, so it
-    # cannot echo it back.
-    api_key = str(body.get('api_key') or '').strip() or None
+    # Blank or absent means "unchanged"; the client never receives the stored
+    # key, so it cannot echo it back.
+    api_key = (body.api_key or '').strip() or None
 
     async with storage.transaction():
         updated = await storage.llm.update(target_id, changes, api_key=api_key)
@@ -135,7 +138,7 @@ async def delete_provider(
         )
 
 
-@router.post('/llm/provider/{provider_id}/test')
+@router.post('/llm/provider/{provider_id}/test', response_model=ProviderTestOut)
 async def test_provider(
     provider_id: str,
     _: User = Depends(require_admin),

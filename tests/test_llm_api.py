@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from hippo.api.routers import llm as llm_api
+from hippo.api.schemas.llm import ProviderCreateRequest, ProviderUpdateRequest
 from hippo.exceptions import ApiError
 from hippo.repositories.llm import mask_key
 
@@ -50,7 +51,7 @@ class ProviderUpdateTest(unittest.IsolatedAsyncioTestCase):
         await llm_api.update_provider(
             '1',
             SimpleNamespace(headers={}, client=None),
-            body={'name': 'renamed', 'api_key': ''},
+            body=ProviderUpdateRequest(name='renamed', api_key=''),
             actor=SimpleNamespace(id=1, username='admin'),
             storage=storage,
         )
@@ -70,14 +71,14 @@ class ProviderUpdateTest(unittest.IsolatedAsyncioTestCase):
         await llm_api.update_provider(
             '1',
             SimpleNamespace(headers={}, client=None),
-            body={'api_key': 'sk-new'},
+            body=ProviderUpdateRequest(api_key='sk-new'),
             actor=SimpleNamespace(id=1, username='admin'),
             storage=storage,
         )
 
         self.assertEqual('sk-new', storage.llm.update.await_args.kwargs['api_key'])
 
-    async def test_create_requires_every_field(self) -> None:
+    async def test_a_blank_api_key_is_refused_on_create(self) -> None:
         storage = SimpleNamespace(
             llm=SimpleNamespace(create=AsyncMock()),
             audit=SimpleNamespace(record=AsyncMock()),
@@ -85,7 +86,7 @@ class ProviderUpdateTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ApiError):
             await llm_api.create_provider(
                 SimpleNamespace(headers={}, client=None),
-                body={'name': 'p', 'base_url': 'http://x', 'model': 'm'},
+                body=ProviderCreateRequest(name='p', base_url='http://x', api_key='', model='m'),
                 actor=SimpleNamespace(id=1, username='admin'),
                 storage=storage,
             )
@@ -99,12 +100,12 @@ class ProviderUpdateTest(unittest.IsolatedAsyncioTestCase):
         )
         await llm_api.create_provider(
             SimpleNamespace(headers={}, client=None),
-            body={
-                'name': 'p',
-                'base_url': 'http://localhost:8000/v1/',
-                'api_key': 'k',
-                'model': 'm',
-            },
+            body=ProviderCreateRequest(
+                name='p',
+                base_url='http://localhost:8000/v1/',
+                api_key='k',
+                model='m',
+            ),
             actor=SimpleNamespace(id=1, username='admin'),
             storage=storage,
         )
