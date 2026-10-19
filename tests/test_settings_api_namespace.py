@@ -8,6 +8,7 @@ SETTINGS_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'settings' / 'SettingsPage
 ADMIN_SYNC_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminSyncPage.tsx'
 SYNC_SETTINGS_PANEL = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'SyncSettingsPanel.tsx'
 EMAIL_PANEL = ROOT / 'frontend' / 'src' / 'pages' / 'settings' / 'EmailPanel.tsx'
+SYNC_RUN_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useSyncRun.ts'
 GROUPS_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'groups' / 'GroupsPage.tsx'
 
 
@@ -45,13 +46,16 @@ class SettingsApiNamespaceTest(unittest.TestCase):
         sync_settings_panel = SYNC_SETTINGS_PANEL.read_text(encoding='utf-8')
         email_panel = EMAIL_PANEL.read_text(encoding='utf-8')
         groups_page = GROUPS_PAGE.read_text(encoding='utf-8')
+        sync_run_hook = SYNC_RUN_HOOK.read_text(encoding='utf-8')
 
         self.assertIn('/api/settings/status', sync_page)
         self.assertIn('/api/settings/tasks?limit=5&detail=true', sync_page)
         self.assertIn('/api/settings', settings_page)
         self.assertIn('/api/settings', sync_settings_panel)
         self.assertIn('/api/settings/test-email', email_panel)
-        self.assertIn('/api/settings/run', groups_page)
+        self.assertIn('useSyncRun', groups_page)
+        self.assertIn('/api/settings/run', sync_run_hook)
+        self.assertIn('/api/settings/admin/run', sync_run_hook)
         self.assertNotIn('/api/sync/settings', settings_page)
         self.assertNotIn('/api/sync/test-email', email_panel)
         self.assertNotIn('/api/sync/run', settings_page)

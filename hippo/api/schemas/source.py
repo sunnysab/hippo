@@ -1,8 +1,7 @@
-"""Source subscription, credential and daemon-login schemas.
+"""Source subscription and credential schemas.
 
-Hippo subscribes to more than WeChat: a pasted URL decides the source
-(``weixin``, ``bilibili``, ``youtube``, ``podcast``). ``/api/login/*`` is not
-Hippo authentication — it is the WeChat account the crawler runs as.
+Hippo subscribes to channels and feeds from multiple sources. The separate
+``daemon`` schema module owns the WeChat session used by the crawler.
 """
 
 from __future__ import annotations
@@ -80,32 +79,3 @@ class CredentialProbeOut(BaseModel):
     ok: bool
     detail: str = Field(description='Human-readable outcome, written by the probe.')
     account: str = Field(description='Account the credential was accepted as, or empty.')
-
-
-class DaemonLoginStatusOut(BaseModel):
-    """State of the WeChat daemon session hippo crawls with."""
-
-    logged_in: bool
-    status: str = Field(description="online / logged_out / unreachable / the daemon's own word.")
-    need_relogin: bool
-    wxid: str | None = None
-    nickname: str | None = None
-    head_url: str | None = None
-    clients_connected: int | None = None
-    error: str = Field(default='', description='Why the daemon could not be reached, when it could not.')
-
-
-class DaemonActionResultOut(BaseModel):
-    """``POST /api/login/auto`` and ``POST /api/login/wait``."""
-
-    ok: bool
-    result: dict[str, object] = Field(description="The daemon's own reply, passed through unchanged.")
-
-
-class DaemonQrOut(BaseModel):
-    """``POST /api/login/qr``: what the console renders so the owner can scan."""
-
-    uuid: str
-    url: str = ''
-    png_base64: str = Field(description='PNG bytes, base64 encoded; empty when the daemon sent only a URL.')
-    expires_in: int = Field(description='Seconds until the QR code goes stale.')
