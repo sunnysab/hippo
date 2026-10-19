@@ -453,6 +453,9 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
                     group_id=job.group_id,
                     biz_list=list(job.biz_list) if job.biz_list else None,
                     source=job.source,
+                    # A manual job forces past the daily interval; ``skip_minutes``
+                    # still throttles it. Scheduled/backfill jobs keep the policy.
+                    force=job.trigger_type == 'manual',
                     observer_factory=lambda account, _: _WorkerObserver(tracker=tracker, account=account),
                     observer=tracker,
                 )

@@ -46,7 +46,8 @@ logger = get_logger(__name__)
 # 2s 那种密度会把 searchcontact 打到限流（2026-09-22 实测：一次全量 alias 校验后
 # 该接口连续几十分钟只回 "无法解析公众号标识"）。
 LIST_ACCOUNT_MIN_INTERVAL = 15.0
-# 连续失败这么多账号就中止本轮：多半是被限流，继续打只会更糟
+# 同一来源连续失败这么多账号就跳过该来源在本轮的其余账号：多半是被限流，继续打只会更糟。
+# 按来源分别计数，微信 daemon 挂掉不会挡住 bilibili/youtube/podcast。
 MAX_CONSECUTIVE_LIST_FAILURES = 3
 # 一次 sync job 只顺带抓一批正文；持续抓是 worker 里常驻 drain 循环的活
 JOB_BODY_BATCH = 5
@@ -117,20 +118,22 @@ class ArticleSyncService:
                     None,
                 )
 
-            if should_skip_by_time(account.last_synced_at, config.skip_minutes):
-                observer.on_skip('recently_synced')
-                return (
-                    SyncAccountResult(
-                        biz=account.biz,
-                        nickname=account.nickname,
-                        source=account.source or 'weixin',
-                        saved=0,
-                        completed=False,
-                        skipped=True,
-                        skip_reason='recently_synced',
-                    ),
-                    None,
-                )
+        # The short cooldown applies to manual runs too: forcing past the daily
+        # interval must not turn into hammering the source on every click.
+        if should_skip_by_time(account.last_synced_at, config.skip_minutes):
+            observer.on_skip('recently_synced')
+            return (
+                SyncAccountResult(
+                    biz=account.biz,
+                    nickname=account.nickname,
+                    source=account.source or 'weixin',
+                    saved=0,
+                    completed=False,
+                    skipped=True,
+                    skip_reason='recently_synced',
+                ),
+                None,
+            )
 
         # weixin-rs 数据源：列表阶段只入队（列表接口只有会失效的长链），
         # 正文由队列 drain 统一抓（拿到永久短链 + 原始 HTML 落 article_document）。
@@ -245,10 +248,16 @@ class ArticleSyncService:
                 current_account=current,
             )
 
-        consecutive_failures = 0
+        consecutive_failures: dict[str, int] = {}
+        blocked_sources: set[str] = set()
         for i, account in enumerate(accounts):
             if _get_cancel_event().is_set():
                 break
+            account_source = account.source or 'weixin'
+            if account_source in blocked_sources:
+                # Rate limiting is per source: a WeChat outage must not stop the
+                # media sources from syncing in the same round.
+                continue
             if i > 0:
                 job_observer.on_log(f'列表请求间隔，等待 {config.sleep_seconds:g} 秒')
                 await asyncio.sleep(config.sleep_seconds)
@@ -281,13 +290,16 @@ class ArticleSyncService:
             details.append(result)
             if result.failed:
                 failed_accounts += 1
-                consecutive_failures += 1
+                failures = consecutive_failures.get(account_source, 0) + 1
+                consecutive_failures[account_source] = failures
                 job_observer.on_account_done(result, summary)
-                if consecutive_failures >= MAX_CONSECUTIVE_LIST_FAILURES:
-                    job_observer.on_log(f'连续 {consecutive_failures} 个账号失败，中止本轮（可能被限流），留到下一轮')
-                    break
+                if failures >= MAX_CONSECUTIVE_LIST_FAILURES:
+                    blocked_sources.add(account_source)
+                    job_observer.on_log(
+                        f'{account_source}: 连续 {failures} 个账号失败，跳过该来源其余账号（可能被限流），留到下一轮'
+                    )
                 continue
-            consecutive_failures = 0
+            consecutive_failures[account_source] = 0
             if result.skipped and not bulk:
                 job_observer.on_account_done(result, summary)
                 return SyncReport(
@@ -320,11 +332,13 @@ class ArticleSyncService:
         )
 
 
-def _build_sync_config(settings: dict[str, Any]) -> SyncConfig:
+def _build_sync_config(settings: dict[str, Any], *, force: bool = False) -> SyncConfig:
     return SyncConfig(
         # 账号间请求间隔：给个下限，避免历史配置里的 2s 继续把接口打限流
         sleep_seconds=max(float(settings.get('sleep_seconds') or 0), LIST_ACCOUNT_MIN_INTERVAL),
-        force=False,
+        # Manual runs force past the per-account daily interval; the short
+        # ``skip_minutes`` cooldown is applied separately and still holds.
+        force=force,
         skip_minutes=settings.get('skip_minutes'),
     )
 
@@ -334,6 +348,7 @@ async def run_sync_job(
     group_id: int | None = None,
     biz_list: list[str] | None = None,
     source: str | None = None,
+    force: bool = False,
     observer_factory: Callable[[AccountCredential, bool], SyncObserver] | None = None,
     observer: SyncJobObserver | None = None,
     lock: asyncio.Lock | None = None,
@@ -346,6 +361,7 @@ async def run_sync_job(
                 group_id=group_id,
                 biz_list=biz_list,
                 source=source,
+                force=force,
                 observer_factory=observer_factory,
                 observer=job_observer,
                 lock=None,
@@ -384,7 +400,7 @@ async def run_sync_job(
 
             if error is None and container:
                 async with container as app:
-                    config = _build_sync_config(settings)
+                    config = _build_sync_config(settings, force=force)
                     service = ArticleSyncService(
                         storage=storage,
                         adapters=app.adapters,

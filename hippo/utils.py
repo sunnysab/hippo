@@ -216,13 +216,19 @@ async def resolve_sync_interval(
     storage: PostgresStorage,
     account: Any,
 ) -> int:
-    """Resolve effective sync interval for an account.
+    """Resolve the effective sync interval (in days) for one account.
 
-    Manual override (sync_interval_days) takes priority.
-    Falls back to auto-detection from article publish history.
+    An explicit per-subscription override (``sync_interval_days``) always wins,
+    whatever the source. Without one, only the WeChat source falls back to the
+    publish-history policy: its list API is a rate-limited bottleneck, so a quiet
+    account is checked less often. Every other source is listed again on each
+    scheduled check, because their endpoints tolerate the traffic.
     """
     if account.sync_interval_days is not None:
         return account.sync_interval_days
+
+    if (account.source or 'weixin') != 'weixin':
+        return 1
 
     try:
         latest_publish_at = await storage.accounts.get_latest_publish_at(account.biz)
