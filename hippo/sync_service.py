@@ -256,7 +256,20 @@ class ArticleSyncService:
             account_source = account.source or 'weixin'
             if account_source in blocked_sources:
                 # Rate limiting is per source: a WeChat outage must not stop the
-                # media sources from syncing in the same round.
+                # media sources from syncing in the same round. The account is
+                # still reported as skipped, or the progress would stop short of
+                # the total and the detail list would silently lose rows.
+                blocked_result = SyncAccountResult(
+                    biz=account.biz,
+                    nickname=account.nickname or account.biz,
+                    source=account_source,
+                    saved=0,
+                    completed=False,
+                    skipped=True,
+                    skip_reason='source_blocked',
+                )
+                details.append(blocked_result)
+                job_observer.on_account_done(blocked_result, None)
                 continue
             if i > 0:
                 job_observer.on_log(f'列表请求间隔，等待 {config.sleep_seconds:g} 秒')

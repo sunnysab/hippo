@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from hippo.sources.weixin import WeixinSourceAdapter
 from hippo.sync_core import reset_sync_cancel
 from hippo.sync_service import ArticleSyncService
-from hippo.sync_types import NullSyncObserver, SyncConfig
+from hippo.sync_types import NullSyncJobObserver, NullSyncObserver, SyncConfig
 from hippo.utils import resolve_sync_interval
 from hippo.weixin_worker import SyncStats
 
@@ -130,6 +130,16 @@ class ManualRunPolicyTest(unittest.TestCase):
         self.assertEqual(adapter.calls, [])
 
 
+class _RecordingJobObserver(NullSyncJobObserver):
+    """Records the per-account results the progress tracker consumes."""
+
+    def __init__(self) -> None:
+        self.done: list[str] = []
+
+    def on_account_done(self, result, summary) -> None:
+        self.done.append(result.biz)
+
+
 class PerSourceFailureIsolationTest(unittest.TestCase):
     def setUp(self) -> None:
         reset_sync_cancel()
@@ -148,14 +158,23 @@ class PerSourceFailureIsolationTest(unittest.TestCase):
             _account('yt1', source='youtube'),
         ]
         config = SyncConfig(sleep_seconds=0, force=True, skip_minutes=None)
+        observer = _RecordingJobObserver()
 
-        report = asyncio.run(service.sync_accounts(accounts=accounts, config=config, bulk=True))
+        report = asyncio.run(
+            service.sync_accounts(accounts=accounts, config=config, bulk=True, observer=observer)
+        )
 
         self.assertEqual(ok.calls, ['yt1'])
         completed = [detail.biz for detail in report.details if detail.completed]
         self.assertEqual(completed, ['yt1'])
-        # The fourth WeChat account is skipped once that source is blocked.
-        self.assertNotIn('wx4', [detail.biz for detail in report.details])
+        # The accounts left behind by the blocked source are still reported, so the
+        # detail list and the progress counters cannot disagree.
+        by_biz = {detail.biz: detail for detail in report.details}
+        self.assertEqual(list(by_biz), ['wx1', 'wx2', 'wx3', 'wx4', 'yt1'])
+        self.assertTrue(by_biz['wx4'].skipped)
+        self.assertEqual(by_biz['wx4'].skip_reason, 'source_blocked')
+        self.assertEqual(report.accounts_done, report.accounts_total)
+        self.assertEqual(observer.done, list(by_biz))
 
 
 if __name__ == '__main__':
