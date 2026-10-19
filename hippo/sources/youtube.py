@@ -26,7 +26,7 @@ import re
 import shutil
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -43,6 +43,9 @@ SOURCE = 'youtube'
 #: system-wide one (fresher, or the operator's own) wins when PATH has it.
 YTDLP_NAME = 'yt-dlp'
 WATCH_BASE = 'https://www.youtube.com/watch?v='
+#: A channel's own page. The ``/channel/UC…`` form is the one whose id needs no
+#: extraction, so it is also the form a stored account is re-read with.
+CHANNEL_BASE = 'https://www.youtube.com/channel/'
 
 #: A logged-in session is what keeps Google from answering with the bot check, so a
 #: submitted cookie is worth carrying into every call. It is written to a private
@@ -69,6 +72,10 @@ _DIRECT_PROTOCOLS = frozenset({'http', 'https'})
 
 _CHANNEL_ID_RE = re.compile(r'^UC[0-9A-Za-z_-]{22}$')
 _VIDEO_ID_RE = re.compile(r'^[0-9A-Za-z_-]{11}$')
+#: Where a channel's own picture is hosted. A video's thumbnail sits on
+#: ``i.ytimg.com``; showing one as the channel avatar is the mistake this list
+#: keeps out.
+_CHANNEL_AVATAR_HOST_SUFFIXES = ('.googleusercontent.com', '.ggpht.com')
 
 
 class YoutubeError(SourceError):
@@ -114,6 +121,79 @@ def channel_id_from_url(value: str) -> str | None:
 
 def embed_url(video_id: str) -> str:
     return f'https://www.youtube.com/embed/{video_id}'
+
+
+def _channel_avatar_url(info: Mapping[str, Any]) -> str | None:
+    """The channel's own picture in a channel dump, or ``None``.
+
+    yt-dlp lists a channel's banner beside its avatar in the same ``thumbnails``
+    array, so banner ids are skipped. A video's thumbnail is a different host
+    entirely (``i.ytimg.com``) and is refused by the host check — the avatar of a
+    channel is not a frame of one of its videos.
+    """
+    for thumbnail in info.get('thumbnails') or ():
+        if not isinstance(thumbnail, Mapping):
+            continue
+        if str(thumbnail.get('id') or '').startswith('banner'):
+            continue
+        url = str(thumbnail.get('url') or '')
+        host = (urlparse(url).hostname or '').lower()
+        if url and any(host.endswith(suffix) for suffix in _CHANNEL_AVATAR_HOST_SUFFIXES):
+            return url
+    return None
+
+
+def _channel_id_from_dump(info: Mapping[str, Any]) -> str | None:
+    """The channel a channel/tab dump belongs to, or ``None`` for anything else.
+
+    ``_type`` is what separates the two: a video's own info carries a
+    ``channel_id`` too — its uploader — and taking that would turn a single video
+    into a subscription. A user playlist keeps its own (``PL…``) id, and only the
+    id of a channel tab is a channel id; failing that, the flat entries name the
+    channel they were listed from.
+    """
+    if str(info.get('_type') or '') not in ('', 'playlist'):
+        return None
+    for entry in info.get('entries') or ():
+        candidate = str((entry or {}).get('playlist_channel_id') or '') if isinstance(entry, Mapping) else ''
+        if _CHANNEL_ID_RE.match(candidate):
+            return candidate
+    candidate = str(info.get('id') or '')
+    return candidate if _CHANNEL_ID_RE.match(candidate) else None
+
+
+def channel_info_from_dump(info: Mapping[str, Any]) -> ChannelInfo | None:
+    """A channel dump → the id, name and picture the confirmation dialog shows.
+
+    ``None`` says the dump is not a channel (see :func:`_channel_id_from_dump`),
+    which is what keeps a pasted video or playlist from becoming a subscription.
+    """
+    channel_id = _channel_id_from_dump(info)
+    if not channel_id:
+        return None
+    first = next((entry for entry in info.get('entries') or () if isinstance(entry, Mapping)), {})
+    # The channel's own fields first: a tab dump's ``title`` may carry the tab's
+    # name along (``… - Videos``).
+    nickname = next(
+        (
+            str(value)
+            for value in (
+                info.get('channel'),
+                info.get('uploader'),
+                first.get('playlist_channel'),
+                first.get('playlist_uploader'),
+                info.get('title'),
+            )
+            if value
+        ),
+        channel_id,
+    )
+    return ChannelInfo(
+        biz=f'{SOURCE}:{channel_id}',
+        nickname=nickname,
+        source_key=channel_id,
+        avatar_url=_channel_avatar_url(info),
+    )
 
 
 def video_block(video_id: str, *, cover_url: str | None = None) -> dict[str, Any]:
@@ -341,25 +421,58 @@ class YoutubeSource:
         return YoutubeSource(proxy=self._proxy, cookies=secret)
 
     async def preview(self, ref: str) -> ChannelInfo:
-        channel_id = channel_id_from_url(ref)
-        if channel_id:
-            return ChannelInfo(biz=f'youtube:{channel_id}', nickname=channel_id, source_key=channel_id)
-        url = ref if ref.startswith('http') else f'https://www.youtube.com/{ref.lstrip("@")}'
-        output = await run_ytdlp(
-            ['--flat-playlist', '--dump-json', '-I', '1:1', url],
-            proxy=self._proxy,
-            timeout=LIST_TIMEOUT,
-            cookies=self._cookies,
-        )
-        entries = parse_json_lines(output)
-        if not entries:
-            raise YoutubeError(f'从 {ref} 没能解析出频道')
-        entry = entries[0]
-        channel_id = str(entry.get('playlist_channel_id') or '')
-        if not _CHANNEL_ID_RE.match(channel_id):
+        """Resolve a pasted channel reference to its id, name and avatar.
+
+        Every form asks yt-dlp for the channel's metadata even when the URL already
+        carries the id: the dialog shows a name and a picture before anything is
+        stored. A ``/channel/UC…`` URL is still a usable subscription when that call
+        fails, while a handle has no id to fall back on.
+        """
+        known = channel_id_from_url(ref)
+        if known:
+            url = f'{CHANNEL_BASE}{known}'
+        else:
+            # A bare @handle or channel name is accepted too: add the site, and do
+            # not eat the "@" that makes it a handle.
+            url = ref if ref.startswith('http') else f'https://www.youtube.com/{ref.lstrip("/")}'
+        info: ChannelInfo | None = None
+        try:
+            # --dump-single-json is what makes the channel-level fields readable:
+            # the ``thumbnails`` of a per-entry dump belong to the video instead.
+            output = await run_ytdlp(
+                ['--flat-playlist', '--dump-single-json', '-I', '1:1', url],
+                proxy=self._proxy,
+                timeout=LIST_TIMEOUT,
+                cookies=self._cookies,
+            )
+            dumps = parse_json_lines(output)
+            info = channel_info_from_dump(dumps[0]) if dumps else None
+        except YoutubeError as exc:
+            if not known:
+                # Without an id from the URL there is nothing to subscribe to, and a
+                # failed lookup must not become a made-up id.
+                raise
+            logger.warning('Channel metadata for %s failed, subscribing with the id alone: %s', known, exc)
+        if known:
+            # The id in the URL is the channel being subscribed to; the dump only
+            # adds its name and picture, and even that may be missing.
+            return ChannelInfo(
+                biz=f'{SOURCE}:{known}',
+                nickname=info.nickname if info else known,
+                source_key=known,
+                avatar_url=info.avatar_url if info else None,
+            )
+        if info is None:
             raise YoutubeError(f'{ref} 不是频道链接（看起来是一个视频或播放列表）')
-        nickname = str(entry.get('playlist_channel') or entry.get('playlist_uploader') or channel_id)
-        return ChannelInfo(biz=f'youtube:{channel_id}', nickname=nickname, source_key=channel_id)
+        return info
+
+    async def channel_info(self, source_key: str) -> ChannelInfo:
+        """Metadata of a channel we already store, keyed the way ``accounts.alias`` is.
+
+        The entry point for filling in a subscription that never got a picture: the
+        caller keeps what is already there, so nothing is overwritten.
+        """
+        return await self.preview(f'{CHANNEL_BASE}{source_key}')
 
     async def list_items(self, *, source_key: str, limit: int, cursor: str | None = None) -> Listing:
         if not _CHANNEL_ID_RE.match(source_key or ''):
@@ -376,7 +489,7 @@ class YoutubeSource:
                 'youtubetab:approximate_date',
                 '-I',
                 f'{start}:{end}',
-                f'https://www.youtube.com/channel/{source_key}/videos',
+                f'{CHANNEL_BASE}{source_key}/videos',
             ],
             proxy=self._proxy,
             timeout=LIST_TIMEOUT,
@@ -469,6 +582,7 @@ class YoutubeResolver:
 
 
 __all__ = [
+    'CHANNEL_BASE',
     'PROBE_TIMEOUT',
     'SOURCE',
     'YTDLP_NAME',
@@ -478,6 +592,7 @@ __all__ = [
     'best_audio_format',
     'best_video_format',
     'channel_id_from_url',
+    'channel_info_from_dump',
     'embed_url',
     'parse_json_lines',
     'run_ytdlp',

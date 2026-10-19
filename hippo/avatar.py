@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
 import psycopg
 
 from .article_queries import _normalize_record
+from .http import MPClient
 from .logger import get_logger
 from .storage import PostgresStorage, fetchone_row
 from .utils import utc_now_iso
@@ -76,19 +76,38 @@ async def _store_avatar(
         )
 
 
+async def _avatar_proxy(storage: PostgresStorage, biz: str) -> str:
+    """The exit this avatar leaves through: the one its account's source uses.
+
+    A YouTube account's avatar sits on a host the box cannot reach directly, so
+    a fixed WeChat proxy here leaves that avatar unfetched. An unknown biz (the
+    search path caches under ``gh_id``, which is not an ``accounts.biz``) stays
+    on WeChat traffic.
+    """
+    from .media_settings import get_media_settings, resolve_proxy
+
+    row = await fetchone_row(
+        storage,
+        'SELECT source FROM accounts WHERE biz = %s',
+        [biz],
+        normalize=_normalize_record,
+    )
+    source = str((row or {}).get('source') or '') or 'weixin'
+    return resolve_proxy(await get_media_settings(storage), source)
+
+
 async def _fetch_and_cache_avatar(storage: PostgresStorage, biz: str, url: str) -> tuple[bytes, str] | None:
     headers = {
         'Referer': 'https://mp.weixin.qq.com/',
         'Origin': 'https://mp.weixin.qq.com',
         'User-Agent': 'Mozilla/5.0',
     }
-    # An avatar is WeChat traffic (the URL is a WeChat CDN host), so it uses the
-    # proxy configured for that source rather than a bare direct connection.
-    from .media_settings import get_media_settings, resolve_proxy
-
-    proxy = resolve_proxy(await get_media_settings(storage), 'weixin') or None
+    proxy = await _avatar_proxy(storage, biz)
     try:
-        resp = httpx.get(url, headers=headers, timeout=10, proxy=proxy)
+        # The shared async client, with the exit of the account's own source: an
+        # avatar is fetched from inside a request, so it must not block the loop.
+        async with MPClient(timeout=10.0, proxy=proxy or None) as client:
+            resp = await client.get(url, headers=headers)
         if resp.status_code != 200:
             return None
         content_type = resp.headers.get('Content-Type') or 'application/octet-stream'

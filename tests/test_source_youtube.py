@@ -20,6 +20,7 @@ from hippo.sources.youtube import (
     best_audio_format,
     best_video_format,
     channel_id_from_url,
+    channel_info_from_dump,
     parse_json_lines,
     run_ytdlp,
     video_block,
@@ -225,27 +226,211 @@ def _ytdlp(*entries) -> AsyncMock:
     return AsyncMock(return_value='\n'.join(json.dumps(entry) for entry in entries))
 
 
+AVATAR = 'https://yt3.googleusercontent.com/channel-avatar=s88-c-k-c0x00ffffff-no-rj'
+BANNER = 'https://yt3.googleusercontent.com/channel-banner=s0-bg'
+
+
+def _channel_dump(**overrides) -> dict:
+    """A channel page as ``--flat-playlist --dump-single-json -I 1:1`` prints it."""
+    dump = {
+        '_type': 'playlist',
+        'id': CHANNEL,
+        'title': 'Fireship - Videos',
+        'channel': 'Fireship',
+        'channel_id': CHANNEL,
+        'uploader': 'Fireship',
+        'uploader_id': '@Fireship',
+        'thumbnails': [
+            {'id': '0', 'width': 88, 'height': 88, 'url': AVATAR},
+            {'id': 'banner_uncropped', 'width': 2560, 'height': 424, 'url': BANNER},
+        ],
+        'entries': [_flat_entry()],
+    }
+    dump.update(overrides)
+    return dump
+
+
+def _dump(*dumps) -> AsyncMock:
+    return AsyncMock(return_value='\n'.join(json.dumps(dump) for dump in dumps))
+
+
+def _video_dump(**overrides) -> dict:
+    """A watch URL's own info: a video, with its uploader's channel id on it."""
+    dump = {
+        '_type': 'video',
+        'id': 'WrCjAAl9okA',
+        'title': '一期视频',
+        'channel': 'Fireship',
+        'channel_id': CHANNEL,
+        'thumbnails': [{'id': '0', 'url': 'https://i.ytimg.com/vi/WrCjAAl9okA/hq.jpg'}],
+    }
+    dump.update(overrides)
+    return dump
+
+
+class ChannelInfoFromDumpTest(unittest.TestCase):
+    """Only a channel dump becomes a channel; the picture is the channel's own."""
+
+    def test_a_channel_dump_carries_id_name_and_avatar(self) -> None:
+        info = channel_info_from_dump(_channel_dump())
+
+        self.assertIsNotNone(info)
+        self.assertEqual(f'youtube:{CHANNEL}', info.biz)
+        self.assertEqual(CHANNEL, info.source_key)
+        self.assertEqual('Fireship', info.nickname)
+        self.assertEqual(AVATAR, info.avatar_url)
+
+    def test_a_video_dump_is_not_a_channel(self) -> None:
+        # 视频自带上传者的 channel_id：认了它，一个视频就变成一次订阅。
+        self.assertIsNone(channel_info_from_dump(_video_dump()))
+
+    def test_a_playlist_dump_is_not_a_channel(self) -> None:
+        playlist = _channel_dump(id='PLabc123', entries=[], thumbnails=[])
+
+        self.assertIsNone(channel_info_from_dump(playlist))
+
+    def test_an_empty_channel_resolves_from_the_playlist_id(self) -> None:
+        # 一个新号还没有投稿：entries 为空，频道 id 就是列表自身的 id。
+        info = channel_info_from_dump(_channel_dump(entries=[]))
+
+        self.assertIsNotNone(info)
+        self.assertEqual(CHANNEL, info.source_key)
+        self.assertEqual('Fireship', info.nickname)
+
+    def test_a_video_thumbnail_is_never_the_avatar(self) -> None:
+        dump = _channel_dump(thumbnails=[{'id': '0', 'url': 'https://i.ytimg.com/vi/a/hq.jpg'}])
+
+        info = channel_info_from_dump(dump)
+
+        self.assertIsNotNone(info)
+        self.assertIsNone(info.avatar_url)
+
+    def test_the_banner_is_not_the_avatar(self) -> None:
+        dump = _channel_dump(thumbnails=[{'id': 'banner_uncropped', 'url': BANNER}, {'id': '0', 'url': AVATAR}])
+
+        info = channel_info_from_dump(dump)
+
+        self.assertEqual(AVATAR, info.avatar_url)
+
+    def test_a_dump_without_a_channel_id_is_refused(self) -> None:
+        self.assertIsNone(channel_info_from_dump({}))
+        self.assertIsNone(channel_info_from_dump({'_type': 'playlist', 'id': 'UU' + CHANNEL[2:]}))
+
+    def test_the_flat_entry_names_the_channel_when_the_playlist_id_does_not(self) -> None:
+        # 频道标签页的 playlist id 不保证是频道 id；扁平条目带着它列出的频道。
+        dump = _channel_dump(id='UU' + CHANNEL[2:], entries=[_flat_entry(playlist_channel_id=CHANNEL)])
+
+        info = channel_info_from_dump(dump)
+
+        self.assertEqual(CHANNEL, info.source_key)
+
+    def test_the_flat_entry_names_the_channel_when_the_dump_has_no_field(self) -> None:
+        dump = _channel_dump(channel=None, uploader=None, entries=[_flat_entry(playlist_channel='Fireship')])
+
+        self.assertEqual('Fireship', channel_info_from_dump(dump).nickname)
+
+    def test_the_tab_title_is_the_last_resort(self) -> None:
+        # 标签页的 title 带着页签名（「频道名 - Videos」），只有在频道字段都没有时才用它。
+        dump = _channel_dump(channel=None, uploader=None, entries=[], title='Fireship - Videos')
+
+        self.assertEqual('Fireship - Videos', channel_info_from_dump(dump).nickname)
+
+
 class PreviewTest(unittest.IsolatedAsyncioTestCase):
-    async def test_a_channel_url_needs_no_subprocess(self) -> None:
-        with patch('hippo.sources.youtube.run_ytdlp', new=_ytdlp()) as runner:
+    async def test_a_channel_url_gets_its_name_and_avatar(self) -> None:
+        with patch('hippo.sources.youtube.run_ytdlp', new=_dump(_channel_dump())) as runner:
             info = await YoutubeSource().preview(f'https://www.youtube.com/channel/{CHANNEL}')
 
-        runner.assert_not_awaited()
         self.assertEqual(f'youtube:{CHANNEL}', info.biz)
+        self.assertEqual(CHANNEL, info.source_key)
+        self.assertEqual('Fireship', info.nickname)
+        self.assertEqual(AVATAR, info.avatar_url)
+        # 频道级字段只有单份 JSON dump 里有；逐条 JSON 只有视频自己的缩略图。
+        command = list(runner.call_args.args[0])
+        self.assertIn('--dump-single-json', command)
+        self.assertEqual(f'https://www.youtube.com/channel/{CHANNEL}', command[-1])
 
     async def test_a_handle_is_resolved_through_yt_dlp(self) -> None:
-        with patch('hippo.sources.youtube.run_ytdlp', new=_ytdlp(_flat_entry())):
+        with patch('hippo.sources.youtube.run_ytdlp', new=_dump(_channel_dump())) as runner:
             info = await YoutubeSource().preview('https://www.youtube.com/@Fireship')
 
         self.assertEqual(CHANNEL, info.source_key)
         self.assertEqual('Fireship', info.nickname)
+        self.assertEqual(AVATAR, info.avatar_url)
+        self.assertEqual('https://www.youtube.com/@Fireship', list(runner.call_args.args[0])[-1])
+
+    async def test_a_bare_handle_keeps_its_at_sign(self) -> None:
+        with patch('hippo.sources.youtube.run_ytdlp', new=_dump(_channel_dump())) as runner:
+            await YoutubeSource().preview('@Fireship')
+
+        self.assertEqual('https://www.youtube.com/@Fireship', list(runner.call_args.args[0])[-1])
+
+    async def test_the_metadata_call_carries_the_proxy_and_the_cookies(self) -> None:
+        with patch('hippo.sources.youtube.run_ytdlp', new=_dump(_channel_dump())) as runner:
+            await YoutubeSource(proxy='http://proxy:8082', cookies='# cookies\n').preview(
+                f'https://www.youtube.com/channel/{CHANNEL}'
+            )
+
+        self.assertEqual('http://proxy:8082', runner.call_args.kwargs['proxy'])
+        self.assertEqual('# cookies\n', runner.call_args.kwargs['cookies'])
 
     async def test_a_video_url_is_not_a_channel(self) -> None:
         with (
-            patch('hippo.sources.youtube.run_ytdlp', new=_ytdlp(_flat_entry(playlist_channel_id=None))),
+            patch('hippo.sources.youtube.run_ytdlp', new=_dump(_video_dump())),
             self.assertRaises(YoutubeError),
         ):
             await YoutubeSource().preview('https://www.youtube.com/watch?v=WrCjAAl9okA')
+
+    async def test_a_playlist_url_is_not_a_channel(self) -> None:
+        with (
+            patch('hippo.sources.youtube.run_ytdlp', new=_dump(_channel_dump(id='PLabc123', entries=[]))),
+            self.assertRaises(YoutubeError),
+        ):
+            await YoutubeSource().preview('https://www.youtube.com/playlist?list=PLabc123')
+
+    async def test_a_failed_lookup_still_subscribes_a_channel_url(self) -> None:
+        # URL 里的 id 已校验：拿不到资料不该挡住一次合法订阅。
+        failed = AsyncMock(side_effect=YoutubeError('yt-dlp 失败（退出码 1）'))
+
+        with patch('hippo.sources.youtube.run_ytdlp', new=failed):
+            info = await YoutubeSource().preview(f'https://www.youtube.com/channel/{CHANNEL}')
+
+        self.assertEqual(f'youtube:{CHANNEL}', info.biz)
+        self.assertEqual(CHANNEL, info.nickname)
+        self.assertIsNone(info.avatar_url)
+
+    async def test_a_non_channel_dump_still_subscribes_a_channel_url(self) -> None:
+        with patch('hippo.sources.youtube.run_ytdlp', new=_dump(_video_dump())):
+            info = await YoutubeSource().preview(f'https://www.youtube.com/channel/{CHANNEL}')
+
+        self.assertEqual(f'youtube:{CHANNEL}', info.biz)
+        self.assertEqual(CHANNEL, info.source_key)
+
+    async def test_an_unknown_handle_is_never_given_a_made_up_id(self) -> None:
+        failed = AsyncMock(side_effect=YoutubeError('yt-dlp 失败（退出码 1）'))
+
+        with (
+            patch('hippo.sources.youtube.run_ytdlp', new=failed),
+            self.assertRaises(YoutubeError),
+        ):
+            await YoutubeSource().preview('https://www.youtube.com/@Fireship')
+
+    async def test_a_handle_that_is_not_a_channel_is_refused(self) -> None:
+        with (
+            patch('hippo.sources.youtube.run_ytdlp', new=_dump(_video_dump())),
+            self.assertRaises(YoutubeError),
+        ):
+            await YoutubeSource().preview('https://www.youtube.com/@Fireship')
+
+    async def test_channel_info_reads_a_stored_channel_key(self) -> None:
+        # 已有订阅（accounts.alias 存的是频道 id）的补齐入口。
+        with patch('hippo.sources.youtube.run_ytdlp', new=_dump(_channel_dump())) as runner:
+            info = await YoutubeSource().channel_info(CHANNEL)
+
+        self.assertEqual(CHANNEL, info.source_key)
+        self.assertEqual('Fireship', info.nickname)
+        self.assertEqual(AVATAR, info.avatar_url)
+        self.assertEqual(f'https://www.youtube.com/channel/{CHANNEL}', list(runner.call_args.args[0])[-1])
 
 
 class ListingTest(unittest.IsolatedAsyncioTestCase):
