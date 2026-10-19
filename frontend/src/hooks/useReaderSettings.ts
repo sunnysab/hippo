@@ -7,6 +7,8 @@ export interface ReaderConfig {
   letter: string;
   serif: boolean;
   hideSmall: boolean;
+  /** Keep the paragraph the player is inside on screen while it plays. */
+  followPlayback: boolean;
 }
 
 const defaultConfig: ReaderConfig = {
@@ -16,6 +18,7 @@ const defaultConfig: ReaderConfig = {
   letter: '0.2',
   serif: false,
   hideSmall: false,
+  followPlayback: true,
 };
 
 /**
@@ -36,6 +39,7 @@ const LEGACY_WIDTH_DEFAULT = '860';
 
 export const normalizeReaderConfig = (config: ReaderConfig): ReaderConfig => ({
   ...config,
+  followPlayback: config.followPlayback !== false,
   width: config.width === LEGACY_WIDTH_DEFAULT
     ? defaultConfig.width
     : clamp(config.width, READER_WIDTH_RANGE.min, READER_WIDTH_RANGE.max, 760),

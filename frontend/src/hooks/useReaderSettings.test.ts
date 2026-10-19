@@ -13,6 +13,7 @@ const config = (patch: Partial<ReaderConfig>): ReaderConfig => ({
   letter: '0.2',
   serif: false,
   hideSmall: false,
+  followPlayback: true,
   ...patch,
 });
 
@@ -30,6 +31,12 @@ describe('normalizeReaderConfig', () => {
       width: String(READER_WIDTH_RANGE.max),
       letter: String(READER_LETTER_RANGE.max),
     });
+  });
+
+  it('follows the player unless it was turned off', () => {
+    // 老版本的配置里没有这个字段，缺省即打开。
+    expect(normalizeReaderConfig({ ...config({}), followPlayback: undefined as unknown as boolean }).followPlayback).toBe(true);
+    expect(normalizeReaderConfig(config({ followPlayback: false })).followPlayback).toBe(false);
   });
 
   it('falls back when a stored value is not a number', () => {

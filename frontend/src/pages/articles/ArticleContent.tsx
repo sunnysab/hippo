@@ -57,6 +57,8 @@ const isArchivedVideoUrl = (url: string | undefined): url is string =>
 interface ArticleContentProps {
   payload: ArticlePayload;
   hideSmall: boolean;
+  /** Scroll the playing paragraph into view as the player moves on. */
+  followPlayback: boolean;
   onImageContextMenu: (detail: { imageId: number; x: number; y: number }) => void;
 }
 
@@ -247,7 +249,11 @@ const ContentBlock = memo(function ContentBlock({
   onTimeUpdate,
   isPlayingBlock,
   outlineIndex,
-}: AnchorableBlockProps & PlayerRefProps & { isPlayingBlock: boolean }) {
+  playingRef,
+}: AnchorableBlockProps & PlayerRefProps & {
+  isPlayingBlock: boolean;
+  playingRef: React.RefObject<HTMLParagraphElement | null>;
+}) {
   const { canSeek, seek, originalHref } = useContext(PlayerContext);
 
   const anchor = { 'data-outline-block': outlineIndex };
@@ -256,21 +262,22 @@ const ContentBlock = memo(function ContentBlock({
     const label = anchorLabel(block.t);
     const text = renderInlineNodes(block.text || '');
     const className = isPlayingBlock ? 'is-playing' : undefined;
-    if (!label) return <p {...anchor} className={className}>{text}</p>;
+    const playingProps = isPlayingBlock ? { ref: playingRef } : {};
+    if (!label) return <p {...anchor} {...playingProps} className={className}>{text}</p>;
     if (!canSeek) {
       // Nothing is archived here, so the anchor opens the original at that moment
       // instead of seeking a player that does not exist.
       const href = originalHref ? timestampHref(originalHref, block.t || 0) : null;
       if (!href) {
         return (
-          <p {...anchor} className={className}>
+          <p {...anchor} {...playingProps} className={className}>
             <span className="reader-anchor" title={label}>{label}</span>
             {text}
           </p>
         );
       }
       return (
-        <p {...anchor} className={className}>
+        <p {...anchor} {...playingProps} className={className}>
           <a className="reader-anchor is-action" href={href} target="_blank" rel="noreferrer" title={label}>
             {label}
           </a>
@@ -279,7 +286,7 @@ const ContentBlock = memo(function ContentBlock({
       );
     }
     return (
-      <p {...anchor} className={className}>
+      <p {...anchor} {...playingProps} className={className}>
         <button
           className="reader-anchor is-action"
           type="button"
@@ -350,7 +357,7 @@ const ContentBlock = memo(function ContentBlock({
   return null;
 });
 
-export function ArticleContent({ payload, hideSmall, onImageContextMenu }: ArticleContentProps) {
+export function ArticleContent({ payload, hideSmall, followPlayback, onImageContextMenu }: ArticleContentProps) {
   const { t } = useI18n();
 
   const content = payload.content;
@@ -383,6 +390,7 @@ export function ArticleContent({ payload, hideSmall, onImageContextMenu }: Artic
       payload={payload}
       content={content}
       hideSmall={hideSmall}
+      followPlayback={followPlayback}
       onImageContextMenu={onImageContextMenu}
     />
   );
@@ -398,9 +406,16 @@ interface RenderedContentProps extends ArticleContentProps {
  * both exist, and the two never play at the same time. A video without an archived
  * copy has no timeline to touch, so its anchors open the original instead.
  */
-function RenderedContent({ payload, content, hideSmall, onImageContextMenu }: RenderedContentProps) {
+function RenderedContent({
+  payload,
+  content,
+  hideSmall,
+  followPlayback,
+  onImageContextMenu,
+}: RenderedContentProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const playingRef = useRef<HTMLParagraphElement>(null);
   const canSeek = content.some(
     (block) =>
       (block.type === 'video' && isArchivedVideoUrl(block.url)) ||
@@ -452,6 +467,14 @@ function RenderedContent({ payload, content, hideSmall, onImageContextMenu }: Re
     markAt(event.currentTarget.currentTime);
   }, [markAt]);
 
+  // Follow the player: the highlight is useless if it has scrolled out of sight.
+  // Keyed on the index, so this runs once per paragraph rather than on every
+  // `timeupdate`, and never while paused.
+  useEffect(() => {
+    if (!followPlayback || activeIndex < 0) return;
+    playingRef.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+  }, [activeIndex, followPlayback]);
+
   const controls = useMemo<PlayerControls>(() => {
     const pauseOther = (active: HTMLMediaElement) => {
       const other = active === videoRef.current ? audioRef.current : videoRef.current;
@@ -495,6 +518,7 @@ function RenderedContent({ payload, content, hideSmall, onImageContextMenu }: Re
           videoRef={videoRef}
           onTimeUpdate={onTimeUpdate}
           isPlayingBlock={index === activeIndex}
+          playingRef={playingRef}
         />
       ))}
     </PlayerContext.Provider>

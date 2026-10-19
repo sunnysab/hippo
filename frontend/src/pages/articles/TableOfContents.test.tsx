@@ -30,7 +30,7 @@ const close = vi.fn();
 function Reader({ payload }: { payload: ArticlePayload }) {
   const ref = useRef<HTMLDivElement>(null);
   return <ArticlesProvider><div ref={ref} style={{ overflowY: 'auto' }}>
-    <ArticleContent payload={payload} hideSmall={false} onImageContextMenu={vi.fn()} />
+    <ArticleContent payload={payload} hideSmall={false} followPlayback={false} onImageContextMenu={vi.fn()} />
     <TableOfContents key={`${payload.article.id}:${payload.content_updated_at}`} payload={payload}
       items={buildOutline(payload.content)} containerRef={ref} onClose={close} />
   </div></ArticlesProvider>;

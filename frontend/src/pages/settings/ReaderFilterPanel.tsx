@@ -24,6 +24,16 @@ export function ReaderFilterPanel() {
           />
         </label>
         <p className="muted sync-inline-note">{t('reader.hideSmallImagesHint', 'Use local heuristics to reduce decorative or low-value images while reading.')}</p>
+        <label className="switch">
+          <span>{t('reader.followPlayback', '跟随播放滚动')}</span>
+          <input
+            id="reader-follow-playback"
+            type="checkbox"
+            checked={config.followPlayback}
+            onChange={(event) => updateConfig({ followPlayback: event.target.checked })}
+          />
+        </label>
+        <p className="muted sync-inline-note">{t('reader.followPlaybackHint', '播放音视频时，正在播放的段落会自动滚到视口中间。')}</p>
       </div>
     </div>
   );

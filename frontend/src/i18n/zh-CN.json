@@ -240,6 +240,8 @@
   "reader.filterSubtitle": "只影响当前设备上的阅读预览。",
   "reader.hideSmallImages": "隐藏小图片",
   "reader.hideSmallImagesHint": "自动隐藏装饰性或信息较少的小图。",
+  "reader.followPlayback": "跟随播放滚动",
+  "reader.followPlaybackHint": "播放音视频时，正在播放的段落会自动滚到视口中间。",
   "filters.allGroups": "全部分组",
   "filters.allAccounts": "全部账号",
   "filters.allTypes": "全部类型",

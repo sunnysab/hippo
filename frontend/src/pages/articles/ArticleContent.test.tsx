@@ -17,11 +17,13 @@ const payload = (
 const renderContent = (
   blocks: ArticlePayload['content'],
   article: Partial<ArticlePayload['article']> = {},
+  followPlayback = false,
 ) =>
   render(
     <ArticleContent
       payload={payload(blocks, article)}
       hideSmall={false}
+      followPlayback={followPlayback}
       onImageContextMenu={vi.fn()}
     />,
   );
@@ -280,6 +282,32 @@ describe('ArticleContent media blocks', () => {
     audio.currentTime = 30;
     fireEvent.timeUpdate(audio);
     expect(container.querySelector('p.is-playing')?.textContent).toContain('正题');
+  });
+
+  it('scrolls the playing paragraph into view only with the setting on', () => {
+    const scrollIntoView = vi.fn();
+    // jsdom has no layout, so the browser API the reader calls is stubbed here.
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const blocks: ArticlePayload['content'] = [
+      { type: 'audio', url: '/api/media/7/audio' },
+      { type: 'paragraph', text: '开场', t: 0 },
+      { type: 'paragraph', text: '正题', t: 30 },
+    ];
+
+    const off = renderContent(blocks);
+    const offAudio = off.container.querySelector('audio')!;
+    offAudio.currentTime = 31;
+    fireEvent.timeUpdate(offAudio);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    off.unmount();
+
+    const on = renderContent(blocks, {}, true);
+    const onAudio = on.container.querySelector('audio')!;
+    onAudio.currentTime = 31;
+    fireEvent.timeUpdate(onAudio);
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView.mock.instances[0]).toBe(on.container.querySelector('p.is-playing'));
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'smooth' });
   });
 
   it('follows the highlight when a transcript anchor seeks', () => {

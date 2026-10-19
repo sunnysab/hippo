@@ -89,6 +89,7 @@ export function ArticlePreview({ previewRef, sidePanel, onSidePanelToggle }: Art
           <ArticleContent
             payload={payload}
             hideSmall={config.hideSmall}
+            followPlayback={config.followPlayback}
             onImageContextMenu={setImageContextMenu}
           />
           {stale.length > 0 ? (
