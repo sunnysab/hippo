@@ -30,6 +30,8 @@ export function EmailPanel({
     try {
       const payload = await apiSend('/api/settings', 'PATCH', buildEmailPayload(formState));
       dispatch({ type: 'SET_SYNC_SETTINGS', payload: payload as unknown as SyncSettings });
+      // The save is done, so the control drops back to "blank keeps the stored secret".
+      setFormState((prev) => ({ ...prev, smtpPassword: '', smtpPasswordClear: false }));
       showToast(t('email.saveSuccess', 'Email settings saved.'));
     } catch (err) {
       if (isAuthError(err)) return;
@@ -121,11 +123,37 @@ export function EmailPanel({
               <input
                 type="password"
                 id="email-smtp-password"
-                placeholder="app password"
+                placeholder={formState.smtpPasswordSet
+                  ? t('email.smtpPasswordKeep', 'Leave blank to keep the stored password')
+                  : 'app password'}
                 value={formState.smtpPassword}
-                onChange={(event) => setFormState((prev) => ({ ...prev, smtpPassword: event.target.value }))}
+                onChange={(event) => setFormState((prev) => ({
+                  ...prev,
+                  smtpPassword: event.target.value,
+                  smtpPasswordClear: false,
+                }))}
               />
+              {formState.smtpPasswordSet ? (
+                <small className="muted" id="email-smtp-password-set">
+                  {t('email.smtpPasswordHint', 'A password is stored. Leave the field blank to keep it, or type a new one to replace it.')}
+                </small>
+              ) : null}
             </label>
+            {formState.smtpPasswordSet ? (
+              <label className="switch">
+                <span>{t('email.smtpPasswordClear', 'Clear the stored password on save')}</span>
+                <input
+                  type="checkbox"
+                  id="email-smtp-password-clear"
+                  checked={Boolean(formState.smtpPasswordClear)}
+                  onChange={(event) => setFormState((prev) => ({
+                    ...prev,
+                    smtpPasswordClear: event.target.checked,
+                    smtpPassword: event.target.checked ? '' : prev.smtpPassword,
+                  }))}
+                />
+              </label>
+            ) : null}
             <label>
               <span>{t('email.fromEmail', 'From email')}</span>
               <input

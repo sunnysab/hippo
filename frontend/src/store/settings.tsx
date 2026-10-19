@@ -27,6 +27,18 @@ export interface SyncStatus {
   worker_heartbeat_at?: string | null;
 }
 
+export interface EmailSettings {
+  smtp_host: string;
+  smtp_port: number;
+  smtp_user: string;
+  /** The server only ever returns a mask here, never the stored secret. */
+  smtp_password: string;
+  /** Whether a secret is stored, so the form can offer "keep" and "clear". */
+  smtp_password_set: boolean;
+  smtp_tls: boolean;
+  from_email: string;
+}
+
 export interface SyncSettings {
   enabled: boolean;
   interval_minutes: number;
@@ -37,7 +49,7 @@ export interface SyncSettings {
   article_exclude_keywords: string;
   alert_enabled: boolean;
   alert_email: string;
-  email?: Record<string, unknown>;
+  email?: EmailSettings;
 }
 
 export interface SyncTaskAccount {
