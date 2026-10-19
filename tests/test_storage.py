@@ -1,9 +1,47 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from hippo import storage
+from hippo.exceptions import StorageInitError
+
+
+class _FakeCursor:
+    """A cursor handing back the rows the initialization check reads."""
+
+    def __init__(self, rows: list[object]) -> None:
+        self._rows = iter(rows)
+
+    async def __aenter__(self) -> _FakeCursor:
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    async def execute(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def fetchone(self) -> object:
+        return next(self._rows)
+
+
+class SchemaVersionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_a_stale_schema_version_refuses_to_open(self) -> None:
+        # Startup compares meta.schema_version with the constant; a mismatch must
+        # stop the process instead of running against a schema it cannot read.
+        conn = SimpleNamespace(
+            cursor=lambda: _FakeCursor([('meta',), ('0',)]),
+            rollback=AsyncMock(),
+        )
+        handle = storage.PostgresStorage('postgresql://ignored')
+        handle.conn = conn  # type: ignore[assignment]
+
+        with self.assertRaises(StorageInitError) as ctx:
+            await handle._ensure_initialized()
+
+        self.assertIn('out of date', str(ctx.exception))
 
 
 class StoragePoolTest(unittest.IsolatedAsyncioTestCase):

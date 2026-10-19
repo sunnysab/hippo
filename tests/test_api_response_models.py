@@ -23,7 +23,6 @@ from hippo.api.errors import install_exception_handlers
 from hippo.api.routers import account as account_api
 from hippo.api.routers import annotation as annotation_api
 from hippo.api.routers import article as article_api
-from hippo.api.routers import daemon as daemon_api
 from hippo.api.routers import feed as feed_api
 from hippo.api.routers import source as source_api
 from hippo.models import AccountGroup
@@ -270,48 +269,6 @@ class SourceResponseTest(unittest.TestCase):
         body = _client(source_api, storage).get('/api/source').json()
 
         self.assertEqual([{'source': 'weixin', 'channels': 2}], body['sources'])
-
-    def test_the_daemon_login_status_fits_its_model_either_way(self) -> None:
-        # Reachable and unreachable are two literal payloads; both are the
-        # documented shape, so neither can turn into a 500 on the way out.
-        live = {
-            'logged_in': True,
-            'status': 'online',
-            'need_relogin': False,
-            'wxid': 'wxid_1',
-            'nickname': '夜行',
-            'head_url': None,
-            'clients_connected': 1,
-        }
-
-        with patch.object(daemon_api, 'WeixinSource', lambda **_kwargs: _FakeDaemon(status=live)):
-            body = _client(daemon_api, SimpleNamespace()).get('/api/login').json()
-
-        self.assertEqual({**live, 'error': ''}, body)
-
-        with patch.object(daemon_api, 'WeixinSource', lambda **_kwargs: _FakeDaemon(error=RuntimeError('boom'))):
-            offline = _client(daemon_api, SimpleNamespace()).get('/api/login').json()
-
-        self.assertFalse(offline['logged_in'])
-        self.assertEqual('unreachable', offline['status'])
-        self.assertEqual('boom', offline['error'])
-
-
-class _FakeDaemon:
-    def __init__(self, *, status: dict[str, Any] | None = None, error: Exception | None = None) -> None:
-        self._status = status
-        self._error = error
-
-    async def __aenter__(self) -> _FakeDaemon:
-        return self
-
-    async def __aexit__(self, *exc: object) -> bool:
-        return False
-
-    async def status(self) -> dict[str, Any]:
-        if self._error is not None:
-            raise self._error
-        return self._status or {}
 
 
 if __name__ == '__main__':

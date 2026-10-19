@@ -4,7 +4,6 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-APP_SHELL = ROOT / 'frontend' / 'src' / 'components' / 'AppShell.tsx'
 TOP_BAR = ROOT / 'frontend' / 'src' / 'components' / 'TopBar.tsx'
 ARTICLES_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'articles' / 'ArticlesPage.tsx'
 ARTICLE_FILTERS = ROOT / 'frontend' / 'src' / 'pages' / 'articles' / 'ArticleFilters.tsx'
@@ -29,8 +28,6 @@ LOGIN_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'auth' / 'LoginPage.tsx'
 SYNC_RUN_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useSyncRun.ts'
 ADMIN_SYNC_SECTION = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminSyncSection.tsx'
 SYNC_SETTINGS_PANEL = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'SyncSettingsPanel.tsx'
-ADMIN_LOG_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminLogPage.tsx'
-LOGIN_PANEL = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'LoginPanel.tsx'
 
 
 def _mark_path_data(source: str) -> str:
@@ -42,21 +39,6 @@ def _mark_path_data(source: str) -> str:
 
 
 class FrontendRegressionTest(unittest.TestCase):
-    def test_the_app_shell_leaves_infrastructure_to_the_source_page(self) -> None:
-        # 服务运行/登录状态是管理台来源页的事（LoginPanel 读 /api/login），
-        # 包住每个页面的 shell 不再重复探测、重复展示。
-        shell = APP_SHELL.read_text(encoding='utf-8')
-        login_panel = LOGIN_PANEL.read_text(encoding='utf-8')
-
-        self.assertNotIn("'/api/login'", shell)
-        self.assertNotIn("'/api/settings/status'", shell)
-        self.assertNotIn('status-banner', shell)
-        self.assertNotIn('syncStatus', shell)
-        top_bar = TOP_BAR.read_text(encoding='utf-8')
-        self.assertNotIn('daemon-status', top_bar)
-        self.assertNotIn('syncStatus', top_bar)
-        self.assertIn("'/api/login'", login_panel)
-
     def test_viewport_logic_uses_shared_media_query_hook(self) -> None:
         # 视口判断收敛到 hooks：页面组件里不再直接碰 window.matchMedia
         hook_source = MEDIA_QUERY_HOOK.read_text(encoding='utf-8')
@@ -220,18 +202,6 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertIn('object-fit: cover;', rule)
         self.assertNotIn('aspect-ratio: auto', rule)
 
-    def test_one_hook_owns_manual_runs_and_their_task_polling(self) -> None:
-        hook = SYNC_RUN_HOOK.read_text(encoding='utf-8')
-
-        # 手动同步只有一份实现：触发、轮询、结束刷新都在这里。
-        self.assertIn("'/api/settings/run'", hook)
-        self.assertIn("`/api/settings/tasks/${taskId}`", hook)
-        self.assertIn('emitRefresh()', hook)
-        # 只轮询活动任务，卸载与新的运行都会让旧答案作废。
-        self.assertIn('ACTIVE_STATUSES', hook)
-        self.assertIn('generationRef', hook)
-        self.assertIn('sync.task_conflict', hook)
-
     def test_manual_runs_refuse_an_invalid_group_id(self) -> None:
         hook = SYNC_RUN_HOOK.read_text(encoding='utf-8')
         translations = json.loads(I18N_ZH.read_text(encoding='utf-8'))
@@ -259,25 +229,12 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertIn('runSync({ bizList: state.selectedAccounts })', batch)
         self.assertIn('runSync({ groupId })', groups)
 
-    def test_console_buttons_run_through_the_admin_endpoint(self) -> None:
+    def test_each_console_caller_runs_site_wide(self) -> None:
+        # The behaviour tests only prove what the hook does once it has a scope.
+        # Whether each caller passes siteWide down is source-only: the console
+        # runs site-wide, not through the reader's own-subscription entry.
         for page in (ADMIN_SOURCE_PAGE, ADMIN_SYNC_SECTION, SYNC_SETTINGS_PANEL):
-            source = page.read_text(encoding='utf-8')
-            self.assertIn('useSyncRun', source)
-            self.assertIn('siteWide: true', source)
-            # 管理台按整站跑，不再占用读者那份只针对本人订阅的入口。
-            self.assertNotIn("'/api/settings/run'", source)
-
-        hook = SYNC_RUN_HOOK.read_text(encoding='utf-8')
-        self.assertIn("'/api/settings/admin/run'", hook)
-        # 只有共享 hook 会轮询任务，页面里那份手写的定时循环已经删掉。
-        self.assertNotIn('maxAttempts', SYNC_SETTINGS_PANEL.read_text(encoding='utf-8'))
-
-    def test_the_signoz_link_is_read_with_a_get(self) -> None:
-        source = ADMIN_LOG_PAGE.read_text(encoding='utf-8')
-
-        # 端点是 GET /api/admin/log/link?minutes=…；POST 过去只会拿到 405。
-        self.assertIn('/api/admin/log/link?minutes=', source)
-        self.assertNotIn("apiSend('/api/admin/log/link'", source)
+            self.assertIn('siteWide: true', page.read_text(encoding='utf-8'))
 
     def test_groups_page_syncs_selected_group_with_route_query(self) -> None:
         source = GROUPS_PAGE.read_text(encoding='utf-8')

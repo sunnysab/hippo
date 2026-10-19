@@ -2358,11 +2358,6 @@ class KnowledgeSchemaTest(unittest.TestCase):
                     f'non-English comment in new schema section: {line}',
                 )
 
-    def test_schema_version_is_bumped_in_this_worktree(self) -> None:
-        from hippo import storage
-
-        self.assertEqual(storage.SCHEMA_VERSION, '31')
-
 
 if __name__ == '__main__':
     unittest.main()

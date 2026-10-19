@@ -10,8 +10,6 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from pydantic import ValidationError
-
 from hippo.api.deps import API_KEY_FORBIDDEN_PREFIXES, api_key_user
 from hippo.api.routers import apikey as apikey_api
 from hippo.api.schemas.auth import ApiKeyCreateRequest
@@ -209,11 +207,9 @@ class RouterTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(expires_at)
         self.assertLess(abs((expires_at - (before + timedelta(days=30))).total_seconds()), 5)
 
-    async def test_a_nonsense_expiry_is_refused_by_the_request_model(self) -> None:
-        # The body is declared as an integer number of days, so a string is
-        # refused before the route runs. _expiry only has to explain 0 or less.
-        with self.assertRaises(ValidationError):
-            ApiKeyCreateRequest(expires_in_days='soon')  # type: ignore[arg-type]
+    async def test_a_non_positive_expiry_is_refused(self) -> None:
+        # The model accepts any integer; _expiry owns the rule that a key cannot
+        # expire immediately. The string case is covered by the request contract.
         storage = SimpleNamespace(transaction=_NullTransaction, api_keys=AsyncMock(), audit=AsyncMock())
         with self.assertRaises(ApiError):
             await apikey_api.create_api_key(

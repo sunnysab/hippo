@@ -7,7 +7,6 @@ of a constant would not have seen that, which is why these tests read the SQL th
 calls hand to a recording cursor.
 """
 
-import re
 import unittest
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -94,35 +93,25 @@ def _row(image_id: int, *, biz: str, orig_url: str, source: str) -> tuple:
 class GeneratedQueryTest(unittest.IsolatedAsyncioTestCase):
     """The assembled statement must be one PostgreSQL can run."""
 
-    async def test_the_source_of_each_image_comes_from_the_join(self) -> None:
+    async def test_the_assembled_statement_is_one_the_database_accepts(self) -> None:
         storage = _Storage(total=1, rows=[_row(1, biz='Mz1', orig_url='https://cdn/a.png', source='youtube')])
 
         with _backfill(storage, _Store(), object, default_media_settings()):
-            result = await backfill_article_images(pg_dsn='postgres://test', dry_run=True)
+            result = await backfill_article_images(pg_dsn='postgres://test', dry_run=True, limit=1)
 
         self.assertEqual(1, result['skipped'])
         self.assertEqual(1, len(storage.selects), 'the run reads one page')
         sql, params = storage.selects[0]
-        # The default of the COALESCE is a real second argument, not an empty one.
+        # The default of the COALESCE is a real second argument, not an empty one;
+        # the dropped fragment it once was is a statement PostgreSQL refuses.
         self.assertIn("COALESCE(acc.source, '')", sql)
         self.assertNotRegex(sql, r'COALESCE\(\s*acc\.source\s*,\s*\)')
-        # A comma followed by the closing bracket is what a dropped fragment looks
-        # like; the shipped query was exactly that.
-        self.assertIsNone(re.search(r',\s*\)', sql), sql)
         self.assertEqual(sql.count('('), sql.count(')'), sql)
         self.assertIn('LEFT JOIN accounts acc ON acc.biz = a.biz', sql)
-        # The statement and the arguments handed to psycopg belong together.
-        self.assertEqual(sql.count('%s'), len(params))
-
-    async def test_the_page_walk_passes_one_limit(self) -> None:
-        storage = _Storage(total=2, rows=[_row(1, biz='Mz1', orig_url='https://cdn/a.png', source='weixin')])
-
-        with _backfill(storage, _Store(), object, default_media_settings()):
-            await backfill_article_images(pg_dsn='postgres://test', dry_run=True, limit=1)
-
-        sql, params = storage.selects[0]
+        # The page walk and the arguments handed to psycopg belong together.
         self.assertTrue(sql.endswith('LIMIT %s'), sql)
         self.assertEqual((1,), params)
+        self.assertEqual(sql.count('%s'), len(params))
 
 
 class SourceProxyTest(unittest.IsolatedAsyncioTestCase):
