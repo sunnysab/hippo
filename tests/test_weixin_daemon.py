@@ -428,5 +428,45 @@ class SessionFailureBookkeepingTest(unittest.TestCase):
         self.assertEqual(queue.requeued, [])
 
 
+class ResolveFakeidTest(unittest.TestCase):
+    """``gh_`` → ``__biz``：文章长链优先，0 篇时退回搜索结果的 ``bizuin``。"""
+
+    def test_reads_the_biz_from_an_article_link(self) -> None:
+        source = WeixinSource(auto_login=False)
+        source._bot = _ListBot([{'url': 'https://mp.weixin.qq.com/s?__biz=MzU1&sn=abc'}])
+
+        self.assertEqual('MzU1', asyncio.run(source.resolve_fakeid('gh_1')))
+
+    def test_falls_back_to_the_search_result_bizuin(self) -> None:
+        # 一页文章都拿不到的号（服务号、刚注册）以前直接 502；bizuin 的 base64 就是 __biz。
+        source = WeixinSource(auto_login=False)
+        source._bot = _EmptyListBot()
+        source.search_public_accounts = AsyncMock(  # type: ignore[method-assign]
+            return_value=[
+                {'userName': 'gh_other', 'bizuin': '999'},
+                {'userName': 'gh_1', 'bizuin': '3908350008'},
+            ]
+        )
+
+        self.assertEqual('MzkwODM1MDAwOA==', asyncio.run(source.resolve_fakeid('gh_1', '宇树机器人训练日常')))
+        source.search_public_accounts.assert_awaited_once_with('宇树机器人训练日常')
+
+    def test_reports_both_misses_when_neither_path_resolves(self) -> None:
+        source = WeixinSource(auto_login=False)
+        source._bot = _EmptyListBot()
+        source.search_public_accounts = AsyncMock(return_value=[])  # type: ignore[method-assign]
+
+        with self.assertRaises(RuntimeError) as ctx:
+            asyncio.run(source.resolve_fakeid('gh_1', '无名号'))
+
+        self.assertIn('gh_1', str(ctx.exception))
+
+
+class _EmptyListBot:
+    async def call(self, action, params, *, timeout):
+        assert action == 'get_biz_articles'
+        return {'biz': 'gh_1', 'count': 0, 'articles': [], 'next_offset': None, 'is_end': True}
+
+
 if __name__ == '__main__':
     unittest.main()

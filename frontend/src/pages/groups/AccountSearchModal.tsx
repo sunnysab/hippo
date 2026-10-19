@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useGroupsState } from '../../store/groups';
 import { useI18n } from '../../i18n';
-import { apiGet, apiSend } from '../../api';
+import { apiGet, apiSend, isAuthError } from '../../api';
 import { LoadingIndicator } from '../../components/LoadingIndicator';
+import { useToast } from '../../hooks/useToast';
 import { emitRefresh } from '../../utils/events';
 
 interface AccountSearchModalProps {
@@ -13,6 +14,8 @@ interface AccountSearchModalProps {
 export function AccountSearchModal({ isOpen, onClose }: AccountSearchModalProps) {
   const { state, dispatch } = useGroupsState();
   const { t } = useI18n();
+  const { showToast } = useToast();
+  const [adding, setAdding] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -61,22 +64,32 @@ export function AccountSearchModal({ isOpen, onClose }: AccountSearchModalProps)
   }, [dispatch, onClose]);
 
   const handleAdd = async (biz: string, nickname: string, alias: string | null, round_head_img: string | null) => {
-    await apiSend('/api/account', 'POST', {
-      biz,
-      nickname,
-      alias: alias || null,
-      round_head_img: round_head_img || null,
-      group_id: state.selectedGroupId,
-    });
-    // Update the result to show "Added"
-    dispatch({
-      type: 'SET_SEARCH_RESULTS',
-      results: state.searchResults.map((r) =>
-        r.biz === biz ? { ...r, is_added: true } : r,
-      ),
-      append: false,
-    });
-    emitRefresh();
+    // 添加要连 daemon 解析 fakeid，可能慢或失败；不接住的话按钮点了毫无反应。
+    if (adding) return;
+    setAdding(biz);
+    try {
+      await apiSend('/api/account', 'POST', {
+        biz,
+        nickname,
+        alias: alias || null,
+        round_head_img: round_head_img || null,
+        group_id: state.selectedGroupId,
+      });
+      // Update the result to show "Added"
+      dispatch({
+        type: 'SET_SEARCH_RESULTS',
+        results: state.searchResults.map((r) =>
+          r.biz === biz ? { ...r, is_added: true } : r,
+        ),
+        append: false,
+      });
+      emitRefresh();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      showToast((err as Error)?.message || t('accounts.addFailed', '添加失败。'));
+    } finally {
+      setAdding(null);
+    }
   };
 
   useEffect(() => {
@@ -146,6 +159,7 @@ export function AccountSearchModal({ isOpen, onClose }: AccountSearchModalProps)
                   <button
                     className="btn ghost search-add"
                     type="button"
+                    disabled={adding === item.biz}
                     onClick={() => handleAdd(item.biz, item.nickname, item.alias, item.round_head_img)}
                   >
                     {t('accounts.searchAdd', 'Add')}

@@ -455,14 +455,14 @@ async def create_account(
             raise ApiError(f'{field} is required')
     raw_biz = body.biz.strip()
     biz = raw_biz
-    # 搜索接口只能给 gh_（daemon 的形状），而 accounts.biz 是 fakeid（``Mz…==``），
-    # 所以这里抓一页该号的文章、从 URL 的 __biz 回填；同时把 gh_ 存下来供后续列表用。
+    # accounts.biz 要 fakeid（``Mz…==``），而搜索结果给的是 gh_：落库前先换成 __biz，
+    # 同时把 gh_ 存下来供后续列表用。
     gh_id: str | None = None
     if raw_biz.startswith('gh_'):
         gh_id = raw_biz
         try:
             async with WeixinSource() as source:
-                biz = await source.resolve_fakeid(gh_id)
+                biz = await source.resolve_fakeid(gh_id, body.nickname)
         except Exception as exc:
             raise ApiError(f'解析公众号 ID 失败：{exc}', status=502, code='daemon.resolve_failed') from exc
     group_id = body.group_id

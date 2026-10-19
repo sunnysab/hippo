@@ -18,6 +18,7 @@ LIST_TIMEOUT_SECONDS = 120.0
 # 正文要等 daemon 的按篇闸门（还要休息），所以给得宽
 BODY_TIMEOUT_SECONDS = 900.0
 
+import base64
 import os
 import sys
 from collections.abc import Mapping
@@ -335,11 +336,13 @@ class WeixinSource:
         """搜公众号（daemon `search_biz`）：返回 H5 搜索结果里的 ``gh_`` 对象列表。"""
         return await self._bot.search_biz(keyword, offset=offset)
 
-    async def resolve_fakeid(self, gh_id: str) -> str:
-        """``gh_…`` → ``__biz``（fakeid）：抓一页列表，从文章 URL 里取。
+    async def resolve_fakeid(self, gh_id: str, keyword: str = '') -> str:
+        """``gh_…`` → ``__biz``（fakeid）。
 
-        ``accounts.biz`` 全库都是 fakeid（``Mz…==``），而 daemon 的搜索只给 gh_，
-        所以落库前必须先拿到这个号任意一篇文章的 URL（未关注的号可能拿不到）。
+        首选该号的文章 URL（``__biz`` 就在长链上），因为它不依赖搜索命中。
+        很多号一页文章都拿不到（服务号、刚注册、订阅号列表为空），这时退回 H5
+        搜索：搜索结果里那个 ``bizuin`` 的 base64 就是 ``__biz``——用文章长链与
+        ``brandInfo`` 里的历史消息链接双向核对过，两者恒等。
         """
         res = await self._list_raw(gh_id, 1)
         for article in res.get('articles') or []:
@@ -347,7 +350,14 @@ class WeixinSource:
                 biz = query_param(str(link), '__biz') if link else None
                 if biz:
                     return biz
-        raise RuntimeError(f'{gh_id} 暂无可用文章，拿不到 __biz（可能需要先关注）')
+        for term in dict.fromkeys(filter(None, (keyword.strip(), gh_id))):
+            for hit in await self.search_public_accounts(term):
+                if str(hit.get('userName') or '') != gh_id:
+                    continue
+                bizuin = str(hit.get('bizuin') or '').strip()
+                if bizuin:
+                    return base64.b64encode(bizuin.encode()).decode()
+        raise RuntimeError(f'{gh_id} 既无文章也搜不到，拿不到 __biz')
 
 
 __all__ = [
