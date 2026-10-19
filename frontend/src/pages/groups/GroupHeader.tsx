@@ -7,7 +7,6 @@ import { useToast } from '../../hooks/useToast';
 interface GroupHeaderProps {
   accountQuery: string;
   onAccountQueryChange: (value: string) => void;
-  onOpenAccountSearch: () => void;
   onOpenSubscription: () => void;
   onOpenRename: (groupId: number, name: string) => void;
   onOpenDelete: (groupId: number) => void;
@@ -16,7 +15,6 @@ interface GroupHeaderProps {
 export function GroupHeader({
   accountQuery,
   onAccountQueryChange,
-  onOpenAccountSearch,
   onOpenSubscription,
   onOpenRename,
   onOpenDelete,
@@ -100,13 +98,7 @@ export function GroupHeader({
             </svg>
           </span>
         </div>
-        <button className="btn ghost" id="btn-account-add" type="button" onClick={onOpenAccountSearch}>
-          <span className="icon">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v14h-2zM5 11h14v2H5z"/></svg>
-          </span>
-          <span>{t('accounts.add', 'Add Account')}</span>
-        </button>
-        <button className="btn ghost" id="btn-source-add" type="button" onClick={onOpenSubscription}>
+        <button className="btn" id="btn-source-add" type="button" onClick={onOpenSubscription}>
           <span className="icon">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v14h-2zM5 11h14v2H5z"/></svg>
           </span>

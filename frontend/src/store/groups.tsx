@@ -11,25 +11,12 @@ import {
 import type { Group, Account } from './shared';
 import { apiGet } from '../api';
 
-interface SearchResult {
-  biz: string;
-  nickname: string;
-  alias: string | null;
-  round_head_img: string;
-  avatar_url: string;
-  is_added: boolean;
-}
-
 interface GroupsState {
   groups: Group[];
   defaultGroupId: number | null;
   selectedGroupId: number | null;
   accounts: Account[];
   selectedAccounts: string[];
-  searchResults: SearchResult[];
-  searchPage: number;
-  searchHasMore: boolean;
-  searchLoading: boolean;
 }
 
 type GroupsAction =
@@ -41,9 +28,6 @@ type GroupsAction =
   | { type: 'TOGGLE_SELECTED'; biz: string }
   | { type: 'SET_SELECTED_ALL'; bizList: string[] }
   | { type: 'CLEAR_SELECTED' }
-  | { type: 'SET_SEARCH_RESULTS'; results: SearchResult[]; append: boolean }
-  | { type: 'SET_SEARCH_LOADING'; loading: boolean }
-  | { type: 'SET_SEARCH_PAGE'; page: number; hasMore: boolean }
   | { type: 'REMOVE_ACCOUNT'; biz: string };
 
 const initialState: GroupsState = {
@@ -52,10 +36,6 @@ const initialState: GroupsState = {
   selectedGroupId: null,
   accounts: [],
   selectedAccounts: [],
-  searchResults: [],
-  searchPage: 1,
-  searchHasMore: true,
-  searchLoading: false,
 };
 
 function reducer(state: GroupsState, action: GroupsAction): GroupsState {
@@ -93,23 +73,12 @@ function reducer(state: GroupsState, action: GroupsAction): GroupsState {
       return { ...state, selectedAccounts: action.bizList };
     case 'CLEAR_SELECTED':
       return { ...state, selectedAccounts: [] };
-    case 'SET_SEARCH_RESULTS':
-      return {
-        ...state,
-        searchResults: action.append
-          ? [...state.searchResults, ...action.results]
-          : action.results,
-      };
-    case 'SET_SEARCH_LOADING':
-      return { ...state, searchLoading: action.loading };
     case 'REMOVE_ACCOUNT':
       return {
         ...state,
         accounts: state.accounts.filter((a) => a.biz !== action.biz),
         selectedAccounts: state.selectedAccounts.filter((b) => b !== action.biz),
       };
-    case 'SET_SEARCH_PAGE':
-      return { ...state, searchPage: action.page, searchHasMore: action.hasMore };
     default:
       return state;
   }

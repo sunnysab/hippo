@@ -657,6 +657,33 @@
   }
 }
 
+/* One dialog for both ways in: a pasted address, or a name to search for. */
+.subscribe-modal {
+  width: min(560px, 92vw);
+}
+
+.subscribe-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.subscribe-input input {
+  flex: 1;
+  min-width: 0;
+  padding-right: 8px;
+}
+
+.subscribe-input .subscribe-go {
+  flex: none;
+  white-space: nowrap;
+}
+
+.subscribe-hint {
+  margin: 0;
+  font-size: 12px;
+}
+
 /* The resolved subscription, before it is written: who it is, and where from. */
 .source-preview {
   display: flex;

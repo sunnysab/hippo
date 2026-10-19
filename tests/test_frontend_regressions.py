@@ -100,12 +100,15 @@ class FrontendRegressionTest(unittest.TestCase):
 
         # 公共订阅管理的文案不再默认指向公众号：读者跟着的是订阅与频道。
         self.assertEqual(translations['groups.subtitle'], '按分组管理订阅。')
-        self.assertEqual(translations['accounts.add'], '添加订阅')
+        self.assertEqual(translations['sources.add'], '添加订阅')
+        self.assertEqual(translations['sources.addTitle'], '添加订阅')
         self.assertEqual(translations['sync.subtitle'], '设置订阅和文章内容的同步方式。')
         self.assertEqual(translations['admin.source.channels'], '频道')
-        # 微信专属的搜索、登录与来源名仍然明说公众号。
-        self.assertEqual(translations['accounts.searchTitle'], '添加公众号')
-        self.assertTrue(translations['accounts.searchPlaceholder'].startswith('搜索公众号'))
+        # 一个入口同时收地址和名字：占位符必须把两件事都说出来，
+        # 否则读者看不出这里也能搜公众号。
+        self.assertIn('公众号', translations['sources.inputPlaceholder'])
+        # 微信来源名仍然明说公众号。
+        self.assertIn('公众号', translations['sources.addHint'])
         self.assertIn('微信公众号', translations['banner.weixinNotLoggedIn'])
         self.assertEqual(translations['source.weixin'], '微信公众号')
         # 文章内容类型标识不是来源文案，不动。

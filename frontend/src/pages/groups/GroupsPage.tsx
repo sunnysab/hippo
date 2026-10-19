@@ -5,7 +5,6 @@ import { GroupList } from './GroupList';
 import { GroupHeader } from './GroupHeader';
 import { AccountCardGrid } from './AccountCardGrid';
 import { BatchActions } from './BatchActions';
-import { AccountSearchModal } from './AccountSearchModal';
 import { AddSubscriptionModal } from './AddSubscriptionModal';
 import { GroupNameModal } from './GroupNameModal';
 import { ConfirmModal } from '../../components/ConfirmModal';
@@ -39,7 +38,6 @@ export function GroupsPage() {
   const { runSync } = useSyncRun();
   const [searchParams, setSearchParams] = useSearchParams();
   const [accountQuery, setAccountQuery] = useState('');
-  const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
   const [groupNameDialog, setGroupNameDialog] = useState<GroupNameDialogState | null>(null);
   const [groupDeleteDialog, setGroupDeleteDialog] = useState<GroupDeleteDialogState | null>(null);
@@ -155,7 +153,6 @@ export function GroupsPage() {
           <GroupHeader
             accountQuery={accountQuery}
             onAccountQueryChange={setAccountQuery}
-            onOpenAccountSearch={() => setIsSearchModalOpen(true)}
             onOpenSubscription={() => setIsSubscriptionModalOpen(true)}
             onOpenRename={(groupId, name) => setGroupNameDialog({ mode: 'rename', groupId, initialName: name })}
             onOpenDelete={(groupId) => setGroupDeleteDialog({ groupId })}
@@ -165,15 +162,13 @@ export function GroupsPage() {
         </div>
       </div>
 
-      <AccountSearchModal
-        isOpen={isSearchModalOpen}
-        onClose={() => setIsSearchModalOpen(false)}
-      />
-      <AddSubscriptionModal
-        isOpen={isSubscriptionModalOpen}
-        onClose={() => setIsSubscriptionModalOpen(false)}
-        onSubscribed={() => { void loadGroups(); }}
-      />
+      {isSubscriptionModalOpen ? (
+        <AddSubscriptionModal
+          onClose={() => setIsSubscriptionModalOpen(false)}
+          groupId={state.selectedGroupId}
+          onSubscribed={() => { void loadGroups(); }}
+        />
+      ) : null}
       {groupNameDialog && (
         <GroupNameModal
           key={`${groupNameDialog.mode}:${groupNameDialog.groupId ?? 'new'}:${groupNameDialog.initialName}`}
