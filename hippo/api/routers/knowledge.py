@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 
 from ...exceptions import ApiError
 from ...knowledge.retry import retry_document
@@ -46,9 +46,12 @@ from ..deps import current_user, get_storage
 from ..schemas.knowledge import (
     DocumentContentOut,
     DocumentCreatedOut,
+    DocumentCreateRequest,
     DocumentListOut,
     KnowledgeBaseCreatedOut,
+    KnowledgeBaseCreateRequest,
     KnowledgeBaseListOut,
+    KnowledgeBaseUpdateRequest,
     SearchPageOut,
 )
 
@@ -72,10 +75,6 @@ _DOCUMENT_FIELDS = (
     'created_at',
     'updated_at',
 )
-
-#: Request fields a caller may set. Everything else is server-derived.
-_KNOWLEDGE_BASE_INPUT = frozenset({'name'})
-_DOCUMENT_INPUT = frozenset({'filename', 'mime_type'})
 
 #: Accepted MIME types, in their canonical spelling.
 _ALLOWED_MIME_TYPES = frozenset({'application/pdf', 'text/plain'})
@@ -127,12 +126,6 @@ def _public_document(row: dict[str, Any]) -> dict[str, Any]:
     return {field: row.get(field) for field in _DOCUMENT_FIELDS}
 
 
-def _reject_unknown_fields(body: dict[str, Any], allowed: frozenset[str], *, code: str) -> None:
-    unknown = sorted(set(body) - allowed)
-    if unknown:
-        raise ApiError(f'Unknown field: {unknown[0]}', status=400, code=code)
-
-
 def _invalid_input(exc: ValueError) -> ApiError:
     """The repository's own bounds check, restated as a 400.
 
@@ -153,18 +146,14 @@ def _document_page_not_found() -> ApiError:
     return ApiError('Document page not found.', status=404, code='document.page_not_found')
 
 
-def _canonical_mime(body: dict[str, Any]) -> str:
-    """The one accepted MIME value, or a 400/415.
+def _canonical_mime(value: str) -> str:
+    """The one accepted MIME value, or a 415.
 
     Only the canonical spellings are stored, so no parameter, case or whitespace
-    variant ever reaches the row. Missing or non-string input is a bad request;
-    anything else is a media type this service does not keep.
+    variant ever reaches the row. The request model already guarantees a string
+    is present, so this is the accepted-set check alone; anything else is a media
+    type this service does not keep.
     """
-    if 'mime_type' not in body:
-        raise ApiError('mime_type is required.', status=400, code='document.mime_type_required')
-    value = body['mime_type']
-    if not isinstance(value, str):
-        raise ApiError('mime_type must be a string.', status=400, code='document.invalid_mime')
     if value not in _ALLOWED_MIME_TYPES:
         raise ApiError(
             'Unsupported MIME type; expected application/pdf or text/plain.',
@@ -187,14 +176,13 @@ async def list_knowledge_bases(
 
 @router.post('/knowledge-base', status_code=201, response_model=KnowledgeBaseCreatedOut)
 async def create_knowledge_base(
-    body: dict[str, Any] = Body(...),
+    body: KnowledgeBaseCreateRequest,
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
 ) -> dict[str, Any]:
-    _reject_unknown_fields(body, _KNOWLEDGE_BASE_INPUT, code='knowledge.unknown_field')
     try:
         async with storage.transaction():
-            created = await storage.knowledge.create_knowledge_base(user.id, body.get('name'))
+            created = await storage.knowledge.create_knowledge_base(user.id, body.name)
     except ValueError as exc:
         raise _invalid_input(exc) from exc
     return {'knowledge_base': _public_knowledge_base(created)}
@@ -215,14 +203,16 @@ async def get_knowledge_base(
 @router.patch('/knowledge-base/{knowledge_base_id}', response_model=KnowledgeBaseCreatedOut)
 async def rename_knowledge_base(
     knowledge_base_id: str,
-    body: dict[str, Any] = Body(...),
+    body: KnowledgeBaseUpdateRequest,
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
 ) -> dict[str, Any]:
-    _reject_unknown_fields(body, _KNOWLEDGE_BASE_INPUT, code='knowledge.unknown_field')
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        raise ApiError('At least one field must be provided.', status=400, code='knowledge.invalid_input')
     try:
         async with storage.transaction():
-            renamed = await storage.knowledge.rename_knowledge_base(user.id, knowledge_base_id, body.get('name'))
+            renamed = await storage.knowledge.rename_knowledge_base(user.id, knowledge_base_id, updates['name'])
             if not renamed:
                 raise _knowledge_base_not_found()
             updated = await storage.knowledge.get_knowledge_base(user.id, knowledge_base_id)
@@ -266,18 +256,17 @@ async def list_documents(
 @router.post('/knowledge-base/{knowledge_base_id}/document', status_code=201, response_model=DocumentCreatedOut)
 async def create_document(
     knowledge_base_id: str,
-    body: dict[str, Any] = Body(...),
+    body: DocumentCreateRequest,
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
 ) -> dict[str, Any]:
-    _reject_unknown_fields(body, _DOCUMENT_INPUT, code='document.unknown_field')
-    mime_type = _canonical_mime(body)
+    mime_type = _canonical_mime(body.mime_type)
     try:
         async with storage.transaction():
             created = await storage.knowledge.create_document(
                 user.id,
                 knowledge_base_id,
-                filename=body.get('filename'),
+                filename=body.filename,
                 mime_type=mime_type,
             )
             if created is None:

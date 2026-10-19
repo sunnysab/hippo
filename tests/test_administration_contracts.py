@@ -38,6 +38,11 @@ from hippo.api.schemas.admin import (
     UserCreateRequest,
     UserUpdateRequest,
 )
+from hippo.api.schemas.knowledge import (
+    DocumentCreateRequest,
+    KnowledgeBaseCreateRequest,
+    KnowledgeBaseUpdateRequest,
+)
 from hippo.media_settings import default_media_settings
 
 
@@ -47,6 +52,11 @@ def _resolve(spec: dict[str, Any], node: dict[str, Any]) -> dict[str, Any]:
         _, _, name = node['$ref'].rpartition('/')
         node = spec['components']['schemas'][name]
     return node
+
+
+def _request_schema(spec: dict[str, Any], path: str, method: str) -> dict[str, Any]:
+    """The JSON request-body schema one operation declares."""
+    return spec['paths'][path][method]['requestBody']['content']['application/json']['schema']
 
 
 def _document() -> dict[str, Any]:
@@ -168,6 +178,47 @@ class AdminResponseContractTest(unittest.TestCase):
         self.assertNotIn('bilibili_cookie_value', schema['properties'])
 
 
+class KnowledgeRequestContractTest(unittest.TestCase):
+    def test_the_create_body_needs_a_name_and_refuses_anything_else(self) -> None:
+        with self.assertRaises(ValidationError):
+            KnowledgeBaseCreateRequest.model_validate({})
+        with self.assertRaises(ValidationError):
+            KnowledgeBaseCreateRequest.model_validate({'name': 'Papers', 'user_id': 2})
+
+        self.assertEqual('Papers', KnowledgeBaseCreateRequest(name='Papers').name)
+        # A blank or over-long name passes the model so the repository keeps its 400.
+        self.assertEqual('', KnowledgeBaseCreateRequest(name='').name)
+
+    def test_the_update_body_tells_an_omitted_field_from_a_null_one(self) -> None:
+        self.assertEqual({}, KnowledgeBaseUpdateRequest().model_dump(exclude_unset=True))
+        self.assertEqual({'name': None}, KnowledgeBaseUpdateRequest(name=None).model_dump(exclude_unset=True))
+        self.assertEqual({'name': 'X'}, KnowledgeBaseUpdateRequest(name='X').model_dump(exclude_unset=True))
+        with self.assertRaises(ValidationError):
+            KnowledgeBaseUpdateRequest.model_validate({'name': 'X', 'user_id': 2})
+
+    def test_the_document_body_needs_both_fields_and_leaves_the_mime_free(self) -> None:
+        with self.assertRaises(ValidationError):
+            DocumentCreateRequest.model_validate({'filename': 'a.pdf'})
+        with self.assertRaises(ValidationError):
+            DocumentCreateRequest.model_validate({'filename': 'a.pdf', 'mime_type': 'application/pdf', 's3_key': 'x'})
+
+        # An unsupported MIME type passes the model: the route answers 415, not 422.
+        body = DocumentCreateRequest.model_validate({'filename': 'a.pdf', 'mime_type': 'image/png'})
+        self.assertEqual('image/png', body.mime_type)
+
+    def test_the_request_models_are_documented_and_closed(self) -> None:
+        spec = _document()
+        create = _resolve(spec, _request_schema(spec, '/api/knowledge-base', 'post'))
+        patch = _resolve(spec, _request_schema(spec, '/api/knowledge-base/{knowledge_base_id}', 'patch'))
+        document = _resolve(spec, _request_schema(spec, '/api/knowledge-base/{knowledge_base_id}/document', 'post'))
+
+        self.assertEqual({'name'}, set(create['properties']))
+        self.assertEqual({'name'}, set(patch['properties']))
+        self.assertEqual({'filename', 'mime_type'}, set(document['properties']))
+        self.assertNotEqual(True, create.get('additionalProperties'))
+        self.assertNotEqual(True, document.get('additionalProperties'))
+
+
 class KnowledgeResponseContractTest(unittest.TestCase):
     #: Storage columns that must never appear as a response key or value.
     SERVER_OWNED = ('s3_key', 'sha256', 'user_id', 'lease_token', 'locked_by', 'deleted_at')
@@ -211,6 +262,27 @@ class KnowledgeResponseContractTest(unittest.TestCase):
         self.assertNotIn('knowledge/secret-object.pdf', str(payload))
         self.assertNotIn('a' * 64, str(payload))
 
+    def test_the_id_is_answered_as_a_uuid_string(self) -> None:
+        storage = SimpleNamespace(
+            knowledge=SimpleNamespace(
+                get_knowledge_base=AsyncMock(
+                    return_value={
+                        'id': '44444444-4444-4444-8444-444444444444',
+                        'name': 'Papers',
+                        'created_at': None,
+                        'updated_at': None,
+                    }
+                )
+            )
+        )
+        user = SimpleNamespace(id=1, username='alice', role='user')
+
+        payload = (
+            _knowledge_client(storage, user).get('/api/knowledge-base/44444444-4444-4444-8444-444444444444').json()
+        )
+
+        self.assertEqual('44444444-4444-4444-8444-444444444444', payload['knowledge_base']['id'])
+
     def test_the_document_schemas_publish_no_storage_column(self) -> None:
         spec = _document()
         document = _resolve(
@@ -226,6 +298,8 @@ class KnowledgeResponseContractTest(unittest.TestCase):
         self.assertNotEqual(True, document.get('additionalProperties'))
         self.assertIn('filename', document['properties'])
         self.assertIn('state', document['properties'])
+        self.assertEqual('string', document['properties']['id']['type'])
+        self.assertEqual('uuid', document['properties']['id']['format'])
         for key in self.SERVER_OWNED:
             self.assertNotIn(key, document['properties'])
 

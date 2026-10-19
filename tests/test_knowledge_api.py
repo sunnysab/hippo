@@ -30,7 +30,7 @@ from fastapi import FastAPI
 from test_knowledge_repository import _AsyncConnection, _Harness
 
 from hippo.api.deps import current_user, get_storage
-from hippo.api.errors import install_exception_handlers
+from hippo.api.errors import VALIDATION_FAILED, install_exception_handlers
 from hippo.api.routers import knowledge as knowledge_api
 from hippo.models import User
 from hippo.repositories.knowledge import KnowledgeRepository
@@ -323,6 +323,9 @@ class KnowledgeBaseApiTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(SERVER_OWNED_VALUES[0], row['s3_key'])
 
     async def test_server_owned_fields_cannot_be_injected(self) -> None:
+        # The request models are closed, so an undeclared field - and with it any
+        # server-owned column - is refused as a validation failure before the
+        # route (and the repository) ever sees it.
         async with self.acting_as(self.alice) as client:
             kb_id = await self._create_base(client, 'Mine')
             for field, value in (
@@ -333,11 +336,11 @@ class KnowledgeBaseApiTest(unittest.IsolatedAsyncioTestCase):
                 ('unknown', 1),
             ):
                 response = await client.post('/api/knowledge-base', json={'name': 'Papers', field: value})
-                self.assertEqual(400, response.status_code, field)
-                self.assertEqual('knowledge.unknown_field', response.json()['code'])
+                self.assertEqual(422, response.status_code, field)
+                self.assertEqual(VALIDATION_FAILED, response.json()['code'])
             patched = await client.patch(f'/api/knowledge-base/{kb_id}', json={'name': 'X', 'user_id': 2})
-            self.assertEqual(400, patched.status_code)
-            self.assertEqual('knowledge.unknown_field', patched.json()['code'])
+            self.assertEqual(422, patched.status_code)
+            self.assertEqual(VALIDATION_FAILED, patched.json()['code'])
             self.assertEqual(
                 'Mine', (await client.get(f'/api/knowledge-base/{kb_id}')).json()['knowledge_base']['name']
             )
@@ -360,8 +363,8 @@ class KnowledgeBaseApiTest(unittest.IsolatedAsyncioTestCase):
                     f'/api/knowledge-base/{kb_id}/document',
                     json={'filename': 'a.pdf', 'mime_type': 'application/pdf', field: value},
                 )
-                self.assertEqual(400, response.status_code, field)
-                self.assertEqual('document.unknown_field', response.json()['code'])
+                self.assertEqual(422, response.status_code, field)
+                self.assertEqual(VALIDATION_FAILED, response.json()['code'])
 
         self.assertEqual(1, self.h.count('SELECT COUNT(*) FROM knowledge_base'))
         self.assertEqual(0, self.h.count('SELECT COUNT(*) FROM document'))
@@ -388,7 +391,8 @@ class KnowledgeBaseApiTest(unittest.IsolatedAsyncioTestCase):
                 {'filename': 'a.pdf', 'mime_type': 7},
             ):
                 response = await client.post(f'/api/knowledge-base/{kb_id}/document', json=body)
-                self.assertEqual(400, response.status_code, body)
+                self.assertEqual(422, response.status_code, body)
+                self.assertEqual(VALIDATION_FAILED, response.json()['code'])
             # Both accepted types are stored in their canonical spelling, so a
             # valid TXT upload must send text/plain explicitly rather than rely on
             # the filename.
@@ -398,16 +402,24 @@ class KnowledgeBaseApiTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_names_and_filenames_are_validated_by_the_repository(self) -> None:
         async with self.acting_as(self.alice) as client:
-            for payload in ({}, {'name': ''}, {'name': '   '}, {'name': 7}, {'name': 'x' * 201}):
+            # A missing or non-string field is a request-shape failure (422); a
+            # blank or over-long one is the repository's own 400.
+            for payload in ({}, {'name': 7}):
+                response = await client.post('/api/knowledge-base', json=payload)
+                self.assertEqual(422, response.status_code, payload)
+                self.assertEqual(VALIDATION_FAILED, response.json()['code'])
+            for payload in ({'name': ''}, {'name': '   '}, {'name': 'x' * 201}):
                 response = await client.post('/api/knowledge-base', json=payload)
                 self.assertEqual(400, response.status_code, payload)
                 self.assertEqual('knowledge.invalid_input', response.json()['code'])
             kb_id = await self._create_base(client, 'Mine')
+            for payload in ({'mime_type': 'application/pdf'}, {'filename': 7, 'mime_type': 'application/pdf'}):
+                response = await client.post(f'/api/knowledge-base/{kb_id}/document', json=payload)
+                self.assertEqual(422, response.status_code, payload)
+                self.assertEqual(VALIDATION_FAILED, response.json()['code'])
             for payload in (
-                {'mime_type': 'application/pdf'},
                 {'filename': '', 'mime_type': 'application/pdf'},
                 {'filename': '   ', 'mime_type': 'application/pdf'},
-                {'filename': 7, 'mime_type': 'application/pdf'},
                 {'filename': 'x' * 256, 'mime_type': 'application/pdf'},
             ):
                 response = await client.post(f'/api/knowledge-base/{kb_id}/document', json=payload)
@@ -421,6 +433,22 @@ class KnowledgeBaseApiTest(unittest.IsolatedAsyncioTestCase):
             )
         # Every rejected write rolled back; the repository error never reached SQL.
         self.assertEqual(0, self.h.count('SELECT COUNT(*) FROM document'))
+
+    async def test_a_patch_must_name_the_field_it_changes(self) -> None:
+        async with self.acting_as(self.alice) as client:
+            kb_id = await self._create_base(client, 'Mine')
+            # ``name`` is optional in the model so an omitted field and an explicit
+            # null stay different: both are refused, and neither renames the base.
+            for payload in ({}, {'name': None}):
+                response = await client.patch(f'/api/knowledge-base/{kb_id}', json=payload)
+                self.assertEqual(400, response.status_code, payload)
+                self.assertEqual('knowledge.invalid_input', response.json()['code'])
+            extra = await client.patch(f'/api/knowledge-base/{kb_id}', json={'name': 'X', 'user_id': 2})
+            self.assertEqual(422, extra.status_code)
+            self.assertEqual(VALIDATION_FAILED, extra.json()['code'])
+            self.assertEqual(
+                'Mine', (await client.get(f'/api/knowledge-base/{kb_id}')).json()['knowledge_base']['name']
+            )
 
     async def test_pagination_is_bounded_and_offset_safe(self) -> None:
         async with self.acting_as(self.alice) as client:

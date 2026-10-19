@@ -6,6 +6,13 @@ promises (the object key, the content hash, the lease pair and the owner id all
 stay server-side). Ids are declared as ``UUID`` because that is the column type
 the reads return, never the driver's text form; the model serialises them back
 to the string the API has always answered.
+
+A request body is closed too (``extra='forbid'``): the declared fields are
+exactly the ones the route accepts, so an undeclared or wrongly typed field is a
+validation failure (422) instead of being silently dropped. The models stay
+loose where the database is the real authority (blank names, a name or filename
+over the column limit, an unsupported MIME type) so those keep answering the
+owned 400/415 in the route.
 """
 
 from __future__ import annotations
@@ -14,7 +21,50 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+#: Refuse a body that names a field the route does not accept.
+_REJECT_EXTRA = ConfigDict(extra='forbid')
+
+
+# -- requests ----------------------------------------------------------------
+
+
+class KnowledgeBaseCreateRequest(BaseModel):
+    """``POST /api/knowledge-base``."""
+
+    model_config = _REJECT_EXTRA
+
+    name: str = Field(description='Knowledge base name; blank or over 200 characters is refused.')
+
+
+class KnowledgeBaseUpdateRequest(BaseModel):
+    """``PATCH /api/knowledge-base/{knowledge_base_id}``.
+
+    ``name`` is optional so an omitted field and an explicit ``null`` are told
+    apart: only the keys the caller sent are read, and an explicit null is left
+    for the repository to refuse.
+    """
+
+    model_config = _REJECT_EXTRA
+
+    name: str | None = Field(default=None, description='New name; blank or over 200 characters is refused.')
+
+
+class DocumentCreateRequest(BaseModel):
+    """``POST /api/knowledge-base/{knowledge_base_id}/document``.
+
+    ``mime_type`` stays a free string: the accepted set is the route's own
+    check, so an unsupported type is answered with 415, not a schema failure.
+    """
+
+    model_config = _REJECT_EXTRA
+
+    filename: str = Field(description='Display name; blank or over 255 characters is refused.')
+    mime_type: str = Field(description='``application/pdf`` or ``text/plain``.')
+
+
+# -- responses ---------------------------------------------------------------
 
 #: The eight live states of a document, mirroring the column's CHECK constraint.
 #: ``needs_ocr`` is an ``error_code``, not a state.
