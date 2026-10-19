@@ -12,7 +12,7 @@ before the transcript exists.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -24,6 +24,7 @@ from ..models import ArticleRecord
 from ..normalize_html import normalize_html
 from ..storage import PostgresStorage
 from ..weixin_worker import SyncStats
+from .chain import run_with_fallback
 
 logger = get_logger(__name__)
 
@@ -84,9 +85,18 @@ class MediaSource(Protocol):
 class MediaSync:
     """List a channel, store what was found, queue what needs transcribing."""
 
-    def __init__(self, *, storage: PostgresStorage, source: MediaSource) -> None:
+    def __init__(
+        self,
+        *,
+        storage: PostgresStorage,
+        source: MediaSource,
+        credentials: Callable[[str], Awaitable[tuple[str, ...]]] | None = None,
+    ) -> None:
         self._storage = storage
         self._source = source
+        #: 一次给定 biz，返回按顺序要试的凭证。列表是共享的、cookie 是个人的，
+        #: 所以「用谁的」只能由这层决定；不传就只用来源自带的那一份。
+        self._credentials = credentials
 
     async def sync_account(
         self,
@@ -98,11 +108,23 @@ class MediaSync:
     ) -> SyncStats:
         settings = await get_media_settings(self._storage)
         limit = int(settings.get('items_per_sync') or 5)
+        cursor: str | None = offset or None
+
+        async def list_page(candidate: MediaSource) -> tuple[MediaSource, Listing]:
+            return candidate, await candidate.list_items(source_key=source_key, limit=limit, cursor=cursor)
+
+        # 第一页决定用谁的凭证：列表接口才是 cookie 的用途，选定之后翻页沿用同一份。
+        if self._credentials is None:
+            source, listing = await list_page(self._source)
+        else:
+            source, listing = await run_with_fallback(
+                self._source,
+                await self._credentials(biz),
+                list_page,
+            )
 
         stats = SyncStats()
-        cursor: str | None = offset or None
         for _ in range(max(int(pages), 1)):
-            listing = await self._source.list_items(source_key=source_key, limit=limit, cursor=cursor)
             stats.listed += len(listing.items)
             # 去重交给数据库：articles 是 upsert，media_job 有 UNIQUE(article_pk)
             # 且入队只把 failed/skipped 拉回 pending，所以重复列举既不会重复转写，
@@ -112,6 +134,7 @@ class MediaSync:
             cursor = listing.next_cursor
             if listing.is_end or not cursor:
                 break
+            listing = await source.list_items(source_key=source_key, limit=limit, cursor=cursor)
         await self._storage.commit()
         logger.info('媒体列表 %s：%d 条，新入队 %d 条', source_key, stats.listed, stats.enqueued)
         return stats
@@ -203,8 +226,15 @@ class MediaResolverRegistry:
     The worker has no idea which source it is draining; the job does.
     """
 
-    def __init__(self, resolvers: Mapping[str, MediaResolver]) -> None:
+    def __init__(
+        self,
+        resolvers: Mapping[str, MediaResolver],
+        credentials: Callable[[str, str], Awaitable[tuple[str, ...]]] | None = None,
+    ) -> None:
         self._resolvers = dict(resolvers)
+        #: (biz, source) → 按顺序要试的凭证。转写走和列表同一条链：共享的频道、
+        #: 个人的 cookie，失败的判定也一样（只有「凭证被拒」才换下一份）。
+        self._credentials = credentials
 
     @property
     def sources(self) -> list[str]:
@@ -216,7 +246,10 @@ class MediaResolverRegistry:
         if resolver is None:
             known = ', '.join(self.sources) or '无'
             raise MediaJobSkipped(f'没有 {source!r} 来源的媒体解析器（已注册：{known}）')
-        return await resolver.resolve(job)
+        if self._credentials is None or not callable(getattr(resolver, 'with_credential', None)):
+            return await resolver.resolve(job)
+        secrets = await self._credentials(str(job.get('biz') or ''), source)
+        return await run_with_fallback(resolver, secrets, lambda candidate: candidate.resolve(job))
 
 
 __all__ = [

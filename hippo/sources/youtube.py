@@ -33,7 +33,7 @@ from urllib.parse import parse_qs, urlparse
 
 from ..logger import get_logger
 from ..media.pipeline import MediaJobSkipped, ResolvedMedia
-from . import SourceError
+from . import CredentialRejected, SourceError
 from .ingest import ChannelInfo, Item, Listing
 
 logger = get_logger(__name__)
@@ -73,6 +73,20 @@ _VIDEO_ID_RE = re.compile(r'^[0-9A-Za-z_-]{11}$')
 
 class YoutubeError(SourceError):
     pass
+
+
+class YoutubeCredentialError(YoutubeError, CredentialRejected):
+    """YouTube 要求登录（bot 检查）：换一份 cookie 重试才有意义。"""
+
+
+#: How YouTube words the refusal. Matched loosely: the message arrives from yt-dlp's
+#: stderr and its exact wording changes between releases.
+BOT_CHECK_HINTS = ('not a bot', 'Sign in to confirm')
+
+
+def is_bot_check(detail: str) -> bool:
+    """Whether a yt-dlp failure is YouTube asking the caller to sign in."""
+    return any(hint in detail for hint in BOT_CHECK_HINTS)
 
 
 def video_id_from_url(value: str) -> str | None:
@@ -292,7 +306,9 @@ async def _run_ytdlp(
         raise YoutubeError(f'yt-dlp 超过 {timeout:.0f} 秒没有返回') from exc
     if process.returncode != 0:
         detail = (stderr or b'').decode('utf-8', 'replace').strip()[-600:]
-        raise YoutubeError(f'yt-dlp 失败（退出码 {process.returncode}）：{detail}')
+        message = f'yt-dlp 失败（退出码 {process.returncode}）：{detail}'
+        # 只有「要登录」这一类值得换 cookie 重试；其余（404、地区限制）换谁的都一样。
+        raise (YoutubeCredentialError if is_bot_check(detail) else YoutubeError)(message)
     return (stdout or b'').decode('utf-8', 'replace')
 
 
@@ -319,6 +335,10 @@ class YoutubeSource:
     def __init__(self, *, proxy: str = '', cookies: str = '') -> None:
         self._proxy = proxy
         self._cookies = cookies
+
+    def with_credential(self, secret: str) -> YoutubeSource:
+        """A copy that runs yt-dlp with ``secret`` as its cookies file."""
+        return YoutubeSource(proxy=self._proxy, cookies=secret)
 
     async def preview(self, ref: str) -> ChannelInfo:
         channel_id = channel_id_from_url(ref)
@@ -394,6 +414,10 @@ class YoutubeResolver:
     def __init__(self, *, proxy: str = '', cookies: str = '') -> None:
         self._proxy = proxy
         self._cookies = cookies
+
+    def with_credential(self, secret: str) -> YoutubeResolver:
+        """A copy that runs yt-dlp with ``secret`` as its cookies file."""
+        return YoutubeResolver(proxy=self._proxy, cookies=secret)
 
     async def resolve(self, job) -> ResolvedMedia:
         video_id = video_id_from_url(str(job.get('media_url') or ''))

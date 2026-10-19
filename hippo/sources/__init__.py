@@ -28,6 +28,16 @@ class SourceError(RuntimeError):
     """
 
 
+class CredentialRejected(SourceError):
+    """The source refused the request because the credential is missing or stale.
+
+    Distinct from the other failures on purpose: only this one is worth retrying
+    with somebody else's cookie (see ``registry.MediaSources.credential_chain``).
+    A network error or a deleted video would fail identically with every
+    credential, and retrying those would multiply the requests for nothing.
+    """
+
+
 class SourceAdapter(Protocol):
     async def sync_account(
         self,
@@ -74,6 +84,7 @@ def body_adapters(adapters: Mapping[str, SourceAdapter]) -> list[BodyAdapter]:
 
 __all__ = [
     'BodyAdapter',
+    'CredentialRejected',
     'SourceAdapter',
     'SourceError',
     'UnsupportedSource',

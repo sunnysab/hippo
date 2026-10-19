@@ -72,7 +72,9 @@ class MediaJobRepository:
                  WHERE id IN (
                        SELECT id FROM media_job WHERE state = 'pending' ORDER BY id LIMIT %s
                  )
-                RETURNING id, article_pk, source, media_url, payload, attempts
+                RETURNING id, article_pk, source, media_url, payload, attempts,
+                          -- 转写要按频道找订阅者的凭证，biz 只能从文章行上取。
+                          (SELECT biz FROM articles WHERE id = media_job.article_pk) AS biz
                 """,
                 (max(int(limit), 1),),
             )
@@ -179,6 +181,24 @@ class MediaJobRepository:
             await cur.execute('SELECT state, COUNT(*) AS n FROM media_job GROUP BY state')
             counts = {str(row['state']): int(row['n']) for row in await cur.fetchall()}
         return {state: counts.get(state, 0) for state in ('pending', 'processing', 'failed', 'done')}
+
+    async def stats_by_source(self) -> dict[str, dict[str, int]]:
+        """The same counts per source, for a per-source backlog on the source page.
+
+        Every source is present with all four keys, so a card can render a zero
+        backlog without checking whether the key exists.
+        """
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute('SELECT source, state, COUNT(*) AS n FROM media_job GROUP BY source, state')
+            rows = await cur.fetchall()
+        per_source: dict[str, dict[str, int]] = {}
+        for row in rows:
+            bucket = per_source.setdefault(str(row['source']), {})
+            bucket[str(row['state'])] = int(row['n'])
+        return {
+            source: {state: counts.get(state, 0) for state in ('pending', 'processing', 'failed', 'done')}
+            for source, counts in per_source.items()
+        }
 
     async def get(self, article_pk: int) -> dict[str, Any] | None:
         """The job for one article, so a reader action can re-queue it as it was."""
@@ -352,6 +372,36 @@ class UserCredentialRepository:
                 'DELETE FROM user_credential WHERE user_id = %s AND source = %s',
                 (int(user_id), source),
             )
+
+    async def for_biz(self, biz: str, source: str) -> list[str]:
+        """Credentials of the users who follow ``biz``, most recently set first.
+
+        A media account is shared, so "whose cookie" has no single answer; the
+        callers' own are tried before the instance's (see ``sources.chain``).
+        Only distinct secrets come back: two users pasting the same cookie would
+        otherwise double the requests for no extra chance of success.
+        """
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT c.secret
+                  FROM user_credential c
+                  JOIN subscription s ON s.user_id = c.user_id
+                 WHERE s.biz = %s AND c.source = %s AND c.secret <> ''
+                 ORDER BY c.updated_at DESC
+                """,
+                (biz, source),
+            )
+            rows = await cur.fetchall()
+        seen: set[str] = set()
+        secrets: list[str] = []
+        for row in rows:
+            secret = str(row['secret'])
+            if secret in seen:
+                continue
+            seen.add(secret)
+            secrets.append(secret)
+        return secrets
 
     async def configured(self, user_id: int) -> dict[str, bool]:
         async with self._conn.cursor(row_factory=dict_row) as cur:

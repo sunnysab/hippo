@@ -14,7 +14,7 @@ from typing import Any
 
 from ..logger import get_logger
 from .bilibili import BilibiliClient, BilibiliError
-from .youtube import YoutubeError, parse_json_lines, run_ytdlp
+from .youtube import YoutubeError, is_bot_check, parse_json_lines, run_ytdlp
 
 logger = get_logger(__name__)
 
@@ -25,11 +25,6 @@ logger = get_logger(__name__)
 #: while a live login gets its subscriptions.
 YOUTUBE_PROBE_URL = 'https://www.youtube.com/feed/subscriptions'
 PROBE_TIMEOUT = 90.0
-
-#: How YouTube words the refusal. Matched loosely: the message arrives from yt-dlp's
-#: stderr and its exact wording changes between releases.
-_BOT_CHECK_HINTS = ('not a bot', 'Sign in to confirm')
-
 
 @dataclass(frozen=True, slots=True)
 class CredentialProbe:
@@ -98,7 +93,7 @@ async def _probe_youtube(*, cookie: str, proxy: str) -> CredentialProbe:
         )
     except YoutubeError as exc:
         detail = str(exc)
-        if any(hint in detail for hint in _BOT_CHECK_HINTS):
+        if is_bot_check(detail):
             return CredentialProbe(
                 source='youtube',
                 ok=False,

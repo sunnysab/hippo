@@ -30,7 +30,7 @@ import httpx
 
 from ..logger import get_logger
 from ..media.pipeline import MediaJobSkipped, ResolvedMedia, Subtitle
-from . import SourceError
+from . import CredentialRejected, SourceError
 from .ingest import ChannelInfo, Item, Listing
 
 logger = get_logger(__name__)
@@ -126,6 +126,10 @@ _RISK_CONTROL_HINT = 'B站风控拦截：投稿列表需要有效的 SESSDATA（
 
 class BilibiliError(SourceError):
     pass
+
+
+class BilibiliCredentialError(BilibiliError, CredentialRejected):
+    """风控拦截 / 未登录：换一份 cookie 重试有意义，网络错误则没有。"""
 
 
 def mixin_key(img_key: str, sub_key: str) -> str:
@@ -354,6 +358,15 @@ class BilibiliClient:
         if self._owns_client:
             await self._client.aclose()
 
+    def with_cookie(self, cookie: str) -> BilibiliClient:
+        """A view of this client with a different session cookie.
+
+        The connection pool is shared rather than reopened, and the copy does not
+        own it: the retry candidates are short-lived, and each of them closing the
+        transport would take the others down with it.
+        """
+        return BilibiliClient(cookie=cookie, client=self._client)
+
     async def _get_json(
         self,
         path: str,
@@ -366,7 +379,7 @@ class BilibiliClient:
         except httpx.HTTPError as exc:
             raise BilibiliError(f'请求 B站 失败：{exc}') from exc
         if response.status_code in (412, 403):
-            raise BilibiliError(_RISK_CONTROL_HINT)
+            raise BilibiliCredentialError(_RISK_CONTROL_HINT)
         if response.status_code != 200:
             raise BilibiliError(f'B站在 {path} 上返回 HTTP {response.status_code}')
         try:
@@ -375,7 +388,10 @@ class BilibiliClient:
             raise BilibiliError(f'B站在 {path} 上返回了非 JSON 内容') from exc
         code = payload.get('code')
         if code in (-352, -412):
-            raise BilibiliError(_RISK_CONTROL_HINT)
+            raise BilibiliCredentialError(_RISK_CONTROL_HINT)
+        if code in (-101, -111):
+            # -101 未登录 / -111 csrf 校验失败：都是「这份 cookie 不顶用」。
+            raise BilibiliCredentialError(f'B站接口返回 {code}：需要有效的 SESSDATA')
         if code not in (0, None) and code not in (allow_codes or set()):
             message = payload.get('message') or payload.get('msg') or ''
             raise BilibiliError(f'B站接口返回 {code}：{message}')
@@ -460,6 +476,15 @@ class BilibiliSource:
 
     def __init__(self, client: BilibiliClient) -> None:
         self._client = client
+
+    def with_credential(self, secret: str) -> BilibiliSource:
+        """A copy of this source that talks with ``secret`` instead.
+
+        The HTTP client is the part that carries the cookie, so a retry with
+        another credential needs a fresh one; the proxy and timeout are copied
+        from the original.
+        """
+        return BilibiliSource(self._client.with_cookie(secret))
 
     async def preview(self, ref: str) -> ChannelInfo:
         kind, identity = parse_ref(ref)

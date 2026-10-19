@@ -8,18 +8,25 @@ client (and its cookie) shared instead of opened twice.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from ..media.pipeline import MediaResolver
-from ..media_settings import get_media_settings, resolve_proxy
+from ..media_settings import (
+    INSTANCE_CREDENTIALS,
+    get_media_settings,
+    instance_credential,
+    resolve_proxy,
+)
 from ..storage import PostgresStorage
 from . import SourceAdapter, UnsupportedSource
 from .bilibili import SOURCE as BILIBILI_SOURCE
 from .bilibili import BilibiliClient, BilibiliResolver, BilibiliSource
+from .chain import credentials_for
 from .ingest import ChannelInfo, MediaResolverRegistry, MediaSource, MediaSync
 from .podcast import FEED_SOURCE, PodcastClient, PodcastResolver, PodcastSource
 from .podcast import SOURCE as PODCAST_SOURCE
+from .weixin import SOURCE as WEIXIN_SOURCE
 from .youtube import SOURCE as YOUTUBE_SOURCE
 from .youtube import YoutubeResolver, YoutubeSource
 
@@ -40,6 +47,11 @@ class MediaSources:
         #: 原始来源对象，供「粘 URL 订阅」时的预览用。
         self.sources: dict[str, MediaSource] = {}
         self._closers: list[Any] = []
+        self._storage = storage
+        self._settings = settings
+        #: 传进来的 cookie 是「预览/测试」用的显式覆盖；同步走凭证链。
+        self._explicit_bilibili = bilibili_cookie
+        self._explicit_youtube = youtube_cookies
 
         cookie = bilibili_cookie if bilibili_cookie is not None else str(settings.get('bilibili_cookie') or '')
         bilibili = self._client(
@@ -50,7 +62,11 @@ class MediaSources:
         )
         bilibili_source = BilibiliSource(bilibili)
         self.sources[BILIBILI_SOURCE] = bilibili_source
-        self.adapters[BILIBILI_SOURCE] = MediaSync(storage=storage, source=bilibili_source)
+        self.adapters[BILIBILI_SOURCE] = MediaSync(
+            storage=storage,
+            source=bilibili_source,
+            credentials=self._credentials_for(BILIBILI_SOURCE),
+        )
         self.resolvers[BILIBILI_SOURCE] = BilibiliResolver(
             bilibili,
             use_cc_subtitle=bool(settings.get('bilibili_cc_subtitle')),
@@ -76,15 +92,46 @@ class MediaSources:
         )
         youtube_source = YoutubeSource(proxy=youtube_proxy, cookies=cookies)
         self.sources[YOUTUBE_SOURCE] = youtube_source
-        self.adapters[YOUTUBE_SOURCE] = MediaSync(storage=storage, source=youtube_source)
+        self.adapters[YOUTUBE_SOURCE] = MediaSync(
+            storage=storage,
+            source=youtube_source,
+            credentials=self._credentials_for(YOUTUBE_SOURCE),
+        )
         self.resolvers[YOUTUBE_SOURCE] = YoutubeResolver(proxy=youtube_proxy, cookies=cookies)
 
     def _client(self, client: Any) -> Any:
         self._closers.append(client.aclose)
         return client
 
+    def _credentials_for(self, source: str) -> Callable[[str], Awaitable[tuple[str, ...]]]:
+        """The chain for one source, bound to this run's instance credential."""
+        explicit = (
+            self._explicit_bilibili if source == BILIBILI_SOURCE else self._explicit_youtube
+        )
+        instance = (
+            explicit
+            if explicit is not None
+            else instance_credential(self._settings, source)
+        )
+        return lambda biz: credentials_for(
+            self._storage,
+            biz=biz,
+            source=source,
+            instance=instance,
+        )
+
     def resolver_registry(self) -> MediaResolverRegistry:
-        return MediaResolverRegistry(self.resolvers)
+        return MediaResolverRegistry(self.resolvers, credentials=self._resolver_credentials)
+
+    async def _resolver_credentials(self, biz: str, source: str) -> tuple[str, ...]:
+        """The chain to try for one transcription job.
+
+        Only the sources that actually take a credential get more than one
+        candidate: a podcast feed was fetched anonymously and stays that way.
+        """
+        if source not in INSTANCE_CREDENTIALS:
+            return ('',)
+        return await self._credentials_for(source)(biz)
 
     async def preview(self, source: str, url: str) -> ChannelInfo:
         """Resolve a pasted URL to a channel, for the confirmation dialog."""
@@ -100,6 +147,17 @@ class MediaSources:
         self._closers.clear()
 
 
+#: Every source hippo ships, in the order the console should list them. WeChat
+#: leads because it is the original one; ``feed`` follows ``podcast`` because a
+#: text feed is the same listing with nothing to transcribe.
+SOURCE_ORDER = (WEIXIN_SOURCE, BILIBILI_SOURCE, YOUTUBE_SOURCE, PODCAST_SOURCE, FEED_SOURCE)
+
+
+def source_names() -> list[str]:
+    """The sources hippo ships, for a console that should not hardcode them."""
+    return list(SOURCE_ORDER)
+
+
 async def build_media_sources(
     *,
     storage: PostgresStorage,
@@ -109,4 +167,4 @@ async def build_media_sources(
     return MediaSources(storage=storage, settings=resolved)
 
 
-__all__ = ['MediaSources', 'build_media_sources']
+__all__ = ['SOURCE_ORDER', 'MediaSources', 'build_media_sources', 'source_names']
