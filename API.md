@@ -156,7 +156,8 @@ PATCH /api/auth/email  { "current_password": "…", "email": "u@example.com" }
 
 ## 2. 微信登录（daemon）`/api/login`
 
-抓取用的微信号登录由 weixin-rs daemon 负责，hippo 不保存微信凭据。这些端点全部要求**登录**（Hippo 用户）。
+抓取用的微信号登录由 weixin-rs daemon 负责，hippo 不保存微信凭据。这些端点全部要求**管理员浏览器会话**；
+普通用户和 API Key 均不可查看或替换平台共享的微信登录状态。
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
@@ -1095,10 +1096,10 @@ Content-Type: application/pdf
 | DELETE | `/api/llm/provider/{provider_id}` | 管理员 |
 | PATCH | `/api/llm/provider/{provider_id}` | 管理员 |
 | POST | `/api/llm/provider/{provider_id}/test` | 管理员 |
-| GET | `/api/login` | 登录 |
-| POST | `/api/login/auto` | 登录 |
-| POST | `/api/login/qr` | 登录 |
-| POST | `/api/login/wait` | 登录 |
+| GET | `/api/login` | 管理员会话 |
+| POST | `/api/login/auto` | 管理员会话 |
+| POST | `/api/login/qr` | 管理员会话 |
+| POST | `/api/login/wait` | 管理员会话 |
 | GET | `/api/media/{article_pk}/{kind}` | 登录 |
 | GET | `/api/report/setting` | 登录 |
 | PATCH | `/api/report/setting` | 登录 |

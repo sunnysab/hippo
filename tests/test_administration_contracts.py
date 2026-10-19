@@ -69,11 +69,11 @@ def _knowledge_client(storage: SimpleNamespace, user: SimpleNamespace) -> TestCl
     return TestClient(app)
 
 
-def _daemon_client() -> TestClient:
+def _daemon_client(*, role: str = 'admin') -> TestClient:
     app = FastAPI()
     install_exception_handlers(app)
     app.include_router(daemon_api.router, prefix='/api')
-    app.dependency_overrides[deps.current_user] = lambda: SimpleNamespace(id=1, username='root', role='admin')
+    app.dependency_overrides[deps.current_user] = lambda: SimpleNamespace(id=1, username='root', role=role)
     return TestClient(app)
 
 
@@ -377,6 +377,20 @@ class DaemonResponseContractTest(unittest.TestCase):
         'clients_connected',
         'error',
     )
+
+    def test_a_reader_cannot_inspect_or_replace_the_shared_wechat_session(self) -> None:
+        client = _daemon_client(role='user')
+        with patch.object(daemon_api, 'WeixinSource') as daemon:
+            for method, path in (
+                ('GET', '/api/login'),
+                ('POST', '/api/login/qr'),
+                ('POST', '/api/login/auto'),
+                ('POST', '/api/login/wait'),
+            ):
+                with self.subTest(path=path):
+                    response = client.request(method, path)
+                    self.assertEqual(403, response.status_code, response.text)
+        daemon.assert_not_called()
 
     def test_the_status_answer_is_the_public_daemon_state(self) -> None:
         source = _FakeSource(

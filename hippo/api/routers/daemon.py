@@ -11,10 +11,10 @@ from fastapi import APIRouter, Depends
 
 from ...exceptions import ApiError
 from ...weixin_daemon import WeixinSource
-from ..deps import current_user
+from ..deps import require_admin
 from ..schemas.daemon import DaemonActionResultOut, DaemonLoginStatusOut, DaemonQrOut
 
-router = APIRouter(dependencies=[Depends(current_user)])
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 @router.get('/login', response_model=DaemonLoginStatusOut)
