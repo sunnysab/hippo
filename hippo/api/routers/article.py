@@ -482,8 +482,9 @@ async def refetch_article(
     await _assert_article_visible(storage, user.id, article_id)
     row = await fetchone_row(
         storage,
-        'SELECT a.biz, a.article_id, a.link, COALESCE(acc.source, '
-        ') AS account_source'
+        # An account row that is gone leaves the source unknown, and the empty
+        # string keeps the refetch on the instance default proxy.
+        "SELECT a.biz, a.article_id, a.link, COALESCE(acc.source, '') AS account_source"
         ' FROM articles a LEFT JOIN accounts acc ON acc.biz = a.biz'
         ' WHERE a.id = %s',
         [article_id],

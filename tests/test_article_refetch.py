@@ -5,6 +5,7 @@ upsert 的 (biz, article_id) 才会命中同一行。
 """
 
 import asyncio
+import re
 import unittest
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, patch
@@ -99,6 +100,43 @@ class RefetchRouteTest(unittest.TestCase):
             article_id='slug-1',
         )
         self.assertEqual('done', article_api._refetch_tasks.pop(task['task_id'])['status'])
+
+    def test_the_refetch_query_hands_the_database_valid_sql(self) -> None:
+        # The query is assembled from string fragments, and an empty COALESCE
+        # argument is valid Python but a syntax error in PostgreSQL: that is how
+        # the account-source lookup broke every on-demand refetch.
+        captured: list[tuple[str, object]] = []
+
+        async def capture(_storage, query, params, *, normalize=None):
+            captured.append((query, params))
+            return {
+                'biz': 'Mz123',
+                'article_id': 'slug-1',
+                'link': 'https://mp.weixin.qq.com/s/AbCdEf',
+                'account_source': '',
+            }
+
+        class _DeferredThread:
+            def __init__(self, target=None, daemon=None, **kwargs) -> None:
+                self._target = target
+
+            def start(self) -> None:
+                return None
+
+        with (
+            patch.object(article_api, '_assert_article_visible', AsyncMock()),
+            patch('hippo.api.routers.article.fetchone_row', capture),
+            patch('hippo.api.routers.article.threading.Thread', _DeferredThread),
+        ):
+            task = asyncio.run(article_api.refetch_article(article_id=7, storage=SimpleNamespace(), user=_user(9)))
+        article_api._refetch_tasks.pop(task['task_id'], None)
+
+        query, params = captured[0]
+        self.assertEqual([7], params)
+        # An unknown source must reach the caller as an empty string, which is
+        # what keeps the refetch on the instance default proxy.
+        self.assertIn("COALESCE(acc.source, '')", query)
+        self.assertIsNone(re.search(r',\s*\)', query), query)
 
 
 class ArticleUpsertTest(unittest.IsolatedAsyncioTestCase):
