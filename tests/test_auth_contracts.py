@@ -9,40 +9,22 @@ returned.
 
 from __future__ import annotations
 
-import tempfile
 import unittest
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
+from _openapi import document as _document
+from _openapi import resolve as _resolve
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from hippo import server
 from hippo.api import deps
 from hippo.api.errors import install_exception_handlers
 from hippo.api.routers import apikey as apikey_api
 from hippo.api.routers import auth as auth_api
 from hippo.api.schemas.auth import ApiKeyCreateRequest, EmailChangeRequest, LoginRequest
-
-
-def _resolve(spec: dict[str, Any], node: dict[str, Any]) -> dict[str, Any]:
-    """Follow a local ``$ref`` to the schema it names."""
-    while '$ref' in node:
-        _, _, name = node['$ref'].rpartition('/')
-        node = spec['components']['schemas'][name]
-    return node
-
-
-def _document() -> dict[str, Any]:
-    with (
-        tempfile.TemporaryDirectory() as static_dir,
-        patch('hippo.server.configure_logging'),
-        patch('hippo.server.init_telemetry', return_value=None),
-        patch('hippo.server.instrument_app'),
-    ):
-        return server.create_app(static_dir=static_dir, enable_inprocess_sync=False).openapi()
 
 
 class _NullTransaction:

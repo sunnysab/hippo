@@ -11,17 +11,17 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
-import tempfile
 import unittest
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+from _openapi import document as _document
+from _openapi import resolve as _resolve
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, ValidationError
 
-from hippo import server
 from hippo.api import deps
 from hippo.api import schemas as schemas_pkg
 from hippo.api.errors import install_exception_handlers
@@ -33,24 +33,6 @@ from hippo.api.schemas.llm import ProviderCreateRequest, ProviderUpdateRequest
 from hippo.api.schemas.report import ReportSettingUpdateRequest
 
 HTTP_METHODS = ('get', 'post', 'put', 'patch', 'delete')
-
-
-def _resolve(spec: dict[str, Any], node: dict[str, Any]) -> dict[str, Any]:
-    """Follow a local ``$ref`` to the schema it names."""
-    while '$ref' in node:
-        _, _, name = node['$ref'].rpartition('/')
-        node = spec['components']['schemas'][name]
-    return node
-
-
-def _document() -> dict[str, Any]:
-    with (
-        tempfile.TemporaryDirectory() as static_dir,
-        patch('hippo.server.configure_logging'),
-        patch('hippo.server.init_telemetry', return_value=None),
-        patch('hippo.server.instrument_app'),
-    ):
-        return server.create_app(static_dir=static_dir, enable_inprocess_sync=False).openapi()
 
 
 def _success_schema(spec: dict[str, Any], path: str, method: str, code: str) -> dict[str, Any]:
