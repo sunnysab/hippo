@@ -157,6 +157,11 @@ class OpenApiDocumentTest(unittest.TestCase):
                 for status in ('401', '403'):
                     self.assertEqual(reference, responses[status]['content']['application/json']['schema'], path)
 
+    def test_no_operation_still_describes_a_validation_body_that_is_never_sent(self) -> None:
+        # The document must not offer a second error shape nobody can receive.
+        self.assertNotIn('HTTPValidationError', self.spec['components']['schemas'])
+        self.assertNotIn('ValidationError', self.spec['components']['schemas'])
+
 
 class ErrorEnvelopeTest(unittest.TestCase):
     def test_a_malformed_body_answers_in_the_shared_envelope(self) -> None:
@@ -190,6 +195,26 @@ class ErrorEnvelopeTest(unittest.TestCase):
 
         self.assertEqual(200, response.status_code)
         self.assertEqual({'username': 'alice'}, response.json())
+
+    def test_a_failure_raised_before_the_route_uses_the_same_envelope(self) -> None:
+        # Starlette answers a method a route does not allow (and an unrouted
+        # path) itself; both must still speak {error, code}.
+        app = FastAPI()
+        install_exception_handlers(app)
+
+        @app.get('/thing')
+        async def thing() -> dict[str, bool]:
+            return {'ok': True}
+
+        client = TestClient(app)
+        method_not_allowed = client.post('/thing')
+        unknown_path = client.get('/nothing-here')
+
+        self.assertEqual(405, method_not_allowed.status_code)
+        self.assertEqual({'error', 'code'}, set(method_not_allowed.json()))
+        self.assertEqual('http_405', method_not_allowed.json()['code'])
+        self.assertEqual(404, unknown_path.status_code)
+        self.assertEqual('http_404', unknown_path.json()['code'])
 
 
 if __name__ == '__main__':

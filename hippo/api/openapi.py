@@ -250,7 +250,8 @@ def _apply_error_responses(schema: dict[str, Any]) -> None:
 
     FastAPI's generated 422 describes its own validation body; a request that
     fails validation is answered by ``install_exception_handlers`` in the same
-    ``{error, code}`` envelope as everything else, so it is replaced here.
+    ``{error, code}`` envelope as everything else, so it is replaced here and
+    the schemas that no longer describe anything are dropped.
     """
     for operations in schema.get('paths', {}).values():
         for method in _HTTP_METHODS:
@@ -264,3 +265,34 @@ def _apply_error_responses(schema: dict[str, Any]) -> None:
                 responses.setdefault('401', _error_response('No usable session cookie or API key.'))
                 responses.setdefault('403', _error_response('Signed in, but not allowed.'))
             responses.setdefault('500', _error_response('Unexpected server error.'))
+    _drop_unreferenced_schemas(schema, 'HTTPValidationError', 'ValidationError')
+
+
+def _drop_unreferenced_schemas(schema: dict[str, Any], *names: str) -> None:
+    """Remove component schemas nothing refers to any more.
+
+    Repeats, because the last referrer of one of them is typically one of them:
+    ``HTTPValidationError`` is the only thing that named ``ValidationError``.
+    """
+    schemas = schema.get('components', {}).get('schemas', {})
+    dropped = True
+    while dropped:
+        dropped = False
+        referenced = _referenced_schema_names(schema)
+        for name in names:
+            if name not in referenced and schemas.pop(name, None) is not None:
+                dropped = True
+
+
+def _referenced_schema_names(node: Any) -> set[str]:
+    referenced: set[str] = set()
+    if isinstance(node, dict):
+        reference = node.get('$ref')
+        if isinstance(reference, str) and reference.startswith('#/components/schemas/'):
+            referenced.add(reference.rsplit('/', 1)[-1])
+        for value in node.values():
+            referenced |= _referenced_schema_names(value)
+    elif isinstance(node, list):
+        for value in node:
+            referenced |= _referenced_schema_names(value)
+    return referenced

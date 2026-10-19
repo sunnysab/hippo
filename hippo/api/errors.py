@@ -15,6 +15,7 @@ from __future__ import annotations
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..exceptions import ApiError
 from ..logger import get_logger
@@ -59,6 +60,25 @@ def install_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=exc.status,
             content={'error': str(exc), 'code': exc.code},
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _handle_http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        """Answer the failures Starlette raises itself in the same envelope.
+
+        An unrouted path and a method a route does not allow are answered before
+        a route ever runs, so they would otherwise keep ``{'detail': ...}`` and
+        break the one-body contract the rest of the API follows.
+        """
+        fields = _fields(request)
+        code = f'http_{exc.status_code}'
+        fields['code'] = code
+        fields['status'] = exc.status_code
+        logger.warning('request_failed', **fields)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={'error': str(exc.detail), 'code': code},
+            headers=getattr(exc, 'headers', None),
         )
 
     @app.exception_handler(RequestValidationError)
