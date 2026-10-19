@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import HTMLResponse
 
 from ...exceptions import ApiError
@@ -13,6 +13,7 @@ from ...report import ReportRepository, build_context, day_bounds, parse_date, r
 from ...site_settings import get_site_settings
 from ...storage import PostgresStorage
 from ..deps import current_user, get_storage
+from ..schemas.report import ReportOut, ReportSendOut, ReportSettingOut, ReportSettingUpdateRequest
 
 router = APIRouter(dependencies=[Depends(current_user)])
 
@@ -68,7 +69,7 @@ async def _collect(
     return settings, articles, context
 
 
-@router.get('/report/setting')
+@router.get('/report/setting', response_model=ReportSettingOut)
 async def read_setting(
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
@@ -77,29 +78,27 @@ async def read_setting(
     return await storage.reports.get_setting(user.id)
 
 
-@router.patch('/report/setting')
+@router.patch('/report/setting', response_model=ReportSettingOut)
 async def update_setting(
-    body: dict[str, Any] = Body(default={}),
+    body: ReportSettingUpdateRequest = ReportSettingUpdateRequest(),
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
 ) -> dict[str, Any]:
     """Update report preferences: switch, send hour, recipients and scope."""
+    sent = body.model_fields_set
     updates: dict[str, Any] = {}
-    if 'enabled' in body:
-        updates['enabled'] = bool(body['enabled'])
-    if 'send_hour' in body:
-        try:
-            updates['send_hour'] = int(body['send_hour'])
-        except (TypeError, ValueError) as exc:
-            raise ApiError('send_hour 必须是整数', status=400) from exc
-        if not 0 <= updates['send_hour'] <= 23:
+    if 'enabled' in sent and body.enabled is not None:
+        updates['enabled'] = body.enabled
+    if 'send_hour' in sent and body.send_hour is not None:
+        if not 0 <= body.send_hour <= 23:
             raise ApiError('send_hour 必须在 0-23 之间', status=400)
-    if 'recipients' in body:
-        updates['recipients'] = _normalize_recipients(body['recipients'])
-    if 'group_ids' in body:
-        updates['group_ids'] = _normalize_group_ids(body['group_ids'])
-    if 'include_read' in body:
-        updates['include_read'] = bool(body['include_read'])
+        updates['send_hour'] = body.send_hour
+    if 'recipients' in sent and body.recipients is not None:
+        updates['recipients'] = _normalize_recipients(body.recipients)
+    if 'group_ids' in sent and body.group_ids is not None:
+        updates['group_ids'] = _normalize_group_ids(body.group_ids)
+    if 'include_read' in sent and body.include_read is not None:
+        updates['include_read'] = body.include_read
     if not updates:
         raise ApiError('没有需要更新的字段', status=400)
 
@@ -107,7 +106,7 @@ async def update_setting(
         return await storage.reports.save_setting(user.id, updates)
 
 
-@router.get('/report/{date}')
+@router.get('/report/{date}', response_model=ReportOut)
 async def read_report(
     date: str,
     group_ids: str | None = Query(default=None, description='逗号分隔的分组 ID'),
@@ -139,7 +138,7 @@ async def read_report_html(
     return HTMLResponse(render_report(context))
 
 
-@router.post('/report/{date}/send', status_code=status.HTTP_202_ACCEPTED)
+@router.post('/report/{date}/send', status_code=status.HTTP_202_ACCEPTED, response_model=ReportSendOut)
 async def send_report_now(
     date: str,
     user: User = Depends(current_user),
