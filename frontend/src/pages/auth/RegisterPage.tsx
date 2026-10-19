@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { useI18n } from '../../i18n';
 import { apiSend, ApiError } from '../../api';
+import { BrandMark } from '../../components/BrandMark';
 
 export function RegisterPage() {
   const { t } = useI18n();
@@ -62,7 +63,7 @@ export function RegisterPage() {
     <div className="auth-screen">
       <form className="auth-card" onSubmit={onSubmit}>
         <div className="auth-brand">
-          <span className="brand-mark">H</span>
+          <BrandMark className="brand-mark" />
           <div>
             <div className="brand-title">Hippo</div>
             <div className="brand-subtitle">{t('register.subtitle', '创建账号')}</div>

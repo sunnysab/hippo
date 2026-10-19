@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../hooks/useAuth';
 import { ApiError } from '../../api';
+import { BrandMark } from '../../components/BrandMark';
 
 export function LoginPage() {
   const { t } = useI18n();
@@ -31,10 +32,10 @@ export function LoginPage() {
     <div className="auth-screen">
       <form className="auth-card" onSubmit={onSubmit}>
         <div className="auth-brand">
-          <span className="brand-mark">H</span>
+          <BrandMark className="brand-mark" />
           <div>
             <div className="brand-title">Hippo</div>
-            <div className="brand-subtitle">{t('brand.subtitle', '公众号文章管理')}</div>
+            <div className="brand-subtitle">{t('brand.subtitle', 'Personal information and knowledge platform')}</div>
           </div>
         </div>
 

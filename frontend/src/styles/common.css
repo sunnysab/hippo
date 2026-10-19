@@ -58,12 +58,10 @@ body {
   place-items: center;
   width: 40px;
   height: 40px;
+  padding: 7px;
   border-radius: var(--radius-sm);
   background: var(--accent);
   color: var(--accent-ink);
-  font-family: var(--font-display);
-  font-size: 18px;
-  font-weight: 700;
 }
 
 .brand-text {

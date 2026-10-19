@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 import { useI18n } from '../i18n';
 import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
+import { BrandMark } from './BrandMark';
 
 interface TopBarProps {
   topbarRef: RefObject<HTMLElement | null>;
@@ -46,11 +47,11 @@ export function TopBar({ topbarRef, currentTab, syncStatus, lastSyncAt }: TopBar
   return (
     <header className="topbar" ref={topbarRef}>
       <div className="brand">
-        <span className="brand-mark">H</span>
+        <BrandMark className="brand-mark" />
         <div className="brand-text">
           <div className="brand-title">Hippo</div>
           <div className="brand-subtitle">
-            {t('brand.subtitle', 'WeChat Article Studio')}
+            {t('brand.subtitle', 'Personal information and knowledge platform')}
           </div>
         </div>
       </div>

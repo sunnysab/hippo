@@ -1,4 +1,5 @@
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -19,6 +20,17 @@ ADMIN_SOURCE_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminSource
 ADMIN_SYNC_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminSyncPage.tsx'
 ADMIN_APP = ROOT / 'frontend' / 'src' / 'App.tsx'
 SETTINGS_CSS = ROOT / 'frontend' / 'src' / 'styles' / 'settings.css'
+BRAND_MARK = ROOT / 'frontend' / 'src' / 'components' / 'BrandMark.tsx'
+FAVICON = ROOT / 'frontend' / 'public' / 'favicon.svg'
+LOGIN_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'auth' / 'LoginPage.tsx'
+
+
+def _mark_path_data(source: str) -> str:
+    """The `d` attribute, whitespace-normalised, from the mark or the favicon."""
+    match = re.search(r'd="(.*?)"', source, re.S) or re.search(r'MARK_PATH = `(.*?)`', source, re.S)
+    if match is None:
+        raise AssertionError('no mark path found')
+    return ' '.join(match.group(1).split())
 
 
 class FrontendRegressionTest(unittest.TestCase):
@@ -117,6 +129,32 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertIn('/api/admin/source', (ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'sources.ts').read_text(encoding='utf-8'))
         self.assertIn('/api/settings/run', source)
         self.assertIn('{ source }', source)
+
+    def test_brand_mark_is_one_colour_and_matches_the_favicon(self) -> None:
+        # 顶栏、登录页和浏览器标签共用一份几何：不比对就会各自漂移。
+        mark = BRAND_MARK.read_text(encoding='utf-8')
+        favicon = FAVICON.read_text(encoding='utf-8')
+
+        self.assertIn('fill="currentColor"', mark)
+        self.assertIn('fill="currentColor"', favicon)
+        # 单色：除了 currentColor 之外不再有写死的填充色。
+        self.assertNotIn('fill="#', mark)
+        self.assertNotIn('fill="#', favicon)
+        self.assertEqual(_mark_path_data(favicon), _mark_path_data(mark))
+
+    def test_the_brand_badge_uses_the_mark_everywhere(self) -> None:
+        top_bar = TOP_BAR.read_text(encoding='utf-8')
+        login_page = LOGIN_PAGE.read_text(encoding='utf-8')
+
+        for source in (top_bar, login_page):
+            self.assertIn('<BrandMark className="brand-mark" />', source)
+            self.assertNotIn('>H</span>', source)
+        self.assertIn('favicon.svg', (ROOT / 'frontend' / 'index.html').read_text(encoding='utf-8'))
+
+    def test_brand_subtitle_describes_a_personal_knowledge_platform(self) -> None:
+        translations = json.loads(I18N_ZH.read_text(encoding='utf-8'))
+
+        self.assertEqual(translations['brand.subtitle'], '个人信息与知识平台')
 
     def test_groups_page_syncs_selected_group_with_route_query(self) -> None:
         source = GROUPS_PAGE.read_text(encoding='utf-8')
