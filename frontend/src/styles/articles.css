@@ -720,6 +720,19 @@
   overflow-wrap: anywhere;
 }
 
+/* The paragraph the player is inside. Paint only: any padding or border here
+   would reflow the text and make the page jump each time the highlight moves. */
+.reader p.is-playing {
+  background: color-mix(in srgb, var(--info) 9%, transparent);
+  border-radius: var(--radius-sm);
+  transition: background 0.2s ease-out;
+}
+
+.reader p.is-playing .reader-anchor {
+  color: var(--info);
+  font-weight: 600;
+}
+
 .reader figure {
   margin: 18px 0;
 }

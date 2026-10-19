@@ -1,4 +1,13 @@
-import { createContext, memo, useContext, useEffect, useMemo, useRef } from 'react';
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useI18n } from '../../i18n';
 import { renderInlineNodes } from '../../utils/markdown';
 import { EmptyState } from '../../components/EmptyState';
@@ -24,6 +33,8 @@ interface PlayerControls {
    * can still point at the right moment of the original.
    */
   originalHref: string | null;
+  /** Index of the paragraph the player is currently inside, -1 before the first. */
+  activeIndex: number;
 }
 
 // Only render-time values live here; the two media refs travel down as props so
@@ -33,6 +44,7 @@ const PlayerContext = createContext<PlayerControls>({
   seek: () => {},
   pauseOther: () => {},
   originalHref: null,
+  activeIndex: -1,
 });
 
 /**
@@ -141,14 +153,18 @@ const ArticleImageBlock = memo(function ArticleImageBlock({
 interface PlayerRefProps {
   audioRef: React.RefObject<HTMLAudioElement | null>;
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  /** Reports the player's position so the transcript can follow along. */
+  onTimeUpdate: (event: React.SyntheticEvent<HTMLMediaElement>) => void;
 }
 
 const ArticleVideoBlock = memo(function ArticleVideoBlock({
   block,
   videoRef,
+  onTimeUpdate,
 }: {
   block: ArticleContentBlock;
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  onTimeUpdate: PlayerRefProps['onTimeUpdate'];
 }) {
   const { t } = useI18n();
   const { originalHref, pauseOther } = useContext(PlayerContext);
@@ -167,6 +183,7 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({
           playsInline
           poster={block.cover_url || undefined}
           onPlay={(event) => pauseOther(event.currentTarget)}
+          onTimeUpdate={onTimeUpdate}
           data-testid='reader-video-file'
         />
       </div>
@@ -197,9 +214,11 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({
 const ArticleAudioBlock = memo(function ArticleAudioBlock({
   block,
   audioRef,
+  onTimeUpdate,
 }: {
   block: ArticleContentBlock;
   audioRef: React.RefObject<HTMLAudioElement | null>;
+  onTimeUpdate: PlayerRefProps['onTimeUpdate'];
 }) {
   const { pauseOther } = useContext(PlayerContext);
   if (!block.url) return null;
@@ -213,6 +232,7 @@ const ArticleAudioBlock = memo(function ArticleAudioBlock({
         preload='metadata'
         src={block.url}
         onPlay={(event) => pauseOther(event.currentTarget)}
+        onTimeUpdate={onTimeUpdate}
       />
     </div>
   );
@@ -226,27 +246,30 @@ const ContentBlock = memo(function ContentBlock({
   onImageContextMenu,
   audioRef,
   videoRef,
-}: AnchorableBlockProps & PlayerRefProps) {
+  onTimeUpdate,
+  isPlayingBlock,
+}: AnchorableBlockProps & PlayerRefProps & { isPlayingBlock: boolean }) {
   const { canSeek, seek, originalHref } = useContext(PlayerContext);
 
   if (block.type === 'paragraph') {
     const label = anchorLabel(block.t);
     const text = renderInlineNodes(block.text || '');
-    if (!label) return <p>{text}</p>;
+    const className = isPlayingBlock ? 'is-playing' : undefined;
+    if (!label) return <p className={className}>{text}</p>;
     if (!canSeek) {
       // Nothing is archived here, so the anchor opens the original at that moment
       // instead of seeking a player that does not exist.
       const href = originalHref ? timestampHref(originalHref, block.t || 0) : null;
       if (!href) {
         return (
-          <p>
+          <p className={className}>
             <span className="reader-anchor" title={label}>{label}</span>
             {text}
           </p>
         );
       }
       return (
-        <p>
+        <p className={className}>
           <a className="reader-anchor is-action" href={href} target="_blank" rel="noreferrer" title={label}>
             {label}
           </a>
@@ -255,7 +278,7 @@ const ContentBlock = memo(function ContentBlock({
       );
     }
     return (
-      <p>
+      <p className={className}>
         <button
           className="reader-anchor is-action"
           type="button"
@@ -270,11 +293,23 @@ const ContentBlock = memo(function ContentBlock({
   }
 
   if (block.type === 'video') {
-    return <ArticleVideoBlock block={block} videoRef={videoRef} />;
+    return (
+      <ArticleVideoBlock
+        block={block}
+        videoRef={videoRef}
+        onTimeUpdate={onTimeUpdate}
+      />
+    );
   }
 
   if (block.type === 'audio') {
-    return <ArticleAudioBlock block={block} audioRef={audioRef} />;
+    return (
+      <ArticleAudioBlock
+        block={block}
+        audioRef={audioRef}
+        onTimeUpdate={onTimeUpdate}
+      />
+    );
   }
 
   if (block.type === 'heading') {
@@ -372,6 +407,50 @@ function RenderedContent({ payload, content, hideSmall, onImageContextMenu }: Re
   );
   const originalHref = payload.article?.link || null;
 
+  // A paragraph is on screen from its own `t` until the next one starts, so the
+  // timeline only needs the sorted start times. Every paragraph carries one for a
+  // transcript; the show notes above it do not, and never light up.
+  const { starts, indexes } = useMemo(() => {
+    const timed = content
+      .map((block, index) => ({ index, t: block.type === 'paragraph' ? block.t : undefined }))
+      .filter((item) => typeof item.t === 'number' && Number.isFinite(item.t));
+    const sorted = [...timed].sort((a, b) => (a.t as number) - (b.t as number));
+    return { starts: sorted.map((item) => item.t as number), indexes: sorted.map((item) => item.index) };
+  }, [content]);
+
+  // `timeupdate` fires about four times a second, which is too coarse for a short
+  // paragraph but adequate for a highlight; the state only changes when the
+  // paragraph does, so React re-renders about once a paragraph.
+  const [activeIndex, setActiveIndex] = useState(-1);
+  // Another article (or a refetched body) replaces every block, so the previous
+  // index points at text that is no longer there. Adjusted during render, which is
+  // where React wants state derived from a prop to be reset.
+  const [renderedContent, setRenderedContent] = useState(content);
+  if (renderedContent !== content) {
+    setRenderedContent(content);
+    setActiveIndex(-1);
+  }
+  const markAt = useCallback((seconds: number) => {
+    // Last start at or before `seconds`; -1 before the first paragraph.
+    let low = 0;
+    let high = starts.length - 1;
+    let found = -1;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      if (starts[middle] <= seconds) {
+        found = middle;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+    const next = found === -1 ? -1 : indexes[found];
+    setActiveIndex((previous) => (next === previous ? previous : next));
+  }, [indexes, starts]);
+  const onTimeUpdate = useCallback((event: React.SyntheticEvent<HTMLMediaElement>) => {
+    markAt(event.currentTarget.currentTime);
+  }, [markAt]);
+
   const controls = useMemo<PlayerControls>(() => {
     const pauseOther = (active: HTMLMediaElement) => {
       const other = active === videoRef.current ? audioRef.current : videoRef.current;
@@ -381,18 +460,22 @@ function RenderedContent({ payload, content, hideSmall, onImageContextMenu }: Re
     return {
       canSeek,
       originalHref,
+      activeIndex,
       pauseOther,
       seek: (seconds: number) => {
         const target: HTMLMediaElement | null = videoRef.current || audioRef.current;
         if (!target) return;
         pauseOther(target);
         target.currentTime = seconds;
+        // The transcript follows the click at once instead of on the next
+        // `timeupdate`, which keeps the highlight and the player in step.
+        markAt(seconds);
         // Browsers may refuse the autoplay; the position is set, so the reader can
         // press play themselves. The rejection must still be consumed.
         void target.play().catch(() => {});
       },
     };
-  }, [canSeek, originalHref]);
+  }, [activeIndex, canSeek, markAt, originalHref]);
   const contentKeys = buildContentBlockKeys(content);
 
   return (
@@ -407,6 +490,8 @@ function RenderedContent({ payload, content, hideSmall, onImageContextMenu }: Re
           onImageContextMenu={onImageContextMenu}
           audioRef={audioRef}
           videoRef={videoRef}
+          onTimeUpdate={onTimeUpdate}
+          isPlayingBlock={index === activeIndex}
         />
       ))}
     </PlayerContext.Provider>

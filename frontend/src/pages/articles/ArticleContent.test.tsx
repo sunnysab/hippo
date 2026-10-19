@@ -237,6 +237,62 @@ describe('ArticleContent media blocks', () => {
 
     expect(container.querySelector('.reader-anchor')).toBeNull();
   });
+
+  it('highlights the paragraph the audio is currently inside', () => {
+    const { container } = renderContent([
+      { type: 'audio', url: '/api/media/7/audio' },
+      { type: 'paragraph', text: '开场', t: 0 },
+      { type: 'paragraph', text: '正题', t: 30 },
+      { type: 'paragraph', text: '结尾', t: 60 },
+    ]);
+    const audio = container.querySelector('audio')!;
+    const playing = () =>
+      [...container.querySelectorAll('p.is-playing')].map((node) => node.textContent?.replace(/^\d\d:\d\d/, ''));
+
+    expect(playing()).toEqual([]);
+
+    audio.currentTime = 5;
+    fireEvent.timeUpdate(audio);
+    expect(playing()).toEqual(['开场']);
+
+    // 段落从它自己的 t 开始，直到下一段开始为止。
+    audio.currentTime = 45;
+    fireEvent.timeUpdate(audio);
+    expect(playing()).toEqual(['正题']);
+
+    audio.currentTime = 120;
+    fireEvent.timeUpdate(audio);
+    expect(playing()).toEqual(['结尾']);
+  });
+
+  it('highlights nothing before the first timestamped paragraph', () => {
+    const { container } = renderContent([
+      { type: 'audio', url: '/api/media/7/audio' },
+      { type: 'paragraph', text: '节目简介' },
+      { type: 'paragraph', text: '正题', t: 30 },
+    ]);
+    const audio = container.querySelector('audio')!;
+
+    audio.currentTime = 0;
+    fireEvent.timeUpdate(audio);
+    expect(container.querySelector('.is-playing')).toBeNull();
+
+    audio.currentTime = 30;
+    fireEvent.timeUpdate(audio);
+    expect(container.querySelector('p.is-playing')?.textContent).toContain('正题');
+  });
+
+  it('follows the highlight when a transcript anchor seeks', () => {
+    const { container } = renderContent([
+      { type: 'audio', url: '/api/media/7/audio' },
+      { type: 'paragraph', text: '开场', t: 0 },
+      { type: 'paragraph', text: '正题', t: 132 },
+    ]);
+
+    fireEvent.click(container.querySelectorAll('.reader-anchor.is-action')[1]);
+
+    expect(container.querySelector('p.is-playing')?.textContent).toContain('正题');
+  });
 });
 
 describe('ArticleContent inline images', () => {
