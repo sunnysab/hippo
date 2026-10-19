@@ -34,8 +34,13 @@ logger = get_logger(__name__)
 router = APIRouter(dependencies=[Depends(current_user)])
 
 
-async def _list_groups(storage: PostgresStorage, user_id: int) -> list[dict[str, Any]]:
-    return [g.model_dump() for g in await storage.groups.list_groups(user_id=user_id)]
+async def _list_groups(
+    storage: PostgresStorage,
+    user_id: int,
+    *,
+    source: str | None = None,
+) -> list[dict[str, Any]]:
+    return [g.model_dump() for g in await storage.groups.list_groups(user_id=user_id, source=source)]
 
 
 async def _get_group(storage: PostgresStorage, user_id: int, group_id: int) -> dict[str, Any]:
@@ -163,11 +168,16 @@ async def _update_account(
 
 @router.get('/group', response_model=GroupListOut, response_model_exclude_unset=True)
 async def list_groups(
+    source: str | None = None,
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
 ) -> dict[str, Any]:
     """
     获取所有分组列表。
+
+    Args:
+        source (str | None): 按来源收窄每个分组的账号计数（如 "bilibili"）；
+            分组本身仍全部返回，只是没有该来源账号的组计数为 0。
 
     Returns:
         dict: 包含默认分组 ID 和所有分组列表的字典。
@@ -175,7 +185,7 @@ async def list_groups(
     default_group = await ensure_default_group(storage, user.id, name=DEFAULT_GROUP_NAME)
     return {
         'default_group_id': default_group.id,
-        'groups': await _list_groups(storage, user.id),
+        'groups': await _list_groups(storage, user.id, source=source),
     }
 
 

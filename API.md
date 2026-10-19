@@ -194,6 +194,9 @@ DELETE /api/group/3 → 204
 
 新建/重命名时 `name` 为空是 `400`；删除不存在的分组是 `404`。**分组按用户隔离**，别人的 `group_id` 对你是 `404`。
 
+`GET /api/group?source=bilibili` 让每个分组的 `account_count` 只数该来源下的订阅；
+分组本身照常全部返回，没有该来源账号的组计数为 `0`。文章页左栏选来源后就是这么取的。
+
 ## 4. 订阅账号 `/api/account`
 
 一个 `account` 是一份**订阅的频道（账号）**，不限微信：`accounts.source` 区分来源

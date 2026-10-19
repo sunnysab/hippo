@@ -79,7 +79,7 @@ describe('ArticlesPage update entry', () => {
     vi.stubGlobal('matchMedia', stubMatchMedia);
     vi.stubGlobal('localStorage', stubStorage());
     apiGetMock.mockImplementation(async (path: string) => {
-      if (path === '/api/group') return { groups: [] };
+      if (path.startsWith('/api/group')) return { groups: [] };
       if (path.startsWith('/api/article')) {
         return { articles: [], total: 0, item_show_type_facets: [] };
       }
@@ -140,6 +140,15 @@ describe('ArticlesPage update entry', () => {
       { source: 'bilibili', group_id: 7 },
       expect.anything(),
     );
+  });
+
+  it('asks for group counts inside the source the list is filtered to', async () => {
+    renderPage('/articles?source=bilibili');
+
+    // 左栏分组后面的数字是“这个来源下这个组有几个号”，请求里必须带上来源。
+    await waitFor(() => {
+      expect(apiGetMock).toHaveBeenCalledWith('/api/group?source=bilibili');
+    });
   });
 
   it('limits the update to one account when an account is filtered', async () => {

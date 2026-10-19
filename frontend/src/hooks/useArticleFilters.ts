@@ -171,8 +171,11 @@ export function useArticleFilters() {
     });
   }, []);
 
-  const loadGroupOptions = useCallback(async () => {
-    const payload = await apiGet('/api/group');
+  // 分组行上的数字回答的是“这个来源下这个组有多少号”，所以来源是它的一部分。
+  const loadGroupOptions = useCallback(async (source: string) => {
+    const payload = await apiGet(source ? `/api/group?source=${encodeURIComponent(source)}` : '/api/group');
+    // 快切来源时旧答案可能后到：它数的是别的来源，写进去就是错的数字。
+    if (filtersRef.current.source !== source) return;
     const groups = (payload.groups || []) as Array<{ id: number; name: string; account_count: number }>;
     const options = groups.map((group) => ({
       value: String(group.id),
@@ -343,9 +346,9 @@ export function useArticleFilters() {
 
   useEffect(() => {
     queueMicrotask(() => {
-      void loadGroupOptions();
+      void loadGroupOptions(filters.source);
     });
-  }, [loadGroupOptions]);
+  }, [filters.source, loadGroupOptions]);
 
   useEffect(() => {
     if (!filters.groupId) return;
@@ -390,7 +393,7 @@ export function useArticleFilters() {
     const handler = () => {
       const nextFilters = filtersRef.current;
       const nextSearch = deferredSearchRef.current;
-      void loadGroupOptions();
+      void loadGroupOptions(nextFilters.source);
       if (nextFilters.groupId) {
         void loadAccountOptions(nextFilters.groupId);
       }

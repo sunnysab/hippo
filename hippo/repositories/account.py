@@ -561,25 +561,37 @@ class GroupRepository:
             raise RuntimeError(f'Failed to create group {trimmed}.')
         return AccountGroup(id=row['id'], name=row['name'])
 
-    async def list_groups(self, *, user_id: int) -> list[AccountGroup]:
+    async def list_groups(self, *, user_id: int, source: str | None = None) -> list[AccountGroup]:
+        """The user's groups, with the count of the channels they hold.
+
+        ``source`` narrows that count to one platform, so the article rail answers
+        "how many of this group's channels are Bilibili" while a source is picked.
+        The predicate belongs to the join: in the ``WHERE`` it would drop every
+        group that has no channel of that source.
+        """
+        source_filter, params = (
+            (' AND a.source = %s', [user_id, source, user_id]) if source else ('', [user_id, user_id])
+        )
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                """
+                f"""
                 SELECT
                     g.id,
                     g.name,
                     g.sync_mode,
                     g.sync_recent_days,
-                    COUNT(s.biz) AS account_count,
+                    COUNT(a.biz) AS account_count,
                     COALESCE(g.article_count, 0) AS article_count
                 FROM account_groups g
                 LEFT JOIN subscription s
                        ON s.group_id = g.id AND s.user_id = %s AND NOT s.is_disabled
+                LEFT JOIN accounts a
+                       ON a.biz = s.biz{source_filter}
                 WHERE g.user_id = %s
                 GROUP BY g.id, g.name, g.sync_mode, g.sync_recent_days, g.article_count
                 ORDER BY g.name ASC
                 """,
-                (user_id, user_id),
+                params,
             )
             rows = await cur.fetchall()
         return [

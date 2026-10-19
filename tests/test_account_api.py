@@ -49,6 +49,22 @@ class AccountApiTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual('', payload['accounts'][0]['alias'])
 
+    async def test_group_counts_are_narrowed_by_the_source_filter(self) -> None:
+        # 文章页左栏选了来源之后，分组后面的数字必须是这个来源下的号数。
+        storage = SimpleNamespace(
+            groups=SimpleNamespace(list_groups=AsyncMock(return_value=[])),
+        )
+        user = SimpleNamespace(id=1, username='admin', role='admin')
+
+        with patch.object(account_api, 'ensure_default_group', AsyncMock(return_value=SimpleNamespace(id=1))):
+            await account_api.list_groups(source='bilibili', storage=storage, user=user)
+            await account_api.list_groups(storage=storage, user=user)
+
+        self.assertEqual(
+            [call.kwargs for call in storage.groups.list_groups.await_args_list],
+            [{'user_id': 1, 'source': 'bilibili'}, {'user_id': 1, 'source': None}],
+        )
+
     async def test_creating_an_account_queues_a_history_backfill(self) -> None:
         @asynccontextmanager
         async def transaction():
