@@ -105,10 +105,7 @@ function AppRoutes() {
                     <Route path="source/:source" element={<SourceDetailPage />} />
                     <Route path="sync" element={<AdminSyncPage />} />
                     <Route path="transcribe" element={<AdminTranscribePage />} />
-                    {/* The WeChat sign-in moved onto its source page. */}
-                    <Route path="login" element={<Navigate to="/admin/source/weixin" replace />} />
                     <Route path="llm" element={<AdminLlmPage />} />
-                    <Route path="media" element={<Navigate to="/admin/transcribe" replace />} />
                     <Route path="site" element={<AdminSitePage />} />
                     <Route path="log" element={<AdminLogPage />} />
                   </Route>

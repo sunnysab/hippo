@@ -123,9 +123,9 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertNotIn("path: '/admin/login'", layout)
         self.assertNotIn("path: '/admin/media'", layout)
         self.assertIn("path=\"source/:source\" element={<SourceDetailPage />}", app)
-        # 旧地址仍然可达：书签与横幅不该撞上空白页。
-        self.assertIn('path="login" element={<Navigate to="/admin/source/weixin" replace />}', app)
-        self.assertIn('path="media" element={<Navigate to="/admin/transcribe" replace />}', app)
+        # 旧地址已经删掉：登录与转写都在各自的来源页上，没有重定向残留。
+        self.assertNotIn('path="login"', app)
+        self.assertNotIn('path="media"', app)
 
     def test_the_sync_console_stacks_in_one_column(self) -> None:
         # 两栏在宽屏留下半屏空白，窄屏又塌成一栏：同步页改成单列。
