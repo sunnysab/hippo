@@ -150,7 +150,7 @@ hippo 只通过 RPC 使用 daemon，不接触微信协议细节：
 | 搜索公众号 | `search_biz`（H5 搜索，返回 `gh_…` 与头像） |
 | 登录 | 扫码 / `auto_auth_key` 免扫重登 |
 
-配置（默认值见 `hippo/weixin_source.py`）：
+配置（默认值见 `hippo/weixin_daemon.py`）：
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
@@ -406,16 +406,17 @@ hippo/
 ├── repositories/        # 数据访问层（account/article/image/chat/audit/…）
 ├── article_queries.py   # 文章查询、全文检索、图片代理
 ├── downloader.py        # 正文抓取与图片下载
-├── weixin_source.py     # weixin-rs daemon 的 RPC 封装
-├── weixin_worker.py     # 列表入队 + 正文落库
-├── weixin_watch.py      # daemon 登录态守护
+├── weixin_daemon.py     # weixin-rs daemon 的 RPC 客户端
+├── weixin_ingest.py     # 微信列表入队与正文落库
+├── weixin_watch.py      # 微信文章推送监听与入队
 ├── sync_worker.py       # 任务领取与执行
 ├── sync_service.py      # 同步流程编排
 ├── sync_jobs.py / sync_tasks.py / sync_types.py / sync_core.py / sync_settings.py
 ├── sync_scheduler.py    # 定时同步
 ├── image_backfill.py    # 图片回填循环
 ├── image_store.py / image_hashes.py / s3.py / file_storage.py
-├── avatar.py            # 公众号头像缓存
+├── avatar.py            # 各来源头像缓存
+├── public_image.py      # 头像公网目标校验、连接固定与有界下载
 ├── wechat_parser.py / normalize_html.py   # 微信页面解析与清洗
 ├── report/              # 日报：query / render / delivery
 ├── report_scheduler.py
@@ -435,8 +436,8 @@ hippo-knowledge-worker.service              # 知识导入 worker 的 systemd �
 hippo/knowledge/worker.py                   # 知识导入 worker（python -m hippo.knowledge.worker 入口）
 ```
 
-> 集成注记：目录名以基线为准。`weixin_*` 模块向 `sources/` 下多来源适配器的重命名属于待集成改动；
-> 合并后以新的模块名为准，本文档不先写成尚未落地的名字。
+通用同步统计类型位于 `sync_types.py`，来源适配器不依赖微信入库模块。微信专属代码仍保留明确的
+`weixin_*` 名称，不为统一命名更改数据库中的来源标识。
 
 ## 部署
 
@@ -448,14 +449,16 @@ hippo/knowledge/worker.py                   # 知识导入 worker（python -m hi
 上线（含 schema 31）前还有几件必须做的事，**在真实隔离环境验证完成并经授权后再执行**：
 
 1. 当前代码 `SCHEMA_VERSION = '31'`（在 schema 30 基础上给 `sync_jobs` 追加了 `requester_user_id` 列与两个索引）。
-   迁移是**纯追加、幂等**的 `ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`，不含 `DROP`/`DELETE`/`TRUNCATE`；
-   但仍需在隔离 PG 上验证 DDL、`pg_jieba`/`pg_trgm`、GIN 索引、UUID 类型、CAS 语义、部分唯一索引与并发锁行为，
+   本次 30 → 31 的增量是**纯追加、幂等**的 `ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`；
+   完整初始化脚本仍有历史清理语句，执行前必须核对这些清理项不会触及现存数据。
+   还需在隔离 PG 上验证 DDL、`pg_jieba`/`pg_trgm`、GIN 索引、UUID 类型、CAS 语义、部分唯一索引与并发锁行为，
    并验证 S3 的上传/下载/删除。
 2. 正式迁移流程：**先备份**（`pg_dump -Fc`），然后**停掉 Web、sync worker 与知识 worker 三个进程**（
    知识 worker 持有 lease/长事务，迁移前必须停），再人工跑 `python -m hippo.ops init-db`，确认库 `schema_version=31`
    后再重启。不要让旧进程在新 schema 上继续跑。
 3. **schema 只能前进**：库一旦升到 31，回退到 schema 30 的代码会因 `SCHEMA_VERSION(30) != meta.schema_version(31)`
-   拒绝启动；回退必须恢复迁移前的 `pg_dump`，不能靠改 `meta.schema_version` 蒙过去。
+   拒绝启动；优先修复并继续迁移，不能改 `meta.schema_version` 蒙混过关。确需恢复时，先将备份恢复到
+   **新的隔离数据库**核对，再由操作者批准切换；不要直接用旧快照覆盖生产库，避免丢失备份之后的写入。
 4. **发布窗口压自动同步**：生产 `sync:settings` 当前为 `enabled=false`、`interval_minutes=120`，调度循环不会自动跑；
    需要更新时用管理台或 `POST /api/settings/run` 手动触发。改回前先确认没有别的调用方依赖自动调度。
 5. **`systemctl is-active` 不等于功能健康**：验收要看 sync worker 新日志（如图片回填是否仍有持续失败）、

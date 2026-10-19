@@ -857,18 +857,18 @@ POST  /api/admin/media/test     逐档探测 ASR 端点可达性
 
 ### 认证与边界
 
-`Authorization: Bearer <key>` 或 `X-API-Key: <key>`。所有只读端点都接受它（认证解析在
-`current_user` 依赖里完成一处，路由无需逐个改动）。
+`Authorization: Bearer <key>` 或 `X-API-Key: <key>`。普通用户可访问的只读端点接受它；
+管理员接口及凭证管理要求浏览器会话，管理员自己签发的 API Key 也不能绕过此限制。
 
 | 限制 | 说明 |
 |---|---|
-| 管理接口 | `/api/admin`、`/api/settings`（及 `/api/settings/*`）、`/api/apikey`、`/api/auth`、`/api/login`、`/api/source/credential` 一律 `403`——一个泄露的 key 不能给自己签一个更大的 |
+| 管理接口 | 所有 `require_admin` 接口（包括 LLM 配置、同步配置、全站任务），以及 `/api/admin`、`/api/apikey`、`/api/auth`、`/api/login`、`/api/source/credential` 均拒绝 API Key，返回 `403` |
+| 本人设置与任务 | `/api/settings/preferences`、本人 `/api/settings/tasks` 可按密钥权限访问；`POST /api/settings/run` 需要 `write` scope，且始终限于本人订阅 |
 | 写操作 | 非 `GET`/`HEAD` 需要 `write` scope，当前控制台只签发 `read` |
 | 使用记录 | `last_used_at` 每 5 分钟最多写一次，避免每次读都变成一次写 |
 
-> 集成注记：上表是目标契约。基线里 `require_admin` 只检查角色，若某一管理员用户的 API Key 被带到
-> `/api/settings`，可能仍被放行；让 `require_admin` 也拒 API Key 的改动在核心 writer 一侧，本文档
-> 按集成后的契约写。
+管理角色与认证方式是两个独立校验：`require_admin` 同时要求管理员角色和会话认证，
+并不只依赖路径黑名单。
 
 ### 端点
 
