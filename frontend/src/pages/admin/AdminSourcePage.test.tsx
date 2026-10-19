@@ -67,14 +67,19 @@ describe('AdminSourcePage', () => {
   });
 
   it('picks the source when its sync button is pressed, instead of the whole instance', async () => {
-    apiSendMock.mockResolvedValue({});
+    apiSendMock.mockResolvedValue({ task_id: 'task-1', status: 'success' });
     renderPage(<AdminSourcePage />);
 
     const rows = await screen.findAllByRole('button', { name: '运行' });
     fireEvent.click(rows[0]);
 
     await waitFor(() =>
-      expect(apiSendMock).toHaveBeenCalledWith('/api/settings/run', 'POST', { source: 'weixin' }),
+      expect(apiSendMock).toHaveBeenCalledWith(
+        '/api/settings/admin/run',
+        'POST',
+        { source: 'weixin' },
+        expect.anything(),
+      ),
     );
   });
 

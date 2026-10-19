@@ -67,7 +67,6 @@ describe('SyncSettingsPanel', () => {
         status: 'failed',
         error: 'invalid session',
       });
-
     render(
       <SyncSettingsPanel
         formState={{
@@ -96,15 +95,22 @@ describe('SyncSettingsPanel', () => {
     });
 
     expect(showToastMock).toHaveBeenCalledWith('同步任务已进入队列');
+    // 运行按钮走管理台自己的入口，不再占用读者的那份。
+    expect(apiSendMock).toHaveBeenCalledWith(
+      '/api/settings/admin/run',
+      'POST',
+      {},
+      expect.anything(),
+    );
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(2000);
     });
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(2000);
     });
 
-    expect(apiGetMock).toHaveBeenCalledWith('/api/settings/tasks/task-1');
+    expect(apiGetMock).toHaveBeenCalledWith('/api/settings/tasks/task-1', expect.anything());
     expect(showToastMock).toHaveBeenLastCalledWith('invalid session');
     expect(emitRefreshMock).toHaveBeenCalledTimes(1);
   });

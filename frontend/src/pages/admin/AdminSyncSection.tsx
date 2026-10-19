@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { apiGet, apiSend } from '../../api';
+import { apiGet } from '../../api';
 import { useI18n } from '../../i18n';
-import { useToast } from '../../hooks/useToast';
+import { useSyncRun } from '../../hooks/useSyncRun';
 import { formatRelativeTime } from '../../utils/format';
 import { getSyncTone } from '../../utils/sync';
 import type { SyncTask } from '../../store/settings';
-import { getSourceLabel } from '../../utils/source';
 
 const TASK_LIMIT = 8;
 
@@ -18,7 +17,7 @@ const TASK_LIMIT = 8;
  */
 export function AdminSyncSection({ source }: { source?: string }) {
   const { t } = useI18n();
-  const { showToast } = useToast();
+  const { runSync } = useSyncRun();
   const [tasks, setTasks] = useState<SyncTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -41,16 +40,9 @@ export function AdminSyncSection({ source }: { source?: string }) {
   const run = async () => {
     setBusy(true);
     try {
-      const body = source ? { source } : {};
-      await apiSend('/api/settings/run', 'POST', body);
-      showToast(
-        source
-          ? t('admin.sync.queuedFor', '{source} 的同步已排队').replace('{source}', getSourceLabel(source, t))
-          : t('sync.runQueued', '同步任务已进入队列'),
-      );
+      // The console runs the instance's own catalogue; the hook reports the job.
+      await runSync({ source, siteWide: true });
       await load();
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }

@@ -2,8 +2,8 @@ import type { Dispatch, SetStateAction } from 'react';
 import { useSettingsState, type SyncSettings } from '../../store/settings';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
-import { apiGet, apiSend, isAuthError } from '../../api';
-import { emitRefresh } from '../../utils/events';
+import { useSyncRun } from '../../hooks/useSyncRun';
+import { apiSend, isAuthError } from '../../api';
 import {
   buildSyncSettingsPayload,
   type SyncSettingsFormState,
@@ -14,10 +14,6 @@ interface SyncSettingsPanelProps {
   setFormState: Dispatch<SetStateAction<SyncSettingsFormState>>;
 }
 
-const isActiveTaskStatus = (status: string | undefined) => {
-  return status === 'queued' || status === 'pending' || status === 'running';
-};
-
 export function SyncSettingsPanel({
   formState,
   setFormState,
@@ -25,26 +21,7 @@ export function SyncSettingsPanel({
   const { dispatch } = useSettingsState();
   const { t } = useI18n();
   const { showToast } = useToast();
-
-  const watchTaskResult = async (taskId: string) => {
-    const maxAttempts = 20;
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 500));
-      const payload = await apiGet(`/api/settings/tasks/${taskId}`);
-      const status = String(payload.status || '');
-      if (isActiveTaskStatus(status)) {
-        continue;
-      }
-      emitRefresh();
-      if (status === 'success') {
-        showToast(t('sync.status.success', 'Success'));
-        return;
-      }
-      showToast((payload.error as string) || t('sync.failed', 'Sync failed. Please check login.'));
-      return;
-    }
-    emitRefresh();
-  };
+  const { runSync } = useSyncRun();
 
   const handleSave = async () => {
     try {
@@ -69,26 +46,7 @@ export function SyncSettingsPanel({
           <button className="btn" id="btn-sync-save" type="button" onClick={handleSave}>
             {t('sync.save', 'Save')}
           </button>
-          <button className="btn ghost" id="btn-sync-run" type="button" onClick={async () => {
-            try {
-              const payload = await apiSend('/api/settings/run', 'POST', {});
-              const taskId = String(payload.task_id || '');
-              const status = String(payload.status || '');
-              showToast(
-                taskId && isActiveTaskStatus(status)
-                  ? t('sync.runQueued', 'Sync task queued')
-                  : t('sync.runningProgress', 'Processing sync task'),
-              );
-              if (taskId) {
-                void watchTaskResult(taskId);
-              } else {
-                emitRefresh();
-              }
-            } catch (err) {
-              if (isAuthError(err)) return;
-              showToast((err as Error)?.message || t('sync.runFailed', 'Failed to start sync task.'));
-            }
-          }}>
+          <button className="btn ghost" id="btn-sync-run" type="button" onClick={() => { void runSync({ siteWide: true }); }}>
             {t('sync.run', 'Run Now')}
           </button>
         </div>

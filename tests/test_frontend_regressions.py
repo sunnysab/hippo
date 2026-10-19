@@ -26,6 +26,8 @@ BRAND_MARK = ROOT / 'frontend' / 'src' / 'components' / 'BrandMark.tsx'
 FAVICON = ROOT / 'frontend' / 'public' / 'favicon.svg'
 LOGIN_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'auth' / 'LoginPage.tsx'
 SYNC_RUN_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useSyncRun.ts'
+ADMIN_SYNC_SECTION = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminSyncSection.tsx'
+SYNC_SETTINGS_PANEL = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'SyncSettingsPanel.tsx'
 
 
 def _mark_path_data(source: str) -> str:
@@ -138,8 +140,7 @@ class FrontendRegressionTest(unittest.TestCase):
 
         # 来源清单来自后端，前端不再自己维护一份。
         self.assertIn('/api/admin/source', (ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'sources.ts').read_text(encoding='utf-8'))
-        self.assertIn('/api/settings/run', source)
-        self.assertIn('{ source }', source)
+        self.assertIn('runSync({ source, siteWide: true })', source)
 
     def test_brand_mark_is_one_colour_and_matches_the_favicon(self) -> None:
         # 顶栏、登录页和浏览器标签共用一份几何：不比对就会各自漂移。
@@ -214,6 +215,19 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertIn('runSync({ source: filters.source, groupId: filters.groupId })', articles)
         self.assertIn('runSync({ bizList: state.selectedAccounts })', batch)
         self.assertIn('runSync({ groupId })', groups)
+
+    def test_console_buttons_run_through_the_admin_endpoint(self) -> None:
+        for page in (ADMIN_SOURCE_PAGE, ADMIN_SYNC_SECTION, SYNC_SETTINGS_PANEL):
+            source = page.read_text(encoding='utf-8')
+            self.assertIn('useSyncRun', source)
+            self.assertIn('siteWide: true', source)
+            # 管理台按整站跑，不再占用读者那份只针对本人订阅的入口。
+            self.assertNotIn("'/api/settings/run'", source)
+
+        hook = SYNC_RUN_HOOK.read_text(encoding='utf-8')
+        self.assertIn("'/api/settings/admin/run'", hook)
+        # 只有共享 hook 会轮询任务，页面里那份手写的定时循环已经删掉。
+        self.assertNotIn('maxAttempts', SYNC_SETTINGS_PANEL.read_text(encoding='utf-8'))
 
     def test_groups_page_syncs_selected_group_with_route_query(self) -> None:
         source = GROUPS_PAGE.read_text(encoding='utf-8')

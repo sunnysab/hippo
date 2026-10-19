@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { apiSend } from '../../api';
 import { useI18n } from '../../i18n';
-import { useToast } from '../../hooks/useToast';
+import { useSyncRun } from '../../hooks/useSyncRun';
 import { formatRelativeTime } from '../../utils/format';
 import { getSourceLabel, getSourceTone } from '../../utils/source';
 import { loadSourceOverview, pendingTotal, type SourceOverview, type SourceOverviewPayload } from './sources';
@@ -16,7 +15,7 @@ import { loadSourceOverview, pendingTotal, type SourceOverview, type SourceOverv
  */
 export function AdminSourcePage() {
   const { t } = useI18n();
-  const { showToast } = useToast();
+  const { runSync } = useSyncRun();
   const [payload, setPayload] = useState<SourceOverviewPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
@@ -36,10 +35,8 @@ export function AdminSourcePage() {
   const sync = async (source: string) => {
     setBusy(source);
     try {
-      await apiSend('/api/settings/run', 'POST', { source });
-      showToast(t('admin.source.syncQueued', '{source} 的同步已排队').replace('{source}', getSourceLabel(source, t)));
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error));
+      // The console runs the instance's own catalogue, not one reader's list.
+      await runSync({ source, siteWide: true });
     } finally {
       setBusy('');
     }
