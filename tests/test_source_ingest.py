@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from hippo.media.pipeline import MediaJobSkipped, ResolvedMedia
-from hippo.sources.ingest import Item, Listing, MediaResolverRegistry, MediaSync
+from hippo.sources.ingest import ChannelInfo, Item, Listing, MediaResolverRegistry, MediaSync
 
 
 class _Source:
@@ -45,6 +45,13 @@ class _FakeStorage:
         self.meta = SimpleNamespace(get=AsyncMock(return_value=None))
         self.articles = AsyncMock()
         self.articles.save_articles = AsyncMock(side_effect=self._save)
+        #: A subscription that already has a name and a picture: nothing to refresh.
+        self.accounts = SimpleNamespace(
+            get_account=AsyncMock(
+                return_value=SimpleNamespace(nickname='Fireship', round_head_img='https://cdn/avatar.png')
+            ),
+            update_account_fields=AsyncMock(),
+        )
 
         async def _save_content(article, **kwargs) -> int:
             self.contents.append((str(kwargs.get('content_markdown') or ''), kwargs.get('content_blocks') or []))
@@ -175,6 +182,122 @@ class MediaSyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, stats.listed)
         # 第一次不带游标，第二次带上上一页给的游标。
         self.assertEqual([None, '2'], [call['cursor'] for call in source.calls])
+
+    async def test_the_page_ceiling_does_not_fetch_one_page_extra(self) -> None:
+        storage = _FakeStorage()
+        source = _Source(
+            [
+                Listing(items=[_item('a')], next_cursor='2', is_end=False),
+                Listing(items=[_item('b')], next_cursor='3', is_end=False),
+                Listing(items=[_item('c')], is_end=True),
+            ]
+        )
+
+        stats = await MediaSync(storage=storage, source=source).sync_account(
+            biz='podcast:x', source_key='feed', pages=2
+        )
+
+        self.assertEqual(2, stats.listed)
+        # 第二页就是上限：第三页取回来也会被整页丢掉，不能再打一次列表接口。
+        self.assertEqual(2, len(source.calls), 'the page past the ceiling is not fetched')
+
+
+CHANNEL = 'UCsBjURrPoezykLs9EqgamOA'
+AVATAR = 'https://yt3.googleusercontent.com/avatar=s88.jpg'
+
+
+class _ChannelSource(_Source):
+    """A source whose metadata is cheap enough for the sync to refresh (YouTube)."""
+
+    def __init__(self, listings: list[Listing], info: ChannelInfo | None = None, error: Exception | None = None) -> None:
+        super().__init__(listings)
+        self._info = info
+        self._error = error
+        self.metadata_calls: list[str] = []
+
+    async def channel_info(self, source_key: str) -> ChannelInfo:
+        self.metadata_calls.append(source_key)
+        if self._error is not None:
+            raise self._error
+        return self._info
+
+
+class ProfileRefreshTest(unittest.IsolatedAsyncioTestCase):
+    """A subscription made before its picture was available gets filled in."""
+
+    def _sync(self, storage: _FakeStorage, source: _Source):
+        return MediaSync(storage=storage, source=source).sync_account(
+            biz=f'youtube:{CHANNEL}', source_key=CHANNEL
+        )
+
+    async def test_a_missing_picture_is_filled_from_the_channels_metadata(self) -> None:
+        storage = _FakeStorage()
+        storage.accounts.get_account = AsyncMock(
+            return_value=SimpleNamespace(nickname=CHANNEL, round_head_img=None)
+        )
+        source = _ChannelSource(
+            [Listing(items=[_item('a')])],
+            info=ChannelInfo(biz=f'youtube:{CHANNEL}', nickname='Fireship', source_key=CHANNEL, avatar_url=AVATAR),
+        )
+
+        await self._sync(storage, source)
+
+        self.assertEqual([CHANNEL], source.metadata_calls)
+        storage.accounts.update_account_fields.assert_awaited_once_with(
+            f'youtube:{CHANNEL}', round_head_img=AVATAR, nickname='Fireship'
+        )
+
+    async def test_a_name_someone_typed_is_kept(self) -> None:
+        storage = _FakeStorage()
+        storage.accounts.get_account = AsyncMock(
+            return_value=SimpleNamespace(nickname='我自己起的名字', round_head_img=None)
+        )
+        source = _ChannelSource(
+            [Listing(items=[_item('a')])],
+            info=ChannelInfo(biz=f'youtube:{CHANNEL}', nickname='Fireship', source_key=CHANNEL, avatar_url=AVATAR),
+        )
+
+        await self._sync(storage, source)
+
+        storage.accounts.update_account_fields.assert_awaited_once_with(f'youtube:{CHANNEL}', round_head_img=AVATAR)
+
+    async def test_a_subscription_that_has_a_picture_costs_no_lookup(self) -> None:
+        storage = _FakeStorage()
+        source = _ChannelSource([Listing(items=[_item('a')])])
+
+        await self._sync(storage, source)
+
+        self.assertEqual([], source.metadata_calls)
+        storage.accounts.update_account_fields.assert_not_awaited()
+
+    async def test_a_source_without_channel_metadata_is_left_alone(self) -> None:
+        storage = _FakeStorage()
+
+        await self._sync(storage, _Source([Listing(items=[_item('a')])]))
+
+        storage.accounts.get_account.assert_not_awaited()
+
+    async def test_a_failed_refresh_does_not_fail_the_listing(self) -> None:
+        storage = _FakeStorage()
+        storage.accounts.get_account = AsyncMock(
+            return_value=SimpleNamespace(nickname=CHANNEL, round_head_img=None)
+        )
+        source = _ChannelSource([Listing(items=[_item('a')])], error=RuntimeError('yt-dlp 失败（退出码 1）'))
+
+        stats = await self._sync(storage, source)
+
+        self.assertEqual(1, stats.listed)
+        storage.accounts.update_account_fields.assert_not_awaited()
+
+    async def test_an_account_row_that_is_gone_is_not_an_error(self) -> None:
+        storage = _FakeStorage()
+        storage.accounts.get_account = AsyncMock(side_effect=LookupError('Account not found'))
+        source = _ChannelSource([Listing(items=[_item('a')])])
+
+        stats = await self._sync(storage, source)
+
+        self.assertEqual(1, stats.listed)
+        self.assertEqual([], source.metadata_calls)
 
 
 class ResolverRegistryTest(unittest.IsolatedAsyncioTestCase):

@@ -15,11 +15,24 @@ from typing import Any
 from .config import get_settings
 from .logger import get_logger
 from .storage import PostgresStorage, open_storage
-from .weixin_source import load_bot_class, query_param
+from .weixin_source import load_bot_class, query_param, select_cover_url
 
 logger = get_logger(__name__)
 
 RECONNECT_SECONDS = 30.0
+
+
+def _push_cover_variants(push: Any) -> Any:
+    """The cover variants of a push event, however the SDK happens to carry them.
+
+    The event's raw payload is what the daemon sent; the SDK dataclass only grows a
+    field once it models one, so both are read before giving up.
+    """
+    variants = getattr(push, 'cover_urls', None)
+    raw = getattr(push, 'raw_data', None)
+    if variants is None and isinstance(raw, dict):
+        variants = raw.get('cover_urls')
+    return variants
 
 
 async def enqueue_pushed_article(storage: PostgresStorage, push: Any) -> bool:
@@ -61,7 +74,9 @@ async def enqueue_pushed_article(storage: PostgresStorage, push: Any) -> bool:
                 'payload': {
                     'title': getattr(push, 'title', ''),
                     'digest': getattr(push, 'digest', ''),
-                    'cover_url': getattr(push, 'cover_url', ''),
+                    # The push event carries the same variants as the list and the
+                    # article detail, so the cover rule does not fork per path.
+                    'cover_url': select_cover_url(_push_cover_variants(push), getattr(push, 'cover_url', '')),
                     'publish_time': getattr(push, 'publish_time', 0),
                     'gh_id': gh_id,
                     'pub_name': getattr(push, 'pub_name', ''),

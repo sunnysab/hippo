@@ -20,6 +20,7 @@ BODY_TIMEOUT_SECONDS = 900.0
 
 import os
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -70,6 +71,36 @@ def query_param(url: str, key: str) -> str | None:
     """取 URL query 里的参数（长链的 ``sn`` 是列表阶段唯一的稳定标识）。"""
     values = parse_qs(urlparse(url).query).get(key)
     return values[0] if values else None
+
+
+#: An article's cover is cropped once per display slot (16:9 / 1:1 / 2.35:1 / 3:4),
+#: each crop on its own CDN key, and the reader lays cards out in 16:9. The daemon
+#: reports every crop as ``cover_urls`` (main first, URLs de-duplicated); the list,
+#: the article detail and the push event all carry that same shape.
+WIDE_COVER_RATIO = '16:9'
+MAIN_COVER_RATIO = 'main'
+
+
+def select_cover_url(cover_urls: Any, cover_url: Any = None) -> str | None:
+    """The 16:9 crop of an article cover, falling back to its main image.
+
+    ``cover_url`` is the daemon's single-image field (the main crop) and all an
+    older daemon sends, so it is what remains when no variant fits. Empty entries
+    and duplicates carry nothing new and are skipped.
+    """
+    wide = main = ''
+    for variant in cover_urls if isinstance(cover_urls, (list, tuple)) else ():
+        if not isinstance(variant, Mapping):
+            continue
+        url = str(variant.get('url') or '').strip()
+        ratio = str(variant.get('ratio') or '').strip()
+        if not url:
+            continue
+        if ratio == WIDE_COVER_RATIO and not wide:
+            wide = url
+        elif ratio in ('', MAIN_COVER_RATIO) and not main:
+            main = url
+    return wide or main or str(cover_url or '').strip() or None
 
 
 @dataclass(slots=True)
@@ -128,7 +159,7 @@ class FetchedArticle:
             publish_time=int(d.get('publish_time') or 0),
             html=d.get('html', ''),
             images=list(d.get('images') or []),
-            cover_url=d.get('cover_url'),
+            cover_url=select_cover_url(d.get('cover_urls'), d.get('cover_url')),
             source_url=d.get('source_url'),
             item_show_type=d.get('item_show_type'),
             raw_json=d.get('raw_json', ''),
@@ -229,7 +260,7 @@ class WeixinSource:
                         'title': strip_nul(article.get('title')),
                         'digest': strip_nul(article.get('digest')),
                         'publish_time': article.get('publish_time'),
-                        'cover_url': strip_nul(article.get('cover_url')),
+                        'cover_url': strip_nul(select_cover_url(article.get('cover_urls'), article.get('cover_url'))),
                     },
                 )
             )
@@ -302,4 +333,5 @@ __all__ = [
     'classify_daemon_error',
     'load_bot_class',
     'query_param',
+    'select_cover_url',
 ]

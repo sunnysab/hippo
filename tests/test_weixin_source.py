@@ -5,7 +5,13 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from hippo.weixin_source import FetchedArticle, SessionExpiredError, WeixinSource, classify_daemon_error
+from hippo.weixin_source import (
+    FetchedArticle,
+    SessionExpiredError,
+    WeixinSource,
+    classify_daemon_error,
+    select_cover_url,
+)
 from hippo.weixin_worker import SyncStats, WeixinArticleSync
 
 
@@ -81,6 +87,96 @@ class WeixinSourceListTest(unittest.TestCase):
         self.assertEqual('x', payload['digest'])
         self.assertEqual('https://example.invalid/c.png', payload['cover_url'])
         self.assertEqual('cur', listed.next_offset)
+
+
+class CoverSelectionTest(unittest.TestCase):
+    """One cover rule for the list, the article detail and the push event."""
+
+    def test_the_wide_crop_wins_over_the_main_image(self) -> None:
+        variants = [
+            {'ratio': 'main', 'url': 'https://cdn/main.png'},
+            {'ratio': '1:1', 'url': 'https://cdn/square.png'},
+            {'ratio': '16:9', 'url': 'https://cdn/wide.png'},
+        ]
+
+        self.assertEqual('https://cdn/wide.png', select_cover_url(variants, 'https://cdn/main.png'))
+
+    def test_without_a_wide_crop_the_main_image_is_used(self) -> None:
+        variants = [{'ratio': 'main', 'url': 'https://cdn/main.png'}, {'ratio': '1:1', 'url': 'https://cdn/square.png'}]
+
+        self.assertEqual('https://cdn/main.png', select_cover_url(variants, 'https://cdn/main.png'))
+
+    def test_an_unlabelled_variant_counts_as_the_main_image(self) -> None:
+        self.assertEqual('https://cdn/main.png', select_cover_url([{'url': 'https://cdn/main.png'}], None))
+
+    def test_a_variant_carrying_no_url_is_skipped(self) -> None:
+        variants = [
+            {'ratio': '16:9', 'url': ''},
+            {'ratio': '16:9', 'url': None},
+            {'ratio': 'main', 'url': 'https://cdn/main.png'},
+        ]
+
+        self.assertEqual('https://cdn/main.png', select_cover_url(variants, None))
+
+    def test_a_repeated_variant_does_not_change_the_answer(self) -> None:
+        variants = [
+            {'ratio': 'main', 'url': 'https://cdn/main.png'},
+            {'ratio': 'main', 'url': 'https://cdn/main.png'},
+            {'ratio': '16:9', 'url': 'https://cdn/wide.png'},
+            {'ratio': '16:9', 'url': 'https://cdn/wide.png'},
+        ]
+
+        self.assertEqual('https://cdn/wide.png', select_cover_url(variants, None))
+
+    def test_the_wide_crop_equal_to_the_main_key_is_still_that_image(self) -> None:
+        # daemon 只在 URL 真的不同时才给出该比例的条目，同一个 URL 就是同一张图。
+        variants = [{'ratio': 'main', 'url': 'https://cdn/same.png'}, {'ratio': '16:9', 'url': 'https://cdn/same.png'}]
+
+        self.assertEqual('https://cdn/same.png', select_cover_url(variants, None))
+
+    def test_an_older_daemon_single_image_is_kept(self) -> None:
+        self.assertEqual('https://cdn/main.png', select_cover_url(None, 'https://cdn/main.png'))
+        self.assertEqual('https://cdn/main.png', select_cover_url([], 'https://cdn/main.png'))
+        self.assertEqual('https://cdn/main.png', select_cover_url([{'ratio': '1:1', 'url': ''}], 'https://cdn/main.png'))
+
+    def test_no_cover_at_all_is_none(self) -> None:
+        self.assertIsNone(select_cover_url(None, None))
+        self.assertIsNone(select_cover_url([], ''))
+        self.assertIsNone(select_cover_url(['https://cdn/not-a-dict.png'], None))
+
+    def test_the_list_payload_uses_the_wide_crop(self) -> None:
+        source = WeixinSource(auto_login=False)
+        source._bot = _ListBot(
+            [
+                {
+                    'title': 'a',
+                    'url': 'https://mp.weixin.qq.com/s?__biz=Mz1&sn=abc',
+                    'cover_url': 'https://cdn/main.png',
+                    'cover_urls': [{'ratio': 'main', 'url': 'https://cdn/main.png'}, {'ratio': '16:9', 'url': 'https://cdn/wide.png'}],
+                }
+            ]
+        )
+
+        listed = asyncio.run(source.list_articles('gh_1', 'Mz1'))
+
+        self.assertEqual('https://cdn/wide.png', listed.items[0].payload['cover_url'])
+
+    def test_the_body_payload_uses_the_wide_crop(self) -> None:
+        body = FetchedArticle.from_dict(
+            {
+                'short_link': 'https://mp.weixin.qq.com/s/a',
+                'slug': 'a',
+                'cover_url': 'https://cdn/main.png',
+                'cover_urls': [{'ratio': 'main', 'url': 'https://cdn/main.png'}, {'ratio': '16:9', 'url': 'https://cdn/wide.png'}],
+            }
+        )
+
+        self.assertEqual('https://cdn/wide.png', body.cover_url)
+
+    def test_a_body_without_variants_keeps_the_daemon_image(self) -> None:
+        body = FetchedArticle.from_dict({'slug': 'a', 'cover_url': 'https://cdn/main.png'})
+
+        self.assertEqual('https://cdn/main.png', body.cover_url)
 
 
 class WeixinSourceBodyDiagnosticsTest(unittest.TestCase):
