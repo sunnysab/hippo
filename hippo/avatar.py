@@ -9,6 +9,7 @@ import psycopg
 from .article_queries import _normalize_record
 from .http import MPClient
 from .logger import get_logger
+from .public_image import fetch_public_image
 from .storage import PostgresStorage, fetchone_row
 from .utils import utc_now_iso
 
@@ -104,14 +105,13 @@ async def _fetch_and_cache_avatar(storage: PostgresStorage, biz: str, url: str) 
     }
     proxy = await _avatar_proxy(storage, biz)
     try:
-        # The shared async client, with the exit of the account's own source: an
-        # avatar is fetched from inside a request, so it must not block the loop.
+        # The avatar URL is untrusted (feed or channel metadata), so the fetch is
+        # pinned to a checked public IP per hop; the source's proxy is kept.
         async with MPClient(timeout=10.0, proxy=proxy or None) as client:
-            resp = await client.get(url, headers=headers)
-        if resp.status_code != 200:
+            fetched = await fetch_public_image(client.client, url, headers=headers)
+        if fetched is None:
             return None
-        content_type = resp.headers.get('Content-Type') or 'application/octet-stream'
-        data = resp.content
+        data, content_type = fetched
         if data:
             await _store_avatar(storage, biz, content_type=content_type, data=data, avatar_url=url)
         return data, content_type
