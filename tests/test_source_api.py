@@ -52,7 +52,9 @@ class _NullTransaction:
         return False
 
 
-def _storage(*, subscribed: bool = False, credentials: dict | None = None, transactions: list | None = None) -> SimpleNamespace:
+def _storage(
+    *, subscribed: bool = False, credentials: dict | None = None, transactions: list | None = None
+) -> SimpleNamespace:
     accounts = AsyncMock()
     accounts.upsert_account = AsyncMock(side_effect=lambda account: account.model_copy(update={'group_id': 1}))
     if subscribed:
@@ -70,6 +72,7 @@ def _storage(*, subscribed: bool = False, credentials: dict | None = None, trans
     return SimpleNamespace(
         transaction=transaction,
         accounts=accounts,
+        groups=AsyncMock(),
         subscriptions=AsyncMock(),
         sync_jobs=AsyncMock(),
         audit=AsyncMock(),
@@ -292,6 +295,45 @@ class SubscribeTest(unittest.IsolatedAsyncioTestCase):
 
         triggers = [call.kwargs['trigger_type'] for call in storage.sync_jobs.create_job.call_args_list]
         self.assertEqual(['subscription', 'subscription'], triggers)
+
+    async def test_a_foreign_group_is_refused_before_resolving_or_writing(self) -> None:
+        storage = _storage()
+        storage.groups.get_group.side_effect = LookupError('not owned')
+        with (
+            patch('hippo.api.routers.source._media_sources', new=AsyncMock()) as media_sources,
+            self.assertRaises(ApiError) as caught,
+        ):
+            await source_api.subscribe_source(
+                request=_request(),
+                body=SubscribeRequest(url='https://feed.example/rss', group_id=8),
+                user=_user(42),
+                storage=storage,
+            )
+
+        self.assertEqual(404, caught.exception.status)
+        storage.groups.get_group.assert_awaited_once_with(8, user_id=42)
+        media_sources.assert_not_awaited()
+        storage.accounts.upsert_account.assert_not_awaited()
+        storage.subscriptions.upsert.assert_not_awaited()
+        storage.sync_jobs.create_job.assert_not_awaited()
+
+    async def test_a_channel_can_be_added_to_the_callers_own_group(self) -> None:
+        sources, _ = _sources(_INFO)
+        storage = _storage()
+        with (
+            patch('hippo.api.routers.source.MediaSources', sources),
+            patch('hippo.api.routers.source.get_media_settings', new=AsyncMock(return_value={'enabled': True})),
+        ):
+            result = await source_api.subscribe_source(
+                request=_request(),
+                body=SubscribeRequest(url='https://feed.example/rss', group_id=8),
+                user=_user(42),
+                storage=storage,
+            )
+
+        self.assertEqual(8, result['group_id'])
+        storage.groups.get_group.assert_awaited_once_with(8, user_id=42)
+        storage.subscriptions.upsert.assert_awaited_once_with(42, _INFO.biz, group_id=8)
 
     async def test_a_blank_url_is_a_bad_request(self) -> None:
         with self.assertRaises(ApiError) as ctx:

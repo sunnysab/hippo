@@ -156,6 +156,11 @@ async def subscribe_source(
     if group_id is None:
         default_group = await ensure_default_group(storage, user.id, name=DEFAULT_GROUP_NAME)
         group_id = default_group.id
+    else:
+        try:
+            await storage.groups.get_group(group_id, user_id=user.id)
+        except LookupError as exc:
+            raise ApiError('Group not found', status=404) from exc
 
     sources = await _media_sources(storage, user)
     try:
