@@ -62,7 +62,7 @@ export const buildSyncSettingsPayload = (form: SyncSettingsFormState): Record<st
   download_images: form.downloadImages,
 });
 
-export const buildFilterSettingsPayload = (form: SyncSettingsFormState): Record<string, unknown> => ({
+export const buildFilterSettingsPayload = (form: Pick<SyncSettingsFormState, 'articleExcludeKeywords'>): Record<string, unknown> => ({
   article_exclude_keywords: form.articleExcludeKeywords.trim(),
 });
 
