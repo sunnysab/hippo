@@ -460,11 +460,13 @@ hippo/knowledge/worker.py                   # 知识导入 worker（python -m hi
    拒绝启动；优先修复并继续迁移，不能改 `meta.schema_version` 蒙混过关。确需恢复时，先将备份恢复到
    **新的隔离数据库**核对，再由操作者批准切换；不要直接用旧快照覆盖生产库，避免丢失备份之后的写入。
 4. **发布窗口压自动同步**：生产 `sync:settings` 当前为 `enabled=false`、`interval_minutes=120`，调度循环不会自动跑；
-   需要更新时用管理台或 `POST /api/settings/run` 手动触发。改回前先确认没有别的调用方依赖自动调度。
+   需要更新时，普通用户可调用 `POST /api/settings/run`；管理员全站更新使用 `POST /api/settings/admin/run`。
+   验收通过后可开启自动调度，保持实例的 120 分钟间隔。
 5. **`systemctl is-active` 不等于功能健康**：验收要看 sync worker 新日志（如图片回填是否仍有持续失败）、
    页面 `frontend/dist/assets/` 的哈希是否与新 build 一致，以及只启一个媒体消费者。
-6. 仓库里被 git 忽略的 `deploy.sh` **没有自动安装新 unit，也不会停知识 worker**；部署流程仍需人工
-   接入这一步。本文档不修改、也不代替那个本地脚本。
+6. `deploy.sh` 是被 Git 忽略的本地运维工具，不随仓库分发。使用前必须核对它是否在覆盖代码前备份、
+   是否同步三个 unit 并重载 systemd、是否在迁移前停掉三个数据库服务，以及失败时是否避免启动版本不匹配的代码。
+   本机脚本已按这些要求做离线演练；其他机器上的同名脚本不能据此视为已验证。
 
 ```bash
 # 以下都需要先完成上面步骤并取得授权，在真实环境执行
