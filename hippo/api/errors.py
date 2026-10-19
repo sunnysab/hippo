@@ -13,6 +13,7 @@ which lets a client branch on the failure without matching prose.
 from __future__ import annotations
 
 from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from ..exceptions import ApiError
@@ -20,6 +21,9 @@ from ..logger import get_logger
 from .middleware import request_log_fields
 
 logger = get_logger(__name__)
+
+#: Stable identifier for a request that does not match its declared shape.
+VALIDATION_FAILED = 'request.invalid'
 
 
 def _fields(request: Request) -> dict[str, object]:
@@ -57,6 +61,22 @@ def install_exception_handlers(app: FastAPI) -> None:
             content={'error': str(exc), 'code': exc.code},
         )
 
+    @app.exception_handler(RequestValidationError)
+    async def _handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+        """Answer a malformed request in the same envelope as every other failure.
+
+        FastAPI's own body is ``{'detail': [[...]]}``; a client that only knows
+        ``{error, code}`` should not have to parse two shapes for one kind of
+        mistake. The details stay in the message, never as a nested structure.
+        """
+        fields = _fields(request)
+        fields['code'] = VALIDATION_FAILED
+        logger.warning('request_failed', **fields)
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content={'error': _validation_message(exc), 'code': VALIDATION_FAILED},
+        )
+
     @app.exception_handler(Exception)
     async def _handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
         logger.exception('request_crashed', **_fields(request))
@@ -64,3 +84,13 @@ def install_exception_handlers(app: FastAPI) -> None:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={'error': 'Internal server error', 'code': 'internal_error'},
         )
+
+
+def _validation_message(exc: RequestValidationError) -> str:
+    """One line naming every field that failed, in FastAPI's own words."""
+    parts = []
+    for error in exc.errors():
+        location = '.'.join(str(item) for item in error.get('loc', ()))
+        message = str(error.get('msg') or 'invalid value')
+        parts.append(f'{location}: {message}' if location else message)
+    return '; '.join(parts) or 'Request validation failed'

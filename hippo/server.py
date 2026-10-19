@@ -15,8 +15,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from . import __version__
 from .api.errors import install_exception_handlers
 from .api.middleware import install_request_context
+from .api.openapi import APP_DESCRIPTION, APP_SUMMARY, APP_TITLE, OPENAPI_TAGS, install_openapi
 from .api.routers import (
     account,
     admin,
@@ -205,7 +207,17 @@ def create_app(
                 telemetry.shutdown()
             shutdown_logging()
 
-    app = FastAPI(lifespan=lifespan)
+    # The document itself (title, tags, per-operation security) is assembled in
+    # hippo.api.openapi; here only the metadata FastAPI carries is set.
+    app = FastAPI(
+        title=APP_TITLE,
+        summary=APP_SUMMARY,
+        description=APP_DESCRIPTION,
+        version=__version__,
+        openapi_tags=OPENAPI_TAGS,
+        license_info={'name': 'MIT'},
+        lifespan=lifespan,
+    )
     # add_middleware inserts at the front, so the last one added is the outermost.
     # CORS goes last to stay outside the request context: a rejected origin is
     # still answered with the CORS headers the browser needs to read the failure.
@@ -237,6 +249,7 @@ def create_app(
         knowledge,
     ):
         app.include_router(module.router, prefix='/api')
+    install_openapi(app)
     app.mount('/', StaticFiles(directory=static_path, html=True), name='static')
     return app
 
