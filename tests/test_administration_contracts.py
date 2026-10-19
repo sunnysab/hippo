@@ -16,6 +16,7 @@ only storage and the acting identity stubbed.
 
 from __future__ import annotations
 
+import base64
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -30,6 +31,7 @@ from hippo import server
 from hippo.api import deps
 from hippo.api.errors import install_exception_handlers
 from hippo.api.routers import admin as admin_api
+from hippo.api.routers import daemon as daemon_api
 from hippo.api.routers import knowledge as knowledge_api
 from hippo.api.schemas.admin import (
     MediaSettingsUpdateRequest,
@@ -72,6 +74,14 @@ def _knowledge_client(storage: SimpleNamespace, user: SimpleNamespace) -> TestCl
     app.include_router(knowledge_api.router, prefix='/api')
     app.dependency_overrides[deps.get_storage] = lambda: storage
     app.dependency_overrides[deps.current_user] = lambda: user
+    return TestClient(app)
+
+
+def _daemon_client() -> TestClient:
+    app = FastAPI()
+    install_exception_handlers(app)
+    app.include_router(daemon_api.router, prefix='/api')
+    app.dependency_overrides[deps.current_user] = lambda: SimpleNamespace(id=1, username='root', role='admin')
     return TestClient(app)
 
 
@@ -244,6 +254,137 @@ class KnowledgeResponseContractTest(unittest.TestCase):
         schema = _resolve(spec, response['content']['application/json']['schema'])
 
         self.assertIn('document', schema['properties'])
+
+
+class _FakeSource:
+    """The daemon RPC surface the routes use, without the SDK or the network."""
+
+    def __init__(
+        self,
+        *,
+        status: dict[str, Any] | None = None,
+        qr: Any = None,
+        auto: dict[str, Any] | None = None,
+        wait: dict[str, Any] | None = None,
+        status_error: Exception | None = None,
+    ) -> None:
+        self._status = status
+        self._qr = qr
+        self._auto = auto
+        self._wait = wait
+        self._status_error = status_error
+
+    async def __aenter__(self) -> _FakeSource:
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    async def status(self) -> dict[str, Any]:
+        if self._status_error is not None:
+            raise self._status_error
+        assert self._status is not None
+        return self._status
+
+    async def start_qr_login(self) -> Any:
+        return self._qr
+
+    async def login_auto_now(self) -> dict[str, Any]:
+        assert self._auto is not None
+        return self._auto
+
+    async def wait_login(self) -> dict[str, Any]:
+        assert self._wait is not None
+        return self._wait
+
+
+def _with_source(source: _FakeSource) -> Any:
+    return patch.object(daemon_api, 'WeixinSource', lambda **kwargs: source)
+
+
+class DaemonResponseContractTest(unittest.TestCase):
+    STATUS_FIELDS = (
+        'logged_in',
+        'status',
+        'need_relogin',
+        'wxid',
+        'nickname',
+        'head_url',
+        'clients_connected',
+        'error',
+    )
+
+    def test_the_status_answer_is_the_public_daemon_state(self) -> None:
+        source = _FakeSource(
+            status={
+                'logged_in': True,
+                'status': 'online',
+                'need_relogin': False,
+                'wxid': 'wxid_1',
+                'nickname': 'nick',
+                'head_url': 'https://example.test/head.jpg',
+                'clients_connected': 2,
+                'error': '',
+            }
+        )
+
+        with _with_source(source):
+            payload = _daemon_client().get('/api/login').json()
+
+        self.assertEqual(list(self.STATUS_FIELDS), list(payload))
+        self.assertTrue(payload['logged_in'])
+        self.assertEqual('online', payload['status'])
+        self.assertEqual(2, payload['clients_connected'])
+
+    def test_an_unreachable_daemon_is_reported_not_raised(self) -> None:
+        source = _FakeSource(status_error=RuntimeError('connect ECONNREFUSED'))
+
+        with _with_source(source):
+            response = _daemon_client().get('/api/login')
+
+        payload = response.json()
+        self.assertEqual(200, response.status_code)
+        self.assertFalse(payload['logged_in'])
+        self.assertEqual('unreachable', payload['status'])
+        self.assertIn('ECONNREFUSED', payload['error'])
+        self.assertEqual(list(self.STATUS_FIELDS), list(payload))
+
+    def test_the_qr_answer_is_exactly_what_the_console_renders(self) -> None:
+        png = b'\x89PNG\r\n\x1a\n-not-really'
+        source = _FakeSource(qr=SimpleNamespace(png=png, url='https://weixin.qq.com/x', uuid='u-1', expires_in=120))
+
+        with _with_source(source):
+            payload = _daemon_client().post('/api/login/qr').json()
+
+        self.assertEqual({'uuid', 'url', 'png_base64', 'expires_in'}, set(payload))
+        self.assertEqual('u-1', payload['uuid'])
+        self.assertEqual('https://weixin.qq.com/x', payload['url'])
+        self.assertEqual(120, payload['expires_in'])
+        self.assertEqual(png, base64.b64decode(payload['png_base64']))
+
+    def test_auto_and_wait_pass_the_daemon_reply_through(self) -> None:
+        client = _daemon_client()
+        with _with_source(_FakeSource(auto={'wxid': 'wxid_1'})):
+            auto = client.post('/api/login/auto').json()
+        with _with_source(_FakeSource(wait={'wxid': 'wxid_1'})):
+            wait = client.post('/api/login/wait').json()
+
+        self.assertEqual({'ok', 'result'}, set(auto))
+        self.assertTrue(auto['ok'])
+        self.assertEqual('wxid_1', auto['result']['wxid'])
+        self.assertEqual({'ok', 'result'}, set(wait))
+
+    def test_the_daemon_schemas_are_documented(self) -> None:
+        spec = _document()
+        status = _resolve(
+            spec, spec['paths']['/api/login']['get']['responses']['200']['content']['application/json']['schema']
+        )
+        qr = _resolve(
+            spec, spec['paths']['/api/login/qr']['post']['responses']['200']['content']['application/json']['schema']
+        )
+
+        self.assertEqual(set(self.STATUS_FIELDS), set(status['properties']))
+        self.assertEqual({'uuid', 'url', 'png_base64', 'expires_in'}, set(qr['properties']))
 
 
 if __name__ == '__main__':

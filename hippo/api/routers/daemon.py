@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends
 from ...exceptions import ApiError
 from ...weixin_source import WeixinSource
 from ..deps import current_user
-from ..schemas.source import DaemonActionResultOut, DaemonLoginStatusOut, DaemonQrOut
+from ..schemas.daemon import DaemonActionResultOut, DaemonLoginStatusOut, DaemonQrOut
 
 router = APIRouter(dependencies=[Depends(current_user)])
 
