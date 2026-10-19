@@ -108,8 +108,9 @@ async def backfill_article_images(
             total_count = min(total_count, limit)
 
         base_query = (
-            'SELECT i.id, a.biz, a.article_id, a.link, i.orig_url, COALESCE(acc.source, '
-            ')'
+            # An empty source (no accounts row) reaches the instance default exit in
+            # client_for instead of guessing a source.
+            "SELECT i.id, a.biz, a.article_id, a.link, i.orig_url, COALESCE(acc.source, '')"
             ' FROM article_images i'
             ' JOIN articles a ON a.id = i.article_pk'
             ' LEFT JOIN accounts acc ON acc.biz = a.biz'
