@@ -47,7 +47,7 @@ uv run python -m hippo.sync_worker                 # 另开一个终端
 uv run python -m hippo.knowledge.worker            # 可选：需要私有知识库时再开（见下节）
 ```
 
-打开页面 → 用刚建的管理员登录 → **设置 → 微信登录** 扫码（`POST /api/login/qr` + `/api/login/wait`）
+打开页面 → 用刚建的管理员登录 → **管理 → 来源 → 微信公众号** 扫码（`POST /api/login/qr` + `/api/login/wait`）
 → **公众号** 页搜索并添加要同步的号。添加后会投递一条历史回填任务，worker 自动从新到旧翻完。
 
 验证：`GET /api/settings/status` 里 `status` 在同步时变为 `running`；`GET /api/article?page=1` 能返回文章。
@@ -146,7 +146,7 @@ hippo 只通过 RPC 使用 daemon，不接触微信协议细节：
 | `WEIXIN_DAEMON_HOST` | `127.0.0.1` | daemon 监听地址 |
 | `WEIXIN_DAEMON_PORT` | `9099` | daemon 监听端口 |
 
-daemon 掉线或会话失效时，同步会整体暂停（不把这种错记成文章失败），页面顶部会提示需要在设置页重新扫码。
+daemon 掉线或会话失效时，同步会整体暂停（不把这种错记成文章失败），页面顶部会提示需要重新扫码（跳转到「管理 → 来源 → 微信公众号」）。
 
 ## 数据来源
 
@@ -172,7 +172,7 @@ daemon 掉线或会话失效时，同步会整体暂停（不把这种错记成�
 3. 切片长度恒定（默认 300s）：太长的片会被模型截断，太短的尾片会让解码器输出乱码，两者都实测过；
    短尾会并进前一片，输出再用字/秒与重复字符占比校验一次（`hippo/media/validate.py`）。
 
-转写服务是一个 **OpenAI 兼容的 `/v1/audio/transcriptions` 端点**，在管理台「媒体与转写」里配置两个档位：
+转写服务是一个 **OpenAI 兼容的 `/v1/audio/transcriptions` 端点**，在管理台「转写」里配置两个档位：
 
 | 档 | 用途 | 实测 |
 |---|---|---|
@@ -199,7 +199,8 @@ daemon 掉线或会话失效时，同步会整体暂停（不把这种错记成�
   yt-dlp --version         # 仅 YouTube 来源需要
   ```
 
-- **媒体设置。** 实例级开关在管理台「媒体与转写」（存 `meta`，默认值见 `hippo/media_settings.py`）：
+- **媒体设置。** 实例级开关在管理台「转写」（存 `meta`，默认值见 `hippo/media_settings.py`）；
+  凭证与代理属于各自的来源，在「来源」页按源配置：
   `enabled` 关掉整个媒体流水线，`keep_media` 决定下载的文件是否留档到对象存储。
   视频轨优先选 H.264 + AAC、分辨率不超过 720p 的兼容轨；视频轨**原样 copy**（不重编码），
   只有音频按 `keep_media_bitrate`（`original` 或 64k–256k）归档，两者的设置不要混用。
@@ -238,6 +239,13 @@ uv run ruff check hippo tests
 - **后端同步适配器是唯一的改造点。** `hippo/sources/` 里 `ADAPTERS` 按 `account.source` 选适配器；
   新增来源 = 加一个 `MediaSource`（`preview` + `list_items`）与一个 `MediaResolver`（把队列里的条目变成音频或字幕）。
 - **卡片与阅读器不假设内容是段落流。** 视频条目可能整篇只有一个媒体块，目录在无小标题时整列隐藏。
+- **凭证是「订阅者自己的优先、实例兜底」。** 频道是共享的（`accounts`），cookie 是个人的
+  （`user_credential`），所以「用谁的」没有唯一答案，顺序固定为：该频道的订阅者各自那一份
+  （最近更新的先试）→ 实例那份（管理台「来源」页配的）。只有**凭证被拒**才换下一份：
+  网络错误、视频被删这些换谁都一样，重试只会把请求数乘上订阅者数。实现在
+  `hippo/sources/chain.py`，列表阶段（`MediaSync`）与转写阶段（`MediaResolverRegistry`）走同一条链。
+- **「转写」页只管跨源参数。** ASR 端点、切片长度、归档码率是一套流水线服务所有媒体源，
+  所以不挂在某个来源下；凭证与代理按来源走「来源」页。
 
 ### 已读状态
 
@@ -344,7 +352,7 @@ cp config.example.toml config.toml
 | | `file` | `logs/{service}.log` | `{service}` 换为 `hippo-web` / `hippo-sync-worker` / `hippo-knowledge-worker`；空即不写文件 |
 | | `tail_lines` | `500` | 管理台日志尾行数 |
 | `[http]` | `article_worker` / `article_worker_proxy` / `article_max_connections` | — | 用 Cloudflare Worker 中转抓正文；代理不再在这里配置 |
-| `media:settings` | `proxy_default` / `proxy_<source>` | 见管理台 | **按来源**的代理，直接在管理台「媒体」页配置（来源：公众号 / B站 / YouTube / 播客）|
+| `media:settings` | `proxy_default` / `proxy_<source>` | 见管理台 | **按来源**的代理，在管理台「来源 → 某个来源」页配置（来源：公众号 / B站 / YouTube / 播客）|
 | `[weixin]` | `sdk_path` | `/opt/weixin-rs/sdk/python` | weixin-rs SDK 路径 |
 | | `daemon_host` / `daemon_port` | `127.0.0.1` / `9099` | daemon 地址 |
 | `[observability]` | `enabled` | `true` | 置 `false` 可停掉导出而不丢 endpoint |

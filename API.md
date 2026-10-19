@@ -208,18 +208,19 @@ DELETE /api/group/3 → 204
 ### 列表
 
 ```
-GET /api/account?group_id=2&group_ids=1,3&q=金融&page=1&page_size=20
+GET /api/account?group_id=2&group_ids=1,3&source=bilibili&q=金融&page=1&page_size=20
 ```
 
 | 参数 | 类型 | 说明 |
 |---|---|---|
 | `group_id` | int | 单个分组（向后兼容） |
 | `group_ids` | str | 逗号分隔的多个分组，优先于 `group_id` |
+| `source` | str | 只看某个来源（`weixin` / `bilibili` / `youtube` / `podcast` / `feed`） |
 | `q` | str | 关键词：昵称 / 微信号 / biz |
 | `page` / `page_size` | int | 默认 1 / 20，`page_size` 上限 200 |
 
 响应为 `{accounts: [...], page, page_size, total}`。列表会返回 `alias`（`null` 归一为 `""`）、
-`avatar_url`（即 `/api/account/{biz}/avatar`）以及订阅侧的 `group_id`、`is_disabled`、`sync_interval_days`。
+`source`、`avatar_url`（即 `/api/account/{biz}/avatar`）以及订阅侧的 `group_id`、`is_disabled`、`sync_interval_days`。
 
 ### 添加
 
@@ -493,13 +494,15 @@ PATCH /api/settings/preferences { "timezone": "Asia/Shanghai", "article_exclude_
 ### 手动同步
 
 ```
-POST /api/settings/run                       # 同步我订阅的全部
-POST /api/settings/run { "group_id": 2 }     # 只同步某个分组
+POST /api/settings/run                        # 同步我订阅的全部
+POST /api/settings/run { "group_id": 2 }      # 只同步某个分组
 POST /api/settings/run { "biz_list": ["Mz1"] } # 只同步指定公众号
+POST /api/settings/run { "source": "bilibili" } # 只同步某个来源（我订阅的那些）
 ```
 
-`202` 返回 `{"status": "...", "task_id": "...", ...}`（附带回显的 `group_id` / `biz_list`）。
-`group_id` 不属于你、或 `biz_list` 里有未订阅的号都是 `404`；请求体字段非法 `400`。
+`202` 返回 `{"status": "...", "task_id": "...", ...}`（附带回显的 `group_id` / `biz_list` / `source`）。
+`group_id` 不属于你、`biz_list` 里有未订阅的号、或 `source` 下没有你的订阅都是 `404`；请求体字段非法 `400`。
+`source` 会把「我订阅的该来源频道」展开成 `biz_list` 写进任务，任务行上的 `source` 用于按来源筛历史。
 
 ### 状态与任务
 
@@ -507,9 +510,11 @@ POST /api/settings/run { "biz_list": ["Mz1"] } # 只同步指定公众号
 GET /api/settings/status?limit=5
 → { "status": "idle"|"running"|..., "last_started_at": "...", "last_finished_at": "...",
     "last_ingest_at": "...", "last_error": "", "history": [ … ],
-    "queue": { … , "failed_items": [ … ] }, "worker_heartbeat_at": "..." }
+    "queue": { "articles": {…}, "images": {…}, "media": { "<source>": {…} },
+               "failed_items": [ … ] }, "worker_heartbeat_at": "..." }
 
 GET /api/settings/tasks?limit=5&detail=false   → { "tasks": [ … ] }
+GET /api/settings/tasks?source=bilibili        # 只看某个来源的任务
 GET /api/settings/tasks/{task_id}             → 任务完整状态（404 表示不存在）
 POST /api/settings/tasks/{task_id}/cancel     → 可取消状态返回更新后的任务，否则 404
 ```
@@ -628,6 +633,22 @@ POST /api/llm/provider
 | GET | `/api/admin/log/tail` | 日志文件末尾若干行 |
 | GET | `/api/admin/log/link` | SignOz 深链 |
 
+### 来源概览
+
+```
+GET /api/admin/source
+→ { "sources": [ { "source": "bilibili", "channels": 3, "enabled_channels": 3,
+                   "followers": 1, "last_synced_at": "...",
+                   "credential": { "field": "bilibili_cookie", "configured": true },
+                   "proxy": "direct",
+                   "backlog": { "pending": 5, "processing": 1, "failed": 0, "done": 40 } } ],
+    "media_enabled": true }
+```
+
+每个来源的目录规模、凭证是否配置、生效的代理与 `media_job` 积压。来源清单由后端给出
+（`hippo/sources/registry.py` 的 `source_names()`），前端不维护副本；不收凭证的来源
+`credential` 为 `null`，没有被配置代理的来源 `proxy` 为解析后的默认值。
+
 ### 站点设置
 
 ```
@@ -668,7 +689,7 @@ GET /api/admin/audit?action=auth.login&user_id=1&since=2026-05-01&until=2026-05-
 ## 13. 媒体来源与转写 `/api/source` `/api/media`
 
 B站视频、YouTube 视频与 RSS 播客都是「媒体来源」：它们的文章行建立时只有元数据，正文由 `media_job`
-队列转写而来（见 README「数据来源」）。订阅与转写的参数在管理台「媒体与转写」里配置。
+队列转写而来（见 README「数据来源」）。凭证与代理在管理台「来源」页按源配置，跨源的转写参数在「转写」页。
 
 ### 列出已订阅的来源
 
@@ -722,8 +743,12 @@ POST /api/source/channel
 
 ### 我的来源凭证
 
-B站投稿列表接口有风控，需要 SESSDATA。**实例级**的在管理台设，**用户级**的在这里设；
-调用者自己的优先，界面只回答「是否已配置」，永不回显明文。
+B站投稿列表接口有风控，需要 SESSDATA。**实例级**的在管理台「来源」页设，**用户级**的在这里设；
+界面只回答「是否已配置」，永不回显明文。
+
+后台同步按「该频道的订阅者各自的凭证（最近更新的先试）→ 实例凭证」的顺序尝试，
+只有凭证被拒（B站风控 / YouTube 要求登录）才换下一份；用户级凭证仅用于自己触发的操作时，
+走的是同一份优先级。
 
 ```
 GET    /api/source/credential                    -> {"bilibili": {"configured": true}}
@@ -925,6 +950,7 @@ Content-Type: application/pdf
 | GET | `/api/account/{biz}` | 登录 |
 | PATCH | `/api/account/{biz}` | 登录 |
 | GET | `/api/account/{biz}/avatar` | 登录 |
+| GET | `/api/admin/source` | 管理员 |
 | GET | `/api/admin/audit` | 管理员 |
 | GET | `/api/admin/audit/action` | 管理员 |
 | GET | `/api/admin/log/link` | 管理员 |
