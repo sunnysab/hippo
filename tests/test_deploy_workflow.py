@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -46,6 +47,18 @@ printf 'node %s\\n' "$*" >> "$FAKE_LOG"
 echo v24.0.0
 """
 
+# Records the libpq environment pg_dump would be handed, then leaves the dump
+# file behind, so the mapping can be checked without a database.
+PG_DUMP_RECORDER = """#!/bin/bash
+env | grep -E '^PG[A-Z]*=' | sort > "$PG_DUMP_LOG"
+file=''
+while [ $# -gt 0 ]; do
+    if [ "$1" = '--file' ]; then file="$2"; shift 2; else shift; fi
+done
+[ -n "$file" ] && : > "$file"
+exit 0
+"""
+
 pytestmark = pytest.mark.skipif(
     not DEPLOY_SH.exists(),
     reason='deploy.sh is a local, gitignored tool; without it there is nothing to rehearse',
@@ -70,17 +83,30 @@ def _fake_bin(tmp_path: Path) -> tuple[Path, Path]:
     return directory, log
 
 
-def _tree(tmp_path: Path, *, dist: bool = True) -> Path:
-    """The smallest checkout deploy.sh accepts, so nothing outside tmp_path is read."""
+def _tree(tmp_path: Path, *, dist: str = 'complete') -> Path:
+    """The smallest checkout deploy.sh accepts, so nothing outside tmp_path is read.
+
+    ``dist`` is 'complete' (index.html references files that exist), 'stale'
+    (it references an asset the build no longer emits) or 'none'.
+    """
     tree = tmp_path / 'tree'
     for relative in REQUIRED_FILES:
         path = tree / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('placeholder\n')
-    if dist:
-        (tree / 'frontend/dist/assets').mkdir(parents=True)
-        (tree / 'frontend/dist/index.html').write_text('<!doctype html>\n')
-        (tree / 'frontend/dist/assets/app-abc123.js').write_text('export {};\n')
+    if dist == 'none':
+        return tree
+    (tree / 'frontend/dist/assets').mkdir(parents=True)
+    (tree / 'frontend/dist/assets/app-abc123.js').write_text('export {};\n')
+    (tree / 'frontend/dist/assets/app-abc123.css').write_text('body {}\n')
+    (tree / 'frontend/dist/favicon.svg').write_text('<svg/>\n')
+    script = '/assets/app-old999.js' if dist == 'stale' else '/assets/app-abc123.js'
+    (tree / 'frontend/dist/index.html').write_text(
+        '<!doctype html>\n'
+        '<html><head><link rel="icon" href="/favicon.svg">\n'
+        '<link rel="stylesheet" href="/assets/app-abc123.css"></head>\n'
+        f'<body><script type="module" src="{script}"></script></body></html>\n'
+    )
     return tree
 
 
@@ -109,6 +135,45 @@ def _log(log: Path) -> str:
     return log.read_text() if log.exists() else ''
 
 
+def _embedded_dump_script() -> str:
+    """The pg_dump snippet deploy.sh runs on the box, without its heredoc."""
+    lines = DEPLOY_SH.read_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if line.strip().endswith("<<'PY'"))
+    end = next(i for i in range(start + 1, len(lines)) if lines[i] == 'PY')
+    return '\n'.join(lines[start + 1 : end]) + '\n'
+
+
+def _run_embedded_dump(tmp_path: Path, dsn: str) -> tuple[subprocess.CompletedProcess, dict[str, str]]:
+    """Run that snippet against a config.toml and a recording pg_dump."""
+    work = tmp_path / 'remote'
+    work.mkdir()
+    (work / 'config.toml').write_text(f'[database]\ndsn = "{dsn}"\n')
+    script = work / 'dump.py'
+    script.write_text(_embedded_dump_script())
+    fake_bin = tmp_path / 'fake-pg'
+    fake_bin.mkdir()
+    pg_dump = fake_bin / 'pg_dump'
+    pg_dump.write_text(PG_DUMP_RECORDER)
+    pg_dump.chmod(pg_dump.stat().st_mode | stat.S_IXUSR)
+
+    recorded = tmp_path / 'pg_dump.env'
+    # Drop any PG* the developer's shell exports, so only the DSN is under test.
+    env = {key: value for key, value in os.environ.items() if not key.startswith('PG')}
+    env['PATH'] = f'{fake_bin}{os.pathsep}{env["PATH"]}'
+    env['PG_DUMP_LOG'] = str(recorded)
+    env['PYTHONPATH'] = str(REPO_ROOT)
+    result = subprocess.run(
+        [sys.executable, str(script), str(work / 'database.dump')],
+        cwd=work,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    params = dict(line.split('=', 1) for line in recorded.read_text().splitlines()) if recorded.exists() else {}
+    return result, params
+
+
 def test_build_runs_and_services_start_after_migration(tmp_path):
     tree = _tree(tmp_path)
     fake_bin, log = _fake_bin(tmp_path)
@@ -123,7 +188,7 @@ def test_build_runs_and_services_start_after_migration(tmp_path):
 
 
 def test_incomplete_dist_is_refused_before_any_remote_command(tmp_path):
-    tree = _tree(tmp_path, dist=False)
+    tree = _tree(tmp_path, dist='none')
     fake_bin, log = _fake_bin(tmp_path)
 
     result = _run(tree, fake_bin, log, skip_build=True)
@@ -187,3 +252,74 @@ def test_unfinished_backup_stops_before_anything_is_replaced(tmp_path):
     recorded = _log(log)
     assert 'sudo systemctl stop' not in recorded
     assert 'rsync -rltzv' not in recorded
+
+
+def test_dist_that_names_a_stale_asset_is_refused(tmp_path):
+    tree = _tree(tmp_path, dist='stale')
+    fake_bin, log = _fake_bin(tmp_path)
+
+    result = _run(tree, fake_bin, log, skip_build=True)
+
+    assert result.returncode != 0
+    assert 'app-old999.js' in result.stderr
+    assert _log(log) == ''
+
+
+def test_failure_never_points_at_overwriting_production(tmp_path):
+    tree = _tree(tmp_path)
+    fake_bin, log = _fake_bin(tmp_path)
+
+    result = _run(tree, fake_bin, log, fail_on='init-db', skip_build=True)
+
+    assert result.returncode != 0
+    assert 'hippo.ops init-db' in result.stderr
+    assert 'NEW database' in result.stderr
+    assert 'pg_restore' not in result.stderr
+    assert '--clean' not in result.stderr
+    assert '--clean' not in DEPLOY_SH.read_text()
+
+
+def test_url_dsn_reaches_pg_dump_through_the_environment(tmp_path):
+    dsn = 'postgresql://hippo:s3cr3t%23pw@dbhost:5433/mp?sslmode=require&application_name=hippo'
+
+    result, params = _run_embedded_dump(tmp_path, dsn)
+
+    assert result.returncode == 0, result.stderr
+    assert params['PGHOST'] == 'dbhost'
+    assert params['PGPORT'] == '5433'
+    assert params['PGUSER'] == 'hippo'
+    assert params['PGPASSWORD'] == 's3cr3t#pw'
+    assert params['PGDATABASE'] == 'mp'
+    assert params['PGSSLMODE'] == 'require'
+    assert params['PGAPPNAME'] == 'hippo'
+    assert 's3cr3t' not in result.stdout + result.stderr
+    assert dsn not in result.stdout + result.stderr
+
+
+def test_keyword_value_dsn_reaches_pg_dump_through_the_environment(tmp_path):
+    result, params = _run_embedded_dump(tmp_path, 'host=dbhost port=5433 user=hippo dbname=mp sslmode=verify-full')
+
+    assert result.returncode == 0, result.stderr
+    assert params['PGDATABASE'] == 'mp'
+    assert params['PGSSLMODE'] == 'verify-full'
+    assert 'PGPASSWORD' not in params
+
+
+def test_libpq_option_without_an_environment_variable_is_refused(tmp_path):
+    dsn = 'postgresql://hippo@dbhost/mp?keepalives=1'
+
+    result, params = _run_embedded_dump(tmp_path, dsn)
+
+    assert result.returncode != 0
+    assert "parameter 'keepalives'" in result.stderr
+    assert params == {}
+    assert dsn not in result.stderr
+
+
+def test_unparsable_dsn_is_refused_without_quoting_it(tmp_path):
+    result, params = _run_embedded_dump(tmp_path, 'this is not a dsn')
+
+    assert result.returncode != 0
+    assert 'not a libpq connection string' in result.stderr
+    assert params == {}
+    assert 'this is not a dsn' not in result.stderr
