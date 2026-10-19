@@ -148,7 +148,7 @@ describe('ArticleContent media blocks', () => {
     expect(playMock).toHaveBeenCalled();
   });
 
-  it('seeks the video when the article has both a video and an audio block', () => {
+  it('seeks the mounted player when the article has both a video and an audio block', () => {
     const { container } = renderContent([
       { type: 'audio', url: '/api/media/7/audio' },
       { type: 'video', provider: 'bilibili', url: '/api/media/7/video' },
@@ -157,25 +157,20 @@ describe('ArticleContent media blocks', () => {
 
     fireEvent.click(container.querySelector('.reader-anchor.is-action')!);
 
+    // 默认看视频，所以 seek 落在 video 上；未挂载的音频没有可写的进度轴。
     expect(container.querySelector('video')!.currentTime).toBe(132);
-    expect(container.querySelector('audio')!.currentTime).toBe(0);
+    expect(container.querySelector('audio')).toBeNull();
   });
 
-  it('pauses the audio when the video starts', () => {
+  it('mounts one player at a time when both an audio and a video exist', () => {
+    // 两个播放器同时挂着就一定会同时下载媒体；音频只是切换目标，不是并存的第二份。
     const { container } = renderContent([
       { type: 'audio', url: '/api/media/7/audio' },
       { type: 'video', provider: 'bilibili', url: '/api/media/7/video' },
     ]);
 
-    const audio = container.querySelector('audio')!;
-    const pauseSpy = vi.fn();
-    // jsdom 的 paused 永远是 true，这里只验证「正在播放时会被暂停」这条分支。
-    Object.defineProperty(audio, 'paused', { value: false, configurable: true });
-    audio.pause = pauseSpy;
-
-    fireEvent.play(container.querySelector('video')!);
-
-    expect(pauseSpy).toHaveBeenCalled();
+    expect(container.querySelector('video')).not.toBeNull();
+    expect(container.querySelector('audio')).toBeNull();
   });
 
   it('consumes a rejected autoplay when seeking', async () => {
@@ -320,6 +315,75 @@ describe('ArticleContent media blocks', () => {
     fireEvent.click(container.querySelectorAll('.reader-anchor.is-action')[1]);
 
     expect(container.querySelector('p.is-playing')?.textContent).toContain('正题');
+  });
+});
+
+describe('ArticleContent audio-only mode', () => {
+  let play: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    play = vi.fn().mockResolvedValue(undefined);
+    window.HTMLMediaElement.prototype.play = play as unknown as HTMLMediaElement['play'];
+    // jsdom 没实现 pause()，切换时一定会调用它。
+    window.HTMLMediaElement.prototype.pause = vi.fn() as unknown as HTMLMediaElement['pause'];
+  });
+
+  const bothBlocks: ArticlePayload['content'] = [
+    { type: 'video', provider: 'bilibili', url: '/api/media/7/video' },
+    { type: 'audio', url: '/api/media/7/audio' },
+    { type: 'paragraph', text: '开场', t: 0 },
+  ];
+
+  it('plays the video by default and offers the audio switch', () => {
+    const { container } = renderContent(bothBlocks);
+
+    expect(container.querySelector('video')).not.toBeNull();
+    expect(container.querySelector('audio')).toBeNull();
+    expect(container.querySelector('.reader-audio-toggle')?.textContent).toBe('仅音频');
+  });
+
+  it('swaps the video for the audio, keeping the position and playback', () => {
+    const { container } = renderContent(bothBlocks);
+    const video = container.querySelector('video')!;
+    video.currentTime = 132;
+    // jsdom 的 paused 永远是 true，这里只验证「切过去继续播」这条分支。
+    Object.defineProperty(video, 'paused', { value: false, configurable: true });
+
+    fireEvent.click(container.querySelector('.reader-audio-toggle')!);
+
+    // 没被选中的播放器不挂载，才谈得上省流量。
+    expect(container.querySelector('video')).toBeNull();
+    const audio = container.querySelector('audio')!;
+    fireEvent.loadedMetadata(audio);
+    expect(audio.currentTime).toBe(132);
+    expect(play).toHaveBeenCalled();
+    expect(container.querySelector('.reader-audio-toggle')?.textContent).toBe('看视频');
+  });
+
+  it('switches back to the video from the audio player', () => {
+    const { container } = renderContent(bothBlocks);
+
+    fireEvent.click(container.querySelector('.reader-audio-toggle')!);
+    expect(container.querySelector('audio')).not.toBeNull();
+
+    fireEvent.click(container.querySelector('.reader-audio-toggle')!);
+    expect(container.querySelector('video')).not.toBeNull();
+    expect(container.querySelector('audio')).toBeNull();
+  });
+
+  it('offers no switch when the article only has one player', () => {
+    const podcast = renderContent([
+      { type: 'audio', url: '/api/media/7/audio' },
+      { type: 'paragraph', text: '开场', t: 0 },
+    ]);
+    expect(podcast.container.querySelector('.reader-audio-toggle')).toBeNull();
+    podcast.unmount();
+
+    const silent = renderContent([
+      { type: 'video', provider: 'bilibili', url: '/api/media/7/video' },
+      { type: 'paragraph', text: '开场', t: 0 },
+    ]);
+    expect(silent.container.querySelector('.reader-audio-toggle')).toBeNull();
   });
 });
 

@@ -33,6 +33,11 @@ interface PlayerControls {
    * can still point at the right moment of the original.
    */
   originalHref: string | null;
+  /** True while the reader listens to the video's audio instead of watching it. */
+  audioOnly: boolean;
+  /** Both a kept video and a kept audio track exist, so listening-only is possible. */
+  canSwitchMode: boolean;
+  toggleMode: () => void;
 }
 
 // Only render-time values live here; the two media refs travel down as props so
@@ -42,6 +47,9 @@ const PlayerContext = createContext<PlayerControls>({
   seek: () => {},
   pauseOther: () => {},
   originalHref: null,
+  audioOnly: false,
+  canSwitchMode: false,
+  toggleMode: () => {},
 });
 
 /**
@@ -155,19 +163,40 @@ interface PlayerRefProps {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   /** Reports the player's position so the transcript can follow along. */
   onTimeUpdate: (event: React.SyntheticEvent<HTMLMediaElement>) => void;
+  /** Called once the other player has loaded, to take over position and playback. */
+  onReady: (event: React.SyntheticEvent<HTMLMediaElement>) => void;
 }
+
+/**
+ * The "listen only" switch. It sits under whichever player is on screen, and both
+ * of them render it: switching to the audio unmounts the video, so a control that
+ * lived with only one of them would disappear the moment it was used.
+ */
+const PlayerModeButton = memo(function PlayerModeButton() {
+  const { t } = useI18n();
+  const { audioOnly, toggleMode } = useContext(PlayerContext);
+  return (
+    <button className="reader-audio-toggle" type="button" onClick={toggleMode}>
+      {audioOnly
+        ? t('articles.showVideo', '看视频')
+        : t('articles.listenOnly', '仅音频')}
+    </button>
+  );
+});
 
 const ArticleVideoBlock = memo(function ArticleVideoBlock({
   block,
   videoRef,
   onTimeUpdate,
+  onReady,
 }: {
   block: ArticleContentBlock;
   videoRef: React.RefObject<HTMLVideoElement | null>;
   onTimeUpdate: PlayerRefProps['onTimeUpdate'];
+  onReady: PlayerRefProps['onReady'];
 }) {
   const { t } = useI18n();
-  const { originalHref, pauseOther } = useContext(PlayerContext);
+  const { originalHref, pauseOther, canSwitchMode } = useContext(PlayerContext);
 
   // The archived copy streams from Hippo with Range support, so it plays at once
   // and never contacts the provider — even when a legacy block still carries an
@@ -184,8 +213,10 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({
           poster={block.cover_url || undefined}
           onPlay={(event) => pauseOther(event.currentTarget)}
           onTimeUpdate={onTimeUpdate}
+          onLoadedMetadata={onReady}
           data-testid='reader-video-file'
         />
+        {canSwitchMode ? <PlayerModeButton /> : null}
       </div>
     );
   }
@@ -215,12 +246,14 @@ const ArticleAudioBlock = memo(function ArticleAudioBlock({
   block,
   audioRef,
   onTimeUpdate,
+  onReady,
 }: {
   block: ArticleContentBlock;
   audioRef: React.RefObject<HTMLAudioElement | null>;
   onTimeUpdate: PlayerRefProps['onTimeUpdate'];
+  onReady: PlayerRefProps['onReady'];
 }) {
-  const { pauseOther } = useContext(PlayerContext);
+  const { pauseOther, canSwitchMode } = useContext(PlayerContext);
   if (!block.url) return null;
   return (
     <div className="reader-audio">
@@ -233,7 +266,9 @@ const ArticleAudioBlock = memo(function ArticleAudioBlock({
         src={block.url}
         onPlay={(event) => pauseOther(event.currentTarget)}
         onTimeUpdate={onTimeUpdate}
+        onLoadedMetadata={onReady}
       />
+      {canSwitchMode ? <PlayerModeButton /> : null}
     </div>
   );
 });
@@ -247,6 +282,7 @@ const ContentBlock = memo(function ContentBlock({
   audioRef,
   videoRef,
   onTimeUpdate,
+  onReady,
   isPlayingBlock,
   outlineIndex,
   playingRef,
@@ -254,7 +290,7 @@ const ContentBlock = memo(function ContentBlock({
   isPlayingBlock: boolean;
   playingRef: React.RefObject<HTMLParagraphElement | null>;
 }) {
-  const { canSeek, seek, originalHref } = useContext(PlayerContext);
+  const { canSeek, seek, originalHref, audioOnly, canSwitchMode } = useContext(PlayerContext);
 
   const anchor = { 'data-outline-block': outlineIndex };
 
@@ -301,21 +337,27 @@ const ContentBlock = memo(function ContentBlock({
   }
 
   if (block.type === 'video') {
+    // Only one player is mounted at a time: the one not chosen is not downloaded
+    // at all, which is the whole point of the audio-only mode.
+    if (audioOnly && canSwitchMode) return null;
     return (
       <ArticleVideoBlock
         block={block}
         videoRef={videoRef}
         onTimeUpdate={onTimeUpdate}
+        onReady={onReady}
       />
     );
   }
 
   if (block.type === 'audio') {
+    if (!audioOnly && canSwitchMode) return null;
     return (
       <ArticleAudioBlock
         block={block}
         audioRef={audioRef}
         onTimeUpdate={onTimeUpdate}
+        onReady={onReady}
       />
     );
   }
@@ -423,6 +465,17 @@ function RenderedContent({
   );
   const originalHref = payload.article?.link || null;
 
+  // A video article keeps both a watchable MP4 and a stripped-down mp3, and the
+  // reader usually only wants the second. The choice is per open article, never
+  // stored: opening something new starts with the picture, as before.
+  const hasVideo = content.some((block) => block.type === 'video' && isArchivedVideoUrl(block.url));
+  const hasAudio = content.some((block) => block.type === 'audio' && Boolean(block.url));
+  const canSwitchMode = hasVideo && hasAudio;
+  const [audioOnly, setAudioOnly] = useState(false);
+  // Where the player was when the reader switched. The other element starts empty,
+  // so it is told where to go once its metadata has arrived.
+  const handoverRef = useRef<{ time: number; playing: boolean } | null>(null);
+
   // A paragraph is on screen from its own `t` until the next one starts, so the
   // timeline only needs the sorted start times. Every paragraph carries one for a
   // transcript; the show notes above it do not, and never light up.
@@ -475,6 +528,14 @@ function RenderedContent({
     playingRef.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
   }, [activeIndex, followPlayback]);
 
+  const onReady = useCallback((event: React.SyntheticEvent<HTMLMediaElement>) => {
+    const handover = handoverRef.current;
+    if (!handover) return;
+    handoverRef.current = null;
+    event.currentTarget.currentTime = handover.time;
+    if (handover.playing) void event.currentTarget.play().catch(() => {});
+  }, []);
+
   const controls = useMemo<PlayerControls>(() => {
     const pauseOther = (active: HTMLMediaElement) => {
       const other = active === videoRef.current ? audioRef.current : videoRef.current;
@@ -484,6 +545,16 @@ function RenderedContent({
     return {
       canSeek,
       originalHref,
+      audioOnly,
+      canSwitchMode,
+      toggleMode: () => {
+        const current = audioOnly ? audioRef.current : videoRef.current;
+        handoverRef.current = current
+          ? { time: current.currentTime, playing: !current.paused }
+          : null;
+        if (current && !current.paused) current.pause();
+        setAudioOnly((previous) => !previous);
+      },
       pauseOther,
       seek: (seconds: number) => {
         const target: HTMLMediaElement | null = videoRef.current || audioRef.current;
@@ -498,7 +569,7 @@ function RenderedContent({
         void target.play().catch(() => {});
       },
     };
-  }, [canSeek, markAt, originalHref]);
+  }, [audioOnly, canSeek, canSwitchMode, markAt, originalHref]);
   const contentKeys = buildContentBlockKeys(content);
   let outlineIndex = 0;
   const outlineIndexes = content.map((block) => isOutlineBlock(block) ? outlineIndex++ : undefined);
@@ -517,6 +588,7 @@ function RenderedContent({
           audioRef={audioRef}
           videoRef={videoRef}
           onTimeUpdate={onTimeUpdate}
+          onReady={onReady}
           isPlayingBlock={index === activeIndex}
           playingRef={playingRef}
         />

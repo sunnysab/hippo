@@ -1273,6 +1273,23 @@ mark.hippo-highlight:hover {
   width: 100%;
 }
 
+/* Listening to a video's audio instead of downloading the picture. */
+.reader-audio-toggle {
+  margin-top: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-chip-soft);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.reader-audio-toggle:hover {
+  background: var(--surface-item-active);
+  color: var(--text);
+}
+
 .reader-anchor {
   margin-right: 8px;
   color: var(--muted);

@@ -110,6 +110,12 @@ def _fake_download(sizes: list[int] | None = None) -> AsyncMock:
     return AsyncMock(side_effect=run)
 
 
+def _fake_archive(source, target, **kwargs) -> None:
+    """ffmpeg 抽音轨的替身：留下目标文件，让后续的上传与时长校验照常走。"""
+    del kwargs
+    target.write_bytes(b'a' * 256)
+
+
 def _run(storage, media, *, transcriber=None, settings=None):
     return pipeline_module.transcribe_job(
         storage=storage,
@@ -147,6 +153,8 @@ class _VideoTestBase(unittest.IsolatedAsyncioTestCase):
                 pipeline_module.audio_module.Chunk(index=0, path=self.chunk, start_seconds=0.0, duration_seconds=300.0)
             ],
             probe_duration=lambda path: 300.0,
+            # 视频留档之后还要抽一份音频，这里不让真的 ffmpeg 跑起来。
+            archive=_fake_archive,
         )
         patched_audio.start()
         self.addCleanup(patched_audio.stop)
@@ -187,18 +195,22 @@ class ProgressiveVideoTest(_VideoTestBase):
         with patch('hippo.media.pipeline._download', new=_fake_download()):
             outcome = await _run(storage, media, transcriber=_FakeTranscriber([]))
 
-        self.assertEqual(['video', 'paragraph'], self._block_types(storage))
+        # 留档的视频之外再抽一份音频：读者多半只想听，不必为此拉整片 MP4。
+        self.assertEqual(['video', 'audio', 'paragraph'], self._block_types(storage))
         block = storage.saved[0]['content_blocks'][0]
         self.assertEqual('/api/media/7/video', block['url'])
         self.assertEqual('vid1', block['video_id'])
         self.assertEqual('https://i.test/cover.jpg', block['cover_url'])
         self.assertNotIn('embed_url', block)
-        # 视频把声音留下了，就不必再存一份重复的音频。
-        self.assertFalse(outcome['archived'])
+        self.assertEqual('/api/media/7/audio', storage.saved[0]['content_blocks'][1]['url'])
+        self.assertTrue(outcome['archived'])
         self.assertTrue(outcome['video_stored'])
-        saved = storage.media_assets.save.await_args.kwargs
-        self.assertEqual('video', saved['kind'])
-        self.assertEqual('video/mp4', saved['content_type'])
+        # 两次落库：先视频后抽出来的音频，两者都不该被标成失败。
+        saved = [call.kwargs for call in storage.media_assets.save.await_args_list]
+        # 音频走仓储的默认 kind='audio'。
+        self.assertEqual(
+            [('video', 'video/mp4'), (None, 'audio/mpeg')], [(item.get('kind'), item['content_type']) for item in saved]
+        )
         self.assertEqual([], storage.media_assets.mark_failed.await_args_list)
 
     async def test_a_ready_subtitle_never_starts_the_asr(self) -> None:
@@ -238,7 +250,8 @@ class SplitTrackVideoTest(_VideoTestBase):
         self.assertEqual(1, len(self.merges))
         self.assertEqual(MAX_DOWNLOAD_BYTES, self.merges[0]['max_bytes'])
         self.assertTrue(outcome['video_stored'])
-        self.assertEqual(['video', 'paragraph'], self._block_types(storage))
+        # 合并出来的 MP4 就是音频的来源，不必再多占一份下载预算。
+        self.assertEqual(['video', 'audio', 'paragraph'], self._block_types(storage))
 
     async def test_the_second_track_carries_the_first_track_budget(self) -> None:
         # 分轨共享同一个 2 GiB 预算：第二条轨不能再拿一份新的。

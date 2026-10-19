@@ -785,11 +785,20 @@ async def transcribe_job(
             _checked_size(source, label='media', max_bytes=MAX_DOWNLOAD_BYTES)
 
         # 有字幕也要留档：字幕是平台给的，媒体是这个条目里我们唯一能留下来的东西。
-        # 视频已经把声音留下了，就不必再存一份重复的音频。
-        if over_ceiling or video_kept or audio_source is None:
+        # 视频留档之后仍然抽一份音频：读者多半只想听，而一段 mp3 比整片 MP4 小两个
+        # 数量级；从留档的视频里抽，不必再下载一遍。
+        archive_source = audio_source if audio_source is not None else (source if video_kept else None)
+        if over_ceiling or archive_source is None:
             archived = None
         else:
-            archived = await _archive(storage, article_pk, audio_source, job=job, settings=settings)
+            archived = await _archive(
+                storage,
+                article_pk,
+                archive_source,
+                job=job,
+                settings=settings,
+                source_is_video=archive_source is not audio_source,
+            )
 
         if subtitle is not None:
             # 有现成字幕就不花 ASR 的钱，但下载、合并、留档照做。
@@ -878,11 +887,20 @@ async def _archive(
     *,
     job: Mapping[str, Any],
     settings: Mapping[str, Any],
+    source_is_video: bool = False,
 ) -> bool:
-    """Keep a listenable copy. A failure here never fails the transcription."""
+    """Keep a listenable copy. A failure here never fails the transcription.
+
+    ``source_is_video`` means the audio is lifted out of the kept MP4 instead of
+    coming from a real audio file. The ``original`` bitrate copies the file
+    byte-for-byte, which for an MP4 would store a video labelled ``audio/mpeg``, so
+    that one setting falls back to a real re-encode.
+    """
     if not settings.get('keep_media'):
         return False
     bitrate = str(settings.get('keep_media_bitrate') or '128k')
+    if source_is_video and bitrate == 'original':
+        bitrate = '128k'
     target = source.with_name(f'archive-{source.stem}.mp3')
     try:
         await asyncio.to_thread(audio_module.archive, source, target, bitrate=bitrate)
