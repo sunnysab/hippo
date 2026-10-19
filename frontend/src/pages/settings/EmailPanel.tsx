@@ -145,7 +145,7 @@ export function EmailPanel({
                 <input
                   type="checkbox"
                   id="email-smtp-password-clear"
-                  checked={Boolean(formState.smtpPasswordClear)}
+                  checked={formState.smtpPasswordClear}
                   onChange={(event) => setFormState((prev) => ({
                     ...prev,
                     smtpPasswordClear: event.target.checked,

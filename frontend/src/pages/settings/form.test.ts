@@ -22,6 +22,8 @@ const baseForm = (patch: Partial<SyncSettingsFormState> = {}): SyncSettingsFormS
   smtpPort: '587',
   smtpUser: 'user',
   smtpPassword: '',
+  smtpPasswordSet: false,
+  smtpPasswordClear: false,
   smtpTls: true,
   fromEmail: 'no-reply@example.com',
   ...patch,

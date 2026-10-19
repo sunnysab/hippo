@@ -19,9 +19,9 @@ export interface SyncSettingsFormState {
    */
   smtpPassword: string;
   /** Whether the server stores a secret, which drives the configured hint and the clear control. */
-  smtpPasswordSet?: boolean;
+  smtpPasswordSet: boolean;
   /** The operator asked to clear the stored secret on the next save. */
-  smtpPasswordClear?: boolean;
+  smtpPasswordClear: boolean;
   smtpTls: boolean;
   fromEmail: string;
 }

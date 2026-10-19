@@ -83,6 +83,8 @@ describe('SyncSettingsPanel', () => {
           smtpPort: '587',
           smtpUser: '',
           smtpPassword: '',
+          smtpPasswordSet: false,
+          smtpPasswordClear: false,
           smtpTls: true,
           fromEmail: '',
         }}

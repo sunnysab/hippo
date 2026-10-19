@@ -48,20 +48,30 @@ export function SettingsPage() {
 
   return (
     <SettingsPageContent
-      key={formResetKey}
       initialFormState={initialFormState}
+      formResetKey={formResetKey}
     />
   );
 }
 
 interface SettingsPageContentProps {
   initialFormState: SyncSettingsFormState;
+  formResetKey: string;
 }
 
-function SettingsPageContent({ initialFormState }: SettingsPageContentProps) {
+function SettingsPageContent({ initialFormState, formResetKey }: SettingsPageContentProps) {
   const { t } = useI18n();
   const { isAdmin } = useAuth();
   const [formState, setFormState] = useState<SyncSettingsFormState>(initialFormState);
+  const [appliedKey, setAppliedKey] = useState(formResetKey);
+
+  // Re-seed the shared sync/email form only when the instance settings really
+  // changed. The subtree is not remounted, so a personal filter draft in a
+  // sibling panel (and an unchanged email field) survives a same-value refresh.
+  if (formResetKey !== appliedKey) {
+    setAppliedKey(formResetKey);
+    setFormState(initialFormState);
+  }
 
   const navItems = [
     {
