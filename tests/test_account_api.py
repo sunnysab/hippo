@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from hippo.api.routers import account as account_api
+from hippo.api.schemas.account import AccountCreateRequest
 from hippo.article_queries import _ensure_image_visible
 from hippo.exceptions import ApiError
 
@@ -25,17 +26,21 @@ class AccountApiTest(unittest.IsolatedAsyncioTestCase):
     async def test_list_accounts_normalizes_null_alias_to_empty_string(self) -> None:
         storage = SimpleNamespace(
             accounts=SimpleNamespace(
-                list_accounts_paginated=AsyncMock(return_value={
-                    'accounts': [{
-                        'biz': 'gh_1',
-                        'nickname': 'Alpha',
-                        'alias': None,
-                        'avatar_url': '/api/account/gh_1/avatar',
-                    }],
-                    'page': 1,
-                    'page_size': 20,
-                    'total': 1,
-                }),
+                list_accounts_paginated=AsyncMock(
+                    return_value={
+                        'accounts': [
+                            {
+                                'biz': 'gh_1',
+                                'nickname': 'Alpha',
+                                'alias': None,
+                                'avatar_url': '/api/account/gh_1/avatar',
+                            }
+                        ],
+                        'page': 1,
+                        'page_size': 20,
+                        'total': 1,
+                    }
+                ),
             ),
         )
 
@@ -66,7 +71,7 @@ class AccountApiTest(unittest.IsolatedAsyncioTestCase):
         user = SimpleNamespace(id=1, username='admin', role='admin')
 
         await account_api.create_account(
-            body={'biz': 'Mz123', 'nickname': '中投数研', 'group_id': 1},
+            body=AccountCreateRequest(biz='Mz123', nickname='中投数研', group_id=1),
             storage=storage,
             user=user,
         )
@@ -98,7 +103,7 @@ class AccountApiTest(unittest.IsolatedAsyncioTestCase):
         user = SimpleNamespace(id=1, username='admin', role='admin')
 
         await account_api.create_account(
-            body={'biz': 'Mz456', 'nickname': '老号', 'group_id': 1},
+            body=AccountCreateRequest(biz='Mz456', nickname='老号', group_id=1),
             storage=storage,
             user=user,
         )

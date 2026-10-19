@@ -3,18 +3,32 @@
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, Body, Depends, Response, status
+from fastapi import APIRouter, Depends, Response, status
 
 from ...article_queries import _normalize_record, _tokenize_query
 from ...avatar import _fetch_and_cache_avatar, _get_avatar_row, _upsert_avatar_url
 from ...config import DEFAULT_GROUP_NAME
 from ...exceptions import ApiError
 from ...logger import get_logger
-from ...models import AccountCredential, User
+from ...models import AccountCredential, AccountGroup, User
 from ...storage import PostgresStorage, ensure_default_group, fetchone_row
 from ...weixin_source import WeixinSource
 from ..deps import current_user, get_storage, parse_group_ids
 from ..responses import binary_response
+from ..schemas.account import (
+    AccountBatchRequest,
+    AccountCreatedOut,
+    AccountCreateRequest,
+    AccountListOut,
+    AccountMoveRequest,
+    AccountOut,
+    AccountSearchOut,
+    AccountUpdateRequest,
+    GroupCreateRequest,
+    GroupListOut,
+    GroupUpdateRequest,
+    UpdatedCountOut,
+)
 
 logger = get_logger(__name__)
 router = APIRouter(dependencies=[Depends(current_user)])
@@ -147,7 +161,7 @@ async def _update_account(
     return await _get_account(storage, user_id, biz)
 
 
-@router.get('/group')
+@router.get('/group', response_model=GroupListOut, response_model_exclude_unset=True)
 async def list_groups(
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
@@ -165,9 +179,11 @@ async def list_groups(
     }
 
 
-@router.post('/group', status_code=status.HTTP_201_CREATED)
+@router.post(
+    '/group', status_code=status.HTTP_201_CREATED, response_model=AccountGroup, response_model_exclude_unset=True
+)
 async def create_group(
-    body: dict[str, Any] = Body(default={}),
+    body: GroupCreateRequest,
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
 ) -> dict[str, Any]:
@@ -175,7 +191,7 @@ async def create_group(
     创建一个新的分组。
 
     Args:
-        body (dict): 请求体，包含分组名称 "name"。
+        body (GroupCreateRequest): 请求体，包含分组名称 "name"。
 
     Returns:
         dict: 创建的分组 ID 和名称。
@@ -183,7 +199,7 @@ async def create_group(
     Raises:
         ApiError: 如果分组名称缺失或为空。
     """
-    name = str(body.get('name', '')).strip()
+    name = body.name.strip()
     if not name:
         raise ApiError('Group name is required')
     async with storage.transaction():
@@ -191,7 +207,7 @@ async def create_group(
     return {'id': group.id, 'name': group.name}
 
 
-@router.get('/group/{group_id}')
+@router.get('/group/{group_id}', response_model=AccountGroup, response_model_exclude_unset=True)
 async def get_group(
     group_id: int,
     storage: PostgresStorage = Depends(get_storage),
@@ -212,10 +228,10 @@ async def get_group(
     return await _get_group(storage, user.id, group_id)
 
 
-@router.patch('/group/{group_id}')
+@router.patch('/group/{group_id}', response_model=AccountGroup, response_model_exclude_unset=True)
 async def update_group(
     group_id: int,
-    body: dict[str, Any] = Body(default={}),
+    body: GroupUpdateRequest,
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
 ) -> dict[str, Any]:
@@ -224,18 +240,15 @@ async def update_group(
 
     Args:
         group_id (int): 分组 ID。
-        body (dict): 需要更新的字段 (name, sync_mode, sync_recent_days)。
+        body (GroupUpdateRequest): 需要更新的字段 (name)。
 
     Returns:
         dict: 更新后的分组详情。
     """
-    updates: dict[str, Any] = {}
-    if 'name' in body:
-        name = str(body.get('name', '')).strip()
-        if not name:
-            raise ApiError('Group name is required')
-        updates['name'] = name
-    return await _update_group(storage, user.id, group_id, updates)
+    name = body.name.strip()
+    if not name:
+        raise ApiError('Group name is required')
+    return await _update_group(storage, user.id, group_id, {'name': name})
 
 
 @router.delete('/group/{group_id}', status_code=status.HTTP_204_NO_CONTENT)
@@ -260,7 +273,7 @@ async def delete_group(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get('/account/search')
+@router.get('/account/search', response_model=AccountSearchOut)
 async def search_account(
     q: str = '',
     page: int = 1,
@@ -281,7 +294,7 @@ async def search_account(
         begin (int | None): 可选的偏移量，优先于 page。
 
     Returns:
-        dict: ``{results, page, page_size, total}``，字段与旧实现保持一致。
+        AccountSearchOut: ``{results, page, page_size, total}``，字段与旧实现保持一致。
     """
     keyword = (q or '').strip()
     if not keyword:
@@ -332,7 +345,12 @@ async def search_account(
     }
 
 
-@router.get('/account/search/{biz}/avatar')
+#: An avatar is served as it was stored, so the media type is whatever the image
+#: came in as: the document names the family rather than one type.
+_AVATAR_RESPONSES = {200: {'description': 'The image bytes.', 'content': {'image/*': {}}}}
+
+
+@router.get('/account/search/{biz}/avatar', response_class=Response, responses=_AVATAR_RESPONSES)
 async def get_search_avatar(
     biz: str,
     storage: PostgresStorage = Depends(get_storage),
@@ -366,7 +384,7 @@ async def get_search_avatar(
     return binary_response(payload, content_type)
 
 
-@router.get('/account')
+@router.get('/account', response_model=AccountListOut, response_model_exclude_unset=True)
 async def list_accounts(
     group_id: int | None = None,
     group_ids: str | None = None,
@@ -404,9 +422,9 @@ async def list_accounts(
     return payload
 
 
-@router.post('/account', status_code=status.HTTP_201_CREATED)
+@router.post('/account', status_code=status.HTTP_201_CREATED, response_model=AccountCreatedOut)
 async def create_account(
-    body: dict[str, Any] = Body(default={}),
+    body: AccountCreateRequest,
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
 ) -> dict[str, Any]:
@@ -414,7 +432,7 @@ async def create_account(
     添加一个新的公众号到数据库。
 
     Args:
-        body (dict): 公众号详情，包括 biz, nickname 等。
+        body (AccountCreateRequest): 公众号详情，包括 biz, nickname 等。
 
     Returns:
         dict: 创建的公众号详情。
@@ -422,11 +440,10 @@ async def create_account(
     Raises:
         ApiError: 如果缺少必填字段 (biz, nickname)。
     """
-    required = ['biz', 'nickname']
-    for field in required:
-        if not body.get(field):
+    for field, value in (('biz', body.biz), ('nickname', body.nickname)):
+        if not value.strip():
             raise ApiError(f'{field} is required')
-    raw_biz = str(body['biz']).strip()
+    raw_biz = body.biz.strip()
     biz = raw_biz
     # 搜索接口只能给 gh_（daemon 的形状），而 accounts.biz 是 fakeid（``Mz…==``），
     # 所以这里抓一页该号的文章、从 URL 的 __biz 回填；同时把 gh_ 存下来供后续列表用。
@@ -438,7 +455,7 @@ async def create_account(
                 biz = await source.resolve_fakeid(gh_id)
         except Exception as exc:
             raise ApiError(f'解析公众号 ID 失败：{exc}', status=502, code='daemon.resolve_failed') from exc
-    group_id = body.get('group_id')
+    group_id = body.group_id
     if group_id is None:
         default_group = await ensure_default_group(storage, user.id, name=DEFAULT_GROUP_NAME)
         group_id = default_group.id
@@ -446,10 +463,10 @@ async def create_account(
         account = await storage.accounts.upsert_account(
             AccountCredential(
                 biz=biz,
-                nickname=str(body['nickname']),
-                alias=body.get('alias'),
+                nickname=body.nickname,
+                alias=body.alias,
                 gh_id=gh_id,
-                round_head_img=body.get('round_head_img'),
+                round_head_img=body.round_head_img,
             )
         )
         # Adding an account to the catalogue also subscribes the caller to it.
@@ -469,9 +486,9 @@ async def create_account(
     )
 
 
-@router.post('/account/move')
+@router.post('/account/move', response_model=UpdatedCountOut)
 async def move_accounts(
-    body: dict[str, Any] = Body(default={}),
+    body: AccountMoveRequest,
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
 ) -> dict[str, Any]:
@@ -479,26 +496,25 @@ async def move_accounts(
     批量移动公众号到另一个分组。
 
     Args:
-        body (dict): 包含 'biz_list' (字符串列表) 和 'group_id' (整数)。
+        body (AccountMoveRequest): 包含 'biz_list' (字符串列表) 和 'group_id' (整数)。
 
     Returns:
         dict: 更新的公众号数量。
     """
-    biz_list = body.get('biz_list') or []
-    if not isinstance(biz_list, list) or not biz_list:
+    if not body.biz_list:
         raise ApiError('biz_list is required')
-    group_id = body.get('group_id')
+    group_id = body.group_id
     if group_id is None:
         default_group = await ensure_default_group(storage, user.id, name=DEFAULT_GROUP_NAME)
         group_id = default_group.id
     async with storage.transaction():
-        updated = await storage.subscriptions.set_group(user.id, biz_list, group_id)
+        updated = await storage.subscriptions.set_group(user.id, body.biz_list, group_id)
     return {'updated': updated}
 
 
-@router.post('/account/batch')
+@router.post('/account/batch', response_model=UpdatedCountOut)
 async def batch_update_accounts(
-    body: dict[str, Any] = Body(default={}),
+    body: AccountBatchRequest,
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
 ) -> dict[str, Any]:
@@ -506,26 +522,24 @@ async def batch_update_accounts(
     批量更新多个公众号的同步设置。
 
     Args:
-        body (dict): 包含 'biz_list' 和需更新的字段 ('sync_mode', 'sync_recent_days')。
+        body (AccountBatchRequest): 包含 'biz_list' 和需更新的字段 ('sync_interval_days')。
 
     Returns:
         dict: 更新的公众号数量。
     """
-    biz_list = body.get('biz_list') or []
-    if not isinstance(biz_list, list) or not biz_list:
+    if not body.biz_list:
         raise ApiError('biz_list is required')
-    updates: dict[str, Any] = {}
-    if 'sync_interval_days' in body:
-        value = body['sync_interval_days']
-        updates['sync_interval_days'] = max(int(value), 1) if value is not None else None
-    if not updates:
+    if 'sync_interval_days' not in body.model_fields_set:
         raise ApiError('No fields to update')
+    interval = body.sync_interval_days
     async with storage.transaction():
-        updated = await storage.subscriptions.set_interval(user.id, biz_list, updates['sync_interval_days'])
+        updated = await storage.subscriptions.set_interval(
+            user.id, body.biz_list, max(interval, 1) if interval is not None else None
+        )
     return {'updated': updated}
 
 
-@router.get('/account/{biz}')
+@router.get('/account/{biz}', response_model=AccountOut, response_model_exclude_unset=True)
 async def get_account(
     biz: str,
     storage: PostgresStorage = Depends(get_storage),
@@ -546,10 +560,10 @@ async def get_account(
     return await _get_account(storage, user.id, biz)
 
 
-@router.patch('/account/{biz}')
+@router.patch('/account/{biz}', response_model=AccountOut, response_model_exclude_unset=True)
 async def update_account(
     biz: str,
-    body: dict[str, Any] = Body(default={}),
+    body: AccountUpdateRequest,
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
 ) -> dict[str, Any]:
@@ -558,15 +572,18 @@ async def update_account(
 
     Args:
         biz (str): 公众号唯一标识。
-        body (dict): 需要更新的字段。
+        body (AccountUpdateRequest): 需要更新的字段。
 
     Returns:
         dict: 更新后的公众号详情。
     """
-    if 'group_id' in body and body['group_id'] is None:
+    # Only the keys the caller sent are written, so an omitted field keeps its
+    # stored value while an explicit null still means "clear it".
+    payload = body.model_dump(exclude_unset=True)
+    if 'group_id' in payload and payload['group_id'] is None:
         default_group = await ensure_default_group(storage, user.id, name=DEFAULT_GROUP_NAME)
-        body['group_id'] = default_group.id
-    return await _update_account(storage, user.id, biz, body)
+        payload['group_id'] = default_group.id
+    return await _update_account(storage, user.id, biz, payload)
 
 
 @router.delete('/account/{biz}', status_code=status.HTTP_204_NO_CONTENT)
@@ -598,7 +615,7 @@ async def delete_account(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get('/account/{biz}/avatar')
+@router.get('/account/{biz}/avatar', response_class=Response, responses=_AVATAR_RESPONSES)
 async def get_account_avatar(
     biz: str,
     storage: PostgresStorage = Depends(get_storage),

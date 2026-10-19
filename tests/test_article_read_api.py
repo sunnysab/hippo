@@ -9,7 +9,10 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from pydantic import ValidationError
+
 from hippo.api.routers import article as article_api
+from hippo.api.schemas.article import ReadUpdateRequest, StarUpdateRequest
 from hippo.article_queries import (
     _build_article_query,
     _build_article_where_clause,
@@ -96,7 +99,7 @@ class SetReadEndpointTest(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(article_api, '_assert_article_visible', AsyncMock()):
             result = await article_api.set_article_read(
-                article_id=5, body={'read': True}, storage=storage, user=_user()
+                article_id=5, body=ReadUpdateRequest(read=True), storage=storage, user=_user()
             )
 
         storage.reads.set_read.assert_awaited_once_with(user_id=7, article_pk=5, read=True)
@@ -107,20 +110,17 @@ class SetReadEndpointTest(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(article_api, '_assert_article_visible', AsyncMock()):
             result = await article_api.set_article_read(
-                article_id=5, body={'read': False}, storage=storage, user=_user()
+                article_id=5, body=ReadUpdateRequest(read=False), storage=storage, user=_user()
             )
 
         storage.reads.set_read.assert_awaited_once_with(user_id=7, article_pk=5, read=False)
         self.assertIsNone(result['read_at'])
 
     async def test_a_non_boolean_read_is_rejected(self) -> None:
-        storage = _storage()
-
-        with patch.object(article_api, '_assert_article_visible', AsyncMock()), self.assertRaises(ApiError) as raised:
-            await article_api.set_article_read(article_id=5, body={'read': 'yes'}, storage=storage, user=_user())
-
-        self.assertEqual(400, raised.exception.status)
-        storage.reads.set_read.assert_not_awaited()
+        # The flag is typed on the request model, so nothing else can reach the
+        # store; "yes" used to be caught by an isinstance check in the route.
+        with self.assertRaises(ValidationError):
+            ReadUpdateRequest.model_validate({'read': 'yes'})
 
     async def test_an_invisible_article_is_never_marked(self) -> None:
         storage = _storage()
@@ -131,7 +131,9 @@ class SetReadEndpointTest(unittest.IsolatedAsyncioTestCase):
             ),
             self.assertRaises(ApiError),
         ):
-            await article_api.set_article_read(article_id=5, body={'read': True}, storage=storage, user=_user())
+            await article_api.set_article_read(
+                article_id=5, body=ReadUpdateRequest(read=True), storage=storage, user=_user()
+            )
 
         storage.reads.set_read.assert_not_awaited()
 
@@ -276,19 +278,15 @@ class SetStarEndpointTest(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(article_api, '_assert_article_visible', AsyncMock()):
             result = await article_api.set_article_star(
-                article_id=5, body={'starred': True}, storage=storage, user=_user()
+                article_id=5, body=StarUpdateRequest(starred=True), storage=storage, user=_user()
             )
 
         storage.stars.set_starred.assert_awaited_once_with(user_id=7, article_pk=5, starred=True)
         self.assertEqual({'article_id': 5, 'starred_at': '2026-05-02T11:00:00+00:00'}, result)
 
     async def test_a_non_boolean_starred_is_rejected(self) -> None:
-        storage = SimpleNamespace(stars=SimpleNamespace(set_starred=AsyncMock()))
-
-        with patch.object(article_api, '_assert_article_visible', AsyncMock()), self.assertRaises(ApiError):
-            await article_api.set_article_star(article_id=5, body={'starred': 'yes'}, storage=storage, user=_user())
-
-        storage.stars.set_starred.assert_not_awaited()
+        with self.assertRaises(ValidationError):
+            StarUpdateRequest.model_validate({'starred': 'yes'})
 
 
 class StarRepositoryTest(unittest.IsolatedAsyncioTestCase):

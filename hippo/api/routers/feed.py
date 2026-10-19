@@ -11,11 +11,24 @@ from ...models import User
 from ...rss import build_rss_xml, query_rss_items
 from ...storage import PostgresStorage, fetchall_rows
 from ..deps import NOT_SIGNED_IN, SESSION_MISSING, current_user_optional, get_storage, parse_group_ids
+from ..schemas.article import FeedOut
 
 router = APIRouter()
 
+#: The same route answers JSON for the SPA or a script and RSS for a feed reader.
+_FEED_RESPONSES = {
+    200: {
+        'content': {
+            'application/rss+xml': {
+                'schema': {'type': 'string'},
+                'example': '<?xml version="1.0" encoding="UTF-8"?>',
+            }
+        }
+    }
+}
 
-@router.get('/feed/mixed', response_model=None)
+
+@router.get('/feed/mixed', response_model=FeedOut, response_model_exclude_unset=True, responses=_FEED_RESPONSES)
 async def list_feed(
     request: Request,
     group_id: int | None = None,

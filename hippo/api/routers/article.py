@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Body, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from starlette.concurrency import iterate_in_threadpool
 
@@ -38,6 +38,19 @@ from ...models import User
 from ...storage import PostgresStorage, fetchone_row, open_storage
 from ..deps import current_user, get_storage, parse_group_ids
 from ..responses import binary_response
+from ..schemas.article import (
+    ArticleDetailOut,
+    ArticleImageListOut,
+    ArticleListOut,
+    BlockedImageOut,
+    ReadStateOut,
+    ReadUpdateRequest,
+    RefetchStartedOut,
+    RefetchStatusOut,
+    StarStateOut,
+    StarUpdateRequest,
+    TranscribeQueuedOut,
+)
 
 logger = get_logger(__name__)
 router = APIRouter(dependencies=[Depends(current_user)])
@@ -46,7 +59,7 @@ _refetch_tasks: dict[str, dict[str, Any]] = {}
 _refetch_lock = threading.Lock()
 
 
-@router.get('/article')
+@router.get('/article', response_model=ArticleListOut, response_model_exclude_unset=True)
 async def list_articles(
     group_id: int | None = None,
     group_ids: str | None = None,
@@ -118,7 +131,13 @@ async def list_articles(
     )
 
 
-@router.get('/article/{article_id}')
+@router.get(
+    '/article/{article_id}',
+    response_model=ArticleDetailOut,
+    # Blocks and the relevance score are written by the source that produced
+    # them: only the keys that are really there come back.
+    response_model_exclude_unset=True,
+)
 async def get_article(
     article_id: int,
     storage: PostgresStorage = Depends(get_storage),
@@ -139,10 +158,10 @@ async def get_article(
     return await _get_article(storage, user.id, article_id)
 
 
-@router.put('/article/{article_id}/read')
+@router.put('/article/{article_id}/read', response_model=ReadStateOut)
 async def set_article_read(
     article_id: int,
-    body: dict[str, Any] = Body(default={}),
+    body: ReadUpdateRequest,
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
 ) -> dict[str, Any]:
@@ -151,23 +170,20 @@ async def set_article_read(
 
     Args:
         article_id (int): 文章 ID。
-        body (dict): `{"read": true}` 标记已读，`false` 标记未读（默认 true）。
+        body (ReadUpdateRequest): `{"read": true}` 标记已读，`false` 标记未读（默认 true）。
 
     Returns:
         dict: 文章 ID 与已读时间（未读时为 null）。
     """
     await _assert_article_visible(storage, user.id, article_id)
-    read = body.get('read', True)
-    if not isinstance(read, bool):
-        raise ApiError('read must be a boolean', status=400)
-    read_at = await storage.reads.set_read(user_id=user.id, article_pk=article_id, read=read)
+    read_at = await storage.reads.set_read(user_id=user.id, article_pk=article_id, read=body.read)
     return {'article_id': article_id, 'read_at': read_at}
 
 
-@router.put('/article/{article_id}/star')
+@router.put('/article/{article_id}/star', response_model=StarStateOut)
 async def set_article_star(
     article_id: int,
-    body: dict[str, Any] = Body(default={}),
+    body: StarUpdateRequest,
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
 ) -> dict[str, Any]:
@@ -176,20 +192,17 @@ async def set_article_star(
 
     Args:
         article_id (int): 文章 ID。
-        body (dict): `{"starred": true}` 收藏，`false` 取消（默认 true）。
+        body (StarUpdateRequest): `{"starred": true}` 收藏，`false` 取消（默认 true）。
 
     Returns:
         dict: 文章 ID 与收藏时间（未收藏时为 null）。
     """
     await _assert_article_visible(storage, user.id, article_id)
-    starred = body.get('starred', True)
-    if not isinstance(starred, bool):
-        raise ApiError('starred must be a boolean', status=400)
-    starred_at = await storage.stars.set_starred(user_id=user.id, article_pk=article_id, starred=starred)
+    starred_at = await storage.stars.set_starred(user_id=user.id, article_pk=article_id, starred=body.starred)
     return {'article_id': article_id, 'starred_at': starred_at}
 
 
-@router.get('/article/{article_id}/image')
+@router.get('/article/{article_id}/image', response_model=ArticleImageListOut)
 async def list_article_images(
     article_id: int,
     storage: PostgresStorage = Depends(get_storage),
@@ -208,7 +221,7 @@ async def list_article_images(
     return {'images': payload}
 
 
-@router.post('/article/{article_id}/transcribe', status_code=202)
+@router.post('/article/{article_id}/transcribe', status_code=202, response_model=TranscribeQueuedOut)
 async def transcribe_article(
     article_id: int,
     force_asr: bool = Query(False, description='跳过现成的字幕/转录稿，强制重新转写'),
@@ -243,7 +256,22 @@ async def transcribe_article(
     return {'article_pk': article_id, 'state': 'pending', 'force_asr': force_asr}
 
 
-@router.get('/article/{article_id}/transcript', response_model=None)
+#: The transcript exports are text formats; the body is the document itself, not JSON.
+_TRANSCRIPT_RESPONSES = {
+    200: {
+        'description': 'The transcript, in the requested format.',
+        'content': {
+            'text/markdown': {},
+            'text/plain': {},
+            'application/x-subrip': {},
+        },
+    }
+}
+
+
+@router.get(
+    '/article/{article_id}/transcript', response_class=Response, response_model=None, responses=_TRANSCRIPT_RESPONSES
+)
 async def export_transcript(
     article_id: int,
     format: str = Query('md', pattern='^(md|txt|srt)$'),
@@ -285,7 +313,29 @@ async def export_transcript(
     return Response(content=body, media_type=media_type)
 
 
-@router.get('/media/{article_pk}/{kind}', response_model=None)
+#: The archived object is handed out with the content type it was stored under.
+_ARCHIVED_MEDIA_RESPONSES = {
+    200: {
+        'description': 'The archived bytes, in the type the object was stored with.',
+        'content': {'audio/mpeg': {}, 'video/mp4': {}, 'application/octet-stream': {}},
+    },
+    206: {
+        'description': 'The requested byte range of the archived object.',
+        'content': {'audio/mpeg': {}, 'video/mp4': {}, 'application/octet-stream': {}},
+    },
+    302: {
+        'description': 'Audio that was never archived, redirected to its source URL.',
+    },
+    416: {
+        'description': 'The requested range is not satisfiable.',
+        'headers': {'Content-Range': {'schema': {'type': 'string'}}},
+    },
+}
+
+
+@router.get(
+    '/media/{article_pk}/{kind}', response_class=Response, response_model=None, responses=_ARCHIVED_MEDIA_RESPONSES
+)
 async def stream_archived_media(
     article_pk: int,
     kind: str,
@@ -408,7 +458,9 @@ async def _close_body_when_done(body: Any) -> AsyncIterator[bytes]:
                 logger.warning('Failed to close archived media body', exc_info=True)
 
 
-@router.get('/image/{image_id}')
+@router.get(
+    '/image/{image_id}', response_class=Response, response_model=None, responses={200: {'content': {'image/*': {}}}}
+)
 async def get_image(
     image_id: int,
     storage: PostgresStorage = Depends(get_storage),
@@ -428,7 +480,7 @@ async def get_image(
     return binary_response(payload, content_type)
 
 
-@router.post('/image/{image_id}/block')
+@router.post('/image/{image_id}/block', response_model=BlockedImageOut)
 async def block_image(
     image_id: int,
     storage: PostgresStorage = Depends(get_storage),
@@ -458,7 +510,7 @@ def _cleanup_refetch_tasks() -> None:
             del _refetch_tasks[tid]
 
 
-@router.get('/article/refetch/{task_id}')
+@router.get('/article/refetch/{task_id}', response_model=RefetchStatusOut)
 def get_refetch_status(task_id: str, user: User = Depends(current_user)) -> dict[str, Any]:
     _cleanup_refetch_tasks()
     with _refetch_lock:
@@ -473,7 +525,7 @@ def get_refetch_status(task_id: str, user: User = Depends(current_user)) -> dict
     return {key: value for key, value in task.items() if key != 'user_id'}
 
 
-@router.post('/article/{article_id}/refetch')
+@router.post('/article/{article_id}/refetch', response_model=RefetchStartedOut)
 async def refetch_article(
     article_id: int,
     storage: PostgresStorage = Depends(get_storage),

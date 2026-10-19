@@ -12,11 +12,12 @@ from fastapi import APIRouter, Depends
 from ...exceptions import ApiError
 from ...weixin_source import WeixinSource
 from ..deps import current_user
+from ..schemas.source import DaemonActionResultOut, DaemonLoginStatusOut, DaemonQrOut
 
 router = APIRouter(dependencies=[Depends(current_user)])
 
 
-@router.get('/login')
+@router.get('/login', response_model=DaemonLoginStatusOut)
 async def login_status() -> dict[str, Any]:
     """daemon 登录状态（登录由 weixin-rs daemon 负责，hippo 不再保存凭据）。"""
     try:
@@ -46,7 +47,7 @@ async def login_status() -> dict[str, Any]:
     }
 
 
-@router.post('/login/auto')
+@router.post('/login/auto', response_model=DaemonActionResultOut)
 async def login_auto() -> dict[str, Any]:
     """用 daemon 本地的 auto_auth_key 免扫重登。"""
     try:
@@ -57,7 +58,7 @@ async def login_auto() -> dict[str, Any]:
     return {'ok': True, 'result': result}
 
 
-@router.post('/login/qr')
+@router.post('/login/qr', response_model=DaemonQrOut)
 async def login_qr() -> dict[str, Any]:
     """索取扫码登录二维码（前端渲染 ``png_base64`` 或 ``url``）。"""
     try:
@@ -74,7 +75,7 @@ async def login_qr() -> dict[str, Any]:
     }
 
 
-@router.post('/login/wait')
+@router.post('/login/wait', response_model=DaemonActionResultOut)
 async def login_wait() -> dict[str, Any]:
     """等扫码确认（daemon 侧轮询，最长约 5 分钟）。"""
     try:

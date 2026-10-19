@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
 from ...config import DEFAULT_GROUP_NAME
 from ...exceptions import ApiError
@@ -27,6 +27,15 @@ from ...sources.probe import probe_credential
 from ...sources.registry import MediaSources
 from ...storage import PostgresStorage, ensure_default_group
 from ..deps import client_ip, current_user, get_storage
+from ..schemas.source import (
+    CredentialListOut,
+    CredentialProbeOut,
+    CredentialRequest,
+    SourceListOut,
+    SourcePreviewOut,
+    SubscribeRequest,
+    SubscriptionOut,
+)
 
 logger = get_logger(__name__)
 
@@ -81,7 +90,7 @@ async def _preview(sources: MediaSources, source: str, url: str) -> ChannelInfo:
         raise ApiError('解析失败', status=502, code='source.parse_failed') from exc
 
 
-@router.get('/source')
+@router.get('/source', response_model=SourceListOut)
 async def list_sources(
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
@@ -94,7 +103,7 @@ async def list_sources(
     return {'sources': await storage.accounts.count_by_source(user.id)}
 
 
-@router.get('/source/preview')
+@router.get('/source/preview', response_model=SourcePreviewOut)
 async def preview_source(
     url: str = Query(..., description='视频 / 频道 / 订阅地址'),
     user: User = Depends(current_user),
@@ -126,10 +135,10 @@ async def preview_source(
     }
 
 
-@router.post('/source/channel', status_code=status.HTTP_202_ACCEPTED)
+@router.post('/source/channel', status_code=status.HTTP_202_ACCEPTED, response_model=SubscriptionOut)
 async def subscribe_source(
     request: Request,
-    body: dict[str, Any] = Body(default={}),
+    body: SubscribeRequest,
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
 ) -> dict[str, Any]:
@@ -138,12 +147,12 @@ async def subscribe_source(
     Accepts the ``biz`` from a preview so the console does not resolve the same URL
     twice; without it the URL is resolved here.
     """
-    url = str(body.get('url') or '').strip()
+    url = body.url.strip()
     if not url:
         raise ApiError('缺少 url', status=400)
     source = _require_source(url)
 
-    group_id = body.get('group_id')
+    group_id = body.group_id
     if group_id is None:
         default_group = await ensure_default_group(storage, user.id, name=DEFAULT_GROUP_NAME)
         group_id = default_group.id
@@ -186,7 +195,7 @@ async def subscribe_source(
     }
 
 
-@router.get('/source/credential')
+@router.get('/source/credential', response_model=CredentialListOut)
 async def list_credentials(
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
@@ -199,7 +208,7 @@ async def list_credentials(
 @router.put('/source/credential/{source}', status_code=status.HTTP_204_NO_CONTENT)
 async def set_credential(
     source: str,
-    body: dict[str, Any] = Body(default={}),
+    body: CredentialRequest,
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
 ) -> None:
@@ -209,14 +218,14 @@ async def set_credential(
     endpoint, which only reports whether one is configured.
     """
     try:
-        secret = clean_credential(source, body.get('secret'))
+        secret = clean_credential(source, body.secret)
     except CredentialError as exc:
         raise ApiError(str(exc), status=400) from exc
     async with storage.transaction():
         await storage.credentials.set(user.id, source, secret)
 
 
-@router.post('/source/credential/{source}/test')
+@router.post('/source/credential/{source}/test', response_model=CredentialProbeOut)
 async def test_credential(
     source: str,
     scope: str = Query('user', pattern='^(user|instance)$'),

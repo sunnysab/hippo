@@ -10,7 +10,10 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from pydantic import ValidationError
+
 from hippo.api.routers import annotation as annotation_api
+from hippo.api.schemas.article import AnnotationCreateRequest
 from hippo.exceptions import ApiError
 from hippo.repositories.annotation import CONTEXT_LENGTH, _row
 
@@ -67,7 +70,7 @@ class AnnotationApiTest(unittest.IsolatedAsyncioTestCase):
         storage = _storage()
         with patch.object(annotation_api, '_ensure_article', AsyncMock()), self.assertRaises(ApiError):
             await annotation_api.create_annotation(
-                1, body={'quote': '   '}, user=_user(), storage=storage
+                1, body=AnnotationCreateRequest(quote='   '), user=_user(), storage=storage
             )
         storage.annotations.create.assert_not_awaited()
 
@@ -76,7 +79,7 @@ class AnnotationApiTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(annotation_api, '_ensure_article', AsyncMock()), self.assertRaises(ApiError):
             await annotation_api.create_annotation(
                 1,
-                body={'quote': 'x' * (annotation_api.MAX_QUOTE_LENGTH + 1)},
+                body=AnnotationCreateRequest(quote='x' * (annotation_api.MAX_QUOTE_LENGTH + 1)),
                 user=_user(),
                 storage=storage,
             )
@@ -87,11 +90,11 @@ class AnnotationApiTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(annotation_api, '_ensure_article', AsyncMock()):
             await annotation_api.create_annotation(
                 5,
-                body={
-                    'quote': 'q',
-                    'prefix': 'p' * (CONTEXT_LENGTH * 3),
-                    'suffix': 's' * (CONTEXT_LENGTH * 3),
-                },
+                body=AnnotationCreateRequest(
+                    quote='q',
+                    prefix='p' * (CONTEXT_LENGTH * 3),
+                    suffix='s' * (CONTEXT_LENGTH * 3),
+                ),
                 user=_user(7),
                 storage=storage,
             )
@@ -103,11 +106,10 @@ class AnnotationApiTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(5, kwargs['article_pk'])
 
     async def test_an_unknown_colour_is_rejected(self) -> None:
-        storage = _storage()
-        with patch.object(annotation_api, '_ensure_article', AsyncMock()), self.assertRaises(ApiError):
-            await annotation_api.create_annotation(
-                1, body={'quote': 'q', 'color': 'chartreuse'}, user=_user(), storage=storage
-            )
+        # The colour is a closed set on the request model, so the route never
+        # sees a value it would have to reject at runtime.
+        with self.assertRaises(ValidationError):
+            AnnotationCreateRequest.model_validate({'quote': 'q', 'color': 'chartreuse'})
 
     async def test_deleting_someone_elses_highlight_is_a_404(self) -> None:
         storage = _storage(deleted=False)
@@ -119,11 +121,12 @@ class AnnotationApiTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_missing_article_is_a_404_before_any_write(self) -> None:
         storage = _storage()
-        with patch.object(
-            annotation_api, '_ensure_article', AsyncMock(side_effect=ApiError('not found', status=404))
-        ), self.assertRaises(ApiError) as ctx:
+        with (
+            patch.object(annotation_api, '_ensure_article', AsyncMock(side_effect=ApiError('not found', status=404))),
+            self.assertRaises(ApiError) as ctx,
+        ):
             await annotation_api.create_annotation(
-                1, body={'quote': 'q'}, user=_user(), storage=storage
+                1, body=AnnotationCreateRequest(quote='q'), user=_user(), storage=storage
             )
         self.assertEqual(404, ctx.exception.status)
         storage.annotations.create.assert_not_awaited()

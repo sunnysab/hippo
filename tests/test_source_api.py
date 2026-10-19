@@ -8,7 +8,10 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from pydantic import ValidationError
+
 from hippo.api.routers import source as source_api
+from hippo.api.schemas.source import CredentialRequest, SubscribeRequest
 from hippo.exceptions import ApiError
 from hippo.models import AccountCredential
 from hippo.sources.bilibili import BilibiliError
@@ -202,7 +205,7 @@ class SubscribeTest(unittest.IsolatedAsyncioTestCase):
         ):
             result = await source_api.subscribe_source(
                 request=_request(),
-                body={'url': 'https://feed.example/rss'},
+                body=SubscribeRequest(url='https://feed.example/rss'),
                 user=_user(),
                 storage=storage,
             )
@@ -216,11 +219,18 @@ class SubscribeTest(unittest.IsolatedAsyncioTestCase):
         storage.subscriptions.upsert.assert_awaited()
         self.assertEqual(['podcast:abc'], storage.sync_jobs.create_job.call_args.kwargs['biz_list'])
 
-    async def test_a_missing_url_is_a_bad_request(self) -> None:
+    async def test_a_blank_url_is_a_bad_request(self) -> None:
         with self.assertRaises(ApiError) as ctx:
-            await source_api.subscribe_source(request=_request(), body={}, user=_user(), storage=_storage())
+            await source_api.subscribe_source(
+                request=_request(), body=SubscribeRequest(url='   '), user=_user(), storage=_storage()
+            )
 
         self.assertEqual(400, ctx.exception.status)
+
+    def test_a_subscription_needs_a_url_at_all(self) -> None:
+        # The body is declared with a url, so an empty one never reaches the route.
+        with self.assertRaises(ValidationError):
+            SubscribeRequest.model_validate({})
 
 
 class CredentialTest(unittest.IsolatedAsyncioTestCase):
@@ -228,19 +238,19 @@ class CredentialTest(unittest.IsolatedAsyncioTestCase):
         storage = _storage()
 
         await source_api.set_credential(
-            source='bilibili', body={'secret': 'SESSDATA=abc'}, user=_user(), storage=storage
+            source='bilibili', body=CredentialRequest(secret='SESSDATA=abc'), user=_user(), storage=storage
         )
         listed = await source_api.list_credentials(user=_user(), storage=storage)
 
-        self.assertEqual(
-            {'bilibili': {'configured': True}, 'youtube': {'configured': False}}, listed
-        )
+        self.assertEqual({'bilibili': {'configured': True}, 'youtube': {'configured': False}}, listed)
         self.assertNotIn('secret', str(listed))
 
     async def test_an_empty_secret_clears_it(self) -> None:
         storage = _storage(credentials={'bilibili': 'SESSDATA=abc'})
 
-        await source_api.set_credential(source='bilibili', body={'secret': '  '}, user=_user(), storage=storage)
+        await source_api.set_credential(
+            source='bilibili', body=CredentialRequest(secret='  '), user=_user(), storage=storage
+        )
 
         self.assertEqual(
             {'bilibili': {'configured': False}, 'youtube': {'configured': False}},
@@ -259,13 +269,15 @@ class CredentialTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_an_unsupported_source_is_refused(self) -> None:
         with self.assertRaises(ApiError):
-            await source_api.set_credential(source='weixin', body={}, user=_user(), storage=_storage())
+            await source_api.set_credential(
+                source='weixin', body=CredentialRequest(secret='x'), user=_user(), storage=_storage()
+            )
 
     async def test_a_bilibili_cookie_without_sessdata_is_refused(self) -> None:
         # 没有 SESSDATA 的「cookie」过不了 B站的风控，早拒绝比晚 412 好。
         with self.assertRaises(ApiError) as ctx:
             await source_api.set_credential(
-                source='bilibili', body={'secret': 'buvid3=abc'}, user=_user(), storage=_storage()
+                source='bilibili', body=CredentialRequest(secret='buvid3=abc'), user=_user(), storage=_storage()
             )
 
         self.assertIn('SESSDATA', str(ctx.exception))
@@ -276,7 +288,7 @@ class CredentialTest(unittest.IsolatedAsyncioTestCase):
 
         await source_api.set_credential(
             source='bilibili',
-            body={'secret': 'SESSDATA=abc;\n  bili_jct=def\n'},
+            body=CredentialRequest(secret='SESSDATA=abc;\n  bili_jct=def\n'),
             user=_user(),
             storage=storage,
         )
@@ -287,7 +299,9 @@ class CredentialTest(unittest.IsolatedAsyncioTestCase):
         storage = _storage()
         cookies = '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t1800000000\tSID\tabc\n'
 
-        await source_api.set_credential(source='youtube', body={'secret': cookies}, user=_user(), storage=storage)
+        await source_api.set_credential(
+            source='youtube', body=CredentialRequest(secret=cookies), user=_user(), storage=storage
+        )
 
         self.assertEqual(cookies.strip(), await storage.credentials.get(1, 'youtube'))
 
@@ -296,13 +310,17 @@ class CredentialTest(unittest.IsolatedAsyncioTestCase):
 
         for source in ('bilibili', 'youtube'):
             with self.subTest(source=source), self.assertRaises(ApiError):
-                await source_api.set_credential(source=source, body={'secret': html}, user=_user(), storage=_storage())
+                await source_api.set_credential(
+                    source=source, body=CredentialRequest(secret=html), user=_user(), storage=_storage()
+                )
 
     async def test_an_oversized_credential_is_refused(self) -> None:
         huge = 'SESSDATA=' + 'a' * (MAX_CREDENTIAL_BYTES + 1)
 
         with self.assertRaises(ApiError) as ctx:
-            await source_api.set_credential(source='bilibili', body={'secret': huge}, user=_user(), storage=_storage())
+            await source_api.set_credential(
+                source='bilibili', body=CredentialRequest(secret=huge), user=_user(), storage=_storage()
+            )
 
         self.assertIn('过大', str(ctx.exception))
 
