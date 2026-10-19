@@ -12,7 +12,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import StreamingResponse
 
 from ...article_queries import _get_article
@@ -24,6 +24,15 @@ from ...logger import get_logger
 from ...models import User
 from ...storage import PostgresStorage, open_storage
 from ..deps import current_user, get_storage
+from ..schemas.chat import (
+    ChatSessionDetailOut,
+    ChatSessionListOut,
+    ChatSessionOut,
+    MessageRequest,
+    PresetAnswerOut,
+    SessionCreateRequest,
+    SessionRenameRequest,
+)
 
 logger = get_logger(__name__)
 router = APIRouter(dependencies=[Depends(current_user)])
@@ -34,6 +43,12 @@ HISTORY_LIMIT = 20
 
 #: Answer length ceiling.
 MAX_ANSWER_TOKENS = 2000
+
+
+class EventStreamResponse(StreamingResponse):
+    """An SSE body, so /docs says text/event-stream instead of assuming JSON."""
+
+    media_type = 'text/event-stream'
 
 
 def _session_id(raw: str) -> int:
@@ -47,7 +62,7 @@ def _sse(payload: dict[str, Any]) -> str:
     return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
 
 
-@router.get('/chat/session')
+@router.get('/chat/session', response_model=ChatSessionListOut)
 async def list_sessions(
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
@@ -56,22 +71,17 @@ async def list_sessions(
     return {'items': await storage.chat.list_sessions(user.id)}
 
 
-@router.post('/chat/session', status_code=status.HTTP_201_CREATED)
+@router.post('/chat/session', status_code=status.HTTP_201_CREATED, response_model=ChatSessionOut)
 async def create_session(
-    body: dict[str, Any] = Body(default={}),
+    body: SessionCreateRequest = SessionCreateRequest(),
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
 ) -> dict[str, Any]:
     """Open a conversation, reusing the article's existing one when there is one."""
-    raw_article_id = body.get('article_id')
-    article_pk: int | None = None
-    title = str(body.get('title') or '').strip()
+    article_pk = body.article_id
+    title = (body.title or '').strip()
 
-    if raw_article_id is not None:
-        try:
-            article_pk = int(raw_article_id)
-        except (TypeError, ValueError) as exc:
-            raise ApiError('Invalid article_id', status=400) from exc
+    if article_pk is not None:
         # 404 unless the article is visible to this user.
         await _get_article(storage, user.id, article_pk)
         existing = await storage.chat.get_session_for_article(user.id, article_pk)
@@ -85,7 +95,7 @@ async def create_session(
         return await storage.chat.create_session(user_id=user.id, title=title, article_pk=article_pk)
 
 
-@router.get('/chat/session/{session_id}')
+@router.get('/chat/session/{session_id}', response_model=ChatSessionDetailOut)
 async def get_session(
     session_id: str,
     user: User = Depends(current_user),
@@ -106,11 +116,11 @@ async def get_session(
 @router.post('/chat/session/{session_id}/rename', status_code=status.HTTP_204_NO_CONTENT)
 async def rename_session(
     session_id: str,
-    body: dict[str, Any] = Body(default={}),
+    body: SessionRenameRequest,
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
 ) -> None:
-    title = str(body.get('title') or '').strip()
+    title = body.title.strip()
     if not title:
         raise ApiError('标题不能为空', status=400)
     async with storage.transaction():
@@ -131,7 +141,7 @@ async def delete_session(
         raise ApiError('会话不存在', status=404)
 
 
-@router.get('/chat/session/{session_id}/preset/{preset}')
+@router.get('/chat/session/{session_id}/preset/{preset}', response_model=PresetAnswerOut)
 async def read_preset(
     session_id: str,
     preset: str,
@@ -158,26 +168,28 @@ async def read_preset(
     }
 
 
-@router.post('/chat/session/{session_id}/message')
+@router.post('/chat/session/{session_id}/message', response_class=EventStreamResponse)
 async def send_message(
     session_id: str,
     request: Request,
-    body: dict[str, Any] = Body(default={}),
+    body: MessageRequest = MessageRequest(),
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
 ) -> StreamingResponse:
     """Send a turn and stream the answer back as server-sent events.
 
     ``preset`` (summary, points) sends a canned instruction instead of user
-    text; ``content`` sends a free-form question.
+    text; ``content`` sends a free-form question. A failure before the stream
+    starts is a normal JSON error; a failure mid-stream travels as an ``error``
+    event, because the status is already sent.
     """
     target_id = _session_id(session_id)
     session = await storage.chat.get_session(target_id, user.id)
     if session is None:
         raise ApiError('会话不存在', status=404)
 
-    preset = str(body.get('preset') or '').strip()
-    content = str(body.get('content') or '').strip()
+    preset = (body.preset or '').strip()
+    content = (body.content or '').strip()
     if not preset and not content:
         raise ApiError('消息内容不能为空', status=400)
     if preset:
