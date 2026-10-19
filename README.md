@@ -250,7 +250,7 @@ uv run ruff check hippo tests
   未登记的来源会原样显示而不是消失。
 - **后端同步适配器是唯一的改造点。** `hippo/sources/` 里 `ADAPTERS` 按 `account.source` 选适配器；
   新增来源 = 加一个 `MediaSource`（`preview` + `list_items`）与一个 `MediaResolver`（把队列里的条目变成音频或字幕）。
-- **卡片与阅读器不假设内容是段落流。** 视频条目可能整篇只有一个媒体块，目录在无小标题时整列隐藏。
+- **卡片与阅读器不假设内容是段落流。** 视频条目可能整篇只有一个媒体块，没有正文时不生成 AI 大纲；没有小标题时仍可打开目录面板。
 - **凭证是「订阅者自己的优先、实例兜底」。** 频道是共享的（`accounts`），cookie 是个人的
   （`user_credential`），所以「用谁的」没有唯一答案，顺序固定为：该频道的订阅者各自那一份
   （最近更新的先试）→ 实例那份（管理台「来源」页配的）。只有**凭证被拒**才换下一份：
@@ -287,12 +287,29 @@ uv run ruff check hippo tests
   转写稿导出（md/txt/srt）、单篇按需重转。
 - **公开 API**：只读 API Key，供脚本与阅读器读取文章、转写稿与留档音频。
 - **阅读器**：`pg_jieba` 中文分词全文检索、相关度排序、按版式（图文/视频/图片消息…）分面筛选、
-  正文目录（TOC）、排版设置（宽度 / 字号 / 行高 / 字距 / 衬线）、未读箱、已读标记与收藏、
+  原文目录与可隐藏的 AI 导航大纲、排版设置（宽度 / 字号 / 行高 / 字距 / 衬线）、未读箱、已读标记与收藏、
   高亮标注、按内容哈希全局屏蔽图片。
 - **日报**：按用户时区生成当天摘要并邮件发送；投递台账保证同一天同一渠道只发一次（`POST /api/report/{date}/send` 幂等）。
 - **AI 对话**：对单篇文章提问或走预设（摘要 / 要点）；模型供应商在管理台配置，密钥只以末四位回显。
 - **RSS**：`GET /api/feed/mixed?format=rss`（用 `token=` 代替 Cookie）。
 - **可观测**：structlog 结构化日志、可选 OTLP 上报 SignOz、`GET /api/admin/log/tail` 兜底看日志文件。
+
+### 文章导航大纲
+
+打开文章后点击「目录」：有原文标题时默认展示原文目录，无标题时可切换或手动「生成大纲」。
+AI 大纲按原文顺序组织为章节和子话题，可折叠、跟随阅读位置高亮；点击标题只定位正文，
+点击时间戳才播放对应音视频（无本地留档时打开来源链接）。桌面为阅读侧栏，手机为底部抽屉，
+都可用关闭按钮收起，或按 Escape 关闭。
+
+- 前提：先在管理台配置可用的默认 LLM Provider。微信文章、B站、YouTube、播客与后续来源使用同一文本块契约，不按来源限制。
+- 只在手动触发时调用模型，结果独立缓存，不修改原文、划线或导出。正文、时间戳或生成规则变化后，旧大纲不再提供跳转。
+- 长内容按完整文本分块再合并，不截取文章开头冒充全文。单篇上限 240,000 个正文字符，过大内容明确拒绝。
+- 仅有图片或尚未转写的媒体不能生成；本功能不做 OCR，也不能提升现有 ASR 时间戳精度。
+- 生成队列持久化在 PostgreSQL，由 Web 进程领取，无新增 systemd 服务。关闭面板不取消任务；正常退出归还租约，崩溃后的租约在 15 分钟后可重领。
+  单任务最多运行 10 分钟；模型的上下文容量需容纳约 12,000 字符的分块、提示词及输出。
+- 验证：`uv run pytest tests/test_outline.py tests/test_outline_api.py tests/test_outline_worker.py tests/test_outline_repository.py`；
+  前端运行 `cd frontend && npm test -- src/pages/articles/TableOfContents.test.tsx src/pages/articles/outline.test.ts`。
+  真实模型还应人工核对全文末尾是否覆盖、章节顺序和跳转位置。
 
 ## 入口命令
 
@@ -446,17 +463,17 @@ hippo/knowledge/worker.py                   # 知识导入 worker（python -m hi
 `hippo.server`、`hippo.sync_worker` 与（需要知识库时）`hippo.knowledge.worker`。注意顺序：先迁移（`init-db`）、
 后重启服务，schema 版本不匹配时服务会拒绝启动。
 
-上线（含 schema 31）前还有几件必须做的事，**在真实隔离环境验证完成并经授权后再执行**：
+上线（含 schema 32）前还有几件必须做的事，**在真实隔离环境验证完成并经授权后再执行**：
 
-1. 当前代码 `SCHEMA_VERSION = '31'`（在 schema 30 基础上给 `sync_jobs` 追加了 `requester_user_id` 列与两个索引）。
-   本次 30 → 31 的增量是**纯追加、幂等**的 `ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`；
+1. 当前代码 `SCHEMA_VERSION = '32'`。31 → 32 追加 `article_outline` 缓存/任务表与待处理索引，
+   使用**纯追加、幂等**的 `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`；
    完整初始化脚本仍有历史清理语句，执行前必须核对这些清理项不会触及现存数据。
    还需在隔离 PG 上验证 DDL、`pg_jieba`/`pg_trgm`、GIN 索引、UUID 类型、CAS 语义、部分唯一索引与并发锁行为，
    并验证 S3 的上传/下载/删除。
 2. 正式迁移流程：**先备份**（`pg_dump -Fc`），然后**停掉 Web、sync worker 与知识 worker 三个进程**（
-   知识 worker 持有 lease/长事务，迁移前必须停），再人工跑 `python -m hippo.ops init-db`，确认库 `schema_version=31`
+   知识 worker 持有 lease/长事务，迁移前必须停），再人工跑 `python -m hippo.ops init-db`，确认库 `schema_version=32`
    后再重启。不要让旧进程在新 schema 上继续跑。
-3. **schema 只能前进**：库一旦升到 31，回退到 schema 30 的代码会因 `SCHEMA_VERSION(30) != meta.schema_version(31)`
+3. **schema 只能前进**：库一旦升到 32，回退到 schema 31 的代码会因 `SCHEMA_VERSION(31) != meta.schema_version(32)`
    拒绝启动；优先修复并继续迁移，不能改 `meta.schema_version` 蒙混过关。确需恢复时，先将备份恢复到
    **新的隔离数据库**核对，再由操作者批准切换；不要直接用旧快照覆盖生产库，避免丢失备份之后的写入。
 4. **发布窗口压自动同步**：生产 `sync:settings` 当前为 `enabled=false`、`interval_minutes=120`，调度循环不会自动跑；

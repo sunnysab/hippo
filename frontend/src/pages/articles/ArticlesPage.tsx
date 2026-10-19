@@ -16,7 +16,6 @@ import { Popover } from '../../components/Popover';
 import { LoadingIndicator } from '../../components/LoadingIndicator';
 import { copyToClipboard } from '../../utils/clipboard';
 import { articleToMarkdown } from './exportMarkdown';
-import { buildOutline } from './outline';
 import { useSyncRun } from '../../hooks/useSyncRun';
 import { getSyncRunLabel } from '../../utils/sync';
 
@@ -49,8 +48,6 @@ export function ArticlesPage() {
     getSelectedArticleLink,
   } = useArticleReader();
   const { runSync, task: syncTask, running: isSyncing } = useSyncRun();
-  // The outline button is only meaningful when the article has headings.
-  const outline = buildOutline(state.currentArticlePayload?.content);
   // Media entries are the ones with a transcription queue behind them; the button
   // is gated on the kind rather than the source, so a new source needs no change.
   const isMediaArticle = ['video', 'audio'].includes(
@@ -250,11 +247,11 @@ export function ArticlesPage() {
                 className={`btn ghost article-toolbar-btn${sidePanel === 'toc' ? ' is-active' : ''}`}
                 id="btn-article-toc-toggle"
                 type="button"
-                disabled={!state.currentArticlePayload || outline.length === 0}
+                disabled={!state.currentArticlePayload}
                 aria-pressed={sidePanel === 'toc'}
-                title={outline.length === 0
-                  ? t('articles.tocEmpty', '本文没有可跳转的小标题')
-                  : t('articles.toc', '目录')}
+                aria-expanded={sidePanel === 'toc'}
+                aria-controls='article-outline-panel'
+                title={t('articles.toc', 'Contents')}
                 onClick={() => setSidePanel((current) => (current === 'toc' ? '' : 'toc'))}
               >
                 {t('articles.toc', '目录')}

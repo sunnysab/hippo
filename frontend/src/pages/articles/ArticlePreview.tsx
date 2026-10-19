@@ -1,4 +1,4 @@
-import { useState, useRef, type RefObject } from 'react';
+import { lazy, Suspense, useState, useRef, type RefObject } from 'react';
 import { ContextMenu } from '../../components/ContextMenu';
 import { useArticlesState } from '../../store/articles';
 import { useI18n } from '../../i18n';
@@ -7,13 +7,14 @@ import { ArticleHeader } from './ArticleHeader';
 import { ArticleContent } from './ArticleContent';
 import { HighlightToolbar } from './HighlightToolbar';
 import { ReadingSidebar } from './ReadingSidebar';
-import { TableOfContents } from './TableOfContents';
 import { buildOutline } from './outline';
 import { useHighlights } from './useHighlights';
 import { EmptyState } from '../../components/EmptyState';
 import { useToast } from '../../hooks/useToast';
 import { apiGet, apiSend, isAuthError } from '../../api';
 import type { ReadingPanel } from '../../hooks/useArticleReader';
+
+const TableOfContents = lazy(() => import('./TableOfContents').then((module) => ({ default: module.TableOfContents })));
 
 interface ArticlePreviewProps {
   previewRef: RefObject<HTMLDivElement | null>;
@@ -110,7 +111,15 @@ export function ArticlePreview({ previewRef, sidePanel, onSidePanelToggle }: Art
         <>
           <HighlightToolbar containerRef={readerRef} onCreate={create} />
           {sidePanel === 'toc' ? (
-            <TableOfContents items={outline} containerRef={previewRef} />
+            <Suspense fallback={<aside className='reader-toc' role='status'>{t('articles.outline.loading', 'Loading outline…')}</aside>}>
+              <TableOfContents
+                key={`${payload.article.id}:${payload.content_updated_at}`}
+                items={outline}
+                payload={payload}
+                containerRef={previewRef}
+                onClose={() => onSidePanelToggle('toc')}
+              />
+            </Suspense>
           ) : (
             <ReadingSidebar
               articleId={state.selectedArticleId ?? null}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
 import logging
 import os
@@ -31,6 +32,7 @@ from .api.routers import (
     feed,
     knowledge,
     llm,
+    outline,
     registration,
     report,
     settings,
@@ -41,6 +43,7 @@ from .config import WEB_SERVICE, get_settings
 from .logger import configure_logging
 from .observability.logging import resolve_level, shutdown_logging
 from .observability.otel import init_telemetry, instrument_app
+from .outline_worker import run_loop as run_outline_loop
 from .report_scheduler import ReportScheduler
 from .storage import open_storage
 from .sync_scheduler import SyncScheduler
@@ -194,9 +197,13 @@ def create_app(
         else:
             app.state.sync_scheduler = None
             app.state.report_scheduler = None
+        outline_task = asyncio.create_task(run_outline_loop())
         try:
             yield
         finally:
+            outline_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await outline_task
             scheduler = getattr(app.state, 'sync_scheduler', None)
             if scheduler:
                 await scheduler.stop()
@@ -246,6 +253,7 @@ def create_app(
         daemon,
         admin,
         llm,
+        outline,
         knowledge,
     ):
         app.include_router(module.router, prefix='/api')

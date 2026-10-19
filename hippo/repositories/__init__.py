@@ -22,6 +22,7 @@ from .knowledge import KnowledgeRepository
 from .llm import LlmProviderRepository, mask_key
 from .media import ArticleMediaRepository, MediaJobRepository, UserCredentialRepository
 from .meta import MetaRepository
+from .outline import OutlineRepository
 from .queue import ArticleQueueRepository
 from .read import ArticleReadRepository
 from .session import UserSessionRepository
@@ -51,6 +52,7 @@ __all__ = [
     'LlmProviderRepository',
     'MediaJobRepository',
     'MetaRepository',
+    'OutlineRepository',
     'SubscriptionRepository',
     'UserCredentialRepository',
     'UserRepository',

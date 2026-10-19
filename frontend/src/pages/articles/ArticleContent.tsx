@@ -14,7 +14,7 @@ import { EmptyState } from '../../components/EmptyState';
 import type { ArticlePayload, ArticleContentBlock } from '../../store/articles';
 import { buildContentBlockKeys } from './contentKeys';
 import { formatDuration as anchorLabel, timestampHref } from '../../utils/duration';
-import { headingAnchorId } from './outline';
+import { headingAnchorId, isOutlineBlock } from './outline';
 
 /**
  * A transcript is navigated by clicking an anchor in front of a paragraph, which
@@ -70,6 +70,7 @@ interface ContentBlockProps {
 /** Only headings need to know where they sit, for the outline anchor. */
 interface AnchorableBlockProps extends ContentBlockProps {
   index: number;
+  outlineIndex?: number;
 }
 
 const ArticleImageBlock = memo(function ArticleImageBlock({
@@ -245,28 +246,31 @@ const ContentBlock = memo(function ContentBlock({
   videoRef,
   onTimeUpdate,
   isPlayingBlock,
+  outlineIndex,
 }: AnchorableBlockProps & PlayerRefProps & { isPlayingBlock: boolean }) {
   const { canSeek, seek, originalHref } = useContext(PlayerContext);
 
-  if (block.type === 'paragraph') {
+  const anchor = { 'data-outline-block': outlineIndex };
+
+  if (['paragraph', 'text', 'link'].includes(block.type)) {
     const label = anchorLabel(block.t);
     const text = renderInlineNodes(block.text || '');
     const className = isPlayingBlock ? 'is-playing' : undefined;
-    if (!label) return <p className={className}>{text}</p>;
+    if (!label) return <p {...anchor} className={className}>{text}</p>;
     if (!canSeek) {
       // Nothing is archived here, so the anchor opens the original at that moment
       // instead of seeking a player that does not exist.
       const href = originalHref ? timestampHref(originalHref, block.t || 0) : null;
       if (!href) {
         return (
-          <p className={className}>
+          <p {...anchor} className={className}>
             <span className="reader-anchor" title={label}>{label}</span>
             {text}
           </p>
         );
       }
       return (
-        <p className={className}>
+        <p {...anchor} className={className}>
           <a className="reader-anchor is-action" href={href} target="_blank" rel="noreferrer" title={label}>
             {label}
           </a>
@@ -275,7 +279,7 @@ const ContentBlock = memo(function ContentBlock({
       );
     }
     return (
-      <p className={className}>
+      <p {...anchor} className={className}>
         <button
           className="reader-anchor is-action"
           type="button"
@@ -314,12 +318,12 @@ const ContentBlock = memo(function ContentBlock({
     const id = headingAnchorId(index);
     const level = Math.min(Math.max(Number(block.level) || 2, 2), 4);
     if (level === 2) {
-      return <h2 id={id}>{renderInlineNodes(block.text || '')}</h2>;
+      return <h2 {...anchor} id={id}>{renderInlineNodes(block.text || '')}</h2>;
     }
     if (level === 3) {
-      return <h3 id={id}>{renderInlineNodes(block.text || '')}</h3>;
+      return <h3 {...anchor} id={id}>{renderInlineNodes(block.text || '')}</h3>;
     }
-    return <h4 id={id}>{renderInlineNodes(block.text || '')}</h4>;
+    return <h4 {...anchor} id={id}>{renderInlineNodes(block.text || '')}</h4>;
   }
 
   if (block.type === 'image') {
@@ -339,7 +343,7 @@ const ContentBlock = memo(function ContentBlock({
       .replace(/\n?```+$/, '')
       .trimEnd();
     return (
-      <pre className="code-block"><code>{codeText}</code></pre>
+      <pre {...anchor} className="code-block"><code>{codeText}</code></pre>
     );
   }
 
@@ -473,6 +477,8 @@ function RenderedContent({ payload, content, hideSmall, onImageContextMenu }: Re
     };
   }, [canSeek, markAt, originalHref]);
   const contentKeys = buildContentBlockKeys(content);
+  let outlineIndex = 0;
+  const outlineIndexes = content.map((block) => isOutlineBlock(block) ? outlineIndex++ : undefined);
 
   return (
     <PlayerContext.Provider value={controls}>
@@ -481,6 +487,7 @@ function RenderedContent({ payload, content, hideSmall, onImageContextMenu }: Re
           key={contentKeys[index]}
           block={block}
           index={index}
+          outlineIndex={outlineIndexes[index]}
           images={payload.images}
           hideSmall={hideSmall}
           onImageContextMenu={onImageContextMenu}

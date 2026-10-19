@@ -380,6 +380,48 @@ GET /api/article/42
 - `content_fetch_diagnostic`：非 `ok` 时给出抓取失败诊断（`last_error`、`error_type`、`retryable`、`attempts`），否则 `null`。
 - `images` 只含 `article_images` 的元数据；`kind` 目前是 `cover` 或 `inline`。
 
+### 导航大纲
+
+```text
+GET  /api/article/{article_id}/outline
+POST /api/article/{article_id}/outline
+```
+
+两者都先检查调用者是否订阅该文章所属账号，不可见时返回 `404`；缓存是文章的共享派生数据，不含用户聊天内容。
+GET 只读取，不调用模型。POST 手动请求生成，正文不存在时 `409`，超过 240,000 个正文字符时 `413`，
+缺少默认 LLM Provider 时 `503`。请求体可省略：
+
+```json
+{ "force": false, "content_updated_at": "2026-10-19T00:00:00Z" }
+```
+
+`force: true` 重新生成已有结果，但不重启正在排队或运行的同一正文任务。`content_updated_at` 可选；
+传入时必须与当前正文版本一致，否则 `409` / `outline.content_changed`。已有有效缓存返回 `200`，
+新任务或已有活动任务返回 `202`，客户端随后轮询 GET：
+
+```json
+{
+  "state": "ready",
+  "content_updated_at": "2026-10-19T00:00:00Z",
+  "can_generate": true,
+  "sections": [
+    { "title": "行业现状", "start_block": 0, "children": [
+      { "title": "项目与回款", "start_block": 2 }
+    ] }
+  ],
+  "model": "configured-model",
+  "updated_at": "2026-10-19T00:01:00Z",
+  "error_code": null
+}
+```
+
+- `state`：`missing` / `queued` / `processing` / `ready` / `failed` / `stale`。只有 `ready` 提供章节链接，失效结果不提供旧锚点。
+- `start_block` 是**非空、可渲染文本块的从零顺序号**，只计 `paragraph` / `heading` / `code` / `link` / `text`；
+  不计图片和音视频。前端定位时必须使用相同编号，并核对 `content_updated_at` 与当前打开的正文一致。
+- 标题和时间戳由正文映射，不允许模型发明定位信息；章节严格按原文顺序，子话题不能越过章节边界。
+- `error_code` 为 `outline.invalid_result`、`outline.content_changed`、`outline.too_large` 或 `outline.generation_failed`，
+  不返回上游异常详情。任务结果独立保存，不插入原文或聊天记录。
+
 ### 已读状态
 
 ```
@@ -1047,6 +1089,8 @@ Content-Type: application/pdf
 | POST | `/api/article/{article_id}/annotation` | 登录 |
 | DELETE | `/api/article/{article_id}/annotation/{annotation_id}` | 登录 |
 | GET | `/api/article/{article_id}/image` | 登录 |
+| GET | `/api/article/{article_id}/outline` | 登录 |
+| POST | `/api/article/{article_id}/outline` | 登录 |
 | PUT | `/api/article/{article_id}/read` | 登录 |
 | POST | `/api/article/{article_id}/refetch` | 登录 |
 | PUT | `/api/article/{article_id}/star` | 登录 |

@@ -31,3 +31,48 @@ export const buildOutline = (blocks: ArticleContentBlock[] | null | undefined): 
   });
   return items;
 };
+
+/** Matches the backend snapshot numbering, independent of media/image blocks. */
+export const isOutlineBlock = (block: ArticleContentBlock): boolean => (
+  ['paragraph', 'heading', 'code', 'link', 'text'].includes(block.type)
+  && typeof block.text === 'string'
+  && Boolean(block.text.trim())
+);
+
+export interface GeneratedTopic {
+  title: string;
+  start_block: number;
+}
+
+export interface GeneratedSection extends GeneratedTopic {
+  children: GeneratedTopic[];
+}
+
+export interface ArticleOutline {
+  state: 'missing' | 'stale' | 'queued' | 'processing' | 'ready' | 'failed';
+  content_updated_at: string | null;
+  sections: GeneratedSection[];
+  can_generate: boolean;
+  model: string | null;
+  updated_at: string | null;
+  error_code: string | null;
+}
+
+export const outlineBlockSelector = (index: number): string => `[data-outline-block="${index}"]`;
+
+export const sameContentVersion = (left: string | null, right: string | null): boolean => (
+  left === right || (left !== null && right !== null && Date.parse(left) === Date.parse(right))
+);
+
+/** Scroll only the reader on desktop; use the page when mobile has no scroll pane. */
+export function jumpToOutline(container: HTMLElement, target: HTMLElement) {
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const behavior = reduced ? 'instant' : 'smooth';
+  const scrolls = /auto|scroll/.test(getComputedStyle(container).overflowY);
+  if (scrolls) {
+    container.scrollTo({ top: container.scrollTop + target.getBoundingClientRect().top - container.getBoundingClientRect().top - 24, behavior });
+  } else {
+    window.scrollTo({ top: window.scrollY + target.getBoundingClientRect().top - 88, behavior });
+  }
+  if (!reduced) target.animate?.([{ backgroundColor: 'var(--info-soft)' }, { backgroundColor: 'transparent' }], { duration: 1000 });
+}

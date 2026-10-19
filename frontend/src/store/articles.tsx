@@ -33,7 +33,7 @@ export interface Article {
 }
 
 export interface ArticleContentBlock {
-  type: 'paragraph' | 'heading' | 'image' | 'code' | 'video' | 'audio';
+  type: 'paragraph' | 'heading' | 'image' | 'code' | 'video' | 'audio' | 'link' | 'text';
   text?: string;
   level?: number;
   image_id?: number;

@@ -38,6 +38,7 @@ from .repositories import (
     LlmProviderRepository,
     MediaJobRepository,
     MetaRepository,
+    OutlineRepository,
     SubscriptionRepository,
     UserCredentialRepository,
     UserRepository,
@@ -46,7 +47,7 @@ from .repositories import (
 )
 from .sync_jobs import SyncJobRepository
 
-SCHEMA_VERSION = '31'
+SCHEMA_VERSION = '32'
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'schema' / 'postgres.sql'
 
@@ -236,6 +237,7 @@ class PostgresStorage(AbstractAsyncContextManager):
         self.reads = ArticleReadRepository(self.conn)
         self.stars = ArticleStarRepository(self.conn)
         self.chat = ChatRepository(self.conn)
+        self.outlines = OutlineRepository(self.conn)
         self.reports = ReportRepository(self.conn)
 
     async def close(self) -> None:

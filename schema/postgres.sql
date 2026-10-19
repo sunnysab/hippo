@@ -866,3 +866,21 @@ CREATE TABLE IF NOT EXISTS document_chunk (
 
 CREATE INDEX IF NOT EXISTS idx_document_chunk_search
 ON document_chunk USING GIN (search_vector);
+
+
+-- Navigation outlines are shared article-derived data, never conversation history.
+-- Authorization is always checked through the caller's subscription first.
+CREATE TABLE IF NOT EXISTS article_outline (
+    article_pk INTEGER PRIMARY KEY REFERENCES articles(id) ON DELETE CASCADE,
+    fingerprint TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('queued', 'processing', 'ready', 'failed')),
+    sections JSONB NOT NULL DEFAULT '[]'::jsonb,
+    lease_token UUID,
+    model TEXT,
+    error_code TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    CHECK ((state = 'processing') = (lease_token IS NOT NULL))
+);
+
+CREATE INDEX IF NOT EXISTS idx_article_outline_pending
+ON article_outline (updated_at, article_pk) WHERE state IN ('queued', 'processing');
