@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from hippo.api.routers.settings import run_sync
-from hippo.api.sync_models import SyncRunRequest
+from hippo.api.schemas.sync import SyncRunRequest
 from hippo.sync_service import SyncJobResult
 from hippo.sync_settings import _persist_sync_outcome
 from hippo.sync_types import SyncReport

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from hippo.api.routers import settings as settings_api
+from hippo.api.schemas.settings import EmailTestRequest
 from hippo.exceptions import ApiError
 
 
@@ -39,7 +40,7 @@ class TestEmailFailureTest(unittest.IsolatedAsyncioTestCase):
             self.assertRaises(ApiError) as ctx,
         ):
             await settings_api.send_sync_test_email(
-                body={'to_email': 'ops@example.com'},
+                body=EmailTestRequest(to_email='ops@example.com'),
                 storage=_storage(),
                 _=_user(),
             )

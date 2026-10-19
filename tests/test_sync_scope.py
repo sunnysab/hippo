@@ -14,7 +14,7 @@ from hippo.api.routers.settings import (
     run_site_sync,
     run_sync,
 )
-from hippo.api.sync_models import SyncRunRequest, SyncSiteRunRequest, SyncTaskListResponse
+from hippo.api.schemas.sync import SyncRunRequest, SyncSiteRunRequest, SyncTaskListResponse
 from hippo.exceptions import ApiError
 from hippo.sync_types import AccountProgress, SyncTaskState
 

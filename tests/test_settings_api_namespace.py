@@ -1,5 +1,7 @@
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from hippo.server import create_app
 
@@ -14,7 +16,13 @@ GROUPS_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'groups' / 'GroupsPage.tsx'
 
 class SettingsApiNamespaceTest(unittest.TestCase):
     def test_server_exposes_settings_routes(self) -> None:
-        app = create_app()
+        with (
+            tempfile.TemporaryDirectory() as static_dir,
+            patch('hippo.server.configure_logging'),
+            patch('hippo.server.init_telemetry', return_value=None),
+            patch('hippo.server.instrument_app'),
+        ):
+            app = create_app(static_dir=static_dir, enable_inprocess_sync=False)
         route_map: dict[str, set[str]] = {}
         for route in app.routes:
             methods = {method.upper() for method in (getattr(route, 'methods', None) or set())}

@@ -12,6 +12,7 @@ from ...emailer import get_email_settings, send_email, set_email_settings
 from ...exceptions import ApiError
 from ...logger import get_logger
 from ...models import User
+from ...repositories.llm import mask_key
 from ...storage import PostgresStorage, fetchone_row, load_meta_json
 from ...sync_core import request_sync_cancel
 from ...sync_scheduler import SyncScheduler
@@ -21,7 +22,17 @@ from ...sync_settings import get_sync_status as load_sync_status
 from ...sync_settings import set_sync_settings as save_sync_settings
 from ...sync_types import SyncTaskState
 from ..deps import current_user, get_storage, get_sync_scheduler, require_admin
-from ..sync_models import (
+from ..schemas.settings import (
+    EmailSettingsUpdate,
+    EmailTestRequest,
+    EmailTestResult,
+    PreferencesOut,
+    PreferencesUpdateRequest,
+    SyncSettingsOut,
+    SyncSettingsUpdateRequest,
+    SyncStatusOut,
+)
+from ..schemas.sync import (
     SyncRunRequest,
     SyncRunResponse,
     SyncSiteRunRequest,
@@ -32,8 +43,30 @@ from ..sync_models import (
 logger = get_logger(__name__)
 router = APIRouter(dependencies=[Depends(current_user)])
 
+#: Secrets are rendered with the same mask the admin media page uses. A value
+#: that still contains one is the round-tripped display value, not a new secret.
+_MASK_CHARACTERS = '•'
 
-@router.get('/settings/status')
+
+def _public_email_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    """Serialisable form: the password is masked, never echoed whole."""
+    public = dict(settings)
+    public['smtp_password'] = mask_key(str(settings.get('smtp_password') or ''))
+    public['smtp_password_set'] = bool(str(settings.get('smtp_password') or '').strip())
+    return public
+
+
+def _submitted_email_updates(email: EmailSettingsUpdate | None) -> dict[str, Any]:
+    """The email fields the caller sent, minus an explicit null and a round-tripped password mask."""
+    if email is None:
+        return {}
+    updates = {key: value for key, value in email.model_dump(exclude_unset=True).items() if value is not None}
+    if isinstance(updates.get('smtp_password'), str) and _MASK_CHARACTERS in updates['smtp_password']:
+        updates.pop('smtp_password')
+    return updates
+
+
+@router.get('/settings/status', response_model=SyncStatusOut)
 async def sync_status(
     limit: int = 5,
     storage: PostgresStorage = Depends(get_storage),
@@ -124,7 +157,7 @@ async def cancel_sync_task(
     return SyncTaskDetail.model_validate(refreshed.to_dict())
 
 
-@router.get('/settings')
+@router.get('/settings', response_model=SyncSettingsOut)
 async def get_sync_settings(
     storage: PostgresStorage = Depends(get_storage),
     _: User = Depends(require_admin),
@@ -136,13 +169,13 @@ async def get_sync_settings(
         dict: 同步设置，包括启用状态、间隔、邮件配置等。
     """
     payload = await load_sync_settings(storage)
-    payload['email'] = await get_email_settings(storage)
+    payload['email'] = _public_email_settings(await get_email_settings(storage))
     return payload
 
 
-@router.patch('/settings')
+@router.patch('/settings', response_model=SyncSettingsOut)
 async def update_sync_settings(
-    body: dict[str, Any] = Body(default={}),
+    body: SyncSettingsUpdateRequest = Body(default_factory=SyncSettingsUpdateRequest),
     storage: PostgresStorage = Depends(get_storage),
     scheduler: SyncScheduler | None = Depends(get_sync_scheduler),
     admin: User = Depends(require_admin),
@@ -150,53 +183,47 @@ async def update_sync_settings(
     """
     更新同步设置。
 
+    只写入请求里出现的字段；未知字段直接 422（`request.invalid`），不回退成
+    “忽略后返回旧值”。`email` 子对象里的 `smtp_password` 是只写的：放回接口回显
+    的掩码会被丢弃，不会把已存密码覆盖成一串圆点。
+
     Args:
-        body (dict): 需要更新的设置 (enabled, interval_minutes, email 等)。
+        body (SyncSettingsUpdateRequest): 需要更新的设置（`enabled`、`interval_minutes`、`email` 等）。
 
     Returns:
         dict: 更新后的设置。
     """
+    sent = body.model_fields_set
     updates: dict[str, Any] = {}
-    if 'enabled' in body:
-        updates['enabled'] = bool(body['enabled'])
-    if 'interval_minutes' in body:
-        updates['interval_minutes'] = max(int(body['interval_minutes']), 1)
-    if 'sleep_seconds' in body:
-        updates['sleep_seconds'] = float(body['sleep_seconds'])
-    if 'download_content' in body:
-        updates['download_content'] = bool(body['download_content'])
-    if 'download_images' in body:
-        updates['download_images'] = bool(body['download_images'])
-    if 'skip_minutes' in body:
-        updates['skip_minutes'] = max(int(body['skip_minutes']), 0)
-    if 'alert_enabled' in body:
-        updates['alert_enabled'] = bool(body['alert_enabled'])
-    if 'alert_email' in body:
-        updates['alert_email'] = str(body['alert_email']).strip()
+    if 'enabled' in sent and body.enabled is not None:
+        updates['enabled'] = body.enabled
+    if 'interval_minutes' in sent and body.interval_minutes is not None:
+        updates['interval_minutes'] = body.interval_minutes
+    if 'sleep_seconds' in sent and body.sleep_seconds is not None:
+        updates['sleep_seconds'] = body.sleep_seconds
+    if 'download_content' in sent and body.download_content is not None:
+        updates['download_content'] = body.download_content
+    if 'download_images' in sent and body.download_images is not None:
+        updates['download_images'] = body.download_images
+    if 'article_exclude_keywords' in sent and body.article_exclude_keywords is not None:
+        updates['article_exclude_keywords'] = body.article_exclude_keywords
+    if 'skip_minutes' in sent and body.skip_minutes is not None:
+        updates['skip_minutes'] = body.skip_minutes
+    if 'alert_enabled' in sent and body.alert_enabled is not None:
+        updates['alert_enabled'] = body.alert_enabled
+    if 'alert_email' in sent and body.alert_email is not None:
+        updates['alert_email'] = body.alert_email.strip()
     settings = await save_sync_settings(storage, updates)
-    email_updates: dict[str, Any] = {}
-    email_body = body.get('email')
-    if isinstance(email_body, dict):
-        for key in (
-            'smtp_host',
-            'smtp_port',
-            'smtp_user',
-            'smtp_password',
-            'smtp_tls',
-            'from_email',
-        ):
-            if key in email_body:
-                email_updates[key] = email_body[key]
+    email_updates = _submitted_email_updates(body.email)
     if email_updates:
-        settings['email'] = await set_email_settings(storage, email_updates)
-    else:
-        settings['email'] = await get_email_settings(storage)
+        await set_email_settings(storage, email_updates)
+    settings['email'] = _public_email_settings(await get_email_settings(storage))
     if settings.get('enabled') and scheduler:
         scheduler.trigger()
     return settings
 
 
-@router.get('/settings/preferences')
+@router.get('/settings/preferences', response_model=PreferencesOut)
 async def get_preferences(
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
@@ -209,9 +236,9 @@ async def get_preferences(
     }
 
 
-@router.patch('/settings/preferences')
+@router.patch('/settings/preferences', response_model=PreferencesOut)
 async def update_preferences(
-    body: dict[str, Any] = Body(default={}),
+    body: PreferencesUpdateRequest = Body(default_factory=PreferencesUpdateRequest),
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
 ) -> dict[str, Any]:
@@ -219,15 +246,17 @@ async def update_preferences(
 
     Global sync cadence, SMTP and site settings live behind the admin-only
     ``PATCH /api/settings``; these are the knobs that only affect one reader.
+    Only the keys sent are written; an unknown key is a 422.
     """
+    sent = body.model_fields_set
     async with storage.transaction():
-        if 'article_exclude_keywords' in body:
+        if 'article_exclude_keywords' in sent:
             await storage.users.set_preferences(
                 user.id,
-                {'article_exclude_keywords': str(body['article_exclude_keywords'] or '')},
+                {'article_exclude_keywords': str(body.article_exclude_keywords or '')},
             )
-        if 'timezone' in body:
-            await storage.users.set_timezone(user.id, str(body['timezone']))
+        if 'timezone' in sent and body.timezone is not None:
+            await storage.users.set_timezone(user.id, str(body.timezone))
 
     refreshed = await storage.users.get(user.id)
     preferences = await storage.users.get_preferences(user.id)
@@ -237,16 +266,18 @@ async def update_preferences(
     }
 
 
-@router.post('/settings/test-email')
+@router.post('/settings/test-email', response_model=EmailTestResult)
 async def send_sync_test_email(
-    body: dict[str, Any] = Body(default={}),
+    body: EmailTestRequest = Body(default_factory=EmailTestRequest),
     storage: PostgresStorage = Depends(get_storage),
     _: User = Depends(require_admin),
 ) -> dict[str, Any]:
     """
     发送测试邮件，使用当前或传入的 SMTP 配置。
+
+    请求体里放回接口回显的密码掩码会被丢弃；`smtp_port` 非法直接 422。
     """
-    to_email = str(body.get('to_email') or '').strip()
+    to_email = str(body.to_email or '').strip()
     if not to_email:
         settings = await load_sync_settings(storage)
         to_email = str(settings.get('alert_email') or '').strip()
@@ -254,23 +285,7 @@ async def send_sync_test_email(
         raise ApiError('to_email is required')
 
     email_settings = await get_email_settings(storage)
-    email_body = body.get('email')
-    if isinstance(email_body, dict):
-        if 'smtp_host' in email_body:
-            email_settings['smtp_host'] = str(email_body.get('smtp_host') or '').strip()
-        if 'smtp_port' in email_body:
-            try:
-                email_settings['smtp_port'] = max(int(email_body.get('smtp_port')), 1)
-            except (TypeError, ValueError) as exc:
-                raise ApiError('Invalid smtp_port') from exc
-        if 'smtp_user' in email_body:
-            email_settings['smtp_user'] = str(email_body.get('smtp_user') or '').strip()
-        if 'smtp_password' in email_body:
-            email_settings['smtp_password'] = str(email_body.get('smtp_password') or '')
-        if 'smtp_tls' in email_body:
-            email_settings['smtp_tls'] = bool(email_body.get('smtp_tls'))
-        if 'from_email' in email_body:
-            email_settings['from_email'] = str(email_body.get('from_email') or '').strip()
+    email_settings.update(_submitted_email_updates(body.email))
 
     smtp_host = str(email_settings.get('smtp_host') or '').strip()
     if not smtp_host:
