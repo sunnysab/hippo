@@ -36,6 +36,13 @@ class DetectSourceTest(unittest.TestCase):
     def test_a_channel_handle(self) -> None:
         self.assertEqual('youtube', detect_source('https://www.youtube.com/@Fireship'))
 
+    def test_a_wechat_article_names_its_account(self) -> None:
+        self.assertEqual('weixin', detect_source('https://mp.weixin.qq.com/s/RpLLRPedSrdgBZHWXQxJbQ'))
+        self.assertEqual(
+            'weixin',
+            detect_source('https://mp.weixin.qq.com/s?__biz=MzU2&mid=1&idx=1&sn=abc'),
+        )
+
     def test_anything_else_http_is_tried_as_a_feed(self) -> None:
         self.assertEqual('podcast', detect_source('https://feeds.megaphone.fm/darknetdiaries'))
 
@@ -69,9 +76,13 @@ def _storage(
             transactions.append(1)
         return _NullTransaction()
 
+    articles = AsyncMock()
+    articles.find_biz_by_link = AsyncMock(return_value=None)
+
     return SimpleNamespace(
         transaction=transaction,
         accounts=accounts,
+        articles=articles,
         groups=AsyncMock(),
         subscriptions=AsyncMock(),
         sync_jobs=AsyncMock(),
@@ -347,6 +358,124 @@ class SubscribeTest(unittest.IsolatedAsyncioTestCase):
         # The body is declared with a url, so an empty one never reaches the route.
         with self.assertRaises(ValidationError):
             SubscribeRequest.model_validate({})
+
+
+_ARTICLE_URL = 'https://mp.weixin.qq.com/s/RpLLRPedSrdgBZHWXQxJbQ'
+
+
+def _publisher(biz: str = 'MzU2MDI3MDk5NQ==', gh_id: str = 'gh_3eb1a1b60c4c') -> SimpleNamespace:
+    return SimpleNamespace(
+        biz=biz,
+        gh_id=gh_id,
+        nickname='TopView',
+        alias='TopView_Skyfall',
+        avatar_url='http://mmbiz.qpic.cn/mmbiz_png/example',
+    )
+
+
+class WeixinArticleTest(unittest.IsolatedAsyncioTestCase):
+    """Pasting an article subscribes to whoever wrote it."""
+
+    async def test_an_archived_article_names_its_account_without_asking_the_daemon(self) -> None:
+        storage = _storage()
+        storage.articles.find_biz_by_link = AsyncMock(return_value='MzU2MDI3MDk5NQ==')
+        storage.accounts.get_account = AsyncMock(return_value=SimpleNamespace(
+            biz='MzU2MDI3MDk5NQ==', nickname='TopView', gh_id='gh_3eb1a1b60c4c', alias='TopView_Skyfall',
+        ))
+        with patch('hippo.api.routers.source.WeixinDaemon') as daemon:
+            result = await source_api.preview_source(url=_ARTICLE_URL, user=_user(), storage=storage)
+
+        self.assertEqual('weixin', result['source'])
+        self.assertEqual('TopView', result['nickname'])
+        self.assertEqual('/api/account/MzU2MDI3MDk5NQ==/avatar', result['avatar_url'])
+        storage.articles.find_biz_by_link.assert_awaited_once_with(
+            _ARTICLE_URL, slug='RpLLRPedSrdgBZHWXQxJbQ',
+        )
+        daemon.assert_not_called()
+
+    async def test_an_unknown_article_is_resolved_through_the_daemon(self) -> None:
+        storage = _storage()
+        body = SimpleNamespace(raw_json='{"bizuin": "MzU2MDI3MDk5NQ==", "user_name": "gh_3eb1a1b60c4c",'
+                                        ' "nick_name": "TopView", "round_head_img": "http://img/x"}')
+        body.nick_name = 'TopView'
+        source = AsyncMock()
+        source.resolve_article = AsyncMock(return_value=body)
+        source.__aenter__ = AsyncMock(return_value=source)
+        source.__aexit__ = AsyncMock(return_value=False)
+        with (
+            patch('hippo.api.routers.source.WeixinDaemon', return_value=source),
+            patch('hippo.api.routers.source._upsert_avatar_url', new=AsyncMock()) as cache_avatar,
+        ):
+            result = await source_api.preview_source(url=_ARTICLE_URL, user=_user(), storage=storage)
+
+        self.assertEqual('MzU2MDI3MDk5NQ==', result['biz'])
+        self.assertEqual('TopView', result['nickname'])
+        # 头像是微信图床，直连会被防盗链挡住：缓存起来走代理。
+        cache_avatar.assert_awaited_once_with(storage, 'MzU2MDI3MDk5NQ==', 'http://img/x')
+        self.assertEqual('/api/account/MzU2MDI3MDk5NQ==/avatar', result['avatar_url'])
+
+    async def test_an_article_without_a_publisher_is_a_bad_gateway(self) -> None:
+        storage = _storage()
+        body = SimpleNamespace(raw_json='{"user_name": "gh_3eb1a1b60c4c"}', nick_name='')
+        source = AsyncMock()
+        source.resolve_article = AsyncMock(return_value=body)
+        source.__aenter__ = AsyncMock(return_value=source)
+        source.__aexit__ = AsyncMock(return_value=False)
+        with (
+            patch('hippo.api.routers.source.WeixinDaemon', return_value=source),
+            self.assertRaises(ApiError) as ctx,
+        ):
+            await source_api.preview_source(url=_ARTICLE_URL, user=_user(), storage=storage)
+
+        self.assertEqual(502, ctx.exception.status)
+
+    async def test_subscribing_by_article_writes_the_account_and_follows_it(self) -> None:
+        storage = _storage()
+        storage.articles.find_biz_by_link = AsyncMock(return_value='MzU2MDI3MDk5NQ==')
+        storage.accounts.get_account = AsyncMock(return_value=SimpleNamespace(
+            biz='MzU2MDI3MDk5NQ==', nickname='TopView', gh_id='gh_3eb1a1b60c4c', alias='TopView_Skyfall',
+        ))
+        with patch(
+            'hippo.api.routers.source.ensure_default_group',
+            new=AsyncMock(return_value=SimpleNamespace(id=1)),
+        ):
+            result = await source_api.subscribe_source(
+                request=_request(),
+                body=SubscribeRequest(url=_ARTICLE_URL),
+                user=_user(),
+                storage=storage,
+            )
+
+        self.assertEqual('weixin', result['source'])
+        self.assertEqual(1, result['group_id'])
+        account: AccountCredential = storage.accounts.upsert_account.call_args.args[0]
+        self.assertEqual('MzU2MDI3MDk5NQ==', account.biz)
+        # The gh_ is what the list RPC needs, so it is stored with the account.
+        self.assertEqual('gh_3eb1a1b60c4c', account.gh_id)
+        storage.subscriptions.upsert.assert_awaited_once_with(1, 'MzU2MDI3MDk5NQ==', group_id=1)
+
+    async def test_weixin_subscription_does_not_need_the_media_instance(self) -> None:
+        """Turning transcription off must not make article links unsubscribable."""
+        storage = _storage()
+        storage.articles.find_biz_by_link = AsyncMock(return_value='MzU2MDI3MDk5NQ==')
+        storage.accounts.get_account = AsyncMock(return_value=SimpleNamespace(
+            biz='MzU2MDI3MDk5NQ==', nickname='TopView', gh_id='gh_3eb1a1b60c4c', alias=None,
+        ))
+        with (
+            patch('hippo.api.routers.source._media_sources', new=AsyncMock()) as media_sources,
+            patch(
+                'hippo.api.routers.source.ensure_default_group',
+                new=AsyncMock(return_value=SimpleNamespace(id=1)),
+            ),
+        ):
+            await source_api.subscribe_source(
+                request=_request(),
+                body=SubscribeRequest(url=_ARTICLE_URL),
+                user=_user(),
+                storage=storage,
+            )
+
+        media_sources.assert_not_awaited()
 
 
 class CredentialTest(unittest.IsolatedAsyncioTestCase):

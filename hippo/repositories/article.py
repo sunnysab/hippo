@@ -360,6 +360,26 @@ class ArticleRepository:
                     )
         return article_pk
 
+    async def find_biz_by_link(self, link: str, *, slug: str = '') -> str | None:
+        """The account that owns an article we already archived.
+
+        A pasted article link usually points at something in the catalogue, and
+        the catalogue already knows whose it is: asking the daemon would spend a
+        body request from a shared budget (5~10 a minute) to learn what this row
+        says. Both link shapes are covered — ``/s/<slug>`` is what the detail
+        call stores, and the long ``/s?__biz=…`` form is what a browser gives.
+        """
+        candidates = [value for value in (link, slug) if value]
+        if not candidates:
+            return None
+        async with self._conn.cursor() as cur:
+            await cur.execute(
+                'SELECT biz FROM articles WHERE link = ANY(%s) OR article_id = ANY(%s) LIMIT 1',
+                (candidates, candidates),
+            )
+            row = await cur.fetchone()
+        return str(row[0]) if row else None
+
     async def has_article_content(self, biz: str, article_id: str) -> bool:
         async with self._conn.cursor() as cur:
             await cur.execute(

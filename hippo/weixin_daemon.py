@@ -19,6 +19,7 @@ LIST_TIMEOUT_SECONDS = 120.0
 BODY_TIMEOUT_SECONDS = 900.0
 
 import base64
+import json
 import os
 import sys
 from collections.abc import Mapping
@@ -145,6 +146,24 @@ class ListedArticles:
     is_end: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class ArticlePublisher:
+    """The account an article belongs to, as the article detail reports it.
+
+    A pasted article URL only names a publisher, and the detail response is the
+    one place that gives both halves of its identity: ``biz`` (the ``Mz…==``
+    fakeid the catalogue is keyed on) and ``gh_id`` (the ``gh_…`` the list RPC
+    accepts). Reading it here is what lets a reader subscribe by pasting an
+    article, instead of having to search for the account by name.
+    """
+
+    biz: str
+    gh_id: str
+    nickname: str
+    alias: str | None = None
+    avatar_url: str | None = None
+
+
 @dataclass(slots=True)
 class FetchedArticle:
     """正文阶段的文章：``short_link`` / ``slug`` 已确定，正文即 ``html``。"""
@@ -184,6 +203,35 @@ class FetchedArticle:
             item_show_type=d.get('item_show_type'),
             raw_json=d.get('raw_json', ''),
         )
+
+
+def publisher_of(body: FetchedArticle) -> ArticlePublisher | None:
+    """Read the publisher out of an article's own detail response.
+
+    The daemon exposes the fields downstream needs but not the account identity,
+    which stays inside the raw ``Content`` JSON it returns verbatim. Parsing it
+    here keeps that knowledge next to the response shape it belongs to, and
+    degrades to ``None`` rather than raising: an old daemon, or an article whose
+    publisher was deleted, simply has no account to subscribe to.
+    """
+    try:
+        payload = json.loads(body.raw_json or '{}')
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    biz = str(payload.get('bizuin') or '').strip()
+    gh_id = str(payload.get('user_name') or '').strip()
+    if not biz or not gh_id.startswith('gh_'):
+        return None
+    alias = str(payload.get('alias') or '').strip() or None
+    return ArticlePublisher(
+        biz=biz,
+        gh_id=gh_id,
+        nickname=str(payload.get('nick_name') or body.nick_name or gh_id).strip(),
+        alias=alias,
+        avatar_url=str(payload.get('round_head_img') or '').strip() or None,
+    )
 
 
 class WeixinSource:
@@ -332,6 +380,19 @@ class WeixinSource:
         """按任一身份取回正文，避免把 daemon 归一化过的 URL 误判成「没给正文」。"""
         return self._bodies_by_key.get(url) or self._bodies_by_key.get(query_param(url, 'sn') or '')
 
+    async def resolve_article(self, url: str) -> FetchedArticle:
+        """Fetch one article's detail, for the account it reveals.
+
+        The detail call is the only token-free way to learn which account a bare
+        article URL belongs to. It shares the daemon's body budget, so callers
+        treat this as the slow path and only take it when the database cannot
+        answer (see ``ArticleRepository.find_biz_by_link``).
+        """
+        bodies = await self.fetch_bodies([url])
+        if bodies:
+            return bodies[0]
+        raise RuntimeError(self.body_error_for(url) or 'daemon 没有返回这篇文章的详情')
+
     async def search_public_accounts(self, keyword: str, offset: int = 0) -> list[dict[str, Any]]:
         """搜公众号（daemon `search_biz`）：返回 H5 搜索结果里的 ``gh_`` 对象列表。"""
         return await self._bot.search_biz(keyword, offset=offset)
@@ -361,6 +422,7 @@ class WeixinSource:
 
 
 __all__ = [
+    'ArticlePublisher',
     'FetchedArticle',
     'ListedArticles',
     'QueuedArticle',
@@ -370,6 +432,7 @@ __all__ = [
     'classify_daemon_error',
     'load_bot_class',
     'load_bot_error_class',
+    'publisher_of',
     'query_param',
     'select_cover_url',
 ]

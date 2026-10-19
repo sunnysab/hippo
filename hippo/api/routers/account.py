@@ -432,6 +432,54 @@ async def list_accounts(
     return payload
 
 
+async def subscribe_weixin_account(
+    storage: PostgresStorage,
+    user_id: int,
+    *,
+    biz: str,
+    nickname: str,
+    alias: str | None = None,
+    gh_id: str | None = None,
+    round_head_img: str | None = None,
+    group_id: int | None = None,
+) -> dict[str, Any]:
+    """Put a WeChat account in the catalogue and follow it in one transaction.
+
+    Both ways in end here: the search dialog already has the ``gh_`` and needs a
+    fakeid resolved, while an article link hands over the fakeid and the ``gh_``
+    together. Writing them the same way is what keeps one account from becoming
+    two rows depending on how it was added.
+    """
+    if group_id is None:
+        default_group = await ensure_default_group(storage, user_id, name=DEFAULT_GROUP_NAME)
+        group_id = default_group.id
+    async with storage.transaction():
+        account = await storage.accounts.upsert_account(
+            AccountCredential(
+                biz=biz,
+                nickname=nickname,
+                alias=alias,
+                gh_id=gh_id,
+                round_head_img=round_head_img,
+            )
+        )
+        # Adding an account to the catalogue also subscribes the caller to it.
+        await storage.subscriptions.upsert(user_id, account.biz, group_id=int(group_id))
+        # 新加进来的号要把它能被看到的历史翻完：丢一条回填 job，worker 下一轮（5s 内）接手。
+        # 目录里已有的号（backfill_state 早就置 done）不会被重复回填。
+        if account.backfill_state == 'pending':
+            await storage.sync_jobs.create_job(trigger_type='backfill', biz_list=[account.biz])
+    return _normalize_account_payload(
+        {
+            'biz': account.biz,
+            'nickname': account.nickname,
+            'alias': account.alias,
+            'round_head_img': account.round_head_img,
+            'group_id': account.group_id,
+        }
+    )
+
+
 @router.post('/account', status_code=status.HTTP_201_CREATED, response_model=AccountCreatedOut)
 async def create_account(
     body: AccountCreateRequest,
@@ -465,34 +513,15 @@ async def create_account(
                 biz = await source.resolve_fakeid(gh_id, body.nickname)
         except Exception as exc:
             raise ApiError(f'解析公众号 ID 失败：{exc}', status=502, code='daemon.resolve_failed') from exc
-    group_id = body.group_id
-    if group_id is None:
-        default_group = await ensure_default_group(storage, user.id, name=DEFAULT_GROUP_NAME)
-        group_id = default_group.id
-    async with storage.transaction():
-        account = await storage.accounts.upsert_account(
-            AccountCredential(
-                biz=biz,
-                nickname=body.nickname,
-                alias=body.alias,
-                gh_id=gh_id,
-                round_head_img=body.round_head_img,
-            )
-        )
-        # Adding an account to the catalogue also subscribes the caller to it.
-        await storage.subscriptions.upsert(user.id, account.biz, group_id=int(group_id))
-        # 新加进来的号要把它能被看到的历史翻完：丢一条回填 job，worker 下一轮（5s 内）接手。
-        # 目录里已有的号（backfill_state 早就置 done）不会被重复回填。
-        if account.backfill_state == 'pending':
-            await storage.sync_jobs.create_job(trigger_type='backfill', biz_list=[account.biz])
-    return _normalize_account_payload(
-        {
-            'biz': account.biz,
-            'nickname': account.nickname,
-            'alias': account.alias,
-            'round_head_img': account.round_head_img,
-            'group_id': account.group_id,
-        }
+    return await subscribe_weixin_account(
+        storage,
+        user.id,
+        biz=biz,
+        nickname=body.nickname,
+        alias=body.alias,
+        gh_id=gh_id,
+        round_head_img=body.round_head_img,
+        group_id=body.group_id,
     )
 
 

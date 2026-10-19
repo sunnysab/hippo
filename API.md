@@ -822,13 +822,21 @@ GET /api/source/preview?url=https://space.bilibili.com/946974/video
 
 | 参数 | 类型 | 说明 |
 |---|---|---|
-| `url` | str | 视频 / 频道 / 订阅地址。来源按域名判断，其余 http(s) 一律当 feed 试 |
+| `url` | str | 视频 / 频道 / 订阅地址，或 `mp.weixin.qq.com` 的文章链接。来源按域名判断，其余 http(s) 一律当 feed 试 |
 
 不写任何东西，只回答「这是什么」。`subscribed` 表示目录里已经有了。
+
+`mp.weixin.qq.com` 的文章链接指向的是**公众号**而不是 feed：库里已经有这篇文章时直接按
+`articles.biz` 回答（一次索引查询），没有时才向 daemon 要一次详情，从响应的
+`bizuin` / `user_name` / `nick_name` 取回 fakeid、`gh_` 与昵称。那条慢路径占 daemon 的
+正文预算（每分钟 5~10 篇），所以能命中库就不问 daemon。
 
 ```json
 {"source": "bilibili", "biz": "bilibili:946974", "nickname": "影视飓风", "avatar_url": null, "subscribed": false}
 ```
+
+微信公众号的预览结果里 `biz` 是 fakeid（`Mz…==`），`avatar_url` 是 `/api/account/{biz}/avatar`——
+微信图床有防盗链，所以头像先落 `avatar_images` 再走代理。
 
 | 状态码 | 何时 |
 |---|---|
@@ -843,10 +851,13 @@ POST /api/source/channel
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `url` | str | 必填，同上 |
+| `url` | str | 必填，同上（含公众号文章链接） |
 | `group_id` | int | 可选，默认分组 |
 
 建账号 + 给调用者建订阅 + 投递一轮列表同步（`202`）。
+
+公众号文章链接走的是另一条落库路径：`accounts` 的 `biz` 是 fakeid、`gh_id` 是 `gh_…`，
+不占用媒体来源的命名空间，也不要求「媒体与转写」开关是开的。
 
 ```json
 {"biz": "bilibili:946974", "nickname": "影视飓风", "source": "bilibili", "group_id": 1}

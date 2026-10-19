@@ -9,9 +9,11 @@ when they have one, and the instance's otherwise.
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
+from ...avatar import _upsert_avatar_url
 from ...config import DEFAULT_GROUP_NAME
 from ...exceptions import ApiError
 from ...logger import get_logger
@@ -26,6 +28,8 @@ from ...sources.ingest import ChannelInfo
 from ...sources.probe import probe_credential
 from ...sources.registry import MediaSources
 from ...storage import PostgresStorage, ensure_default_group
+from ...weixin_daemon import WeixinSource as WeixinDaemon
+from ...weixin_daemon import publisher_of
 from ..deps import client_ip, current_user, get_storage
 from ..schemas.source import (
     CredentialListOut,
@@ -36,6 +40,7 @@ from ..schemas.source import (
     SubscribeRequest,
     SubscriptionOut,
 )
+from .account import subscribe_weixin_account
 
 logger = get_logger(__name__)
 
@@ -90,6 +95,95 @@ async def _preview(sources: MediaSources, source: str, url: str) -> ChannelInfo:
         raise ApiError('解析失败', status=502, code='source.parse_failed') from exc
 
 
+def _weixin_article_slug(url: str) -> str:
+    """``https://mp.weixin.qq.com/s/<slug>`` → ``<slug>``, otherwise an empty string."""
+    path = urlparse(url).path or ''
+    marker = '/s/'
+    return path.split(marker, 1)[1].strip('/') if marker in path else ''
+
+
+async def _weixin_channel(storage: PostgresStorage, url: str) -> ChannelInfo:
+    """Resolve an article link to the account that published it.
+
+    Two steps, cheapest first: an article we already archived names its account
+    in one index lookup, and only an article we have never seen costs a daemon
+    body request — those share a 5~10 a minute budget with the whole sync, so
+    the slow path is the exception rather than the rule.
+    """
+    biz = await storage.articles.find_biz_by_link(url, slug=_weixin_article_slug(url))
+    if biz:
+        try:
+            known = await storage.accounts.get_account(biz, fallback_to_default=False)
+        except LookupError:
+            known = None
+        if known is not None:
+            return ChannelInfo(
+                biz=known.biz,
+                nickname=known.nickname,
+                source_key=known.gh_id or known.alias or '',
+                avatar_url=f'/api/account/{known.biz}/avatar',
+            )
+    try:
+        async with WeixinDaemon() as daemon:
+            body = await daemon.resolve_article(url)
+    except Exception as exc:
+        raise ApiError(f'解析文章失败：{exc}', status=502, code='source.parse_failed') from exc
+    publisher = publisher_of(body)
+    if publisher is None:
+        raise ApiError('这篇文章没有给出公众号信息', status=502, code='source.parse_failed')
+    avatar_url = None
+    if publisher.avatar_url:
+        # WeChat's image hosts refuse a hotlink from the console, so the URL is
+        # cached and served through the proxy every other avatar already uses.
+        await _upsert_avatar_url(storage, publisher.biz, publisher.avatar_url)
+        avatar_url = f'/api/account/{publisher.biz}/avatar'
+    return ChannelInfo(
+        biz=publisher.biz,
+        nickname=publisher.nickname,
+        source_key=publisher.gh_id,
+        avatar_url=avatar_url,
+    )
+
+
+async def _subscribe_weixin(
+    request: Request,
+    storage: PostgresStorage,
+    user: User,
+    *,
+    url: str,
+    group_id: int,
+) -> dict[str, Any]:
+    """Follow the account an article link points at.
+
+    A reading list is the most natural way to answer "I want more of this", so
+    pasting an article is a full subscription path of its own rather than a hint
+    to go and search for the account by name.
+    """
+    info = await _weixin_channel(storage, url)
+    account = await subscribe_weixin_account(
+        storage,
+        user.id,
+        biz=info.biz,
+        nickname=info.nickname,
+        gh_id=info.source_key or None,
+        group_id=group_id,
+    )
+    await storage.audit.record(
+        user.id,
+        'source.subscribed',
+        target=info.biz,
+        detail={'source': 'weixin', 'via': 'article'},
+        ip=client_ip(request),
+    )
+    logger.info('按文章订阅 %s（%s）', info.biz, info.nickname)
+    return {
+        'biz': account['biz'],
+        'nickname': account['nickname'],
+        'source': 'weixin',
+        'group_id': group_id,
+    }
+
+
 @router.get('/source', response_model=SourceListOut)
 async def list_sources(
     user: User = Depends(current_user),
@@ -115,11 +209,14 @@ async def preview_source(
     console can show what is about to be subscribed to.
     """
     source = _require_source(url)
-    sources = await _media_sources(storage, user)
-    try:
-        info = await _preview(sources, source, url)
-    finally:
-        await sources.aclose()
+    if source == 'weixin':
+        info = await _weixin_channel(storage, url)
+    else:
+        sources = await _media_sources(storage, user)
+        try:
+            info = await _preview(sources, source, url)
+        finally:
+            await sources.aclose()
     try:
         await storage.accounts.get_account_detail(info.biz, user_id=user.id)
         subscribed = True
@@ -161,6 +258,9 @@ async def subscribe_source(
             await storage.groups.get_group(group_id, user_id=user.id)
         except LookupError as exc:
             raise ApiError('Group not found', status=404) from exc
+
+    if source == 'weixin':
+        return await _subscribe_weixin(request, storage, user, url=url, group_id=int(group_id))
 
     sources = await _media_sources(storage, user)
     try:

@@ -15,6 +15,7 @@ from hippo.weixin_daemon import (
     WeixinSource,
     WeixinUnavailableError,
     classify_daemon_error,
+    publisher_of,
     select_cover_url,
 )
 from hippo.weixin_ingest import WeixinArticleSync
@@ -69,6 +70,38 @@ class _ListBot:
             'next_offset': 'cur',
             'is_end': False,
         }
+
+
+class PublisherOfTest(unittest.TestCase):
+    """The account identity lives in the article's own raw Content JSON."""
+
+    #: 真实抓包里的字段形状（evidence/wx_cap_0827/plain_6771_article_resp.bin）。
+    _RAW = (
+        '{"bizuin":"MzU2MDI3MDk5NQ==","user_name":"gh_3eb1a1b60c4c","nick_name":"TopView",'
+        '"alias":"TopView_Skyfall","round_head_img":"http://mmbiz.qpic.cn/x"}'
+    )
+
+    def _body(self, raw: str) -> FetchedArticle:
+        return FetchedArticle(
+            url='', short_link='', slug='', title='', author='', digest='',
+            user_name='', nick_name='', publish_time=0, html='', images=[], raw_json=raw,
+        )
+
+    def test_reads_the_fakeid_and_the_gh_id_together(self) -> None:
+        publisher = publisher_of(self._body(self._RAW))
+
+        assert publisher is not None
+        self.assertEqual('MzU2MDI3MDk5NQ==', publisher.biz)
+        self.assertEqual('gh_3eb1a1b60c4c', publisher.gh_id)
+        self.assertEqual('TopView', publisher.nickname)
+        self.assertEqual('TopView_Skyfall', publisher.alias)
+
+    def test_a_deleted_publisher_is_reported_as_absent(self) -> None:
+        self.assertIsNone(publisher_of(self._body('{"user_name":"gh_1"}')))
+
+    def test_unparseable_metadata_is_absent_rather_than_an_error(self) -> None:
+        self.assertIsNone(publisher_of(self._body('not json')))
+        self.assertIsNone(publisher_of(self._body('')))
 
 
 class WeixinSourceListTest(unittest.TestCase):
