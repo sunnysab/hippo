@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiGet } from '../../api';
 import { useI18n } from '../../i18n';
 import { getSourceLabel, getSourceTone } from '../../utils/source';
+import { createLatestOnly } from '../../utils/latest';
+import { onRefresh } from '../../utils/events';
 import type { ArticleFiltersState, ArticleSelectOption } from './filtering';
 
 interface SourceCount {
@@ -26,22 +28,37 @@ interface ViewRailProps {
 export function ViewRail({ filters, groupOptions, onChange }: ViewRailProps) {
   const { t } = useI18n();
   const [sources, setSources] = useState<SourceCount[]>([]);
+  // Subscribing or unsubscribing emits a refresh, and these counts are how the
+  // reader sees it land: the newest answer wins, a slow one is dropped.
+  const [loadSources] = useState(() => createLatestOnly<SourceCount[] | null>((next) => {
+    if (next) setSources(next);
+  }));
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
+  const fetchSources = useCallback(async () => {
+    await loadSources(async () => {
       try {
         const payload = await apiGet('/api/source') as { sources?: SourceCount[] };
-        if (!cancelled) setSources(payload.sources || []);
+        return payload.sources || [];
       } catch {
-        // Reading the source list is decoration: without it the rail simply does
-        // not offer source filtering, and the article list is unaffected.
+        // Reading the source list is decoration: without it the rail keeps the
+        // counts it already had, and the article list is unaffected.
+        return null;
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    });
+  }, [loadSources]);
+
+  useEffect(() => {
+    void fetchSources();
+    return onRefresh(() => {
+      void fetchSources();
+    });
+  }, [fetchSources]);
+
+  // The number is why these rows exist, so it is part of the name a screen
+  // reader announces and not only a span on the right.
+  const subscriptionCount = (count: number) => (
+    t('articles.railSubscriptions', '{count} subscriptions').replace('{count}', String(count))
+  );
 
   const view = filters.starred ? 'starred' : filters.read === 'unread' ? 'unread' : 'all';
   const views = [
@@ -85,11 +102,12 @@ export function ViewRail({ filters, groupOptions, onChange }: ViewRailProps) {
               className={`view-rail-item${filters.source === item.source ? ' is-active' : ''}`}
               type="button"
               aria-pressed={filters.source === item.source}
+              aria-label={`${getSourceLabel(item.source, t)} · ${subscriptionCount(item.channels)}`}
               onClick={() => onChange({ source: item.source })}
             >
               <span className={`view-rail-dot item-show-type-${getSourceTone(item.source)}`} aria-hidden="true" />
               <span className="view-rail-label">{getSourceLabel(item.source, t)}</span>
-              <span className="view-rail-count">{item.channels}</span>
+              <span className="view-rail-count" aria-hidden="true">{item.channels}</span>
             </button>
           ))}
         </div>
@@ -113,9 +131,11 @@ export function ViewRail({ filters, groupOptions, onChange }: ViewRailProps) {
               className={`view-rail-item${filters.groupId === group.value ? ' is-active' : ''}`}
               type="button"
               aria-pressed={filters.groupId === group.value}
+              aria-label={`${group.label} · ${subscriptionCount(group.count ?? 0)}`}
               onClick={() => onChange({ groupId: group.value })}
             >
               <span className="view-rail-label">{group.label}</span>
+              <span className="view-rail-count" aria-hidden="true">{group.count ?? 0}</span>
             </button>
           ))}
         </div>

@@ -14,6 +14,7 @@ GROUP_HEADER = ROOT / 'frontend' / 'src' / 'pages' / 'groups' / 'GroupHeader.tsx
 MEDIA_QUERY_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useMediaQuery.ts'
 ARTICLE_FILTER_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useArticleFilters.ts'
 ARTICLE_READER_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useArticleReader.ts'
+VIEW_RAIL = ROOT / 'frontend' / 'src' / 'pages' / 'articles' / 'ViewRail.tsx'
 I18N_ZH = ROOT / 'frontend' / 'src' / 'i18n' / 'zh-CN.json'
 ADMIN_LAYOUT = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminLayout.tsx'
 ADMIN_SOURCE_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminSourcePage.tsx'
@@ -155,6 +156,16 @@ class FrontendRegressionTest(unittest.TestCase):
         translations = json.loads(I18N_ZH.read_text(encoding='utf-8'))
 
         self.assertEqual(translations['brand.subtitle'], '个人信息与知识平台')
+
+    def test_the_view_rail_keeps_the_group_subscription_counts(self) -> None:
+        # /api/group 会返回 account_count：hook 要是把它丢了，分组行就没有数字可显示。
+        hook = ARTICLE_FILTER_HOOK.read_text(encoding='utf-8')
+        rail = VIEW_RAIL.read_text(encoding='utf-8')
+
+        self.assertIn('count: group.account_count', hook)
+        self.assertIn('articles.railSubscriptions', rail)
+        # 订阅变化会 emitRefresh，这一栏要跟着重取。
+        self.assertIn('onRefresh', rail)
 
     def test_groups_page_syncs_selected_group_with_route_query(self) -> None:
         source = GROUPS_PAGE.read_text(encoding='utf-8')

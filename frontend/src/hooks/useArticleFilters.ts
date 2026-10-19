@@ -177,6 +177,7 @@ export function useArticleFilters() {
     const options = groups.map((group) => ({
       value: String(group.id),
       label: group.name,
+      count: group.account_count,
     }));
     setGroupOptions(options);
     setAccountOptions((prev) => {

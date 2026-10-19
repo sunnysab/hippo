@@ -161,6 +161,7 @@
   "articles.starFailed": "更新收藏失败",
   "articles.readFailed": "更新已读状态失败",
   "articles.view": "视图",
+  "articles.railSubscriptions": "{count} 个订阅",
   "articles.viewAll": "全部",
   "articles.viewUnread": "未读",
   "articles.viewStarred": "收藏",

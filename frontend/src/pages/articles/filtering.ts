@@ -26,6 +26,8 @@ export interface ArticleRouteState {
 export interface ArticleSelectOption {
   value: string;
   label: string;
+  /** Subscriptions behind the option, as the API counts them. */
+  count?: number;
 }
 
 export const areArticleFiltersEqual = (
