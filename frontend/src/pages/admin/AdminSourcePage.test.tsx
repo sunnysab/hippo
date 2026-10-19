@@ -94,6 +94,15 @@ describe('AdminSourcePage', () => {
     const button = await screen.findByRole('button', { name: '运行' });
     expect((button as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it('shows a load failure and retries it', async () => {
+    apiGetMock.mockRejectedValueOnce(new Error('boom'));
+    renderPage(<AdminSourcePage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '重试' }));
+
+    expect(await screen.findByText('微信公众号')).toBeTruthy();
+  });
 });
 
 describe('SourceSyncOverview', () => {

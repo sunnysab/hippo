@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useI18n } from '../../i18n';
 import { useSyncRun } from '../../hooks/useSyncRun';
@@ -18,18 +18,32 @@ export function AdminSourcePage() {
   const { runSync } = useSyncRun();
   const [payload, setPayload] = useState<SourceOverviewPayload | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
+  // A retry races the request it replaces: only the newest answer is applied.
+  const requestIdRef = useRef(0);
 
   const load = useCallback(async () => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    setLoading(true);
+    setError('');
     try {
-      setPayload(await loadSourceOverview());
+      const next = await loadSourceOverview();
+      if (requestId !== requestIdRef.current) return;
+      setPayload(next);
+    } catch (err) {
+      if (requestId !== requestIdRef.current) return;
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void load();
+    queueMicrotask(() => {
+      void load();
+    });
   }, [load]);
 
   const sync = async (source: string) => {
@@ -44,6 +58,21 @@ export function AdminSourcePage() {
 
   if (loading) {
     return <div className="muted admin-empty">{t('admin.loading', '加载中…')}</div>;
+  }
+
+  if (error) {
+    return (
+      <div className="admin-page">
+        <section className="panel">
+          <p className="muted admin-empty">{t('admin.source.loadFailed', '加载来源失败。')}</p>
+          <div className="admin-actions">
+            <button className="btn" type="button" onClick={() => void load()}>
+              {t('common.retry', '重试')}
+            </button>
+          </div>
+        </section>
+      </div>
+    );
   }
 
   return (

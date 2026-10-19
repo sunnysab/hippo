@@ -22,6 +22,7 @@ ADMIN_SYNC_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminSyncPage
 ADMIN_APP = ROOT / 'frontend' / 'src' / 'App.tsx'
 SETTINGS_CSS = ROOT / 'frontend' / 'src' / 'styles' / 'settings.css'
 ARTICLES_CSS = ROOT / 'frontend' / 'src' / 'styles' / 'articles.css'
+SOURCE_SUBSCRIPTION_PANEL = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'SourceSubscriptionPanel.tsx'
 BRAND_MARK = ROOT / 'frontend' / 'src' / 'components' / 'BrandMark.tsx'
 FAVICON = ROOT / 'frontend' / 'public' / 'favicon.svg'
 LOGIN_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'auth' / 'LoginPage.tsx'
@@ -135,6 +136,19 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertNotIn('sync-columns', admin_css)
         self.assertNotIn('sync-columns', sync_page)
         self.assertIn('admin-page', sync_page)
+
+    def test_the_source_page_recovers_from_load_failures(self) -> None:
+        # 加载失败要能重试；切换来源时迟到的响应不能覆盖新结果。
+        page = ADMIN_SOURCE_PAGE.read_text(encoding='utf-8')
+        panel = SOURCE_SUBSCRIPTION_PANEL.read_text(encoding='utf-8')
+
+        self.assertIn('requestIdRef', page)
+        self.assertIn("'common.retry'", page)
+        self.assertIn('requestIdRef', panel)
+        self.assertIn("'common.retry'", panel)
+        # 订阅列表按页取，不再默默截断在 100 条。
+        self.assertNotIn('page_size=100', panel)
+        self.assertIn('page_size', panel)
 
     def test_admin_source_page_lists_what_the_backend_reports(self) -> None:
         source = ADMIN_SOURCE_PAGE.read_text(encoding='utf-8')

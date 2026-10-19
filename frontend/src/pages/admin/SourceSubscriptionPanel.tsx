@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { apiGet } from '../../api';
 import { useI18n } from '../../i18n';
@@ -13,29 +13,61 @@ interface Account {
   article_count: number;
 }
 
+const PAGE_SIZE = 50;
+
 /**
  * What hippo is following from this source, for the admin's own subscriptions.
  *
  * The catalogue is shared, so these are the admin's rows: a full instance-wide
  * channel list belongs in a future page of its own, not in a settings pane.
+ * The list pages through the account endpoint instead of truncating at one page.
  */
 export function SourceSubscriptionPanel({ source }: { source: string }) {
   const { t } = useI18n();
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState('');
+  // Switching source or retrying races the request it replaces: only the newest
+  // answer may touch the list.
+  const requestIdRef = useRef(0);
 
-  const load = useCallback(async () => {
+  const loadPage = useCallback(async (page: number) => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    if (page === 1) setLoading(true);
+    else setLoadingMore(true);
+    setError('');
     try {
-      const payload = await apiGet(`/api/account?source=${encodeURIComponent(source)}&page_size=100`);
-      setAccounts(((payload.accounts as Account[]) || []));
+      const query = new URLSearchParams({
+        source,
+        page: String(page),
+        page_size: String(PAGE_SIZE),
+      });
+      const payload = await apiGet(`/api/account?${query.toString()}`);
+      if (requestId !== requestIdRef.current) return;
+      const next = (payload.accounts as Account[]) || [];
+      setAccounts((previous) => (page === 1 ? next : [...previous, ...next]));
+      setTotal(Number(payload.total || 0));
+    } catch (err) {
+      if (requestId !== requestIdRef.current) return;
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
   }, [source]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    queueMicrotask(() => {
+      void loadPage(1);
+    });
+  }, [loadPage]);
+
+  const hasMore = accounts.length < total;
 
   return (
     <div className="panel">
@@ -54,7 +86,16 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
       {loading ? (
         <div className="muted admin-empty">{t('admin.loading', '加载中…')}</div>
       ) : accounts.length === 0 ? (
-        <div className="muted admin-empty">{t('admin.source.noSubscriptions', '还没有订阅。')}</div>
+        <div className="muted admin-empty">
+          {error
+            ? t('admin.source.subscriptionsFailed', '加载订阅失败。')
+            : t('admin.source.noSubscriptions', '还没有订阅。')}
+          {error ? (
+            <button className="btn ghost" type="button" onClick={() => void loadPage(1)}>
+              {t('common.retry', '重试')}
+            </button>
+          ) : null}
+        </div>
       ) : (
         <div className="admin-table-wrap">
           <table className="admin-table">
@@ -84,6 +125,17 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
               ))}
             </tbody>
           </table>
+          {error ? <p className="muted admin-note">{t('admin.source.subscriptionsFailed', '加载订阅失败。')}</p> : null}
+          {hasMore ? (
+            <button
+              className="btn ghost"
+              type="button"
+              disabled={loadingMore}
+              onClick={() => void loadPage(accounts.length / PAGE_SIZE + 1)}
+            >
+              {loadingMore ? t('common.loading', '加载中...') : t('admin.source.loadMore', '加载更多')}
+            </button>
+          ) : null}
         </div>
       )}
     </div>
