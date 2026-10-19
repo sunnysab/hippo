@@ -6,9 +6,11 @@ cannot disagree about a field that is declared here.
 
 Two rules the modules follow:
 
-* A model fed from a database row or a query helper inherits ``RowPayload``,
-  which keeps undeclared keys. A response model that silently truncated a row
-  would be a worse bug than a document that names fewer fields.
+* A response model names its fields explicitly and stays closed. A credential
+  row is one column away from a secret, so passing undeclared keys through is
+  only ever allowed for a payload a provider owns (``RowPayload``), never for a
+  storage row this API shapes itself: if a row gains a column, the right
+  outcome is a field this API chose to publish, not a leak by default.
 * A request model declares a field required exactly when the route refuses to
   work without it. Routes keep their own checks for the cases a type cannot
   express (blank text, length, enum), and those checks keep their own messages.

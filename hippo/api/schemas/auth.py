@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from .common import RowPayload
-
 # -- requests ----------------------------------------------------------------
 
 
@@ -97,8 +95,13 @@ class SessionListOut(BaseModel):
     sessions: list[SessionOut]
 
 
-class ApiKeyOut(RowPayload):
-    """One issued key. The secret itself exists only in the creation response."""
+class ApiKeyOut(BaseModel):
+    """One issued key, and only its public columns.
+
+    Closed on purpose: the stored row is one column away from a usable key, and
+    a response model that cannot name a field is what keeps a future
+    ``secret_hash`` (or anything else about the credential) out of the list.
+    """
 
     id: int
     name: str

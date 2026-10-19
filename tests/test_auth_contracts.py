@@ -109,35 +109,44 @@ class RequestContractTest(unittest.TestCase):
 
 
 class KeyResponseContractTest(unittest.TestCase):
-    def test_the_key_list_keeps_undeclared_columns_and_has_no_secret(self) -> None:
-        # A column the model does not name must survive: a response model that
-        # truncated a row would be a worse bug than a shorter document.
+    def test_the_key_list_publishes_only_its_public_columns(self) -> None:
+        # The row below holds two hashes and a column from the future. None of
+        # them may reach the client: the model is an allowlist, not a passthrough.
+        row = _key_row(secret_hash='sha256-of-the-key', key_hash='sha256-of-key-', future_column='kept')
         storage = SimpleNamespace(
             transaction=_NullTransaction,
-            api_keys=SimpleNamespace(list_for_user=AsyncMock(return_value=[_key_row(future_column='kept')])),
+            api_keys=SimpleNamespace(list_for_user=AsyncMock(return_value=[row])),
         )
 
         payload = _apikey_client(storage).get('/api/apikey').json()
 
-        self.assertEqual('kept', payload['keys'][0]['future_column'])
-        self.assertNotIn('secret', payload['keys'][0])
+        self.assertEqual(
+            {'id', 'name', 'prefix', 'scopes', 'last_used_at', 'last_used_ip', 'expires_at', 'created_at'},
+            set(payload['keys'][0]),
+        )
+        self.assertNotIn('secret_hash', str(payload))
+        self.assertNotIn('key_hash', str(payload))
         self.assertEqual(['read', 'write'], payload['scopes'])
 
     def test_issuing_a_key_returns_the_secret_exactly_once(self) -> None:
         storage = SimpleNamespace(
             transaction=_NullTransaction,
-            api_keys=SimpleNamespace(create=AsyncMock(return_value=(_key_row(), 'hippo_secret'))),
+            api_keys=SimpleNamespace(
+                create=AsyncMock(return_value=(_key_row(secret_hash='sha256-of-the-key'), 'hippo_secret'))
+            ),
             audit=SimpleNamespace(record=AsyncMock()),
         )
 
         created = _apikey_client(storage).post('/api/apikey', json={'name': 'CI'}).json()
-        self.assertEqual('hippo_secret', created['secret'])
 
+        self.assertEqual('hippo_secret', created['secret'])
+        # The secret is this response's one addition; the row's own hashes are not.
+        self.assertNotIn('secret_hash', created)
         listed = (
             _apikey_client(
                 SimpleNamespace(
                     transaction=_NullTransaction,
-                    api_keys=SimpleNamespace(list_for_user=AsyncMock(return_value=[_key_row()])),
+                    api_keys=SimpleNamespace(list_for_user=AsyncMock(return_value=[_key_row(secret_hash='sha256')])),
                 )
             )
             .get('/api/apikey')
