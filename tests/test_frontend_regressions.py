@@ -29,6 +29,7 @@ SYNC_RUN_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useSyncRun.ts'
 ADMIN_SYNC_SECTION = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminSyncSection.tsx'
 SYNC_SETTINGS_PANEL = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'SyncSettingsPanel.tsx'
 ADMIN_LOG_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminLogPage.tsx'
+LOGIN_PANEL = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'LoginPanel.tsx'
 
 
 def _mark_path_data(source: str) -> str:
@@ -40,21 +41,20 @@ def _mark_path_data(source: str) -> str:
 
 
 class FrontendRegressionTest(unittest.TestCase):
-    def test_app_shell_refreshes_sync_status_and_meta(self) -> None:
-        source = APP_SHELL.read_text(encoding='utf-8')
-
-        # 同步服务状态是语义化的 state，文案由 TopBar 负责渲染
-        self.assertIn("setSyncStatus('online');", source)
-        self.assertNotIn('lastLoginAt', source)
-        self.assertIn("else {\n        setLastSyncAt('');", source)
-
-    def test_the_daemon_status_belongs_to_the_console_only(self) -> None:
-        # 全站登录/同步状态是管理台的事：普通读者不请求它，也没有横幅可关。
+    def test_the_app_shell_leaves_infrastructure_to_the_source_page(self) -> None:
+        # 服务运行/登录状态是管理台来源页的事（LoginPanel 读 /api/login），
+        # 包住每个页面的 shell 不再重复探测、重复展示。
         shell = APP_SHELL.read_text(encoding='utf-8')
+        login_panel = LOGIN_PANEL.read_text(encoding='utf-8')
 
-        self.assertIn('if (!isAdmin) return;', shell)
-        banner_at = shell.index('id="status-banner"')
-        self.assertIn('{isAdmin ? (', shell[:banner_at])
+        self.assertNotIn("'/api/login'", shell)
+        self.assertNotIn("'/api/settings/status'", shell)
+        self.assertNotIn('status-banner', shell)
+        self.assertNotIn('syncStatus', shell)
+        top_bar = TOP_BAR.read_text(encoding='utf-8')
+        self.assertNotIn('daemon-status', top_bar)
+        self.assertNotIn('syncStatus', top_bar)
+        self.assertIn("'/api/login'", login_panel)
 
     def test_viewport_logic_uses_shared_media_query_hook(self) -> None:
         # 视口判断收敛到 hooks：页面组件里不再直接碰 window.matchMedia

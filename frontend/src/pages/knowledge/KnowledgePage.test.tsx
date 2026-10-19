@@ -942,7 +942,7 @@ describe('knowledge navigation', () => {
     render(
       <MemoryRouter initialEntries={['/knowledge']} future={ROUTER_FUTURE}>
         <I18nProvider>
-          <TopBar topbarRef={{ current: null }} currentTab="knowledge" syncStatus="" lastSyncAt="" />
+          <TopBar topbarRef={{ current: null }} currentTab="knowledge" />
         </I18nProvider>
       </MemoryRouter>,
     );

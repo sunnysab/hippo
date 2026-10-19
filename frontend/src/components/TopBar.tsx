@@ -8,19 +8,9 @@ import { BrandMark } from './BrandMark';
 interface TopBarProps {
   topbarRef: RefObject<HTMLElement | null>;
   currentTab: string;
-  syncStatus: SyncStatus;
-  lastSyncAt: string;
 }
 
-export type SyncStatus = '' | 'online' | 'offline' | 'unreachable';
-
-const SYNC_STATUS_LABEL: Record<Exclude<SyncStatus, ''>, { key: string; fallback: string }> = {
-  online: { key: 'sync.status.online', fallback: '同步服务运行中' },
-  offline: { key: 'sync.status.offline', fallback: '同步服务未登录' },
-  unreachable: { key: 'sync.status.unreachable', fallback: '同步服务不可达' },
-};
-
-export function TopBar({ topbarRef, currentTab, syncStatus, lastSyncAt }: TopBarProps) {
+export function TopBar({ topbarRef, currentTab }: TopBarProps) {
   const { t } = useI18n();
   const { user, signOut, isAdmin } = useAuth();
   const { mode, cycle } = useTheme();
@@ -29,10 +19,6 @@ export function TopBar({ topbarRef, currentTab, syncStatus, lastSyncAt }: TopBar
     light: t('theme.light', '浅色'),
     dark: t('theme.dark', '深色'),
   }[mode];
-
-  const syncLabel = syncStatus
-    ? t(SYNC_STATUS_LABEL[syncStatus].key, SYNC_STATUS_LABEL[syncStatus].fallback)
-    : '';
 
   const tabs = [
     { key: 'groups', label: t('nav.groups', 'Groups'), path: '/groups' },
@@ -68,17 +54,6 @@ export function TopBar({ topbarRef, currentTab, syncStatus, lastSyncAt }: TopBar
         ))}
       </nav>
       <div className="top-actions">
-        {syncStatus ? (
-          <div
-            className={`top-meta top-sync-status is-${syncStatus}`}
-            id="daemon-status"
-            title={lastSyncAt ? `${syncLabel} · ${lastSyncAt}` : syncLabel}
-          >
-            <span className="status-dot" aria-hidden="true" />
-            {syncLabel}
-          </div>
-        ) : null}
-        {lastSyncAt && <div className="top-meta" id="last-sync-info">{lastSyncAt}</div>}
         {user ? (
           <div className="top-user">
             <button
