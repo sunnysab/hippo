@@ -585,7 +585,7 @@ class SyncJobQueueTest(unittest.TestCase):
             report=SyncReport(total_saved=0, summary=[], details=[]),
             error=None,
         )
-        for trigger_type, expected in (('manual', True), ('scheduled', False)):
+        for trigger_type, expected in (('manual', True), ('scheduled', False), ('subscription', False)):
             queued_state = SyncTaskState(
                 task_id=f'job-{trigger_type}',
                 status='queued',

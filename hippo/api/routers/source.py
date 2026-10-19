@@ -178,7 +178,16 @@ async def subscribe_source(
         )
         await storage.subscriptions.upsert(user.id, account.biz, group_id=int(group_id))
         # 订阅当下就跑一轮列表：媒体来源的正文要排队转写，越早入队越好。
-        await storage.sync_jobs.create_job(trigger_type='manual', biz_list=[account.biz])
+        # Trigger is ``subscription``, not ``manual``: the partial unique index only
+        # allows one active manual job per requester, so a second subscription by
+        # the same user would be deduped away. The requester is still recorded, so
+        # the user can see and cancel the round their subscription triggered.
+        await storage.sync_jobs.create_job(
+            trigger_type='subscription',
+            biz_list=[account.biz],
+            source=info.source or source,
+            requester_user_id=user.id,
+        )
         await storage.audit.record(
             user.id,
             'source.subscribed',

@@ -73,6 +73,11 @@ IMAGE_POLL_SECONDS = 120.0
 _WORKER_STATE_MIN_INTERVAL = 30.0
 _last_worker_state_at = 0.0
 
+#: Trigger types that force past the per-account daily interval. A manual click
+#: does; a scheduled sweep and a subscription's first look keep the policy (the
+#: short ``skip_minutes`` cooldown still applies to the manual one).
+FORCING_TRIGGER_TYPES = frozenset({'manual'})
+
 
 async def publish_worker_state(storage: PostgresStorage) -> None:
     """把 worker 心跳和队列水位写进 meta。
@@ -454,8 +459,9 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
                     biz_list=list(job.biz_list) if job.biz_list else None,
                     source=job.source,
                     # A manual job forces past the daily interval; ``skip_minutes``
-                    # still throttles it. Scheduled/backfill jobs keep the policy.
-                    force=job.trigger_type == 'manual',
+                    # still throttles it. Scheduled/backfill/subscription jobs keep
+                    # the policy.
+                    force=job.trigger_type in FORCING_TRIGGER_TYPES,
                     observer_factory=lambda account, _: _WorkerObserver(tracker=tracker, account=account),
                     observer=tracker,
                 )

@@ -49,15 +49,21 @@ class _NullTransaction:
         return False
 
 
-def _storage(*, subscribed: bool = False, credentials: dict | None = None) -> SimpleNamespace:
+def _storage(*, subscribed: bool = False, credentials: dict | None = None, transactions: list | None = None) -> SimpleNamespace:
     accounts = AsyncMock()
     accounts.upsert_account = AsyncMock(side_effect=lambda account: account.model_copy(update={'group_id': 1}))
     if subscribed:
         accounts.get_account = AsyncMock(return_value=SimpleNamespace(biz='x'))
     else:
         accounts.get_account = AsyncMock(side_effect=LookupError('nope'))
+
+    def transaction():
+        if transactions is not None:
+            transactions.append(1)
+        return _NullTransaction()
+
     return SimpleNamespace(
-        transaction=lambda: _NullTransaction(),
+        transaction=transaction,
         accounts=accounts,
         subscriptions=AsyncMock(),
         sync_jobs=AsyncMock(),
@@ -197,7 +203,8 @@ class PreviewTest(unittest.IsolatedAsyncioTestCase):
 class SubscribeTest(unittest.IsolatedAsyncioTestCase):
     async def test_subscribing_writes_the_catalogue_and_queues_a_round(self) -> None:
         sources, _ = _sources(_INFO)
-        storage = _storage()
+        transactions: list[int] = []
+        storage = _storage(transactions=transactions)
         with (
             patch('hippo.api.routers.source.MediaSources', sources),
             patch('hippo.api.routers.source.get_media_settings', new=AsyncMock(return_value={'enabled': True})),
@@ -217,7 +224,36 @@ class SubscribeTest(unittest.IsolatedAsyncioTestCase):
         # alias 存的是来源内的标识，biz 是加了命名空间的那个
         self.assertEqual('https://feed.example/rss', account.alias)
         storage.subscriptions.upsert.assert_awaited()
-        self.assertEqual(['podcast:abc'], storage.sync_jobs.create_job.call_args.kwargs['biz_list'])
+        job = storage.sync_jobs.create_job.call_args.kwargs
+        self.assertEqual(['podcast:abc'], job['biz_list'])
+        # A subscription is its own trigger, so it never collides with the
+        # one-active-manual-per-user unique index.
+        self.assertEqual('subscription', job['trigger_type'])
+        self.assertNotIn('dedupe', job)
+        self.assertEqual('podcast', job['source'])
+        # Recorded requester is what makes the round visible to its user.
+        self.assertEqual(1, job['requester_user_id'])
+        # The subscription and its first round stay in one transaction.
+        self.assertEqual([1], transactions)
+
+    async def test_a_second_subscription_is_not_deduped_away(self) -> None:
+        sources, _ = _sources(_INFO)
+        storage = _storage()
+        with (
+            patch('hippo.api.routers.source.MediaSources', sources),
+            patch('hippo.api.routers.source.get_media_settings', new=AsyncMock(return_value={'enabled': True})),
+            patch('hippo.api.routers.source.ensure_default_group', new=AsyncMock(return_value=SimpleNamespace(id=1))),
+        ):
+            for _ in range(2):
+                await source_api.subscribe_source(
+                    request=_request(),
+                    body=SubscribeRequest(url='https://feed.example/rss'),
+                    user=_user(),
+                    storage=storage,
+                )
+
+        triggers = [call.kwargs['trigger_type'] for call in storage.sync_jobs.create_job.call_args_list]
+        self.assertEqual(['subscription', 'subscription'], triggers)
 
     async def test_a_blank_url_is_a_bad_request(self) -> None:
         with self.assertRaises(ApiError) as ctx:
