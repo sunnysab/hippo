@@ -121,7 +121,7 @@ async def preview_source(
     finally:
         await sources.aclose()
     try:
-        await storage.accounts.get_account(info.biz)
+        await storage.accounts.get_account_detail(info.biz, user_id=user.id)
         subscribed = True
     except LookupError:
         subscribed = False

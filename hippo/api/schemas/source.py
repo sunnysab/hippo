@@ -44,8 +44,8 @@ class SourcePreviewOut(BaseModel):
     source: str
     biz: str
     nickname: str
-    avatar_url: str = ''
-    subscribed: bool = Field(description='Whether the catalogue already has this channel.')
+    avatar_url: str | None = None
+    subscribed: bool = Field(description='Whether the caller already follows this channel.')
 
 
 class SubscriptionOut(BaseModel):

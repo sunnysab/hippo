@@ -8,8 +8,11 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import httpx
+from fastapi import FastAPI
 from pydantic import ValidationError
 
+from hippo.api.deps import current_user, get_storage
 from hippo.api.routers import source as source_api
 from hippo.api.schemas.source import CredentialRequest, SubscribeRequest
 from hippo.exceptions import ApiError
@@ -54,8 +57,10 @@ def _storage(*, subscribed: bool = False, credentials: dict | None = None, trans
     accounts.upsert_account = AsyncMock(side_effect=lambda account: account.model_copy(update={'group_id': 1}))
     if subscribed:
         accounts.get_account = AsyncMock(return_value=SimpleNamespace(biz='x'))
+        accounts.get_account_detail = AsyncMock(return_value={'biz': 'podcast:abc'})
     else:
         accounts.get_account = AsyncMock(side_effect=LookupError('nope'))
+        accounts.get_account_detail = AsyncMock(side_effect=LookupError('not followed'))
 
     def transaction():
         if transactions is not None:
@@ -139,6 +144,39 @@ class PreviewTest(unittest.IsolatedAsyncioTestCase):
             result = await source_api.preview_source(url='https://feed.example/rss', user=_user(), storage=storage)
 
         self.assertTrue(result['subscribed'])
+
+    async def test_a_channel_in_the_catalogue_is_not_already_followed_by_every_user(self) -> None:
+        sources, _ = _sources(_INFO)
+        storage = _storage()
+        storage.accounts.get_account.return_value = SimpleNamespace(biz=_INFO.biz)
+        storage.accounts.get_account.side_effect = None
+        with (
+            patch('hippo.api.routers.source.MediaSources', sources),
+            patch('hippo.api.routers.source.get_media_settings', new=AsyncMock(return_value={'enabled': True})),
+        ):
+            result = await source_api.preview_source(url='https://feed.example/rss', user=_user(42), storage=storage)
+
+        self.assertFalse(result['subscribed'])
+        storage.accounts.get_account_detail.assert_awaited_once_with(_INFO.biz, user_id=42)
+        storage.accounts.get_account.assert_not_awaited()
+
+    async def test_a_preview_without_an_avatar_survives_response_validation(self) -> None:
+        sources, _ = _sources(_INFO)
+        storage = _storage()
+        app = FastAPI()
+        app.include_router(source_api.router, prefix='/api')
+        app.dependency_overrides[current_user] = _user
+        app.dependency_overrides[get_storage] = lambda: storage
+        with (
+            patch('hippo.api.routers.source.MediaSources', sources),
+            patch('hippo.api.routers.source.get_media_settings', new=AsyncMock(return_value={'enabled': True})),
+        ):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+                response = await client.get('/api/source/preview', params={'url': 'https://feed.example/rss'})
+
+        self.assertEqual(200, response.status_code)
+        self.assertIsNone(response.json()['avatar_url'])
+        self.assertFalse(response.json()['subscribed'])
 
     async def test_a_non_url_is_a_bad_request(self) -> None:
         with self.assertRaises(ApiError) as ctx:
