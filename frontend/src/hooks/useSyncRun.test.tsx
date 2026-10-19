@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../api';
 import { I18nProvider } from '../i18n';
 import zhCN from '../i18n/zh-CN.json';
-import { useSyncRun, type SyncRunScope } from './useSyncRun';
+import { useSyncRun, wait, type SyncRunScope } from './useSyncRun';
 
 const apiGetMock = vi.fn();
 const apiSendMock = vi.fn();
@@ -129,6 +129,34 @@ describe('useSyncRun', () => {
     );
   });
 
+  it('keeps every scope the page provides instead of narrowing to one', async () => {
+    apiSendMock.mockResolvedValue({});
+
+    renderHarness({ source: 'bilibili', groupId: '7', bizList: ['biz-a'] });
+    await clickRun();
+
+    expect(apiSendMock).toHaveBeenCalledWith(
+      '/api/settings/run',
+      'POST',
+      { source: 'bilibili', group_id: 7, biz_list: ['biz-a'] },
+      expect.anything(),
+    );
+  });
+
+  it('does not widen an explicit empty list into every subscription', async () => {
+    apiSendMock.mockResolvedValue({});
+
+    renderHarness({ bizList: [] });
+    await clickRun();
+
+    expect(apiSendMock).toHaveBeenCalledWith(
+      '/api/settings/run',
+      'POST',
+      { biz_list: [] },
+      expect.anything(),
+    );
+  });
+
   it('asks for every subscription when the page has no narrower scope', async () => {
     apiSendMock.mockResolvedValue({ task_id: 'task-1', status: 'success' });
 
@@ -206,6 +234,41 @@ describe('useSyncRun', () => {
     await tick(10000);
     expect(apiGetMock).toHaveBeenCalledTimes(1);
     expect(emitRefreshMock).not.toHaveBeenCalled();
+  });
+
+  it('reclaims the abort listener on every completed poll', async () => {
+    const addSpy = vi.spyOn(AbortSignal.prototype, 'addEventListener');
+    const removeSpy = vi.spyOn(AbortSignal.prototype, 'removeEventListener');
+    apiSendMock.mockResolvedValue({ task_id: 'task-1', status: 'running' });
+    apiGetMock.mockResolvedValue({ task_id: 'task-1', status: 'running' });
+
+    renderHarness({ source: 'bilibili' });
+    await clickRun();
+    const signal = (apiSendMock.mock.calls[0][3] as { signal: AbortSignal }).signal;
+    for (let i = 0; i < 5; i += 1) await tick(2000);
+
+    const onOurSignal = (spy: typeof addSpy) => spy.mock.calls.filter(
+      (call, index) => call[0] === 'abort' && spy.mock.contexts[index] === signal,
+    ).length;
+    const added = onOurSignal(addSpy);
+    const removed = onOurSignal(removeSpy);
+    // Only the wait that is currently in flight may still hold a listener.
+    expect(added).toBe(6);
+    expect(added - removed).toBe(1);
+
+    addSpy.mockRestore();
+    removeSpy.mockRestore();
+  });
+
+  it('resolves a wait on an already-aborted signal without arming a timer', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const timerSpy = vi.spyOn(window, 'setTimeout');
+
+    await expect(wait(2000, controller.signal)).resolves.toBeUndefined();
+    expect(timerSpy).not.toHaveBeenCalled();
+
+    timerSpy.mockRestore();
   });
 
   it('drops a slow answer from a run that has been superseded', async () => {

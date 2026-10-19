@@ -128,6 +128,34 @@ describe('ArticlesPage update entry', () => {
     );
   });
 
+  it('keeps source and group together when both are filtered', async () => {
+    apiSendMock.mockResolvedValue({ task_id: 'task-1', status: 'queued' });
+
+    renderPage('/articles?source=bilibili&group=7');
+    await clickUpdate();
+
+    expect(apiSendMock).toHaveBeenCalledWith(
+      '/api/settings/run',
+      'POST',
+      { source: 'bilibili', group_id: 7 },
+      expect.anything(),
+    );
+  });
+
+  it('limits the update to one account when an account is filtered', async () => {
+    apiSendMock.mockResolvedValue({ task_id: 'task-1', status: 'queued' });
+
+    renderPage('/articles?account=biz-a');
+    await clickUpdate();
+
+    expect(apiSendMock).toHaveBeenCalledWith(
+      '/api/settings/run',
+      'POST',
+      { biz_list: ['biz-a'] },
+      expect.anything(),
+    );
+  });
+
   it('shows the job it is following and keeps the run button busy', async () => {
     apiSendMock.mockResolvedValue({ task_id: 'task-1', status: 'queued' });
 

@@ -91,14 +91,21 @@ export function ArticlesPage() {
             </div>
             <div className="toolbar article-sidebar-actions">
               {/* The scope is whatever the list is filtered to: one source, one
-                  group, or every subscription the reader has. */}
+                  group, one account, or every subscription the reader has. All
+                  of them go out together and the backend intersects them. */}
               <button
                 className="btn ghost"
                 id="btn-articles-sync"
                 type="button"
                 disabled={isSyncing}
                 title={t('articles.updateNowHint', 'Update the current scope')}
-                onClick={() => { void runSync({ source: filters.source, groupId: filters.groupId }); }}
+                onClick={() => {
+                  void runSync({
+                    source: filters.source,
+                    groupId: filters.groupId,
+                    bizList: filters.accountBiz ? [filters.accountBiz] : undefined,
+                  });
+                }}
               >
                 {t('articles.updateNow', 'Update now')}
               </button>

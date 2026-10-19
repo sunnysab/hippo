@@ -213,7 +213,9 @@ class FrontendRegressionTest(unittest.TestCase):
             self.assertNotIn("'/api/settings/run'", page)
             self.assertNotIn("navigate('/admin/sync')", page)
         self.assertIn('articles.updateNow', articles)
-        self.assertIn('runSync({ source: filters.source, groupId: filters.groupId })', articles)
+        self.assertIn('source: filters.source', articles)
+        self.assertIn('groupId: filters.groupId', articles)
+        self.assertIn('bizList: filters.accountBiz ? [filters.accountBiz] : undefined', articles)
         self.assertIn('runSync({ bizList: state.selectedAccounts })', batch)
         self.assertIn('runSync({ groupId })', groups)
 

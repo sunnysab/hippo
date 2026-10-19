@@ -41,23 +41,35 @@ const buildRunRequest = (
       body: scope.source ? { source: scope.source } : {},
     };
   }
-  // One scope per run, narrowest first: what the page is looking at. The
-  // backend intersects it with the caller's own subscriptions either way.
-  if (scope.source) return { path: '/api/settings/run', body: { source: scope.source } };
-  if (scope.bizList?.length) return { path: '/api/settings/run', body: { biz_list: scope.bizList } };
+  // Every filter the page shows goes out together; the backend intersects them
+  // with the caller's own subscriptions. An explicit empty `bizList` is a filter
+  // too, so it goes out as `[]` instead of widening into every subscription.
+  const body: Record<string, unknown> = {};
+  if (scope.source) body.source = scope.source;
   if (scope.groupId !== undefined && scope.groupId !== '') {
-    return { path: '/api/settings/run', body: { group_id: Number(scope.groupId) } };
+    body.group_id = Number(scope.groupId);
   }
-  return { path: '/api/settings/run', body: {} };
+  if (scope.bizList !== undefined) body.biz_list = scope.bizList;
+  return { path: '/api/settings/run', body };
 };
 
-const wait = (ms: number, signal: AbortSignal) =>
+export const wait = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
-    const timer = window.setTimeout(resolve, ms);
-    signal.addEventListener('abort', () => {
+    // An already-aborted signal never fires again: resolving now avoids a timer
+    // that would hang until it elapsed on its own.
+    if (signal.aborted) return resolve();
+    let timer = 0;
+    const onAbort = () => {
       window.clearTimeout(timer);
       resolve();
-    }, { once: true });
+    };
+    timer = window.setTimeout(() => {
+      // A long job polls for minutes: reclaim the listener on a normal timeout
+      // or they pile up one per tick and all fire on the next abort.
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
   });
 
 /**
