@@ -44,6 +44,14 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertNotIn('lastLoginAt', source)
         self.assertIn("else {\n        setLastSyncAt('');", source)
 
+    def test_the_daemon_status_belongs_to_the_console_only(self) -> None:
+        # 全站登录/同步状态是管理台的事：普通读者不请求它，也没有横幅可关。
+        shell = APP_SHELL.read_text(encoding='utf-8')
+
+        self.assertIn('if (!isAdmin) return;', shell)
+        banner_at = shell.index('id="status-banner"')
+        self.assertIn('{isAdmin ? (', shell[:banner_at])
+
     def test_viewport_logic_uses_shared_media_query_hook(self) -> None:
         # 视口判断收敛到 hooks：页面组件里不再直接碰 window.matchMedia
         hook_source = MEDIA_QUERY_HOOK.read_text(encoding='utf-8')

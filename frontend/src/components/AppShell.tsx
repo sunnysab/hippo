@@ -27,6 +27,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const currentTab = location.pathname.split('/').filter(Boolean)[0] || 'groups';
 
   const refreshChromeMeta = useCallback(async () => {
+    // The daemon session and the site-wide sync state are console business: a
+    // reader gets no service badge and no site-wide error banner here.
+    if (!isAdmin) return;
     // The WeChat daemon state and the sync status are independent: a failed
     // status call must not throw away a login state we already have, and a
     // stale sync error must not hide a login that needs renewing.
@@ -101,9 +104,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     } catch {
       /* the sync status is optional; the login banner stays as it is */
     }
-  }, [t]);
+  }, [isAdmin, t]);
 
   useEffect(() => {
+    if (!isAdmin) return;
     const kickoff = window.setTimeout(() => {
       void refreshChromeMeta();
     }, 0);
@@ -114,7 +118,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       window.clearTimeout(kickoff);
       window.clearInterval(timer);
     };
-  }, [refreshChromeMeta]);
+  }, [isAdmin, refreshChromeMeta]);
 
   useEffect(() => {
     const app = appRef.current;
@@ -160,30 +164,32 @@ export function AppShell({ children }: { children: ReactNode }) {
         lastSyncAt={lastSyncAt}
       />
       <main className="content">
-        <div className={`banner${bannerVisible ? '' : ' is-hidden'}${bannerError ? ' is-error' : ''}`} id="status-banner">
-          <div className="banner-text" id="banner-text">{bannerText}</div>
-          <div className="banner-actions">
-            {isAdmin && bannerRelogin ? (
+        {isAdmin ? (
+          <div className={`banner${bannerVisible ? '' : ' is-hidden'}${bannerError ? ' is-error' : ''}`} id="status-banner">
+            <div className="banner-text" id="banner-text">{bannerText}</div>
+            <div className="banner-actions">
+              {bannerRelogin ? (
+                <button
+                  className="btn ghost"
+                  id="btn-banner-login"
+                  type="button"
+                  onClick={handleBannerLogin}
+                >
+                  {t('login.relogin', 'Re-login')}
+                </button>
+              ) : null}
               <button
                 className="btn ghost"
-                id="btn-banner-login"
+                id="btn-banner-dismiss"
                 type="button"
-                onClick={handleBannerLogin}
+                aria-label={t('common.close', 'Close')}
+                onClick={handleBannerDismiss}
               >
-                {t('login.relogin', 'Re-login')}
+                ×
               </button>
-            ) : null}
-            <button
-              className="btn ghost"
-              id="btn-banner-dismiss"
-              type="button"
-              aria-label={t('common.close', 'Close')}
-              onClick={handleBannerDismiss}
-            >
-              ×
-            </button>
+            </div>
           </div>
-        </div>
+        ) : null}
         <div id="view-root">{children}</div>
       </main>
     </div>

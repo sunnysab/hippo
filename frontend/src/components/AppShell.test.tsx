@@ -341,7 +341,7 @@ describe('AppShell', () => {
     expect(screen.queryByRole('button', { name: zhCN['login.relogin'] })).toBeNull();
   });
 
-  it('leaves the dismiss button reachable for non-admins', async () => {
+  it('keeps the daemon badge and the site-wide banner out of a reader\'s shell', async () => {
     vi.stubGlobal('ResizeObserver', ResizeObserverMock);
 
     apiGetMock.mockImplementation(async (path: string) => {
@@ -360,8 +360,10 @@ describe('AppShell', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(screen.getByText(zhCN['banner.weixinLoginExpired'])).toBeTruthy();
-    expect(screen.queryByRole('button', { name: zhCN['login.relogin'] })).toBeNull();
-    expect(screen.getByRole('button', { name: zhCN['common.close'] })).toBeTruthy();
+    // 普通读者既看不到 daemon 状态，也不会去读它。
+    expect(apiGetMock).not.toHaveBeenCalled();
+    expect(document.querySelector('.banner')).toBeNull();
+    expect(screen.queryByText(zhCN['banner.weixinLoginExpired'])).toBeNull();
+    expect(screen.queryByText(zhCN['sync.status.online'])).toBeNull();
   });
 });
