@@ -10,8 +10,11 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from pydantic import ValidationError
+
 from hippo.api.deps import API_KEY_FORBIDDEN_PREFIXES, api_key_user
 from hippo.api.routers import apikey as apikey_api
+from hippo.api.schemas.auth import ApiKeyCreateRequest
 from hippo.exceptions import ApiError
 from hippo.repositories.apikey import generate_key, key_hash, key_prefix
 
@@ -149,7 +152,7 @@ class RouterTest(unittest.IsolatedAsyncioTestCase):
 
         result = await apikey_api.create_api_key(
             request=SimpleNamespace(headers={}, client=None),
-            body={'name': 'CI'},
+            body=ApiKeyCreateRequest(name='CI'),
             user=self._user(),
             storage=storage,
         )
@@ -181,7 +184,7 @@ class RouterTest(unittest.IsolatedAsyncioTestCase):
 
         await apikey_api.create_api_key(
             request=SimpleNamespace(headers={}, client=None),
-            body={'scopes': ['admin', 'read']},
+            body=ApiKeyCreateRequest(scopes=['admin', 'read']),
             user=self._user(),
             storage=storage,
         )
@@ -197,7 +200,7 @@ class RouterTest(unittest.IsolatedAsyncioTestCase):
         before = datetime.now(UTC)
         await apikey_api.create_api_key(
             request=SimpleNamespace(headers={}, client=None),
-            body={'expires_in_days': 30},
+            body=ApiKeyCreateRequest(expires_in_days=30),
             user=self._user(),
             storage=storage,
         )
@@ -206,13 +209,16 @@ class RouterTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(expires_at)
         self.assertLess(abs((expires_at - (before + timedelta(days=30))).total_seconds()), 5)
 
-    async def test_a_nonsense_expiry_is_a_bad_request(self) -> None:
+    async def test_a_nonsense_expiry_is_refused_by_the_request_model(self) -> None:
+        # The body is declared as an integer number of days, so a string is
+        # refused before the route runs. _expiry only has to explain 0 or less.
+        with self.assertRaises(ValidationError):
+            ApiKeyCreateRequest(expires_in_days='soon')  # type: ignore[arg-type]
         storage = SimpleNamespace(transaction=_NullTransaction, api_keys=AsyncMock(), audit=AsyncMock())
-
         with self.assertRaises(ApiError):
             await apikey_api.create_api_key(
                 request=SimpleNamespace(headers={}, client=None),
-                body={'expires_in_days': 'soon'},
+                body=ApiKeyCreateRequest(expires_in_days=0),
                 user=self._user(),
                 storage=storage,
             )

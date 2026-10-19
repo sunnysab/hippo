@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from hippo.api.routers import auth as auth_api
+from hippo.api.schemas.auth import EmailChangeRequest, LoginRequest
 from hippo.exceptions import ApiError
 from hippo.security import hash_password
 
@@ -56,7 +57,7 @@ class LoginVerificationGateTest(unittest.IsolatedAsyncioTestCase):
 
         response = await auth_api.login(
             _request('10.0.0.1'),
-            body={'username': 'u', 'password': 'correct-horse'},
+            body=LoginRequest(username='u', password='correct-horse'),
             storage=storage,
         )
 
@@ -69,7 +70,7 @@ class LoginVerificationGateTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ApiError) as ctx:
             await auth_api.login(
                 _request('10.0.0.2'),
-                body={'username': 'u', 'password': 'correct-horse'},
+                body=LoginRequest(username='u', password='correct-horse'),
                 storage=storage,
             )
 
@@ -83,7 +84,7 @@ class ChangeEmailTest(unittest.IsolatedAsyncioTestCase):
 
         await auth_api.change_email(
             _request(),
-            body={'current_password': 'correct-horse', 'email': 'New@Example.com'},
+            body=EmailChangeRequest(current_password='correct-horse', email='New@Example.com'),
             user=user,
             storage=storage,
         )
@@ -97,7 +98,7 @@ class ChangeEmailTest(unittest.IsolatedAsyncioTestCase):
 
         await auth_api.change_email(
             _request(),
-            body={'current_password': 'correct-horse', 'email': ''},
+            body=EmailChangeRequest(current_password='correct-horse', email=''),
             user=user,
             storage=storage,
         )
@@ -111,7 +112,7 @@ class ChangeEmailTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ApiError) as ctx:
             await auth_api.change_email(
                 _request(),
-                body={'current_password': 'wrong', 'email': 'new@example.com'},
+                body=EmailChangeRequest(current_password='wrong', email='new@example.com'),
                 user=user,
                 storage=storage,
             )
@@ -126,7 +127,7 @@ class ChangeEmailTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ApiError) as ctx:
             await auth_api.change_email(
                 _request(),
-                body={'current_password': 'correct-horse', 'email': 'taken@example.com'},
+                body=EmailChangeRequest(current_password='correct-horse', email='taken@example.com'),
                 user=user,
                 storage=storage,
             )

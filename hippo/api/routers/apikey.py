@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Request, status
+from fastapi import APIRouter, Depends, Request, status
 
 from ...exceptions import ApiError
 from ...logger import get_logger
@@ -18,6 +18,7 @@ from ...models import User
 from ...repositories.apikey import SCOPES
 from ...storage import PostgresStorage
 from ..deps import client_ip, current_user, get_storage
+from ..schemas.auth import ApiKeyCreatedOut, ApiKeyCreateRequest, ApiKeyListOut, WhoamiOut
 
 logger = get_logger(__name__)
 
@@ -40,7 +41,7 @@ def _expiry(value: Any) -> datetime | None:
     return datetime.now(UTC) + timedelta(days=min(days, MAX_EXPIRY_DAYS))
 
 
-@router.get('/apikey')
+@router.get('/apikey', response_model=ApiKeyListOut)
 async def list_api_keys(
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
@@ -52,23 +53,22 @@ async def list_api_keys(
     }
 
 
-@router.post('/apikey', status_code=status.HTTP_201_CREATED)
+@router.post('/apikey', status_code=status.HTTP_201_CREATED, response_model=ApiKeyCreatedOut)
 async def create_api_key(
     request: Request,
-    body: dict[str, Any] = Body(default={}),
+    body: ApiKeyCreateRequest,
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
 ) -> dict[str, Any]:
     """Issue a key. The ``secret`` in this response is the only copy that exists."""
-    name = str(body.get('name') or '').strip() or 'API Key'
-    requested = body.get('scopes')
-    scopes = tuple(scope for scope in (requested or ['read']) if scope in SCOPES) or ('read',)
+    name = (body.name or '').strip() or 'API Key'
+    scopes = tuple(scope for scope in (body.scopes or ['read']) if scope in SCOPES) or ('read',)
     async with storage.transaction():
         record, secret = await storage.api_keys.create(
             user.id,
             name=name,
             scopes=scopes,
-            expires_at=_expiry(body.get('expires_in_days')),
+            expires_at=_expiry(body.expires_in_days),
         )
         await storage.audit.record(
             user.id,
@@ -96,7 +96,7 @@ async def revoke_api_key(
         await storage.audit.record(user.id, 'apikey.revoked', target=str(key_id), ip=client_ip(request))
 
 
-@router.get('/whoami')
+@router.get('/whoami', response_model=WhoamiOut)
 async def whoami(
     request: Request,
     user: User = Depends(current_user),

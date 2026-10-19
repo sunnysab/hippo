@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 
 from ...config import get_settings
 from ...exceptions import ApiError
@@ -16,6 +16,7 @@ from ...storage import PostgresStorage
 from ...utils import EMAIL_RE
 from ..deps import SESSION_COOKIE, client_ip, current_user, get_storage
 from ..ratelimit import SlidingWindowLimiter
+from ..schemas.auth import EmailChangeRequest, LoginRequest, PasswordChangeRequest, SessionListOut, UserOut
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -49,12 +50,12 @@ def _set_session_cookie(response: Response, token: str) -> None:
 @router.post('/auth/login', status_code=status.HTTP_204_NO_CONTENT)
 async def login(
     request: Request,
-    body: dict[str, Any] = Body(default={}),
+    body: LoginRequest,
     storage: PostgresStorage = Depends(get_storage),
 ) -> Response:
     """Sign in with username and password, setting the session cookie."""
-    username = str(body.get('username') or '').strip()
-    password = str(body.get('password') or '')
+    username = body.username.strip()
+    password = body.password
     ip = client_ip(request)
     limiter_key = ip or 'unknown'
 
@@ -106,7 +107,7 @@ async def logout(
     return response
 
 
-@router.get('/auth/me')
+@router.get('/auth/me', response_model=UserOut)
 async def me(user: User = Depends(current_user)) -> dict[str, Any]:
     """Return the signed-in user."""
     return {
@@ -122,13 +123,13 @@ async def me(user: User = Depends(current_user)) -> dict[str, Any]:
 @router.post('/auth/password', status_code=status.HTTP_204_NO_CONTENT)
 async def change_password(
     request: Request,
-    body: dict[str, Any] = Body(default={}),
+    body: PasswordChangeRequest,
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
 ) -> Response:
     """Change the password and rotate every session, including this one."""
-    current = str(body.get('current_password') or '')
-    new_password = str(body.get('new_password') or '')
+    current = body.current_password
+    new_password = body.new_password
     if len(new_password) < _MIN_PASSWORD_LENGTH:
         raise ApiError(f'新密码至少 {_MIN_PASSWORD_LENGTH} 位', status=400)
 
@@ -155,7 +156,7 @@ async def change_password(
 @router.patch('/auth/email', status_code=status.HTTP_204_NO_CONTENT)
 async def change_email(
     request: Request,
-    body: dict[str, Any] = Body(default={}),
+    body: EmailChangeRequest,
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
 ) -> None:
@@ -165,8 +166,8 @@ async def change_email(
     counts as verified: verification gates account activation, which is long
     past by the time this runs, and a mistyped address must not lock anyone out.
     """
-    email = str(body.get('email') or '').strip()
-    password = str(body.get('current_password') or '')
+    email = body.email.strip()
+    password = body.current_password
 
     credentials = await storage.users.get_with_password(user.username)
     if credentials is None or not await asyncio.to_thread(verify_password, password, credentials[1]):
@@ -192,7 +193,7 @@ async def change_email(
         )
 
 
-@router.get('/auth/session')
+@router.get('/auth/session', response_model=SessionListOut)
 async def my_sessions(
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),

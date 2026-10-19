@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Request, status
+from fastapi import APIRouter, Depends, Request, status
 
 from ...emailer import get_email_settings, send_email
 from ...exceptions import ApiError
@@ -20,6 +20,14 @@ from ...storage import PostgresStorage
 from ...utils import EMAIL_RE
 from ..deps import client_ip, get_storage
 from ..ratelimit import SlidingWindowLimiter
+from ..schemas.auth import (
+    AcceptedOut,
+    RegisterRequest,
+    RegistrationPendingOut,
+    ResetPasswordRequest,
+    ResetRequestRequest,
+    TokenRequest,
+)
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -71,10 +79,10 @@ def _render_mail(*, site_name: str, title: str, intro: str, link: str, action: s
     return text, html
 
 
-@router.post('/auth/register', status_code=status.HTTP_202_ACCEPTED)
+@router.post('/auth/register', status_code=status.HTTP_202_ACCEPTED, response_model=RegistrationPendingOut)
 async def register(
     request: Request,
-    body: dict[str, Any] = Body(default={}),
+    body: RegisterRequest,
     storage: PostgresStorage = Depends(get_storage),
 ) -> dict[str, Any]:
     """Create an unverified account and mail a verification link."""
@@ -86,9 +94,9 @@ async def register(
     if not _send_limiter.allow(ip or 'unknown'):
         raise ApiError('请求过于频繁，请稍后再试', status=429)
 
-    username = str(body.get('username') or '').strip()
-    email = str(body.get('email') or '').strip()
-    password = str(body.get('password') or '')
+    username = body.username.strip()
+    email = body.email.strip()
+    password = body.password
 
     if not username:
         raise ApiError('用户名不能为空', status=400)
@@ -124,12 +132,11 @@ async def register(
 
 @router.post('/auth/verify', status_code=status.HTTP_204_NO_CONTENT)
 async def verify(
-    body: dict[str, Any] = Body(default={}),
+    body: TokenRequest,
     storage: PostgresStorage = Depends(get_storage),
 ) -> None:
     """Consume a verification token."""
-    token = str(body.get('token') or '').strip()
-    user_id = await storage.tokens.consume(token, VERIFY_EMAIL)
+    user_id = await storage.tokens.consume(body.token.strip(), VERIFY_EMAIL)
     if user_id is None:
         raise ApiError('链接无效或已过期', status=400)
     async with storage.transaction():
@@ -137,10 +144,10 @@ async def verify(
         await storage.audit.record(user_id, 'auth.email_verified')
 
 
-@router.post('/auth/reset-request', status_code=status.HTTP_202_ACCEPTED)
+@router.post('/auth/reset-request', status_code=status.HTTP_202_ACCEPTED, response_model=AcceptedOut)
 async def reset_request(
     request: Request,
-    body: dict[str, Any] = Body(default={}),
+    body: ResetRequestRequest,
     storage: PostgresStorage = Depends(get_storage),
 ) -> dict[str, Any]:
     """Mail a password-reset link.
@@ -148,7 +155,7 @@ async def reset_request(
     Always reports success so the endpoint cannot be used to probe which
     addresses are registered.
     """
-    email = str(body.get('email') or '').strip()
+    email = body.email.strip()
     ip = client_ip(request)
     if not _send_limiter.allow(ip or 'unknown'):
         raise ApiError('请求过于频繁，请稍后再试', status=429)
@@ -180,12 +187,12 @@ async def reset_request(
 
 @router.post('/auth/reset', status_code=status.HTTP_204_NO_CONTENT)
 async def reset(
-    body: dict[str, Any] = Body(default={}),
+    body: ResetPasswordRequest,
     storage: PostgresStorage = Depends(get_storage),
 ) -> None:
     """Set a new password using a reset token, invalidating every session."""
-    token = str(body.get('token') or '').strip()
-    password = str(body.get('password') or '')
+    token = body.token.strip()
+    password = body.password
     if len(password) < _MIN_PASSWORD_LENGTH:
         raise ApiError(f'密码至少 {_MIN_PASSWORD_LENGTH} 位', status=400)
 
