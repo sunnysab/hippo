@@ -8,6 +8,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from pydantic import ValidationError
+
 from hippo.api.routers import admin as admin_api
 from hippo.api.schemas.admin import (
     PasswordResetRequest,
@@ -16,7 +18,6 @@ from hippo.api.schemas.admin import (
     UserUpdateRequest,
 )
 from hippo.exceptions import ApiError
-from pydantic import ValidationError
 
 
 def _user(user_id: int = 1, role: str = 'admin') -> SimpleNamespace:
@@ -151,8 +152,9 @@ class AdminGuardTest(unittest.IsolatedAsyncioTestCase):
         settings = {'registration_enabled': True, 'site_name': 'Hippo', 'public_base_url': ''}
         before = {**settings, 'registration_enabled': False}
 
-        with patch.object(admin_api, 'get_site_settings', AsyncMock(return_value=before)), patch.object(
-            admin_api, 'set_site_settings', AsyncMock(return_value=settings)
+        with (
+            patch.object(admin_api, 'get_site_settings', AsyncMock(return_value=before)),
+            patch.object(admin_api, 'set_site_settings', AsyncMock(return_value=settings)),
         ):
             result = await admin_api.update_site_settings(
                 SimpleNamespace(headers={}, client=None),
@@ -168,8 +170,9 @@ class AdminGuardTest(unittest.IsolatedAsyncioTestCase):
         storage = _storage()
         settings = {'registration_enabled': False, 'site_name': 'Hippo', 'public_base_url': ''}
 
-        with patch.object(admin_api, 'get_site_settings', AsyncMock(return_value=dict(settings))), patch.object(
-            admin_api, 'set_site_settings', AsyncMock(return_value=settings)
+        with (
+            patch.object(admin_api, 'get_site_settings', AsyncMock(return_value=dict(settings))),
+            patch.object(admin_api, 'set_site_settings', AsyncMock(return_value=settings)),
         ):
             await admin_api.update_site_settings(
                 SimpleNamespace(headers={}, client=None),

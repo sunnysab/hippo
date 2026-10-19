@@ -198,9 +198,7 @@ class KnowledgeResponseContractTest(unittest.TestCase):
         }
 
     def test_a_document_response_drops_the_storage_columns(self) -> None:
-        storage = SimpleNamespace(
-            knowledge=SimpleNamespace(get_document=AsyncMock(return_value=self._document_row()))
-        )
+        storage = SimpleNamespace(knowledge=SimpleNamespace(get_document=AsyncMock(return_value=self._document_row())))
         user = SimpleNamespace(id=1, username='alice', role='user')
 
         response = _knowledge_client(storage, user).get('/api/document/11111111-1111-4111-8111-111111111111')
@@ -242,7 +240,17 @@ class KnowledgeResponseContractTest(unittest.TestCase):
         hit = _resolve(spec, page['properties']['hits']['items'])
 
         self.assertEqual(
-            {'document_id', 'knowledge_base_id', 'filename', 'version', 'page_no', 'ordinal', 'text', 'chunk_type', 'heading_level'},
+            {
+                'document_id',
+                'knowledge_base_id',
+                'filename',
+                'version',
+                'page_no',
+                'ordinal',
+                'text',
+                'chunk_type',
+                'heading_level',
+            },
             set(hit['properties']),
         )
         for key in self.SERVER_OWNED:
