@@ -99,8 +99,6 @@
   "groups.rssPrompt": "RSS 地址",
   "groups.syncNow": "同步",
   "groups.viewArticles": "查看分组文章",
-  "groups.syncTriggered": "已触发分组同步",
-  "groups.syncTriggerFailed": "触发分组同步失败",
   "accounts.title": "公众号管理",
   "accounts.subtitle": "浏览、搜索并调整公众号分组。",
   "accounts.empty": "暂无公众号。",
@@ -132,8 +130,6 @@
   "accounts.groupSync": "同步已选",
   "accounts.batchToggle": "批量操作",
   "accounts.batchHide": "收起批量",
-  "accounts.syncTriggered": "已开始同步所选公众号",
-  "accounts.syncTriggerFailed": "触发所选公众号同步失败",
   "accounts.syncDisabled": "同步已禁用",
   "accounts.disableSync": "禁用同步",
   "accounts.enableSync": "启用同步",
@@ -749,7 +745,6 @@
   "admin.source.actions": "操作",
   "admin.source.configure": "配置",
   "admin.source.syncing": "排队中…",
-  "admin.source.syncQueued": "{source} 的同步已排队",
   "admin.source.back": "全部来源",
   "admin.source.mediaDisabled": "媒体来源与转写当前是关闭的；只有公众号会同步。",
   "admin.source.proxySubtitle": "这个来源的出口；每个来源的出口可以不同。",
@@ -760,7 +755,6 @@
   "admin.sync.overviewTitle": "各来源概览",
   "admin.sync.overviewSubtitle": "每个来源的积压与最近一次同步。",
   "admin.sync.pendingCount": "待处理 {n}",
-  "admin.sync.queuedFor": "{source} 的同步已排队",
   "admin.sync.sourceSubtitle": "这个来源最近的任务。",
   "admin.sync.savedCount": "+{n} 篇"
 }
