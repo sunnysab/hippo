@@ -48,7 +48,7 @@ MAX_DOWNLOAD_BYTES = 2 * 1024**3
 
 #: How the video asset is named in ``article_media`` and in the object store. The
 #: phase-1 contract fixed both strings.
-VIDEO_KIND = 'video'
+VIDEO_KIND = archive_module.VIDEO_KIND
 VIDEO_CONTENT_TYPE = 'video/mp4'
 
 #: Media files are fetched in ranged blocks, which is not cosmetic: googlevideo throttles a

@@ -303,6 +303,19 @@ class ArticleMediaRepository:
                 ),
             )
 
+    async def mark_pending(self, article_pk: int, *, kind: str = 'audio') -> None:
+        """Claim the row before the work starts, so a second reader waits instead of starting again."""
+        async with self._conn.cursor() as cur:
+            await cur.execute(
+                """
+                INSERT INTO article_media (article_pk, kind, state, created_at, updated_at)
+                VALUES (%s, %s, 'pending', NOW(), NOW())
+                ON CONFLICT (article_pk, kind) DO UPDATE
+                   SET state = 'pending', error = NULL, updated_at = NOW()
+                """,
+                (int(article_pk), kind),
+            )
+
     async def mark_failed(self, article_pk: int, *, kind: str = 'audio', error: str) -> None:
         """A failed archive must not fail the transcription it was made for."""
         async with self._conn.cursor() as cur:

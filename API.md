@@ -240,9 +240,14 @@ POST /api/account
 { "biz": "gh_abc123", "nickname": "某号", "alias": "gh_abc", "round_head_img": "…", "group_id": 2 }
 ```
 
-`biz` 与 `nickname` 必填。传 `gh_…` 形状的 `biz` 时，服务端会先解析成 fakeid（`Mz…==`），
-解析失败返回 `502`。添加成功后：写入共享目录 + 订阅你的分组，并在 `backfill_state = pending` 时
+`biz` 与 `nickname` 必填。传 `gh_…` 形状的 `biz` 时，服务端会先解析成 fakeid（`Mz…==`）：
+优先读该号任意一篇文章长链上的 `__biz`，一页都拿不到（服务号、刚注册、订阅号列表为空）时
+退回 H5 搜索，用结果的 `bizuin` 做 base64——两者恒等。仍解析不到才返回 `502`。
+添加成功后：写入共享目录 + 订阅你的分组，并在 `backfill_state = pending` 时
 投递一条历史回填任务（worker 接手，已回填过的号不会重复）。
+
+注意：**添加不等于关注**。公众号关注走 daemon 的 `verifyuser`，只影响 push 推送能否覆盖到该号；
+文章列表走 `bizprofilev2h5`，未关注的号一样能拉到历史文章。
 
 ### 更新与批量
 
@@ -877,6 +882,20 @@ GET /api/media/{article_pk}/{kind}        # kind = audio | video
 `audio` 与 `video` 共用同一套订阅鉴权与 Range 语义。`200`（或带 `Range` 时的 `206`，浏览器拖动进度条
 靠它）。没有留档时 `302` 到原始地址，既没有留档也没有原始地址时 `404`，范围越界 `416`。
 
+视频转写的文章同时保留一段音频，读者可以只闻其声，不必为了一小时播客拉几百兆的画面；
+播客等本来就只有音频的条目当然还是只有 `audio`。早期留档的视频没有这份音频，
+可以按需补出来：
+
+```
+GET  /api/article/{article_id}/audio      # 只读状态，不启动任何任务
+POST /api/article/{article_id}/audio      # 需要时从留档视频里抽一份，幂等
+```
+
+两者都返回 `{state, url}`：`stored`（`url` 可用）、`pending`（正在抽，再问一次就是结果）、
+`missing`（有视频但还没抽过，`POST` 会开始）、`failed`（上次失败，`POST` 会重试）、
+`unavailable`（没有留档视频，抽不出来）。
+抽取在服务进程里跑，同一时刻只做一份，重复 `POST` 会并入正在跑的那次。
+
 ### 转写稿
 
 ```
@@ -1089,6 +1108,8 @@ Content-Type: application/pdf
 | GET | `/api/article/refetch/{task_id}` | 登录 |
 | GET | `/api/article/{article_id}` | 登录 |
 | GET | `/api/article/{article_id}/annotation` | 登录 |
+| GET | `/api/article/{article_id}/audio` | 登录 |
+| POST | `/api/article/{article_id}/audio` | 登录 |
 | POST | `/api/article/{article_id}/annotation` | 登录 |
 | DELETE | `/api/article/{article_id}/annotation/{annotation_id}` | 登录 |
 | GET | `/api/article/{article_id}/image` | 登录 |

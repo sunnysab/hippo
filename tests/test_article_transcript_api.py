@@ -167,6 +167,35 @@ class OnDemandTranscribeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(404, ctx.exception.status)
 
 
+class OnDemandAudioTest(unittest.IsolatedAsyncioTestCase):
+    async def _get(self, state='stored'):
+        storage = _storage()
+        with (
+            patch('hippo.api.routers.article._assert_article_visible', new=AsyncMock()),
+            patch('hippo.api.routers.article.audio_export.audio_state', new=AsyncMock(return_value=state)),
+        ):
+            return await article_api.get_article_audio(article_id=7, storage=storage, user=_user())
+
+    async def test_a_stored_copy_answers_with_its_url(self) -> None:
+        self.assertEqual({'state': 'stored', 'url': '/api/media/7/audio'}, await self._get())
+
+    async def test_an_article_without_a_copy_answers_without_a_url(self) -> None:
+        # 没有可播放的地址就不要给出一个会 404 的链接。
+        self.assertEqual({'state': 'unavailable', 'url': None}, await self._get('unavailable'))
+
+    async def test_the_post_starts_the_extraction(self) -> None:
+        storage = _storage()
+        ensure = AsyncMock(return_value='pending')
+        with (
+            patch('hippo.api.routers.article._assert_article_visible', new=AsyncMock()),
+            patch('hippo.api.routers.article.audio_export.ensure_audio', new=ensure),
+        ):
+            answer = await article_api.start_article_audio(article_id=7, storage=storage, user=_user())
+
+        ensure.assert_awaited_once_with(storage, 7)
+        self.assertEqual({'state': 'pending', 'url': None}, answer)
+
+
 class AudioStreamingTest(unittest.IsolatedAsyncioTestCase):
     _STORED_VIDEO: ClassVar[dict] = {'state': 'stored', 's3_key': 'media/video/7.mp4', 'size_bytes': 100}
 

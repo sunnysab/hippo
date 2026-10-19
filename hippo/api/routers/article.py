@@ -32,6 +32,7 @@ from ...container import build_downloader_container
 from ...exceptions import ApiError
 from ...logger import get_logger
 from ...media import archive as archive_module
+from ...media import audio_export
 from ...media.subtitle import to_markdown, to_srt, to_text
 from ...media_settings import get_media_settings, resolve_proxy
 from ...models import User
@@ -39,6 +40,7 @@ from ...storage import PostgresStorage, fetchone_row, open_storage
 from ..deps import current_user, get_storage, parse_group_ids
 from ..responses import binary_response
 from ..schemas.article import (
+    ArticleAudioOut,
     ArticleDetailOut,
     ArticleImageListOut,
     ArticleListOut,
@@ -254,6 +256,37 @@ async def transcribe_article(
         )
     logger.info('按需转写 article_pk=%s force_asr=%s', article_id, force_asr)
     return {'article_pk': article_id, 'state': 'pending', 'force_asr': force_asr}
+
+
+def _audio_answer(state: str, article_id: int) -> dict[str, Any]:
+    stored = state == 'stored'
+    return {'state': state, 'url': f'/api/media/{article_id}/audio' if stored else None}
+
+
+@router.get('/article/{article_id}/audio', response_model=ArticleAudioOut)
+async def get_article_audio(
+    article_id: int,
+    storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
+) -> dict[str, Any]:
+    """Whether this article can be listened to without its picture, and start nothing."""
+    await _assert_article_visible(storage, user.id, article_id)
+    return _audio_answer(await audio_export.audio_state(storage, article_id), article_id)
+
+
+@router.post('/article/{article_id}/audio', status_code=202, response_model=ArticleAudioOut)
+async def start_article_audio(
+    article_id: int,
+    storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
+) -> dict[str, Any]:
+    """Lift the audio out of the archived video, for articles archived before that existed.
+
+    New transcriptions keep both files already; this is the repair path, and it is
+    idempotent — a second request joins the extraction that is already running.
+    """
+    await _assert_article_visible(storage, user.id, article_id)
+    return _audio_answer(await audio_export.ensure_audio(storage, article_id), article_id)
 
 
 #: The transcript exports are text formats; the body is the document itself, not JSON.

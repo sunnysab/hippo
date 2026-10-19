@@ -11,6 +11,7 @@ import {
 import { useI18n } from '../../i18n';
 import { renderInlineNodes } from '../../utils/markdown';
 import { EmptyState } from '../../components/EmptyState';
+import { apiGet, apiSend, isAuthError } from '../../api';
 import type { ArticlePayload, ArticleContentBlock } from '../../store/articles';
 import { buildContentBlockKeys } from './contentKeys';
 import { formatDuration as anchorLabel, timestampHref } from '../../utils/duration';
@@ -35,8 +36,10 @@ interface PlayerControls {
   originalHref: string | null;
   /** True while the reader listens to the video's audio instead of watching it. */
   audioOnly: boolean;
-  /** Both a kept video and a kept audio track exist, so listening-only is possible. */
-  canSwitchMode: boolean;
+  /** The switch is worth drawing: there is something to listen to, or to prepare. */
+  showModeButton: boolean;
+  /** An extraction is running, so the switch is busy rather than pressable. */
+  preparingAudio: boolean;
   toggleMode: () => void;
 }
 
@@ -48,7 +51,8 @@ const PlayerContext = createContext<PlayerControls>({
   pauseOther: () => {},
   originalHref: null,
   audioOnly: false,
-  canSwitchMode: false,
+  showModeButton: false,
+  preparingAudio: false,
   toggleMode: () => {},
 });
 
@@ -58,6 +62,10 @@ const PlayerContext = createContext<PlayerControls>({
  * backslash the browser rewrites into a remote host (`/\evil.test`).
  */
 const ARCHIVED_VIDEO_PATH = /^\/api\/media\/[1-9]\d*\/video$/;
+
+/** How long to wait for an extraction before giving up on the switch. */
+const AUDIO_POLL_INTERVAL_MS = 3000;
+const AUDIO_POLL_ATTEMPTS = 20;
 
 const isArchivedVideoUrl = (url: string | undefined): url is string =>
   typeof url === 'string' && ARCHIVED_VIDEO_PATH.test(url);
@@ -174,11 +182,24 @@ interface PlayerRefProps {
  */
 const PlayerModeButton = memo(function PlayerModeButton() {
   const { t } = useI18n();
-  const { audioOnly, toggleMode } = useContext(PlayerContext);
+  const { audioOnly, toggleMode, preparingAudio } = useContext(PlayerContext);
+  if (audioOnly) {
+    return (
+      <button className="reader-audio-toggle" type="button" onClick={toggleMode}>
+        {t('articles.showVideo', '看视频')}
+      </button>
+    );
+  }
   return (
-    <button className="reader-audio-toggle" type="button" onClick={toggleMode}>
-      {audioOnly
-        ? t('articles.showVideo', '看视频')
+    <button
+      className="reader-audio-toggle"
+      type="button"
+      disabled={preparingAudio}
+      onClick={toggleMode}
+      title={t('articles.listenOnlyHint', '只播放声音，不下载视频。')}
+    >
+      {preparingAudio
+        ? t('articles.preparingAudio', '正在准备音频…')
         : t('articles.listenOnly', '仅音频')}
     </button>
   );
@@ -196,7 +217,7 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({
   onReady: PlayerRefProps['onReady'];
 }) {
   const { t } = useI18n();
-  const { originalHref, pauseOther, canSwitchMode } = useContext(PlayerContext);
+  const { originalHref, pauseOther, showModeButton } = useContext(PlayerContext);
 
   // The archived copy streams from Hippo with Range support, so it plays at once
   // and never contacts the provider — even when a legacy block still carries an
@@ -216,7 +237,7 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({
           onLoadedMetadata={onReady}
           data-testid='reader-video-file'
         />
-        {canSwitchMode ? <PlayerModeButton /> : null}
+        {showModeButton ? <PlayerModeButton /> : null}
       </div>
     );
   }
@@ -253,7 +274,7 @@ const ArticleAudioBlock = memo(function ArticleAudioBlock({
   onTimeUpdate: PlayerRefProps['onTimeUpdate'];
   onReady: PlayerRefProps['onReady'];
 }) {
-  const { pauseOther, canSwitchMode } = useContext(PlayerContext);
+  const { pauseOther, showModeButton } = useContext(PlayerContext);
   if (!block.url) return null;
   return (
     <div className="reader-audio">
@@ -268,7 +289,7 @@ const ArticleAudioBlock = memo(function ArticleAudioBlock({
         onTimeUpdate={onTimeUpdate}
         onLoadedMetadata={onReady}
       />
-      {canSwitchMode ? <PlayerModeButton /> : null}
+      {showModeButton ? <PlayerModeButton /> : null}
     </div>
   );
 });
@@ -286,11 +307,17 @@ const ContentBlock = memo(function ContentBlock({
   isPlayingBlock,
   outlineIndex,
   playingRef,
+  hasAudioBlock,
+  fallbackAudioUrl,
 }: AnchorableBlockProps & PlayerRefProps & {
   isPlayingBlock: boolean;
   playingRef: React.RefObject<HTMLParagraphElement | null>;
+  /** The body already carries an audio block, so nothing has to be synthesised. */
+  hasAudioBlock: boolean;
+  /** An audio file the body does not mention (extracted from an older video). */
+  fallbackAudioUrl: string | null;
 }) {
-  const { canSeek, seek, originalHref, audioOnly, canSwitchMode } = useContext(PlayerContext);
+  const { canSeek, seek, originalHref, audioOnly, showModeButton } = useContext(PlayerContext);
 
   const anchor = { 'data-outline-block': outlineIndex };
 
@@ -339,7 +366,19 @@ const ContentBlock = memo(function ContentBlock({
   if (block.type === 'video') {
     // Only one player is mounted at a time: the one not chosen is not downloaded
     // at all, which is the whole point of the audio-only mode.
-    if (audioOnly && canSwitchMode) return null;
+    if (audioOnly && showModeButton) {
+      // An older article has no audio block in its body, so the player the reader
+      // switched to is built here, where the video was.
+      if (hasAudioBlock || !fallbackAudioUrl) return null;
+      return (
+        <ArticleAudioBlock
+          block={{ type: 'audio', url: fallbackAudioUrl }}
+          audioRef={audioRef}
+          onTimeUpdate={onTimeUpdate}
+          onReady={onReady}
+        />
+      );
+    }
     return (
       <ArticleVideoBlock
         block={block}
@@ -351,7 +390,7 @@ const ContentBlock = memo(function ContentBlock({
   }
 
   if (block.type === 'audio') {
-    if (!audioOnly && canSwitchMode) return null;
+    if (!audioOnly && showModeButton) return null;
     return (
       <ArticleAudioBlock
         block={block}
@@ -469,9 +508,14 @@ function RenderedContent({
   // reader usually only wants the second. The choice is per open article, never
   // stored: opening something new starts with the picture, as before.
   const hasVideo = content.some((block) => block.type === 'video' && isArchivedVideoUrl(block.url));
-  const hasAudio = content.some((block) => block.type === 'audio' && Boolean(block.url));
-  const canSwitchMode = hasVideo && hasAudio;
+  const archivedAudio = content.find((block) => block.type === 'audio' && Boolean(block.url))?.url || null;
+  // Articles archived before the audio track was kept have the video only; the
+  // server can still strip one out, and this is what it produced when asked.
+  const [fetchedAudio, setFetchedAudio] = useState<string | null>(null);
+  const audioUrl = archivedAudio || fetchedAudio;
   const [audioOnly, setAudioOnly] = useState(false);
+  const [preparingAudio, setPreparingAudio] = useState(false);
+  const articleId = payload.article?.id ?? null;
   // Where the player was when the reader switched. The other element starts empty,
   // so it is told where to go once its metadata has arrived.
   const handoverRef = useRef<{ time: number; playing: boolean } | null>(null);
@@ -498,6 +542,9 @@ function RenderedContent({
   if (renderedContent !== content) {
     setRenderedContent(content);
     setActiveIndex(-1);
+    setAudioOnly(false);
+    setFetchedAudio(null);
+    setPreparingAudio(false);
   }
   const markAt = useCallback((seconds: number) => {
     // Last start at or before `seconds`; -1 before the first paragraph.
@@ -528,6 +575,33 @@ function RenderedContent({
     playingRef.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
   }, [activeIndex, followPlayback]);
 
+  // Older video articles have no audio track to switch to. The server extracts one
+  // from the archived copy, and this polls until it is there instead of making the
+  // reader press the button again.
+  const prepareAudio = useCallback(async () => {
+    if (articleId === null) return;
+    setPreparingAudio(true);
+    try {
+      for (let attempt = 0; attempt < AUDIO_POLL_ATTEMPTS; attempt += 1) {
+        const answer = attempt === 0
+          ? await apiSend(`/api/article/${articleId}/audio`, 'POST', {})
+          : await apiGet(`/api/article/${articleId}/audio`, { silent: true });
+        const state = String(answer.state || '');
+        if (state === 'stored' && typeof answer.url === 'string') {
+          setFetchedAudio(answer.url);
+          setAudioOnly(true);
+          return;
+        }
+        if (state === 'unavailable' || state === 'failed') break;
+        await new Promise((resolve) => setTimeout(resolve, AUDIO_POLL_INTERVAL_MS));
+      }
+    } catch (error) {
+      if (isAuthError(error)) return;
+    } finally {
+      setPreparingAudio(false);
+    }
+  }, [articleId]);
+
   const onReady = useCallback((event: React.SyntheticEvent<HTMLMediaElement>) => {
     const handover = handoverRef.current;
     if (!handover) return;
@@ -546,13 +620,20 @@ function RenderedContent({
       canSeek,
       originalHref,
       audioOnly,
-      canSwitchMode,
+      showModeButton: hasVideo,
+      preparingAudio,
       toggleMode: () => {
         const current = audioOnly ? audioRef.current : videoRef.current;
         handoverRef.current = current
           ? { time: current.currentTime, playing: !current.paused }
           : null;
         if (current && !current.paused) current.pause();
+        if (!audioOnly && !audioUrl) {
+          // Nothing to switch to yet: extract first, and turn the player over once
+          // the file exists.
+          void prepareAudio();
+          return;
+        }
         setAudioOnly((previous) => !previous);
       },
       pauseOther,
@@ -569,7 +650,7 @@ function RenderedContent({
         void target.play().catch(() => {});
       },
     };
-  }, [audioOnly, canSeek, canSwitchMode, markAt, originalHref]);
+  }, [audioOnly, audioUrl, canSeek, hasVideo, markAt, originalHref, prepareAudio, preparingAudio]);
   const contentKeys = buildContentBlockKeys(content);
   let outlineIndex = 0;
   const outlineIndexes = content.map((block) => isOutlineBlock(block) ? outlineIndex++ : undefined);
@@ -591,6 +672,8 @@ function RenderedContent({
           onReady={onReady}
           isPlayingBlock={index === activeIndex}
           playingRef={playingRef}
+          hasAudioBlock={Boolean(archivedAudio)}
+          fallbackAudioUrl={audioUrl}
         />
       ))}
     </PlayerContext.Provider>

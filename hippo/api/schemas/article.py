@@ -217,6 +217,19 @@ class TranscribeQueuedOut(BaseModel):
     force_asr: bool
 
 
+class ArticleAudioOut(BaseModel):
+    """``GET``/``POST /api/article/{article_id}/audio``.
+
+    ``stored`` means the player can use ``url`` right now. ``pending`` means an
+    extraction is running and the same call will answer ``stored`` when it ends.
+    ``missing``/``failed`` mean a POST would start one; ``unavailable`` means the
+    article has no archived video to take the audio from.
+    """
+
+    state: Literal['stored', 'pending', 'missing', 'failed', 'unavailable']
+    url: str | None = Field(default=None, description='Set only while state is stored.')
+
+
 class RefetchStartedOut(BaseModel):
     task_id: str
     status: Literal['started']

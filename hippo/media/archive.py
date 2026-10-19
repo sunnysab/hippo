@@ -29,6 +29,9 @@ DEFAULT_CONTENT_TYPE = 'audio/mpeg'
 _UPLOAD_CONCURRENCY = 1
 _UPLOAD_TRANSFER = TransferConfig(max_concurrency=_UPLOAD_CONCURRENCY, preferred_transfer_client='classic')
 
+#: The archive kind of the video file itself, as opposed to its audio.
+VIDEO_KIND = 'video'
+
 #: What ``article_media.kind`` may hold. `source` is the untouched download, `video`
 #: is the video itself (a file somebody already had), `audio` is the listenable copy.
 MEDIA_KINDS = ('audio', 'video', 'source')
@@ -243,6 +246,7 @@ __all__ = [
     'DEFAULT_CONTENT_TYPE',
     'MEDIA_KINDS',
     'MEDIA_PREFIX',
+    'VIDEO_KIND',
     'ArchiveError',
     'AudioStream',
     'build_media_key',

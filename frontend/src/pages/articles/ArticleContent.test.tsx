@@ -1,7 +1,16 @@
-import { fireEvent, render } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ArticlePayload } from '../../store/articles';
 import { ArticleContent } from './ArticleContent';
+
+const get = vi.fn();
+const send = vi.fn();
+
+vi.mock('../../api', async () => ({
+  ...await vi.importActual<typeof import('../../api')>('../../api'),
+  apiGet: (...args: unknown[]) => get(...args),
+  apiSend: (...args: unknown[]) => send(...args),
+}));
 
 const payload = (
   blocks: ArticlePayload['content'],
@@ -371,19 +380,60 @@ describe('ArticleContent audio-only mode', () => {
     expect(container.querySelector('audio')).toBeNull();
   });
 
-  it('offers no switch when the article only has one player', () => {
-    const podcast = renderContent([
+  it('offers no switch for a podcast, which is already audio', () => {
+    const { container } = renderContent([
       { type: 'audio', url: '/api/media/7/audio' },
       { type: 'paragraph', text: '开场', t: 0 },
     ]);
-    expect(podcast.container.querySelector('.reader-audio-toggle')).toBeNull();
-    podcast.unmount();
 
-    const silent = renderContent([
-      { type: 'video', provider: 'bilibili', url: '/api/media/7/video' },
-      { type: 'paragraph', text: '开场', t: 0 },
-    ]);
-    expect(silent.container.querySelector('.reader-audio-toggle')).toBeNull();
+    expect(container.querySelector('.reader-audio-toggle')).toBeNull();
+  });
+});
+
+describe('ArticleContent on-demand audio', () => {
+  const videoOnly: ArticlePayload['content'] = [
+    { type: 'video', provider: 'bilibili', url: '/api/media/7/video' },
+    { type: 'paragraph', text: '开场', t: 0 },
+  ];
+
+  const mount = (post: ReturnType<typeof vi.fn>) => {
+    send.mockImplementation(post);
+    return renderContent(videoOnly);
+  };
+
+  it('asks the server to extract the audio, then plays it', async () => {
+    // 老文章只有视频：点一下，服务端从留档视频里抽一份音频，抽完自动切过去。
+    // 轮询间隔是固定的几秒，所以这里用假时钟推进，而不是真的等。
+    vi.useFakeTimers();
+    try {
+      const post = vi.fn().mockResolvedValueOnce({ state: 'pending', url: null });
+      const { container } = mount(post);
+      get.mockResolvedValue({ state: 'stored', url: '/api/media/7/audio' });
+
+      fireEvent.click(container.querySelector('.reader-audio-toggle')!);
+      // 一次推进跨过 POST 与随后的轮询间隔。
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(3000);
+      await vi.advanceTimersByTimeAsync(3000);
+
+      expect(send).toHaveBeenCalledWith('/api/article/1/audio', 'POST', {});
+      expect(container.querySelector('audio')?.getAttribute('src')).toBe('/api/media/7/audio');
+      expect(container.querySelector('video')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops trying when there is nothing to extract', async () => {
+    const post = vi.fn().mockResolvedValue({ state: 'unavailable', url: null });
+    const { container } = mount(post);
+
+    fireEvent.click(container.querySelector('.reader-audio-toggle')!);
+
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    // 抽不出来就停在视频上，不要让按钮一直转。
+    await waitFor(() => expect(container.querySelector('.reader-audio-toggle')?.textContent).toBe('仅音频'));
+    expect(container.querySelector('audio')).toBeNull();
   });
 });
 
