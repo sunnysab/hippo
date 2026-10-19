@@ -36,6 +36,16 @@ HEADERS = {
     'Origin': 'https://mp.weixin.qq.com',
 }
 
+#: Neutral browser headers for the avatar image profile. A public CDN (yt3, feed
+#: covers) reads WeChat's referer/origin as a hotlink and answers 403, so the
+#: pinned avatar client must not send them; WeChat hosts get them per request.
+IMAGE_HEADERS = {
+    'User-Agent': DEFAULT_USER_AGENT,
+    'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Accept-Encoding': 'gzip, deflate, br',
+}
+
 
 class WorkerURLTransport(httpx.AsyncBaseTransport):
     def __init__(self, base: httpx.AsyncBaseTransport, worker_url: str | None) -> None:
@@ -104,7 +114,7 @@ class MPClient(AbstractAsyncContextManager):
         )
         client_kwargs: dict[str, Any] = {
             'timeout': timeout,
-            'headers': HEADERS,
+            'headers': IMAGE_HEADERS if pinned_proxy_sni else HEADERS,
             'follow_redirects': True,
         }
         if pinned_proxy_sni:

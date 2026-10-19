@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 
 from hippo import avatar as avatar_module
-from hippo.avatar import _avatar_proxy, _fetch_and_cache_avatar
+from hippo.avatar import _avatar_source_and_proxy, _fetch_and_cache_avatar
 from hippo.avatar_transport import PinnedProxyTransport
 from hippo.http import MPClient
 from hippo.media_settings import default_media_settings
@@ -36,14 +36,17 @@ class AvatarProxyTest(unittest.IsolatedAsyncioTestCase):
             patch.object(avatar_module, 'fetchone_row', AsyncMock(return_value={'source': 'youtube'})),
             patch('hippo.media_settings.get_media_settings', AsyncMock(return_value=SETTINGS)),
         ):
-            self.assertEqual('http://youtube:2', await _avatar_proxy(SimpleNamespace(), 'youtube:UC123'))
+            self.assertEqual(
+                ('youtube', 'http://youtube:2'),
+                await _avatar_source_and_proxy(SimpleNamespace(), 'youtube:UC123'),
+            )
 
     async def test_a_wechat_account_stays_direct(self) -> None:
         with (
             patch.object(avatar_module, 'fetchone_row', AsyncMock(return_value={'source': 'weixin'})),
             patch('hippo.media_settings.get_media_settings', AsyncMock(return_value=SETTINGS)),
         ):
-            self.assertEqual('', await _avatar_proxy(SimpleNamespace(), 'Mz123'))
+            self.assertEqual(('weixin', ''), await _avatar_source_and_proxy(SimpleNamespace(), 'Mz123'))
 
     async def test_a_biz_that_is_not_an_account_row_stays_on_wechat(self) -> None:
         # The search path caches an avatar under gh_id, which no accounts row knows.
@@ -51,7 +54,7 @@ class AvatarProxyTest(unittest.IsolatedAsyncioTestCase):
             patch.object(avatar_module, 'fetchone_row', AsyncMock(return_value=None)),
             patch('hippo.media_settings.get_media_settings', AsyncMock(return_value=SETTINGS)),
         ):
-            self.assertEqual('', await _avatar_proxy(SimpleNamespace(), 'gh_abc'))
+            self.assertEqual(('weixin', ''), await _avatar_source_and_proxy(SimpleNamespace(), 'gh_abc'))
 
 
 class AvatarFetchTest(unittest.IsolatedAsyncioTestCase):
@@ -127,7 +130,9 @@ class AvatarFetchTest(unittest.IsolatedAsyncioTestCase):
         # The avatar profile pins + certifies each hop; not the generic client.
         self.assertIs(seen['pinned_proxy_sni'], True)
         self.assertEqual('https://yt3/x=s88.jpg', seen['url'])
-        self.assertIn('User-Agent', seen['headers'])
+        # A non-WeChat avatar sends no overrides; the profile's neutral client
+        # defaults carry the browser headers.
+        self.assertEqual({}, seen['headers'])
         store.assert_awaited_once()
         self.assertEqual('https://yt3/x=s88.jpg', store.await_args.kwargs['avatar_url'])
         self.assertEqual('image/png', store.await_args.kwargs['content_type'])
@@ -192,6 +197,8 @@ class MPClientAvatarProfileTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIsInstance(client._transport, PinnedProxyTransport)
         self.assertEqual(0, client._transport._pool._max_keepalive_connections)
         self.assertFalse(client.trust_env)
+        self.assertNotIn('origin', client.headers)
+        self.assertNotIn('referer', client.headers)
 
     async def test_a_socks_avatar_proxy_keeps_httpcore_path(self) -> None:
         client = await self._client(proxy='socks5://proxy.example:1', pinned=True)
@@ -205,6 +212,54 @@ class MPClientAvatarProfileTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIsInstance(client._transport, PinnedProxyTransport)
         self.assertEqual(20, client._transport._pool._max_keepalive_connections)
         self.assertTrue(client.trust_env)
+        # The plain web client keeps WeChat's referer/origin.
+        self.assertEqual('https://mp.weixin.qq.com', client.headers['origin'])
+        self.assertEqual('https://mp.weixin.qq.com/', client.headers['referer'])
+
+
+class AvatarHeaderTest(unittest.IsolatedAsyncioTestCase):
+    """A real request, so a client default cannot sneak WeChat headers in."""
+
+    class _Capture:
+        def __init__(self) -> None:
+            self.headers: httpx.Headers | None = None
+
+        def handler(self, request: httpx.Request) -> httpx.Response:
+            self.headers = request.headers
+            return httpx.Response(200, headers={'Content-Type': 'image/jpeg'}, content=b'avatar')
+
+    async def _fetch(self, *, source: str, url: str) -> tuple[object, httpx.Headers]:
+        capture = self._Capture()
+        real_client = httpx.AsyncClient
+
+        def build(**kwargs):
+            kwargs['transport'] = httpx.MockTransport(capture.handler)
+            return real_client(**kwargs)
+
+        with (
+            patch.object(avatar_module, 'fetchone_row', AsyncMock(return_value={'source': source})),
+            patch('hippo.media_settings.get_media_settings', AsyncMock(return_value=SETTINGS)),
+            patch.object(avatar_module, '_store_avatar', AsyncMock()),
+            patch('hippo.public_image._host_addresses', return_value=['93.184.216.34']),
+            patch('hippo.http.httpx.AsyncClient', side_effect=build),
+        ):
+            result = await _fetch_and_cache_avatar(SimpleNamespace(), 'biz', url)
+        self.assertIsNotNone(capture.headers)
+        return result, capture.headers
+
+    async def test_a_non_wechat_avatar_sends_no_weixin_origin_or_referer(self) -> None:
+        result, headers = await self._fetch(source='youtube', url='https://yt3.googleusercontent.com/ytc/x.jpg')
+
+        self.assertEqual((b'avatar', 'image/jpeg'), result)
+        self.assertNotIn('origin', headers)
+        self.assertNotIn('referer', headers)
+
+    async def test_a_wechat_avatar_keeps_the_weixin_origin_and_referer(self) -> None:
+        result, headers = await self._fetch(source='weixin', url='https://wx.qlogo.cn/x.jpg')
+
+        self.assertEqual((b'avatar', 'image/jpeg'), result)
+        self.assertEqual('https://mp.weixin.qq.com', headers['origin'])
+        self.assertEqual('https://mp.weixin.qq.com/', headers['referer'])
 
 
 if __name__ == '__main__':

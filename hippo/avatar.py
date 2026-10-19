@@ -77,13 +77,12 @@ async def _store_avatar(
         )
 
 
-async def _avatar_proxy(storage: PostgresStorage, biz: str) -> str:
-    """The exit this avatar leaves through: the one its account's source uses.
+async def _avatar_source_and_proxy(storage: PostgresStorage, biz: str) -> tuple[str, str]:
+    """The account's source, and the exit its avatar leaves through.
 
     A YouTube account's avatar sits on a host the box cannot reach directly, so
-    a fixed WeChat proxy here leaves that avatar unfetched. An unknown biz (the
-    search path caches under ``gh_id``, which is not an ``accounts.biz``) stays
-    on WeChat traffic.
+    the proxy must follow the source. An unknown biz (the search path caches
+    under ``gh_id``, which is not an ``accounts.biz``) is treated as WeChat.
     """
     from .media_settings import get_media_settings, resolve_proxy
 
@@ -94,16 +93,21 @@ async def _avatar_proxy(storage: PostgresStorage, biz: str) -> str:
         normalize=_normalize_record,
     )
     source = str((row or {}).get('source') or '') or 'weixin'
-    return resolve_proxy(await get_media_settings(storage), source)
+    return source, resolve_proxy(await get_media_settings(storage), source)
+
+
+#: WeChat's image hosts expect the article referer; a public CDN reads it as a
+#: hotlink. Only WeChat avatars keep it.
+_WECHAT_AVATAR_HEADERS = {
+    'Referer': 'https://mp.weixin.qq.com/',
+    'Origin': 'https://mp.weixin.qq.com',
+    'User-Agent': 'Mozilla/5.0',
+}
 
 
 async def _fetch_and_cache_avatar(storage: PostgresStorage, biz: str, url: str) -> tuple[bytes, str] | None:
-    headers = {
-        'Referer': 'https://mp.weixin.qq.com/',
-        'Origin': 'https://mp.weixin.qq.com',
-        'User-Agent': 'Mozilla/5.0',
-    }
-    proxy = await _avatar_proxy(storage, biz)
+    source, proxy = await _avatar_source_and_proxy(storage, biz)
+    headers = dict(_WECHAT_AVATAR_HEADERS) if source == 'weixin' else {}
     try:
         # The avatar URL is untrusted (feed or channel metadata), so the fetch is
         # pinned to a checked public IP per hop; the source's proxy is kept. The
