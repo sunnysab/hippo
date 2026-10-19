@@ -9,7 +9,7 @@ from hippo.container import AppContainer, build_downloader_container, build_sync
 from hippo.downloader import ArticleDownloader
 from hippo.sources import SourceError
 from hippo.sources.podcast import FEED_SOURCE
-from hippo.weixin_source import SessionExpiredError
+from hippo.weixin_daemon import SessionExpiredError
 
 
 class DownloaderContainerTest(unittest.TestCase):

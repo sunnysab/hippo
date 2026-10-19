@@ -9,8 +9,8 @@ from types import SimpleNamespace
 from hippo.sources.weixin import WeixinSourceAdapter
 from hippo.sync_service import ArticleSyncService
 from hippo.sync_types import NullSyncObserver, SyncConfig, SyncStats
-from hippo.weixin_source import ListedArticles, QueuedArticle
-from hippo.weixin_worker import WeixinArticleSync
+from hippo.weixin_daemon import ListedArticles, QueuedArticle
+from hippo.weixin_ingest import WeixinArticleSync
 
 
 class _FakeQueue:

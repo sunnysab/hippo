@@ -15,7 +15,7 @@ from typing import Any
 from .config import get_settings
 from .logger import get_logger
 from .storage import PostgresStorage, open_storage
-from .weixin_source import load_bot_class, query_param, select_cover_url
+from .weixin_daemon import load_bot_class, query_param, select_cover_url
 
 logger = get_logger(__name__)
 

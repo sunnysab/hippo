@@ -140,7 +140,7 @@ async def _proxy_for(storage: PostgresStorage, source: Any) -> str:
     An unknown source falls back to the instance default, which is what a host
     the accounts table does not know yet (a hand-added feed) deserves.
 
-    Imported lazily: ``media_settings`` reaches ``sources`` -> ``weixin_worker`` ->
+    Imported lazily: ``media_settings`` reaches ``sources`` -> ``weixin_ingest`` ->
     ``downloader`` -> ``image_store`` -> this module, so a top-level import cycles.
     """
     from .media_settings import get_media_settings, resolve_proxy

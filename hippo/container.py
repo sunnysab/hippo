@@ -18,8 +18,8 @@ from .sources.podcast import FEED_SOURCE
 from .sources.registry import MediaSources
 from .sources.weixin import WeixinSourceAdapter
 from .storage import PostgresStorage
-from .weixin_source import SessionExpiredError, WeixinSource
-from .weixin_worker import WeixinArticleSync
+from .weixin_daemon import SessionExpiredError, WeixinSource
+from .weixin_ingest import WeixinArticleSync
 
 logger = get_logger(__name__)
 

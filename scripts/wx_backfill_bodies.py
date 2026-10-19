@@ -31,7 +31,7 @@ from hippo.http import MPClient
 from hippo.image_store import ArticleImageService
 from hippo.models import ArticleRecord
 from hippo.storage import PostgresStorage
-from hippo.weixin_source import WeixinSource, classify_daemon_error
+from hippo.weixin_daemon import WeixinSource, classify_daemon_error
 
 # 每轮从库里取多少篇候选（一轮内再按 --batch-size 分批请求）
 FETCH_WINDOW = 200

@@ -6,14 +6,14 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from hippo.sync_types import SyncStats
-from hippo.weixin_source import (
+from hippo.weixin_daemon import (
     FetchedArticle,
     SessionExpiredError,
     WeixinSource,
     classify_daemon_error,
     select_cover_url,
 )
-from hippo.weixin_worker import WeixinArticleSync
+from hippo.weixin_ingest import WeixinArticleSync
 
 
 class _Bot:
@@ -288,7 +288,7 @@ class BatchFailureAttributionTest(unittest.TestCase):
         self.assertEqual(queue.errors, ['正文解析失败: 响应里没有 JSON'] * 2)
 
     def test_split_ignores_messages_that_are_not_url_prefixed(self) -> None:
-        from hippo.weixin_worker import _split_batch_error
+        from hippo.weixin_ingest import _split_batch_error
 
         self.assertEqual(_split_batch_error('connection reset by peer'), {})
         self.assertEqual(

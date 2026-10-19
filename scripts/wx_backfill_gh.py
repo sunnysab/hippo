@@ -23,7 +23,7 @@ import sys
 from typing import Any
 
 from hippo.storage import PostgresStorage
-from hippo.weixin_source import WeixinSource
+from hippo.weixin_daemon import WeixinSource
 
 CANDIDATE_SQL = """
 SELECT a.biz, a.nickname, u.url, u.raw_json

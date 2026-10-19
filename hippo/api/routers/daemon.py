@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Depends
 
 from ...exceptions import ApiError
-from ...weixin_source import WeixinSource
+from ...weixin_daemon import WeixinSource
 from ..deps import current_user
 from ..schemas.daemon import DaemonActionResultOut, DaemonLoginStatusOut, DaemonQrOut
 

@@ -12,7 +12,7 @@ from ...exceptions import ApiError
 from ...logger import get_logger
 from ...models import AccountCredential, AccountGroup, User
 from ...storage import PostgresStorage, ensure_default_group, fetchone_row
-from ...weixin_source import WeixinSource
+from ...weixin_daemon import WeixinSource
 from ..deps import current_user, get_storage, parse_group_ids
 from ..responses import binary_response
 from ..schemas.account import (

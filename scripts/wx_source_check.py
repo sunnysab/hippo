@@ -13,7 +13,7 @@ import argparse
 import asyncio
 import sys
 
-from hippo.weixin_source import WeixinSource
+from hippo.weixin_daemon import WeixinSource
 
 
 def parse_args() -> argparse.Namespace:

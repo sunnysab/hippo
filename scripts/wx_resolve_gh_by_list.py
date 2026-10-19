@@ -19,7 +19,7 @@ import os
 import sys
 
 from hippo.storage import PostgresStorage
-from hippo.weixin_source import load_bot_class
+from hippo.weixin_daemon import load_bot_class
 
 # 账号之间留足间隔：searchcontact 是会被熔断的窄口（一次密集调用能封它几十分钟）
 ACCOUNT_INTERVAL = 15.0

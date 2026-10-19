@@ -23,8 +23,8 @@ from hippo.file_storage import FileStorageError, S3FileStorage
 from hippo.http import MPClient
 from hippo.image_store import ArticleImageService
 from hippo.storage import PostgresStorage
-from hippo.weixin_source import WeixinSource
-from hippo.weixin_worker import WeixinArticleSync
+from hippo.weixin_daemon import WeixinSource
+from hippo.weixin_ingest import WeixinArticleSync
 
 
 def parse_args() -> argparse.Namespace:

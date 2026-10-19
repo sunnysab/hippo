@@ -1,7 +1,7 @@
 """Source adapters.
 
 A source is whatever a subscription points at: a WeChat account today, a Bilibili
-UP, a YouTube channel or a podcast feed. The contract is the one ``weixin_worker``
+UP, a YouTube channel or a podcast feed. The contract is the one ``weixin_ingest``
 already implements — list items and turn them into article rows — because that is
 the only shape the sync service needs, and keeping the same shape is what makes
 adding a source a data change rather than a second sync pipeline.

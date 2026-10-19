@@ -20,7 +20,7 @@ from .models import ArticleRecord
 from .storage import PostgresStorage
 from .sync_types import SyncStats
 from .utils import strip_nul
-from .weixin_source import FetchedArticle, SessionExpiredError, WeixinSource, classify_daemon_error
+from .weixin_daemon import FetchedArticle, SessionExpiredError, WeixinSource, classify_daemon_error
 
 logger = get_logger(__name__)
 
