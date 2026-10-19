@@ -151,6 +151,46 @@ class SplitParagraphsTest(unittest.TestCase):
         self.assertEqual([], pipeline_module.split_paragraphs('   ', 300.0))
 
 
+class CleanTranscriptTest(unittest.TestCase):
+    def test_hesitations_are_dropped_wherever_they_sit(self) -> None:
+        self.assertEqual(
+            '这个市场的那其实过去这已经真的是一年时间了吧，就是已经完全放弃它了。',
+            pipeline_module.clean_transcript(
+                '这个市场的呃那其实过去这已经真的是一年时间了吧，就是已经完全呃放弃它了。'
+            ),
+        )
+
+    def test_a_clause_final_particle_goes_with_its_clause(self) -> None:
+        # 真实的播客转写：语气词夹在逗号前，去掉后句子照常读。
+        self.assertEqual(
+            '包括中概股里面的一些互联网巨头开始了解这个市场，大家最近抱怨都懒得抱怨了。',
+            pipeline_module.clean_transcript(
+                '包括中概股里面的一些互联网巨头开始呃了解这个市场啊，大家最近抱怨都懒得抱怨了。'
+            ),
+        )
+
+    def test_a_particle_after_a_one_character_clause_is_kept(self) -> None:
+        # 天啊 / 好呀 是词，不是一个停顿，删掉就变味了。
+        self.assertEqual('天啊，这也太离谱了。', pipeline_module.clean_transcript('天啊，这也太离谱了。'))
+        self.assertEqual('好呀，那就这么办。', pipeline_module.clean_transcript('好呀，那就这么办。'))
+
+    def test_a_sentence_opening_filler_leaves_no_orphan_punctuation(self) -> None:
+        self.assertEqual(
+            '而且这三个季度是一直在连续的往下走。这个确实是。',
+            pipeline_module.clean_transcript('而且这三个季度是一直在连续的往下走。 啊，这个确实是。'),
+        )
+
+    def test_a_chunk_that_is_only_filler_reads_as_empty(self) -> None:
+        # 转写只有语气词时，段落为空，脚本落到「整段没转出内容」的分支。
+        self.assertEqual('', pipeline_module.clean_transcript('嗯。'))
+        self.assertEqual('', pipeline_module.clean_transcript('呃，嗯，啊。'))
+        self.assertEqual([], pipeline_module.split_paragraphs('嗯。', 300.0))
+
+    def test_ordinary_text_is_left_alone(self) -> None:
+        text = '欢迎收听这一期节目。今天聊聊恒生科技，以及它的成分股。'
+        self.assertEqual(text, pipeline_module.clean_transcript(text))
+
+
 _SUBTITLE = Subtitle(blocks=[{'type': 'paragraph', 'text': '字幕', 't': 0}], markdown='字幕')
 
 

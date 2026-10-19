@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import tempfile
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -82,6 +83,42 @@ TARGET_PARAGRAPH_CHARS = 200
 
 _SENTENCE_ENDERS = '。！？!?；;'
 
+#: Hesitation sounds. The model writes one every time the speaker pauses, and none
+#: of these characters is ever part of a Chinese word, so they go wherever they are.
+_HESITATIONS = '嗯呃唔'
+
+#: Clause-final particles: "是啊，", "成分股啊，". They also carry meaning after a
+#: one-character exclamation — "天啊", "好呀" — and jieba splits that into 天 + 啊,
+#: so the position alone does not tell a filler from a word: one is only dropped
+#: when the clause in front of it holds real content (or nothing at all, as in the
+#: "啊，这个确实是" that opens a sentence).
+_CLAUSE_PARTICLES = '啊哦噢呀'
+
+_HESITATION_RE = re.compile(f'[{_HESITATIONS}]+')
+_CLAUSE_PARTICLE_RE = re.compile(rf'([^\s，。！？、；：,.!?;:]*)([{_CLAUSE_PARTICLES}]+)(?=[\s，。！？、；：,.!?;:]|$)')
+
+
+def _drop_clause_particle(match: re.Match[str]) -> str:
+    clause, particle = match.group(1), match.group(2)
+    return clause if len(clause) != 1 else clause + particle
+
+
+def clean_transcript(text: str) -> str:
+    """Strip the interjections an ASR model fills pauses with.
+
+    Runs before the text is cut into paragraphs, so the interpolated timestamps are
+    measured against the words that are actually shown — a filler has no duration of
+    its own worth preserving.
+    """
+    cleaned = _HESITATION_RE.sub('', text or '')
+    cleaned = _CLAUSE_PARTICLE_RE.sub(_drop_clause_particle, cleaned)
+    # Dropping an interjection leaves its punctuation behind: "。 啊，这个" would read
+    # "。 ，这个", and "嗯。呃。" a bare "。。". Neither says anything, so both go.
+    cleaned = re.sub(r'(?<=[。！？!?；;])[。！？!?；;]+', '', cleaned)
+    cleaned = re.sub(r'(?<=[。！？!?；;])\s*[，、,]\s*', '', cleaned)
+    cleaned = re.sub(rf'^\s*[{_SENTENCE_ENDERS}，、；：,;:]+\s*', '', cleaned)
+    return re.sub(r'\s+', ' ', cleaned).strip()
+
 
 class MediaJobSkipped(RuntimeError):
     """Nothing to transcribe, and not a failure."""
@@ -144,8 +181,12 @@ def split_paragraphs(text: str, duration_seconds: float) -> list[tuple[float, st
     The timestamp is interpolated by character position inside the chunk — the
     same approximation the backend's own SRT output uses. It is good to a few
     seconds, and the chunk boundaries themselves stay exact.
+
+    This is the ASR path, so the interjections the model writes into every pause are
+    cleaned out first. A ready-made subtitle keeps its wording: its timestamps are
+    real, and its cues are what the uploader chose to publish.
     """
-    stripped = (text or '').strip()
+    stripped = clean_transcript(text)
     if not stripped:
         return []
     sentences: list[str] = []
@@ -879,6 +920,7 @@ __all__ = [
     'MediaResolver',
     'ResolvedMedia',
     'Subtitle',
+    'clean_transcript',
     'split_paragraphs',
     'transcribe_job',
 ]
