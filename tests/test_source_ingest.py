@@ -31,6 +31,14 @@ def _item(article_id: str) -> Item:
     )
 
 
+class _FakeTransaction:
+    async def __aenter__(self) -> _FakeTransaction:
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+
 class _FakeStorage:
     """Records what would be written; article pks are handed out in order."""
 
@@ -87,6 +95,9 @@ class _FakeStorage:
 
     async def commit(self) -> None:
         self.commits += 1
+
+    def transaction(self) -> _FakeTransaction:
+        return _FakeTransaction()
 
 
 class MediaSyncTest(unittest.IsolatedAsyncioTestCase):
@@ -298,6 +309,37 @@ class ProfileRefreshTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(1, stats.listed)
         self.assertEqual([], source.metadata_calls)
+
+    async def test_a_profile_read_failure_keeps_the_listing(self) -> None:
+        storage = _FakeStorage()
+        storage.accounts.get_account = AsyncMock(side_effect=RuntimeError('db down'))
+        source = _ChannelSource([Listing(items=[_item('a')])])
+
+        stats = await self._sync(storage, source)
+
+        self.assertEqual(1, stats.listed)
+        self.assertEqual(1, len(storage.saved))
+        self.assertEqual(1, storage.commits)
+        storage.accounts.update_account_fields.assert_not_awaited()
+
+    async def test_a_profile_write_failure_keeps_the_listing(self) -> None:
+        storage = _FakeStorage()
+        storage.accounts.get_account = AsyncMock(
+            return_value=SimpleNamespace(nickname=CHANNEL, round_head_img=None)
+        )
+        storage.accounts.update_account_fields = AsyncMock(side_effect=RuntimeError('db down'))
+        source = _ChannelSource(
+            [Listing(items=[_item('a')])],
+            info=ChannelInfo(biz=f'youtube:{CHANNEL}', nickname='Fireship', source_key=CHANNEL, avatar_url=AVATAR),
+        )
+
+        stats = await self._sync(storage, source)
+
+        self.assertEqual(1, stats.listed)
+        self.assertEqual(1, len(storage.saved))
+        # The listing is committed before the refresh, so the write failure cannot lose it.
+        self.assertEqual(1, storage.commits)
+        storage.accounts.update_account_fields.assert_awaited_once()
 
 
 class ResolverRegistryTest(unittest.IsolatedAsyncioTestCase):

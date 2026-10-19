@@ -138,8 +138,8 @@ class MediaSync:
             if listing.is_end or not cursor or page_number + 1 >= max_pages:
                 break
             listing = await source.list_items(source_key=source_key, limit=limit, cursor=cursor)
-        await self._refresh_profile(biz=biz, source_key=source_key)
         await self._storage.commit()
+        await self._refresh_profile(biz=biz, source_key=source_key)
         logger.info('媒体列表 %s：%d 条，新入队 %d 条', source_key, stats.listed, stats.enqueued)
         return stats
 
@@ -150,6 +150,9 @@ class MediaSync:
         keeps the raw channel id as its nickname and has no avatar. One metadata call
         per sync, and only while something is missing: once both are there this costs
         a single row read, so a source that is never short of them never pays for it.
+
+        Runs after the listing is committed: a metadata or profile write failure is
+        logged and dropped, never allowed to roll the stored articles back.
         """
         fetcher = getattr(self._source, 'channel_info', None)
         if fetcher is None:
@@ -158,23 +161,25 @@ class MediaSync:
             return
         try:
             account = await self._storage.accounts.get_account(biz)
+            fields: dict[str, str] = {}
+            if not account.round_head_img:
+                info = await fetcher(source_key)
+                if info.avatar_url:
+                    fields['round_head_img'] = info.avatar_url
+                if info.nickname and account.nickname == source_key:
+                    # Only the raw id is replaced: a name someone already has stays.
+                    fields['nickname'] = info.nickname
+            if fields:
+                # The profile update gets its own transaction so a failure here
+                # cannot abort the connection the committed listing rode in on.
+                async with self._storage.transaction():
+                    await self._storage.accounts.update_account_fields(biz, **fields)
+                logger.info('Filled in the channel profile of %s: %s', biz, ', '.join(sorted(fields)))
         except LookupError:
             return
-        fields: dict[str, str] = {}
-        if not account.round_head_img:
-            try:
-                info = await fetcher(source_key)
-            except Exception as exc:  # a refresh must never fail the listing
-                logger.warning('Channel metadata refresh for %s failed: %s', biz, exc)
-                return
-            if info.avatar_url:
-                fields['round_head_img'] = info.avatar_url
-            if info.nickname and account.nickname == source_key:
-                # Only the raw id is replaced: a name someone already has stays.
-                fields['nickname'] = info.nickname
-        if fields:
-            await self._storage.accounts.update_account_fields(biz, **fields)
-            logger.info('Filled in the channel profile of %s: %s', biz, ', '.join(sorted(fields)))
+        except Exception as exc:  # a refresh must never fail the listing
+            logger.warning('Channel metadata refresh for %s failed: %s', biz, exc)
+            return
 
     async def _store(self, biz: str, items: list[Item]) -> dict[str, int]:
         """Upsert the article rows and return ``article_id → article_pk``."""
