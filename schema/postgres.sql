@@ -515,6 +515,22 @@ ALTER TABLE account_groups ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES u
 CREATE INDEX IF NOT EXISTS idx_account_groups_user
 ON account_groups (user_id);
 
+-- Sync job ownership: a normal user may only read or cancel their own tasks.
+-- Jobs the scheduler and other system triggers create leave this NULL.
+ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS requester_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_sync_jobs_requester_created_at
+ON sync_jobs (requester_user_id, created_at DESC);
+
+-- Manual runs dedupe atomically: at most one active manual job per requester,
+-- enforced by the database so two racing requests cannot both queue (no frontend
+-- debounce needed). Scheduled/backfill jobs carry no requester and are excluded.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_jobs_active_manual_requester
+ON sync_jobs (requester_user_id)
+WHERE trigger_type = 'manual'
+  AND requester_user_id IS NOT NULL
+  AND status IN ('queued', 'running', 'cancelling');
+
 CREATE TABLE IF NOT EXISTS subscription (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     biz TEXT NOT NULL REFERENCES accounts(biz) ON DELETE CASCADE,

@@ -97,6 +97,8 @@ class SyncTaskState:
     #: 这次任务限定在哪个来源；空值表示全站同步。
     source: str | None = None
     trigger_type: str = 'manual'
+    #: 谁发起了这次任务。调度/回填等系统任务为空；普通用户只能看到与自己 id 相同的任务。
+    requester_user_id: int | None = None
     phase: str | None = None
     accounts_total: int = 0
     accounts_done: int = 0

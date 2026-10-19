@@ -2361,7 +2361,7 @@ class KnowledgeSchemaTest(unittest.TestCase):
     def test_schema_version_is_bumped_in_this_worktree(self) -> None:
         from hippo import storage
 
-        self.assertEqual(storage.SCHEMA_VERSION, '30')
+        self.assertEqual(storage.SCHEMA_VERSION, '31')
 
 
 if __name__ == '__main__':

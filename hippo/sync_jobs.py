@@ -53,6 +53,7 @@ def _row_to_state(row: dict[str, Any] | None) -> SyncTaskState | None:
         biz_list=tuple(str(item) for item in biz_list_raw) if isinstance(biz_list_raw, list) else None,
         source=str(row['source']) if row.get('source') else None,
         trigger_type=str(row.get('trigger_type') or 'manual'),
+        requester_user_id=int(row['requester_user_id']) if row.get('requester_user_id') is not None else None,
         phase=row.get('phase'),
         accounts_total=int(row.get('accounts_total') or 0),
         accounts_done=int(row.get('accounts_done') or 0),
@@ -75,12 +76,23 @@ class SyncJobRepository:
         group_id: int | None = None,
         biz_list: list[str] | None = None,
         source: str | None = None,
+        requester_user_id: int | None = None,
+        dedupe: bool = False,
     ) -> SyncTaskState:
+        """Insert a job, optionally deduping active manual jobs by requester.
+
+        ``dedupe`` relies on the partial unique index
+        ``idx_sync_jobs_active_manual_requester``: a second concurrent request from
+        the same user conflicts and gets the already-active job back instead of
+        queueing a duplicate. Atomic in the database, not in the caller.
+        """
         task_id = uuid.uuid4().hex
         now = utc_now_dt()
+        deduping = dedupe and requester_user_id is not None
+        conflict = 'ON CONFLICT DO NOTHING' if deduping else ''
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                """
+                f"""
                 INSERT INTO sync_jobs (
                     id,
                     status,
@@ -88,10 +100,12 @@ class SyncJobRepository:
                     group_id,
                     biz_list,
                     source,
+                    requester_user_id,
                     accounts,
                     created_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                {conflict}
                 RETURNING *
                 """,
                 (
@@ -101,11 +115,25 @@ class SyncJobRepository:
                     group_id,
                     Json(biz_list) if biz_list is not None else None,
                     source,
+                    requester_user_id,
                     Json([]),
                     now,
                 ),
             )
             row = await cur.fetchone()
+            if not row and deduping:
+                await cur.execute(
+                    """
+                    SELECT * FROM sync_jobs
+                    WHERE trigger_type = 'manual'
+                      AND requester_user_id = %s
+                      AND status IN ('queued', 'running', 'cancelling')
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (requester_user_id,),
+                )
+                row = await cur.fetchone()
         if not row:
             raise RuntimeError('Failed to create sync job')
         return _row_to_state(dict(row))  # type: ignore[arg-type]
@@ -115,13 +143,20 @@ class SyncJobRepository:
         *,
         limit: int = 5,
         source: str | None = None,
+        requester_user_id: int | None = None,
     ) -> list[SyncTaskState]:
-        """Recent jobs, optionally narrowed to one source."""
+        """Recent jobs, optionally narrowed to one source and/or requester."""
         query = 'SELECT * FROM sync_jobs'
         params: list[Any] = []
+        where: list[str] = []
         if source:
-            query += ' WHERE source = %s'
+            where.append('source = %s')
             params.append(source)
+        if requester_user_id is not None:
+            where.append('requester_user_id = %s')
+            params.append(requester_user_id)
+        if where:
+            query += ' WHERE ' + ' AND '.join(where)
         query += ' ORDER BY created_at DESC LIMIT %s'
         params.append(max(int(limit), 1))
         async with self._conn.cursor(row_factory=dict_row) as cur:

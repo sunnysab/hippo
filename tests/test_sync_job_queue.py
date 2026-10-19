@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import unittest
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from hippo.api.routers.settings import run_sync
+from hippo.api.sync_models import SyncRunRequest
 from hippo.sync_service import SyncJobResult
 from hippo.sync_settings import _persist_sync_outcome
 from hippo.sync_types import SyncReport
@@ -22,6 +23,9 @@ class _FakeSyncJobs:
         self.progress_updates: list[dict] = []
         self.active_job = False
         self.recovered: list[int] = []
+        # Mirrors the partial unique index: one active manual job per requester.
+        self._active_manual: dict[int, object] = {}
+        self._lock = asyncio.Lock()
 
     async def create_job(
         self,
@@ -30,15 +34,35 @@ class _FakeSyncJobs:
         group_id: int | None = None,
         biz_list: list[str] | None = None,
         source: str | None = None,
+        requester_user_id: int | None = None,
+        dedupe: bool = False,
     ):
-        payload = {
-            'trigger_type': trigger_type,
-            'group_id': group_id,
-            'biz_list': biz_list,
-            'source': source,
-        }
-        self.created.append(payload)
-        return self.queued_state
+        async with self._lock:
+            if dedupe and requester_user_id is not None and requester_user_id in self._active_manual:
+                return self._active_manual[requester_user_id]
+            payload = {
+                'trigger_type': trigger_type,
+                'group_id': group_id,
+                'biz_list': biz_list,
+                'source': source,
+                'requester_user_id': requester_user_id,
+                'dedupe': dedupe,
+            }
+            self.created.append(payload)
+            from hippo.sync_types import SyncTaskState
+
+            state = SyncTaskState(
+                task_id=f'job-{len(self.created)}',
+                status='queued',
+                created_at='2026-03-20T04:00:00+00:00',
+                group_id=group_id,
+                biz_list=tuple(biz_list) if biz_list else None,
+                source=source,
+                requester_user_id=requester_user_id,
+            )
+            if dedupe and requester_user_id is not None:
+                self._active_manual[requester_user_id] = state
+            return state
 
     async def claim_next_job(self, *, worker_id: str):
         if self.claimed:
@@ -128,14 +152,30 @@ class _FakeSessions:
 
 
 class _FakeAccounts:
-    def __init__(self, biz_values: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        biz_values: list[str] | None = None,
+        *,
+        disabled: list[str] | None = None,
+        sources: dict[str, str] | None = None,
+    ) -> None:
         self._biz_values = biz_values or []
+        self._disabled = set(disabled or [])
+        self._sources = sources or {}
 
     async def list_accounts(self):
         return [SimpleNamespace(biz=value) for value in self._biz_values]
 
     async def list_followed_accounts(self, user_id: int, **_kwargs):
-        return [SimpleNamespace(biz=value) for value in self._biz_values]
+        return [
+            SimpleNamespace(
+                biz=value,
+                is_disabled=value in self._disabled,
+                source=self._sources.get(value, 'weixin'),
+                group_id=None,
+            )
+            for value in self._biz_values
+        ]
 
 
 class _FakeStorage:
@@ -177,54 +217,60 @@ def _admin() -> SimpleNamespace:
     return SimpleNamespace(id=1, username='admin', role='admin')
 
 
+def _user(user_id: int = 7) -> SimpleNamespace:
+    return SimpleNamespace(id=user_id, username='reader', role='user')
+
+
 class SyncJobQueueTest(unittest.TestCase):
     def test_run_sync_queues_job_and_returns_queued_status(self) -> None:
-        from hippo.sync_types import SyncTaskState
+        storage = _FakeStorage(_FakeSyncJobs(), ['biz-a'])
 
-        queued_state = SyncTaskState(
-            task_id='job-1',
-            status='queued',
-            created_at='2026-03-20T04:00:00+00:00',
-        )
-        storage = _FakeStorage(_FakeSyncJobs(queued_state))
+        payload = asyncio.run(run_sync(body=SyncRunRequest(), storage=storage, user=_admin()))
 
-        payload = asyncio.run(run_sync(body={}, storage=storage, user=_admin()))
-
-        self.assertEqual(payload, {'status': 'queued', 'task_id': 'job-1'})
+        self.assertEqual(payload.status, 'queued')
+        self.assertEqual(payload.task_id, 'job-1')
+        # The requester-scoped route resolves "all of mine", never the catalogue.
+        self.assertEqual(payload.scope, 'own')
+        self.assertEqual(payload.biz_list, ['biz-a'])
         self.assertEqual(
             storage.sync_jobs.created,
-            [{'trigger_type': 'manual', 'group_id': None, 'biz_list': None, 'source': None}],
+            [
+                {
+                    'trigger_type': 'manual',
+                    'group_id': None,
+                    'biz_list': ['biz-a'],
+                    'source': None,
+                    'requester_user_id': 1,
+                    'dedupe': True,
+                }
+            ],
         )
 
     def test_run_sync_normalizes_biz_list_before_queueing(self) -> None:
-        from hippo.sync_types import SyncTaskState
-
-        queued_state = SyncTaskState(
-            task_id='job-2',
-            status='queued',
-            created_at='2026-03-20T04:00:00+00:00',
-            biz_list=('biz-a', 'biz-b'),
-        )
-        storage = _FakeStorage(_FakeSyncJobs(queued_state), ['biz-a', 'biz-b'])
+        storage = _FakeStorage(_FakeSyncJobs(), ['biz-a', 'biz-b'])
 
         payload = asyncio.run(
             run_sync(
-                body={'biz_list': ['biz-a', ' ', 'biz-b', 'biz-a']},
+                body=SyncRunRequest(biz_list=['biz-a', ' ', 'biz-b', 'biz-a']),
                 storage=storage,
                 user=_admin(),
             )
         )
 
-        self.assertEqual(payload['status'], 'queued')
-        self.assertEqual(payload['biz_list'], ['biz-a', 'biz-b'])
+        self.assertEqual(payload.status, 'queued')
+        self.assertEqual(payload.biz_list, ['biz-a', 'biz-b'])
         self.assertEqual(
             storage.sync_jobs.created,
-            [{
-                'trigger_type': 'manual',
-                'group_id': None,
-                'biz_list': ['biz-a', 'biz-b'],
-                'source': None,
-            }],
+            [
+                {
+                    'trigger_type': 'manual',
+                    'group_id': None,
+                    'biz_list': ['biz-a', 'biz-b'],
+                    'source': None,
+                    'requester_user_id': 1,
+                    'dedupe': True,
+                }
+            ],
         )
 
     def test_sync_job_state_serializes_like_legacy_task_shape(self) -> None:
@@ -261,6 +307,7 @@ class SyncJobQueueTest(unittest.TestCase):
                 'current_account': {'biz': 'demo', 'nickname': 'Demo'},
                 'current_article': {'article_id': '100-1', 'title': 'Story'},
                 'last_log': 'downloading',
+                'requester_user_id': None,
             },
         )
 
@@ -464,16 +511,87 @@ class SyncJobQueueTest(unittest.TestCase):
         )
 
         with patch('hippo.sync_settings._send_sync_alert') as mock_alert:
-            status = asyncio.run(_persist_sync_outcome(
-                storage,
-                started_at='2026-04-03T11:30:54.694914+00:00',
-                finished_at='2026-04-03T11:37:43.925005+00:00',
-                error=None,
-                report=report,
-            ))
+            status = asyncio.run(
+                _persist_sync_outcome(
+                    storage,
+                    started_at='2026-04-03T11:30:54.694914+00:00',
+                    finished_at='2026-04-03T11:37:43.925005+00:00',
+                    error=None,
+                    report=report,
+                )
+            )
 
         self.assertEqual(status['status'], 'success')
         self.assertEqual(asyncio.run(storage.meta.get('sync:last_error')), '')
         self.assertIn('failed_accounts', asyncio.run(storage.meta.get('sync:history')) or '')
         mock_alert.assert_called_once()
 
+    def test_manual_job_creation_dedupes_on_the_unique_index(self) -> None:
+        from hippo.sync_jobs import SyncJobRepository
+
+        class _Cursor:
+            def __init__(self) -> None:
+                self.queries: list[str] = []
+                self.results: list[dict | None] = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            async def execute(self, query: str, params=None) -> None:
+                self.queries.append(query)
+
+            async def fetchone(self):
+                return self.results.pop(0) if self.results else None
+
+        class _Conn:
+            def __init__(self, cursor: _Cursor) -> None:
+                self.cursor_obj = cursor
+
+            def cursor(self, **kwargs):
+                return self.cursor_obj
+
+        cursor = _Cursor()
+        cursor.results = [
+            None,  # the partial unique index rejected the insert
+            {
+                'id': 'existing',
+                'status': 'running',
+                'created_at': datetime(2026, 3, 20, tzinfo=UTC),
+                'requester_user_id': 7,
+            },
+        ]
+        repo = SyncJobRepository(_Conn(cursor))
+
+        state = asyncio.run(repo.create_job(trigger_type='manual', requester_user_id=7, dedupe=True))
+
+        self.assertEqual(state.task_id, 'existing')
+        joined = '\n'.join(cursor.queries)
+        self.assertIn('ON CONFLICT DO NOTHING', joined)
+        self.assertIn("status IN ('queued', 'running', 'cancelling')", joined)
+        self.assertIn('requester_user_id = %s', joined)
+
+    def test_worker_forces_manual_jobs_but_not_scheduled_ones(self) -> None:
+        from hippo.sync_types import SyncTaskState
+        from hippo.sync_worker import run_worker_once
+
+        result = SyncJobResult(
+            status={'status': 'success'},
+            report=SyncReport(total_saved=0, summary=[], details=[]),
+            error=None,
+        )
+        for trigger_type, expected in (('manual', True), ('scheduled', False)):
+            queued_state = SyncTaskState(
+                task_id=f'job-{trigger_type}',
+                status='queued',
+                created_at='2026-03-20T04:00:00+00:00',
+                trigger_type=trigger_type,
+            )
+            storage = _FakeStorage(_FakeSyncJobs(queued_state))
+
+            with patch('hippo.sync_worker.run_sync_job', return_value=result) as mocked:
+                asyncio.run(run_worker_once(storage=storage, worker_id='worker-1'))
+
+            self.assertEqual(mocked.call_args.kwargs['force'], expected)

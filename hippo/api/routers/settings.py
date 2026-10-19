@@ -3,7 +3,7 @@
 import asyncio
 import time as time_module
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Body, Depends, status
 
@@ -19,7 +19,15 @@ from ...sync_settings import QUEUE_STATS_KEY, WORKER_HEARTBEAT_KEY
 from ...sync_settings import get_sync_settings as load_sync_settings
 from ...sync_settings import get_sync_status as load_sync_status
 from ...sync_settings import set_sync_settings as save_sync_settings
+from ...sync_types import SyncTaskState
 from ..deps import current_user, get_storage, get_sync_scheduler, require_admin
+from ..sync_models import (
+    SyncRunRequest,
+    SyncRunResponse,
+    SyncSiteRunRequest,
+    SyncTaskDetail,
+    SyncTaskListResponse,
+)
 
 logger = get_logger(__name__)
 router = APIRouter(dependencies=[Depends(current_user)])
@@ -29,10 +37,13 @@ router = APIRouter(dependencies=[Depends(current_user)])
 async def sync_status(
     limit: int = 5,
     storage: PostgresStorage = Depends(get_storage),
-    _: User = Depends(current_user),
+    _: User = Depends(require_admin),
 ) -> dict[str, Any]:
     """
     获取后台同步任务的状态。
+
+    全站的同步状态、队列水位与 worker 心跳，只对管理员开放；普通用户看自己的
+    任务即可（``GET /api/settings/tasks``）。
 
     Returns:
         dict: 同步状态详情。
@@ -50,53 +61,67 @@ async def sync_status(
     return payload
 
 
-@router.get('/settings/tasks')
+@router.get('/settings/tasks', response_model_exclude_unset=True)
 async def list_sync_tasks(
     limit: int = 5,
     detail: bool = False,
     source: str | None = None,
     storage: PostgresStorage = Depends(get_storage),
-    _: User = Depends(require_admin),
-) -> dict[str, Any]:
+    user: User = Depends(current_user),
+) -> SyncTaskListResponse:
     """
-    获取同步任务列表。`source` 只看某个来源的任务。
+    获取同步任务列表。
+
+    管理员看到全部任务；普通用户只看到自己发起的任务（``requester_user_id``），
+    所以任务列表不会泄漏其他人的数据。`source` 只看某个来源的任务。
     """
-    tasks = await storage.sync_jobs.list_jobs(limit=max(int(limit), 1), source=source or None)
+    tasks = await storage.sync_jobs.list_jobs(
+        limit=max(int(limit), 1),
+        source=source or None,
+        requester_user_id=None if user.role == 'admin' else user.id,
+    )
     formatter = (lambda task: task.to_dict()) if detail else (lambda task: task.to_summary_dict())
-    return {
-        'tasks': [formatter(task) for task in tasks],
-    }
+    return SyncTaskListResponse(tasks=[formatter(task) for task in tasks])
 
 
 @router.get('/settings/tasks/{task_id}')
 async def get_sync_task(
     task_id: str,
     storage: PostgresStorage = Depends(get_storage),
-    _: User = Depends(require_admin),
-) -> dict[str, Any]:
+    user: User = Depends(current_user),
+) -> SyncTaskDetail:
     """
     获取指定同步任务的进度与状态。
+
+    普通用户只能读自己的任务；不是自己的任务返回 404（不暴露它是否存在）。
     """
     state = await storage.sync_jobs.get_job(task_id)
-    if not state:
+    if not state or (user.role != 'admin' and state.requester_user_id != user.id):
         raise ApiError('Task not found', status=404)
-    return state.to_dict()
+    return SyncTaskDetail.model_validate(state.to_dict())
 
 
 @router.post('/settings/tasks/{task_id}/cancel')
 async def cancel_sync_task(
     task_id: str,
     storage: PostgresStorage = Depends(get_storage),
-    _: User = Depends(require_admin),
-) -> dict[str, Any]:
-    """Cancel a running or queued sync task."""
+    user: User = Depends(current_user),
+) -> SyncTaskDetail:
+    """Cancel a running or queued sync task.
+
+    Ownership follows the read endpoints: an admin may cancel any task, a normal
+    user only their own, and a foreign task looks missing rather than forbidden.
+    """
+    state = await storage.sync_jobs.get_job(task_id)
+    if not state or (user.role != 'admin' and state.requester_user_id != user.id):
+        raise ApiError('Task not found', status=404)
     async with storage.transaction():
         cancelled = await storage.sync_jobs.cancel_job(task_id)
     if not cancelled:
         raise ApiError('Task not found or not in a cancellable state', status=404)
     request_sync_cancel()
-    state = await storage.sync_jobs.get_job(task_id)
-    return state.to_dict() if state else {}
+    refreshed = await storage.sync_jobs.get_job(task_id) or state
+    return SyncTaskDetail.model_validate(refreshed.to_dict())
 
 
 @router.get('/settings')
@@ -314,30 +339,45 @@ async def send_sync_test_email(
     return {'status': 'sent', 'to_email': to_email}
 
 
-@router.post('/settings/run', status_code=status.HTTP_202_ACCEPTED)
-async def run_sync(
-    body: dict[str, Any] = Body(default={}),
-    storage: PostgresStorage = Depends(get_storage),
-    user: User = Depends(current_user),
-) -> dict[str, Any]:
-    """
-    手动触发同步操作。
+def _normalize_biz_list(raw_biz_list: list[str] | None) -> list[str] | None:
+    """Trim, drop blanks and duplicates; reject an explicitly empty list.
 
-    Args:
-        body (dict): 可选的 'group_id' 同步指定分组，或 'source' 只同步某个来源。
-
-    Returns:
-        dict: 触发操作的状态。
+    An empty ``biz_list`` must never widen into a whole-site run, so it is a 400.
     """
-    group_id = body.get('group_id')
-    source = str(body.get('source') or '').strip() or None
-    raw_biz_list = body.get('biz_list')
-    biz_list: list[str] | None = None
+    if raw_biz_list is None:
+        return None
+    normalized: list[str] = []
+    seen_biz: set[str] = set()
+    for value in raw_biz_list:
+        biz = str(value or '').strip()
+        if not biz or biz in seen_biz:
+            continue
+        normalized.append(biz)
+        seen_biz.add(biz)
+    if not normalized:
+        raise ApiError('Invalid biz_list')
+    return normalized
+
+
+async def _resolve_own_scope(
+    storage: PostgresStorage,
+    user: User,
+    *,
+    group_id: int | None,
+    source: str | None,
+    biz_list: list[str] | None,
+) -> list[str]:
+    """Resolve the caller's own subscriptions the filters select.
+
+    The requested filters intersect with the caller's enabled subscriptions, so
+    the result can never reach an account they do not follow; an empty result is
+    a 404, never a silent whole-site run. Admins use the same rule here and the
+    explicit site route for the catalogue.
+    """
+    followed = await storage.accounts.list_followed_accounts(user.id)
+    enabled_biz = {account.biz for account in followed if not account.is_disabled}
+
     if group_id is not None:
-        try:
-            group_id = int(group_id)
-        except (TypeError, ValueError) as exc:
-            raise ApiError('Invalid group_id') from exc
         row = await fetchone_row(
             storage,
             'SELECT id FROM account_groups WHERE id = %s AND user_id = %s',
@@ -346,45 +386,130 @@ async def run_sync(
         )
         if not row:
             raise ApiError('Group not found', status=404)
-    if raw_biz_list is not None:
-        if not isinstance(raw_biz_list, list):
-            raise ApiError('Invalid biz_list')
-        normalized_biz_list: list[str] = []
-        seen_biz: set[str] = set()
-        for value in raw_biz_list:
-            biz = str(value or '').strip()
-            if not biz or biz in seen_biz:
-                continue
-            normalized_biz_list.append(biz)
-            seen_biz.add(biz)
-        if not normalized_biz_list:
-            raise ApiError('Invalid biz_list')
-        known_biz = {account.biz for account in await storage.accounts.list_followed_accounts(user.id)}
-        missing_biz = [biz for biz in normalized_biz_list if biz not in known_biz]
+
+    if biz_list is not None:
+        missing_biz = [biz for biz in biz_list if biz not in enabled_biz]
         if missing_biz:
             raise ApiError(f'Account not found: {missing_biz[0]}', status=404)
-        biz_list = normalized_biz_list
-    if source is not None and biz_list is None:
-        # 按来源同步就是「挑这个源里我订阅的号」：来源页的按钮不该惊动别的源。
-        followed = await storage.accounts.list_followed_accounts(user.id)
-        biz_list = [account.biz for account in followed if (account.source or 'weixin') == source]
-        if not biz_list:
-            raise ApiError(f'来源 {source} 下没有可同步的订阅', status=404)
+
+    scoped = set(enabled_biz)
+    if group_id is not None:
+        scoped &= {account.biz for account in followed if account.group_id == group_id}
+    if source is not None:
+        scoped &= {account.biz for account in followed if (account.source or 'weixin') == source}
+    if biz_list is not None:
+        scoped &= set(biz_list)
+    if not scoped:
+        raise ApiError('No syncable subscription for the requested scope', status=404)
+    return [account.biz for account in followed if account.biz in scoped]
+
+
+def _state_scope(state: SyncTaskState) -> Literal['own', 'site']:
+    """Scope a queued job covers, read back from what the row stored."""
+    return 'site' if state.group_id is None and state.biz_list is None else 'own'
+
+
+def _job_response(state: SyncTaskState) -> SyncRunResponse:
+    return SyncRunResponse(
+        task_id=state.task_id,
+        status=state.status,
+        scope=_state_scope(state),
+        group_id=state.group_id,
+        biz_list=list(state.biz_list) if state.biz_list else None,
+        source=state.source,
+    )
+
+
+async def _queue_manual_job(
+    storage: PostgresStorage,
+    *,
+    user: User,
+    group_id: int | None,
+    source: str | None,
+    biz_list: list[str] | None,
+) -> SyncRunResponse:
+    """Queue a manual job, reconciling with an already-active one.
+
+    ``create_job`` dedupes atomically per requester, so it may hand back a task
+    queued by an earlier request. If that task covers the same scope it *is* this
+    operation, and its real id/scope are echoed back. A different scope is a
+    conflict (409) rather than a silent drop: the caller must know the second
+    request did not queue anything.
+    """
     async with storage.transaction():
-        task_state = await storage.sync_jobs.create_job(
+        state = await storage.sync_jobs.create_job(
             trigger_type='manual',
             group_id=group_id,
             biz_list=biz_list,
             source=source,
+            requester_user_id=user.id,
+            dedupe=True,
         )
-    response: dict[str, Any] = {
-        'status': task_state.status,
-        'task_id': task_state.task_id,
-    }
-    if group_id is not None:
-        response['group_id'] = group_id
-    if biz_list is not None:
-        response['biz_list'] = biz_list
-    if source is not None:
-        response['source'] = source
-    return response
+    requested = (group_id, source, tuple(biz_list) if biz_list else None)
+    existing = (state.group_id, state.source, state.biz_list)
+    if existing != requested:
+        raise ApiError(
+            f'Sync task {state.task_id} is already active for a different scope; '
+            'wait for it to finish or cancel it first',
+            status=409,
+            code='sync.task_conflict',
+        )
+    return _job_response(state)
+
+
+@router.post('/settings/run', status_code=status.HTTP_202_ACCEPTED)
+async def run_sync(
+    body: SyncRunRequest = Body(default_factory=SyncRunRequest),
+    storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
+) -> SyncRunResponse:
+    """
+    手动触发同步操作（只涉及调用者自己的订阅）。
+
+    普通用户与管理员走同一条规则：`group_id` / `source` / `biz_list` 取交集，
+    空请求表示「我的全部订阅」，绝不会变成全站同步；没有可同步的订阅返回 404。
+    全站同步是管理员专用的 `POST /api/settings/admin/run`，不会随角色被同一按钮
+    意外放大。
+
+    同一个用户已有活动的手动任务时：作用域相同则返回该任务（`task_id`/`status`/`scope`
+    均为旧任务真实值）；作用域不同则返回 409，不静默丢弃第二次操作。
+
+    Args:
+        body (SyncRunRequest): 可选的 'group_id'、'source'、'biz_list'。
+
+    Returns:
+        SyncRunResponse: 任务 id、状态与作用域（始终为 own）。
+    """
+    group_id = body.group_id
+    source = (body.source or '').strip() or None
+    normalized_biz_list = _normalize_biz_list(body.biz_list)
+    biz_list = await _resolve_own_scope(
+        storage,
+        user,
+        group_id=group_id,
+        source=source,
+        biz_list=normalized_biz_list,
+    )
+    return await _queue_manual_job(storage, user=user, group_id=group_id, source=source, biz_list=biz_list)
+
+
+@router.post('/settings/admin/run', status_code=status.HTTP_202_ACCEPTED)
+async def run_site_sync(
+    body: SyncSiteRunRequest = Body(default_factory=SyncSiteRunRequest),
+    storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(require_admin),
+) -> SyncRunResponse:
+    """
+    管理员显式触发全站（整个目录）同步。
+
+    与普通用户的 `POST /api/settings/run` 分开：全站语义只在这里出现，不依赖调用者
+    角色去改变同一条路径的含义。`source` 可把范围限定到某个来源。
+
+    Args:
+        body (SyncSiteRunRequest): 可选的 'source'。
+
+    Returns:
+        SyncRunResponse: 任务 id、状态与作用域（site）。
+    """
+    source = (body.source or '').strip() or None
+    return await _queue_manual_job(storage, user=user, group_id=None, source=source, biz_list=None)
