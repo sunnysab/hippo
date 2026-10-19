@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Protocol
 
-from ..weixin_worker import SyncStats
+from ..sync_types import SyncStats
 
 
 class UnsupportedSource(RuntimeError):

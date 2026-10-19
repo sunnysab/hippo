@@ -12,36 +12,19 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from typing import Any
 
 from .downloader import ArticleDownloader
 from .logger import get_logger
 from .models import ArticleRecord
 from .storage import PostgresStorage
+from .sync_types import SyncStats
 from .utils import strip_nul
 from .weixin_source import FetchedArticle, SessionExpiredError, WeixinSource, classify_daemon_error
 
 logger = get_logger(__name__)
 
 DOCUMENT_SOURCE = 'api_6771'
-
-
-@dataclass(slots=True)
-class SyncStats:
-    listed: int = 0
-    enqueued: int = 0
-    ingested: int = 0
-    failed: int = 0
-    # 列表分页：下一页游标 + 是否到底（回填循环靠它们决定还要不要继续）
-    next_offset: str | None = None
-    is_end: bool = False
-
-    def merge(self, other: SyncStats) -> None:
-        self.listed += other.listed
-        self.enqueued += other.enqueued
-        self.ingested += other.ingested
-        self.failed += other.failed
 
 
 def _split_batch_error(message: str) -> dict[str, str]:
@@ -243,4 +226,4 @@ def _parse_raw_json(raw: str) -> Any | None:
         return None
 
 
-__all__ = ['DOCUMENT_SOURCE', 'SyncStats', 'WeixinArticleSync']
+__all__ = ['DOCUMENT_SOURCE', 'WeixinArticleSync']

@@ -6,7 +6,8 @@ bodies), so this is only a name that the registry can key on.
 
 from __future__ import annotations
 
-from ..weixin_worker import SyncStats, WeixinArticleSync
+from ..sync_types import SyncStats
+from ..weixin_worker import WeixinArticleSync
 
 #: ``accounts.source`` 上的取值：回填只有微信这条路径，靠它把别的源挡在外面。
 SOURCE = 'weixin'

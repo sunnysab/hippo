@@ -30,6 +30,25 @@ class SyncSummary:
     completed: bool
 
 
+@dataclass
+class SyncStats:
+    """Counters one adapter returns for a single account's list phase."""
+
+    listed: int = 0
+    enqueued: int = 0
+    ingested: int = 0
+    failed: int = 0
+    # 列表分页：下一页游标 + 是否到底（回填循环靠它们决定还要不要继续）
+    next_offset: str | None = None
+    is_end: bool = False
+
+    def merge(self, other: SyncStats) -> None:
+        self.listed += other.listed
+        self.enqueued += other.enqueued
+        self.ingested += other.ingested
+        self.failed += other.failed
+
+
 @dataclass(frozen=True)
 class SyncAccountResult:
     biz: str
@@ -204,6 +223,7 @@ __all__ = [
     'SyncJobObserver',
     'SyncObserver',
     'SyncReport',
+    'SyncStats',
     'SyncSummary',
     'SyncTaskState',
 ]

@@ -13,8 +13,7 @@ from types import SimpleNamespace
 from hippo.models import AccountCredential
 from hippo.sources import UnsupportedSource, adapter_for, body_adapters
 from hippo.sync_service import ArticleSyncService
-from hippo.sync_types import NullSyncObserver, SyncConfig
-from hippo.weixin_worker import SyncStats
+from hippo.sync_types import NullSyncObserver, SyncConfig, SyncStats
 
 
 class _Adapter:

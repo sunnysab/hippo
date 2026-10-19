@@ -37,11 +37,11 @@ from .sync_settings import (
     mark_content_ingested,
 )
 from .sync_tasks import _article_snapshot
-from .sync_types import AccountProgress, SyncAccountResult, SyncObserver, SyncReport, SyncSummary
+from .sync_types import AccountProgress, SyncAccountResult, SyncObserver, SyncReport, SyncStats, SyncSummary
 from .utils import utc_now_iso
 from .weixin_source import SessionExpiredError, WeixinSource
 from .weixin_watch import watch_article_push
-from .weixin_worker import SyncStats, WeixinArticleSync
+from .weixin_worker import WeixinArticleSync
 
 logger = get_logger(__name__)
 SERVICE_NAME = WORKER_SERVICE

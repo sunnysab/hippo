@@ -10,9 +10,8 @@ from types import SimpleNamespace
 from hippo.sources.weixin import WeixinSourceAdapter
 from hippo.sync_core import reset_sync_cancel
 from hippo.sync_service import ArticleSyncService
-from hippo.sync_types import NullSyncJobObserver, NullSyncObserver, SyncConfig
+from hippo.sync_types import NullSyncJobObserver, NullSyncObserver, SyncConfig, SyncStats
 from hippo.utils import resolve_sync_interval
-from hippo.weixin_worker import SyncStats
 
 
 class _Accounts:

@@ -5,6 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from hippo.sync_types import SyncStats
 from hippo.weixin_source import (
     FetchedArticle,
     SessionExpiredError,
@@ -12,7 +13,7 @@ from hippo.weixin_source import (
     classify_daemon_error,
     select_cover_url,
 )
-from hippo.weixin_worker import SyncStats, WeixinArticleSync
+from hippo.weixin_worker import WeixinArticleSync
 
 
 class _Bot:

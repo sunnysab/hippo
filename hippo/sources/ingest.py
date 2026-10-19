@@ -23,7 +23,7 @@ from ..media_settings import get_media_settings
 from ..models import ArticleRecord
 from ..normalize_html import normalize_html
 from ..storage import PostgresStorage
-from ..weixin_worker import SyncStats
+from ..sync_types import SyncStats
 from .chain import run_with_fallback
 
 logger = get_logger(__name__)
