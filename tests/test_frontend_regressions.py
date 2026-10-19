@@ -113,6 +113,22 @@ class FrontendRegressionTest(unittest.TestCase):
 
         self.assertNotIn('confirm(', source)
 
+    def test_reader_wording_speaks_of_subscriptions_not_official_accounts(self) -> None:
+        translations = json.loads(I18N_ZH.read_text(encoding='utf-8'))
+
+        # 公共订阅管理的文案不再默认指向公众号：读者跟着的是订阅与频道。
+        self.assertEqual(translations['groups.subtitle'], '按分组管理订阅。')
+        self.assertEqual(translations['accounts.add'], '添加订阅')
+        self.assertEqual(translations['sync.subtitle'], '设置订阅和文章内容的同步方式。')
+        self.assertEqual(translations['admin.source.channels'], '频道')
+        # 微信专属的搜索、登录与来源名仍然明说公众号。
+        self.assertEqual(translations['accounts.searchTitle'], '添加公众号')
+        self.assertTrue(translations['accounts.searchPlaceholder'].startswith('搜索公众号'))
+        self.assertIn('微信公众号', translations['banner.weixinNotLoggedIn'])
+        self.assertEqual(translations['source.weixin'], '微信公众号')
+        # 文章内容类型标识不是来源文案，不动。
+        self.assertEqual(translations['contentKind.video'], '视频')
+
     def test_admin_navigation_follows_the_source_model(self) -> None:
         # 来源是一等公民：凭证、代理、扫码登录都归到各自的来源页，
         # 共享的转写参数单独一页，不再挂在某个来源下。

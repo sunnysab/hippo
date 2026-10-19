@@ -99,7 +99,7 @@ describe('AdminSourcePage', () => {
     apiGetMock.mockRejectedValueOnce(new Error('boom'));
     renderPage(<AdminSourcePage />);
 
-    fireEvent.click(await screen.findByRole('button', { name: '重试' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
 
     expect(await screen.findByText('微信公众号')).toBeTruthy();
   });

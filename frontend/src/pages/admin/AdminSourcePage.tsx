@@ -64,10 +64,10 @@ export function AdminSourcePage() {
     return (
       <div className="admin-page">
         <section className="panel">
-          <p className="muted admin-empty">{t('admin.source.loadFailed', '加载来源失败。')}</p>
+          <p className="muted admin-empty">{t('admin.source.loadFailed', 'Failed to load sources.')}</p>
           <div className="admin-actions">
             <button className="btn" type="button" onClick={() => void load()}>
-              {t('common.retry', '重试')}
+              {t('common.retry', 'Retry')}
             </button>
           </div>
         </section>

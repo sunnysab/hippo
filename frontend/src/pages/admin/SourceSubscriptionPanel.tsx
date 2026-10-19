@@ -88,11 +88,11 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
       ) : accounts.length === 0 ? (
         <div className="muted admin-empty">
           {error
-            ? t('admin.source.subscriptionsFailed', '加载订阅失败。')
+            ? t('admin.source.subscriptionsFailed', 'Failed to load subscriptions.')
             : t('admin.source.noSubscriptions', '还没有订阅。')}
           {error ? (
             <button className="btn ghost" type="button" onClick={() => void loadPage(1)}>
-              {t('common.retry', '重试')}
+              {t('common.retry', 'Retry')}
             </button>
           ) : null}
         </div>
@@ -125,7 +125,7 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
               ))}
             </tbody>
           </table>
-          {error ? <p className="muted admin-note">{t('admin.source.subscriptionsFailed', '加载订阅失败。')}</p> : null}
+          {error ? <p className="muted admin-note">{t('admin.source.subscriptionsFailed', 'Failed to load subscriptions.')}</p> : null}
           {hasMore ? (
             <button
               className="btn ghost"
@@ -133,7 +133,7 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
               disabled={loadingMore}
               onClick={() => void loadPage(accounts.length / PAGE_SIZE + 1)}
             >
-              {loadingMore ? t('common.loading', '加载中...') : t('admin.source.loadMore', '加载更多')}
+              {loadingMore ? t('common.loading', 'Loading…') : t('admin.source.loadMore', 'Load more')}
             </button>
           ) : null}
         </div>
