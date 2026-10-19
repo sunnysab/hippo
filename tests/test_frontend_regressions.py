@@ -21,6 +21,7 @@ ADMIN_SOURCE_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminSource
 ADMIN_SYNC_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminSyncPage.tsx'
 ADMIN_APP = ROOT / 'frontend' / 'src' / 'App.tsx'
 SETTINGS_CSS = ROOT / 'frontend' / 'src' / 'styles' / 'settings.css'
+ARTICLES_CSS = ROOT / 'frontend' / 'src' / 'styles' / 'articles.css'
 BRAND_MARK = ROOT / 'frontend' / 'src' / 'components' / 'BrandMark.tsx'
 FAVICON = ROOT / 'frontend' / 'public' / 'favicon.svg'
 LOGIN_PAGE = ROOT / 'frontend' / 'src' / 'pages' / 'auth' / 'LoginPage.tsx'
@@ -166,6 +167,17 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertIn('articles.railSubscriptions', rail)
         # 订阅变化会 emitRefresh，这一栏要跟着重取。
         self.assertIn('onRefresh', rail)
+
+    def test_article_thumbnails_keep_a_fixed_sixteen_by_nine_box(self) -> None:
+        # 封面在列表里必须一样大：按图片自己的比例排，每一行都会不一样高。
+        css = ARTICLES_CSS.read_text(encoding='utf-8')
+        block = re.search(r'^\.article-thumb \{(.*?)\}', css, re.S | re.M)
+        self.assertIsNotNone(block)
+        rule = block.group(1)  # type: ignore[union-attr]
+
+        self.assertIn('aspect-ratio: 16 / 9;', rule)
+        self.assertIn('object-fit: cover;', rule)
+        self.assertNotIn('aspect-ratio: auto', rule)
 
     def test_groups_page_syncs_selected_group_with_route_query(self) -> None:
         source = GROUPS_PAGE.read_text(encoding='utf-8')

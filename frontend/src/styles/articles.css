@@ -354,9 +354,10 @@
   width: 100%;
   height: auto;
   align-self: start;
-  /* 16:9 is only what an image reserves before it loads; once the source reports
-     its own size the natural ratio wins, so covers are never cropped. */
-  aspect-ratio: auto 16 / 9;
+  /* One box for every card in the column. The backend picks a 16:9 cover, but
+     that is a choice about the source image, not a promise about its pixels. */
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
   border-radius: var(--radius-control);
   background: var(--surface-chip);
 }
