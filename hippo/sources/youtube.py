@@ -126,15 +126,18 @@ def embed_url(video_id: str) -> str:
 def _channel_avatar_url(info: Mapping[str, Any]) -> str | None:
     """The channel's own picture in a channel dump, or ``None``.
 
-    yt-dlp lists a channel's banner beside its avatar in the same ``thumbnails``
-    array, so banner ids are skipped. A video's thumbnail is a different host
-    entirely (``i.ytimg.com``) and is refused by the host check — the avatar of a
-    channel is not a frame of one of its videos.
+    Numbered banner crops share the avatar's CDN and have no banner id, so only
+    explicitly labelled avatars or square images qualify. Video thumbnails are
+    still refused by the host check.
     """
     for thumbnail in info.get('thumbnails') or ():
         if not isinstance(thumbnail, Mapping):
             continue
-        if str(thumbnail.get('id') or '').startswith('banner'):
+        thumbnail_id = str(thumbnail.get('id') or '')
+        if thumbnail_id.startswith('banner'):
+            continue
+        width, height = thumbnail.get('width'), thumbnail.get('height')
+        if not thumbnail_id.startswith('avatar') and not (width and width == height):
             continue
         url = str(thumbnail.get('url') or '')
         host = (urlparse(url).hostname or '').lower()
@@ -469,8 +472,8 @@ class YoutubeSource:
     async def channel_info(self, source_key: str) -> ChannelInfo:
         """Metadata of a channel we already store, keyed the way ``accounts.alias`` is.
 
-        The entry point for filling in a subscription that never got a picture: the
-        caller keeps what is already there, so nothing is overwritten.
+        Used to fill missing profiles and replace banner crops mistakenly stored
+        as avatars; valid existing pictures are kept by the caller.
         """
         return await self.preview(f'{CHANNEL_BASE}{source_key}')
 

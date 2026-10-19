@@ -78,7 +78,7 @@ class _FakeStorage:
 
             return _Rows()
 
-        self.conn = SimpleNamespace(execute=execute)
+        self.conn = SimpleNamespace(execute=AsyncMock(side_effect=execute))
 
     async def _save(self, records) -> int:
         records = list(records)
@@ -152,7 +152,7 @@ class MediaSyncTest(unittest.IsolatedAsyncioTestCase):
             biz='podcast:blog', source_key='https://blog/atom.xml', pages=1
         )
 
-        self.assertEqual([], storage.queued)          # 没有音频，不该排转写
+        self.assertEqual([], storage.queued)  # 没有音频，不该排转写
         self.assertEqual(1, len(storage.contents))
         marks, blocks = storage.contents[0]
         self.assertIn('第一段', marks)
@@ -220,7 +220,11 @@ AVATAR = 'https://yt3.googleusercontent.com/avatar=s88.jpg'
 class _ChannelSource(_Source):
     """A source whose metadata is cheap enough for the sync to refresh (YouTube)."""
 
-    def __init__(self, listings: list[Listing], info: ChannelInfo | None = None, error: Exception | None = None) -> None:
+    source = 'youtube'
+
+    def __init__(
+        self, listings: list[Listing], info: ChannelInfo | None = None, error: Exception | None = None
+    ) -> None:
         super().__init__(listings)
         self._info = info
         self._error = error
@@ -237,15 +241,11 @@ class ProfileRefreshTest(unittest.IsolatedAsyncioTestCase):
     """A subscription made before its picture was available gets filled in."""
 
     def _sync(self, storage: _FakeStorage, source: _Source):
-        return MediaSync(storage=storage, source=source).sync_account(
-            biz=f'youtube:{CHANNEL}', source_key=CHANNEL
-        )
+        return MediaSync(storage=storage, source=source).sync_account(biz=f'youtube:{CHANNEL}', source_key=CHANNEL)
 
     async def test_a_missing_picture_is_filled_from_the_channels_metadata(self) -> None:
         storage = _FakeStorage()
-        storage.accounts.get_account = AsyncMock(
-            return_value=SimpleNamespace(nickname=CHANNEL, round_head_img=None)
-        )
+        storage.accounts.get_account = AsyncMock(return_value=SimpleNamespace(nickname=CHANNEL, round_head_img=None))
         source = _ChannelSource(
             [Listing(items=[_item('a')])],
             info=ChannelInfo(biz=f'youtube:{CHANNEL}', nickname='Fireship', source_key=CHANNEL, avatar_url=AVATAR),
@@ -281,6 +281,52 @@ class ProfileRefreshTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], source.metadata_calls)
         storage.accounts.update_account_fields.assert_not_awaited()
 
+    async def test_a_youtube_banner_is_replaced_and_its_cached_bytes_are_removed(self) -> None:
+        storage = _FakeStorage()
+        storage.accounts.get_account.return_value.round_head_img = (
+            'https://yt3.googleusercontent.com/banner=w1060-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj'
+        )
+        source = _ChannelSource(
+            [Listing(items=[])],
+            info=ChannelInfo(biz=f'youtube:{CHANNEL}', nickname='Fireship', source_key=CHANNEL, avatar_url=AVATAR),
+        )
+
+        await self._sync(storage, source)
+
+        storage.accounts.update_account_fields.assert_awaited_once_with(f'youtube:{CHANNEL}', round_head_img=AVATAR)
+        storage.conn.execute.assert_awaited_once_with(
+            'DELETE FROM avatar_images WHERE biz = %s', (f'youtube:{CHANNEL}',)
+        )
+
+    async def test_a_failed_banner_refresh_keeps_the_existing_picture_and_cache(self) -> None:
+        storage = _FakeStorage()
+        storage.accounts.get_account.return_value.round_head_img = (
+            'https://yt3.googleusercontent.com/banner=w1060-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj'
+        )
+        source = _ChannelSource(
+            [Listing(items=[])],
+            info=ChannelInfo(biz=f'youtube:{CHANNEL}', nickname='Fireship', source_key=CHANNEL),
+        )
+
+        stats = await self._sync(storage, source)
+
+        self.assertEqual(0, stats.listed)
+        self.assertEqual([CHANNEL], source.metadata_calls)
+        storage.accounts.update_account_fields.assert_not_awaited()
+        storage.conn.execute.assert_not_awaited()
+
+    async def test_a_non_youtube_picture_with_crop_parameters_is_kept(self) -> None:
+        storage = _FakeStorage()
+        storage.accounts.get_account.return_value.round_head_img = 'https://cdn/avatar=w100-fcrop64=1,0'
+        source = _ChannelSource([Listing(items=[])])
+        source.source = 'podcast'
+
+        await self._sync(storage, source)
+
+        self.assertEqual([], source.metadata_calls)
+        storage.accounts.update_account_fields.assert_not_awaited()
+        storage.conn.execute.assert_not_awaited()
+
     async def test_a_source_without_channel_metadata_is_left_alone(self) -> None:
         storage = _FakeStorage()
 
@@ -290,9 +336,7 @@ class ProfileRefreshTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_failed_refresh_does_not_fail_the_listing(self) -> None:
         storage = _FakeStorage()
-        storage.accounts.get_account = AsyncMock(
-            return_value=SimpleNamespace(nickname=CHANNEL, round_head_img=None)
-        )
+        storage.accounts.get_account = AsyncMock(return_value=SimpleNamespace(nickname=CHANNEL, round_head_img=None))
         source = _ChannelSource([Listing(items=[_item('a')])], error=RuntimeError('yt-dlp 失败（退出码 1）'))
 
         stats = await self._sync(storage, source)
@@ -324,9 +368,7 @@ class ProfileRefreshTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_profile_write_failure_keeps_the_listing(self) -> None:
         storage = _FakeStorage()
-        storage.accounts.get_account = AsyncMock(
-            return_value=SimpleNamespace(nickname=CHANNEL, round_head_img=None)
-        )
+        storage.accounts.get_account = AsyncMock(return_value=SimpleNamespace(nickname=CHANNEL, round_head_img=None))
         storage.accounts.update_account_fields = AsyncMock(side_effect=RuntimeError('db down'))
         source = _ChannelSource(
             [Listing(items=[_item('a')])],

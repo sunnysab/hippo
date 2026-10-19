@@ -144,7 +144,7 @@ class MediaSync:
         return stats
 
     async def _refresh_profile(self, *, biz: str, source_key: str) -> None:
-        """Fill in a channel's own name and picture when the row has neither.
+        """Fill a missing channel picture or repair a stored YouTube banner crop.
 
         A subscription made before a source could report them (or imported by hand)
         keeps the raw channel id as its nickname and has no avatar. One metadata call
@@ -162,7 +162,9 @@ class MediaSync:
         try:
             account = await self._storage.accounts.get_account(biz)
             fields: dict[str, str] = {}
-            if not account.round_head_img:
+            # Older YouTube extraction picked numbered banner crops from the avatar CDN.
+            is_banner = self._source.source == 'youtube' and '-fcrop64=' in (account.round_head_img or '')
+            if not account.round_head_img or is_banner:
                 info = await fetcher(source_key)
                 if info.avatar_url:
                     fields['round_head_img'] = info.avatar_url
@@ -174,7 +176,10 @@ class MediaSync:
                 # cannot abort the connection the committed listing rode in on.
                 async with self._storage.transaction():
                     await self._storage.accounts.update_account_fields(biz, **fields)
-                logger.info('Filled in the channel profile of %s: %s', biz, ', '.join(sorted(fields)))
+                    if 'round_head_img' in fields:
+                        # The avatar endpoint serves cached bytes before reading the account URL.
+                        await self._storage.conn.execute('DELETE FROM avatar_images WHERE biz = %s', (biz,))
+                logger.info('Refreshed the channel profile of %s: %s', biz, ', '.join(sorted(fields)))
         except LookupError:
             return
         except Exception as exc:  # a refresh must never fail the listing

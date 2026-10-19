@@ -227,7 +227,10 @@ def _ytdlp(*entries) -> AsyncMock:
 
 
 AVATAR = 'https://yt3.googleusercontent.com/channel-avatar=s88-c-k-c0x00ffffff-no-rj'
-BANNER = 'https://yt3.googleusercontent.com/channel-banner=s0-bg'
+BANNER = 'https://yt3.googleusercontent.com/channel-banner=s0'
+CROPPED_BANNER = (
+    'https://yt3.googleusercontent.com/channel-banner=w1060-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj'
+)
 
 
 def _channel_dump(**overrides) -> dict:
@@ -241,7 +244,8 @@ def _channel_dump(**overrides) -> dict:
         'uploader': 'Fireship',
         'uploader_id': '@Fireship',
         'thumbnails': [
-            {'id': '0', 'width': 88, 'height': 88, 'url': AVATAR},
+            {'id': '0', 'width': 1060, 'height': 175, 'preference': -10, 'url': CROPPED_BANNER},
+            {'id': '7', 'width': 900, 'height': 900, 'url': AVATAR},
             {'id': 'banner_uncropped', 'width': 2560, 'height': 424, 'url': BANNER},
         ],
         'entries': [_flat_entry()],
@@ -298,7 +302,9 @@ class ChannelInfoFromDumpTest(unittest.TestCase):
         self.assertEqual('Fireship', info.nickname)
 
     def test_a_video_thumbnail_is_never_the_avatar(self) -> None:
-        dump = _channel_dump(thumbnails=[{'id': '0', 'url': 'https://i.ytimg.com/vi/a/hq.jpg'}])
+        dump = _channel_dump(
+            thumbnails=[{'id': '0', 'width': 480, 'height': 480, 'url': 'https://i.ytimg.com/vi/a/hq.jpg'}]
+        )
 
         info = channel_info_from_dump(dump)
 
@@ -306,11 +312,41 @@ class ChannelInfoFromDumpTest(unittest.TestCase):
         self.assertIsNone(info.avatar_url)
 
     def test_the_banner_is_not_the_avatar(self) -> None:
-        dump = _channel_dump(thumbnails=[{'id': 'banner_uncropped', 'url': BANNER}, {'id': '0', 'url': AVATAR}])
+        dump = _channel_dump(
+            thumbnails=[
+                {'id': 'banner_uncropped', 'url': BANNER},
+                {'id': '0', 'width': 88, 'height': 88, 'url': AVATAR},
+            ]
+        )
 
         info = channel_info_from_dump(dump)
 
         self.assertEqual(AVATAR, info.avatar_url)
+
+    def test_numbered_banner_crops_alone_are_not_an_avatar(self) -> None:
+        dump = _channel_dump(
+            thumbnails=[
+                {'id': '0', 'width': 1060, 'height': 175, 'url': CROPPED_BANNER},
+                {'id': 'banner_uncropped', 'url': BANNER},
+            ]
+        )
+
+        self.assertIsNone(channel_info_from_dump(dump).avatar_url)
+
+    def test_an_explicit_avatar_needs_no_dimensions(self) -> None:
+        dump = _channel_dump(
+            thumbnails=[
+                {'id': '0', 'width': 1060, 'height': 175, 'url': CROPPED_BANNER},
+                {'id': 'avatar_uncropped', 'url': AVATAR},
+            ]
+        )
+
+        self.assertEqual(AVATAR, channel_info_from_dump(dump).avatar_url)
+
+    def test_an_unlabelled_image_without_dimensions_is_not_an_avatar(self) -> None:
+        dump = _channel_dump(thumbnails=[{'id': '0', 'url': BANNER}])
+
+        self.assertIsNone(channel_info_from_dump(dump).avatar_url)
 
     def test_a_dump_without_a_channel_id_is_refused(self) -> None:
         self.assertIsNone(channel_info_from_dump({}))
