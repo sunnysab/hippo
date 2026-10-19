@@ -10,7 +10,7 @@ from .downloader import ArticleDownloader
 from .file_storage import S3FileStorage
 from .http import MPClient
 from .image_store import ArticleImageService
-from .media_settings import PROXY_SOURCES, resolve_proxy
+from .media_settings import PROXY_ALIASES, PROXY_SOURCES, resolve_proxy
 from .sources import SourceAdapter
 from .sources.registry import MediaSources
 from .sources.weixin import WeixinSourceAdapter
@@ -156,7 +156,8 @@ def _source_proxy(settings: Mapping[str, Any] | None, source: str) -> str:
     """
     if not settings:
         return ''
-    if source not in PROXY_SOURCES:
+    if source not in PROXY_SOURCES and source not in PROXY_ALIASES:
+        # 未知来源：没有自己的出口可读，退回默认代理。
         return str(settings.get('proxy_default') or '')
     return resolve_proxy(settings, source)
 

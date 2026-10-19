@@ -8,7 +8,7 @@ used to sit in ``[http] proxy`` belonged to a single source anyway.
 import unittest
 
 from hippo.container import _source_proxy
-from hippo.media_settings import PROXY_SOURCES, default_media_settings, resolve_proxy
+from hippo.media_settings import PROXY_ALIASES, PROXY_SOURCES, default_media_settings, resolve_proxy
 
 
 class ResolveProxyTest(unittest.TestCase):
@@ -24,6 +24,13 @@ class ResolveProxyTest(unittest.TestCase):
 
     def test_weixin_is_a_proxy_source(self) -> None:
         self.assertIn('weixin', PROXY_SOURCES)
+
+    def test_a_text_feed_uses_the_podcast_proxy(self) -> None:
+        # feed 和 podcast 是同一个客户端：读 proxy_feed 会读不到而静默回落到默认出口。
+        settings = {**default_media_settings(), 'proxy_default': 'http://d:1', 'proxy_podcast': 'http://p:2'}
+        self.assertEqual('http://p:2', resolve_proxy(settings, 'feed'))
+        self.assertEqual('podcast', PROXY_ALIASES['feed'])
+        self.assertEqual('http://p:2', _source_proxy(settings, 'feed'))
 
     def test_a_source_own_value_wins_over_the_default(self) -> None:
         settings = {**default_media_settings(), 'proxy_default': 'http://d:1', 'proxy_bilibili': 'http://b:2'}

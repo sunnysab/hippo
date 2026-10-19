@@ -58,6 +58,12 @@ INSTANCE_CREDENTIALS = {'bilibili': 'bilibili_cookie', 'youtube': 'youtube_cooki
 #: ``weixin`` is here too: its article pages, avatars and images are fetched over
 #: HTTP even though the article *list* comes from the local daemon.
 PROXY_SOURCES = ('weixin', 'bilibili', 'youtube', 'podcast')
+
+#: Sources that share another source's connection pool, and so its proxy.
+#: A text feed and a podcast are the same client; ``feed`` only says there is no
+#: audio to transcribe. Reading ``proxy_feed`` would find nothing and silently
+#: fall back to the default exit, which is not the one actually used.
+PROXY_ALIASES = {'feed': 'podcast'}
 #: A per-source proxy field holds one of: `''`/`'default'` (follow
 #: `proxy_default`), `'direct'` (no proxy, overriding a default), or a URL.
 PROXY_FOLLOW = 'default'
@@ -254,6 +260,7 @@ def resolve_proxy(settings: Mapping[str, Any], source: str) -> str:
 
     ``''`` means "connect directly", which is also what an unset default gives.
     """
+    source = PROXY_ALIASES.get(source, source)
     value = _as_text(settings.get(f'proxy_{source}')) or PROXY_FOLLOW
     if value == PROXY_DIRECT:
         return ''
@@ -276,6 +283,7 @@ __all__ = [
     'BITRATES',
     'INSTANCE_CREDENTIALS',
     'MEDIA_SETTINGS_KEY',
+    'PROXY_ALIASES',
     'PROXY_DIRECT',
     'PROXY_FOLLOW',
     'PROXY_SOURCES',
