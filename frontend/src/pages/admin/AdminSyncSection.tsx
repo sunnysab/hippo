@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiGet } from '../../api';
 import { useI18n } from '../../i18n';
 import { useSyncRun } from '../../hooks/useSyncRun';
 import { formatRelativeTime } from '../../utils/format';
 import { getSyncTone } from '../../utils/sync';
+import { createLatestOnly } from '../../utils/latest';
 import type { SyncTask } from '../../store/settings';
 
 const TASK_LIMIT = 8;
@@ -22,16 +23,21 @@ export function AdminSyncSection({ source }: { source?: string }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
+  // Switching source races the previous read: only the newest answer applies.
+  const applyLatest = useMemo(() => createLatestOnly<SyncTask[]>(setTasks), []);
+
   const load = useCallback(async () => {
     try {
       const query = new URLSearchParams({ limit: String(TASK_LIMIT), detail: 'true' });
       if (source) query.set('source', source);
-      const payload = await apiGet(`/api/settings/tasks?${query.toString()}`);
-      setTasks((payload.tasks as SyncTask[]) || []);
+      await applyLatest(async () => {
+        const payload = await apiGet(`/api/settings/tasks?${query.toString()}`);
+        return (payload.tasks as SyncTask[]) || [];
+      });
     } finally {
       setLoading(false);
     }
-  }, [source]);
+  }, [applyLatest, source]);
 
   useEffect(() => {
     void load();

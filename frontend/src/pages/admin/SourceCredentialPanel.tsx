@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiGet, apiSend } from '../../api';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
 import { getSourceLabel } from '../../utils/source';
+import { createLatestOnly } from '../../utils/latest';
 
 interface Probe {
   ok: boolean;
@@ -32,14 +33,19 @@ export function SourceCredentialPanel({ source }: { source: string }) {
 
   const field = source === 'youtube' ? 'youtube_cookies' : 'bilibili_cookie';
 
+  // Switching source races the previous read: only the newest answer applies.
+  const applyLatest = useMemo(() => createLatestOnly<boolean>(setConfigured), []);
+
   const load = useCallback(async () => {
     try {
-      const payload = await apiGet('/api/admin/media');
-      setConfigured(Boolean(payload[`${field}_set`]));
+      await applyLatest(async () => {
+        const payload = await apiGet('/api/admin/media') as Record<string, unknown>;
+        return Boolean(payload[`${field}_set`]);
+      });
     } finally {
       setLoading(false);
     }
-  }, [field]);
+  }, [applyLatest, field]);
 
   useEffect(() => {
     void load();

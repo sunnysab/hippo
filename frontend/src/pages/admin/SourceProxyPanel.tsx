@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiGet, apiSend } from '../../api';
 import { useI18n } from '../../i18n';
 import { ProxyFields } from './ProxyFields';
+import { createLatestOnly } from '../../utils/latest';
 
 /** Sources that open their own connections, and so each pick their own exit. */
 const PROXY_SOURCES = ['weixin', 'bilibili', 'youtube', 'podcast'];
@@ -19,16 +20,25 @@ export function SourceProxyPanel({ source }: { source: string }) {
   const [defaultProxy, setDefaultProxy] = useState('');
   const [loading, setLoading] = useState(true);
 
+  // Switching source races the previous read: only the newest answer applies.
+  const applyLatest = useMemo(() => createLatestOnly<{ proxy: string; defaultProxy: string }>((value) => {
+    setProxy(value.proxy);
+    setDefaultProxy(value.defaultProxy);
+  }), []);
+
   const load = useCallback(async () => {
     try {
-      const payload = await apiGet('/api/admin/media');
-      const record = payload as Record<string, string>;
-      setProxy(String(record[`proxy_${source}`] ?? ''));
-      setDefaultProxy(String(record.proxy_default ?? ''));
+      await applyLatest(async () => {
+        const record = await apiGet('/api/admin/media') as unknown as Record<string, string>;
+        return {
+          proxy: String(record[`proxy_${source}`] ?? ''),
+          defaultProxy: String(record.proxy_default ?? ''),
+        };
+      });
     } finally {
       setLoading(false);
     }
-  }, [source]);
+  }, [applyLatest, source]);
 
   useEffect(() => {
     void load();
