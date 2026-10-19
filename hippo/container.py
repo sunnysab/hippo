@@ -18,15 +18,16 @@ from .sources.podcast import FEED_SOURCE
 from .sources.registry import MediaSources
 from .sources.weixin import WeixinSourceAdapter
 from .storage import PostgresStorage
-from .weixin_daemon import SessionExpiredError, WeixinSource
+from .weixin_daemon import WeixinSource, WeixinUnavailableError
 from .weixin_ingest import WeixinArticleSync
 
 logger = get_logger(__name__)
 
-#: Failures that mean the WeChat daemon is unreachable or logged out, not a Hippo
-#: bug. Anything else -- a missing SDK, a TypeError -- must propagate: a broken
-#: container should stay loud instead of being mistaken for a daemon outage.
-WEIXIN_UNAVAILABLE_ERRORS = (SessionExpiredError, OSError)
+#: Failures that mean the WeChat daemon is unreachable, logged out or rejected an
+#: RPC, not a Hippo bug. Anything else -- a missing SDK, a TypeError, a
+#: cancellation -- must propagate: a broken container should stay loud instead of
+#: being mistaken for a daemon outage.
+WEIXIN_UNAVAILABLE_ERRORS = (WeixinUnavailableError, OSError)
 
 
 class _UnavailableSourceAdapter:

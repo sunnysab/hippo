@@ -9,7 +9,7 @@ from hippo.container import AppContainer, build_downloader_container, build_sync
 from hippo.downloader import ArticleDownloader
 from hippo.sources import SourceError
 from hippo.sources.podcast import FEED_SOURCE
-from hippo.weixin_daemon import SessionExpiredError
+from hippo.weixin_daemon import SessionExpiredError, WeixinUnavailableError
 
 
 class DownloaderContainerTest(unittest.TestCase):
@@ -175,6 +175,18 @@ class ContainerLifecycleTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(SourceError) as caught:
             await app.adapters['weixin'].sync_account(biz='biz', source_key='key')
         self.assertIn('weixin source unavailable', str(caught.exception))
+        await app.__aexit__(None, None, None)
+        self.assertEqual(client.exited, 1)
+
+    async def test_a_daemon_rpc_failure_is_isolated(self) -> None:
+        client = _RecordingContext()
+        weixin = _RecordingContext(fail=WeixinUnavailableError('[400] searchcontact unavailable'))
+        container = _container(client=client, weixin_source=weixin)
+
+        app = await container.__aenter__()
+
+        self.assertIsNone(app.weixin_source)
+        self.assertEqual(app.weixin_unavailable, '[400] searchcontact unavailable')
         await app.__aexit__(None, None, None)
         self.assertEqual(client.exited, 1)
 

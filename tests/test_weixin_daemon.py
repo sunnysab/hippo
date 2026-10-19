@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+import types
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
+from hippo.sources import SourceError
 from hippo.sync_types import SyncStats
 from hippo.weixin_daemon import (
     FetchedArticle,
     SessionExpiredError,
     WeixinSource,
+    WeixinUnavailableError,
     classify_daemon_error,
     select_cover_url,
 )
@@ -178,6 +182,90 @@ class CoverSelectionTest(unittest.TestCase):
         body = FetchedArticle.from_dict({'slug': 'a', 'cover_url': 'https://cdn/main.png'})
 
         self.assertEqual('https://cdn/main.png', body.cover_url)
+
+
+class _SdkBotError(Exception):
+    """The SDK's error shape: ``code`` / ``message`` and a ``[code] message`` str."""
+
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(f'[{code}] {message}')
+        self.code = code
+        self.message = message
+
+
+class _SdkBot:
+    def __init__(self, *, fail: Exception) -> None:
+        self._fail = fail
+        self.traceparent = None
+
+    async def __aenter__(self) -> _SdkBot:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    async def get_status(self) -> dict:
+        raise self._fail
+
+
+def _fake_sdk(fail: Exception) -> types.ModuleType:
+    """A ``weixin_bot`` module whose bot raises ``fail`` on ``get_status``."""
+    module = types.ModuleType('weixin_bot')
+    module.WeChatBot = lambda **_kwargs: _SdkBot(fail=fail)
+    module.WeChatBotError = _SdkBotError
+    return module
+
+
+class DaemonErrorBoundaryTest(unittest.TestCase):
+    """An SDK RPC failure is normalized; a programming error is not."""
+
+    def test_an_sdk_rpc_error_becomes_the_local_unavailable_error(self) -> None:
+        sdk = _fake_sdk(_SdkBotError(-13, 'session expired, need relogin'))
+
+        with patch.dict(sys.modules, {'weixin_bot': sdk}):
+            with self.assertRaises(WeixinUnavailableError) as caught:
+                asyncio.run(WeixinSource(auto_login=True).__aenter__())
+
+        self.assertIn('[-13] session expired', str(caught.exception))
+
+    def test_a_programming_error_still_propagates(self) -> None:
+        sdk = _fake_sdk(ValueError('programming bug'))
+
+        with patch.dict(sys.modules, {'weixin_bot': sdk}):
+            with self.assertRaises(ValueError):
+                asyncio.run(WeixinSource(auto_login=True).__aenter__())
+
+
+class _Client:
+    async def __aenter__(self) -> _Client:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+
+class DaemonOutageIsolationTest(unittest.IsolatedAsyncioTestCase):
+    async def test_an_sdk_rpc_error_isolates_weixin_in_the_container(self) -> None:
+        from hippo.container import AppContainer
+
+        sdk = _fake_sdk(_SdkBotError(-13, 'session expired'))
+        container = AppContainer(
+            storage=SimpleNamespace(),
+            client=_Client(),
+            image_service=None,
+            downloader=None,
+            weixin_source=WeixinSource(auto_login=True),
+            adapters={},
+        )
+
+        with patch.dict(sys.modules, {'weixin_bot': sdk}):
+            app = await container.__aenter__()
+
+        self.assertIsNone(app.weixin_source)
+        self.assertIn('session expired', app.weixin_unavailable or '')
+        with self.assertRaises(SourceError):
+            await app.adapters['weixin'].sync_account(biz='b', source_key='k')
+        await app.__aexit__(None, None, None)
 
 
 class WeixinSourceBodyDiagnosticsTest(unittest.TestCase):

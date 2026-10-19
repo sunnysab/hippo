@@ -35,7 +35,15 @@ SESSION_MARKERS = ('session expired', '需要重新登录', '需要先登录', '
 NETWORK_MARKERS = ('timeout', 'timed out', '超时', '0-RTT', '握手', 'connection', 'Not connected')
 
 
-class SessionExpiredError(RuntimeError):
+class WeixinUnavailableError(RuntimeError):
+    """The daemon is unreachable or rejected the call: a source outage, not a bug.
+
+    The container treats this as an outage of one source, so the other sources
+    still run in the same round.
+    """
+
+
+class SessionExpiredError(WeixinUnavailableError):
     """daemon 会话失效：调用方应暂停等待登录，不要把它记成文章失败。"""
 
 
@@ -65,6 +73,17 @@ def load_bot_class() -> Any:
             f'weixin-bot SDK 不可用（{sdk_path}）：把 weixin-rs/sdk/python 拷到该路径，或用 WEIXIN_SDK_PATH 指定'
         ) from exc
     return WeChatBot
+
+
+def load_bot_error_class() -> Any:
+    """weixin-rs SDK 的 RPC 错误类型（``WeChatBotError``）。
+
+    Call after :func:`load_bot_class` has put the SDK on ``sys.path``: the SDK is
+    optional, so importing it at module load would break hippo without it.
+    """
+    from weixin_bot import WeChatBotError  # type: ignore[import-not-found]
+
+    return WeChatBotError
 
 
 def query_param(url: str, key: str) -> str | None:
@@ -180,13 +199,20 @@ class WeixinSource:
 
     async def __aenter__(self) -> WeixinSource:
         bot_class = load_bot_class()
+        error_class = load_bot_error_class()
         self._bot = bot_class(host=self.host, port=self.port)
         # Carry the active span into each RPC: without this the daemon's server span
         # starts its own trace and the two services never line up.
         self._bot.traceparent = traceparent
-        await self._bot.__aenter__()
-        if self._auto_login:
-            await self.ensure_login()
+        try:
+            await self._bot.__aenter__()
+            if self._auto_login:
+                await self.ensure_login()
+        except error_class as exc:
+            # An expected RPC/session failure is this source being unavailable, not a
+            # Hippo bug: surface the local type so the container isolates it. A
+            # CancelledError, a missing SDK or a TypeError is not caught and stays loud.
+            raise WeixinUnavailableError(str(exc)) from exc
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
@@ -330,8 +356,10 @@ __all__ = [
     'QueuedArticle',
     'SessionExpiredError',
     'WeixinSource',
+    'WeixinUnavailableError',
     'classify_daemon_error',
     'load_bot_class',
+    'load_bot_error_class',
     'query_param',
     'select_cover_url',
 ]
