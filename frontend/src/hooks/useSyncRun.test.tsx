@@ -115,6 +115,19 @@ describe('useSyncRun', () => {
     );
   });
 
+  it.each([['abc'], ['NaN'], ['0'], ['-3'], ['7.5'], [0], [-1], [7.5]])(
+    'refuses an invalid group id (%s) without starting a run',
+    async (groupId) => {
+      renderHarness({ groupId });
+      await clickRun();
+
+      // Dropping the filter or sending null would silently widen the run.
+      expect(apiSendMock).not.toHaveBeenCalled();
+      expect(showToastMock).toHaveBeenCalledWith(zhCN['sync.invalidScope']);
+      expect(screen.getByTestId('running').textContent).toBe('no');
+    },
+  );
+
   it('sends an explicit list as the scope', async () => {
     apiSendMock.mockResolvedValue({});
 

@@ -232,6 +232,16 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertIn('generationRef', hook)
         self.assertIn('sync.task_conflict', hook)
 
+    def test_manual_runs_refuse_an_invalid_group_id(self) -> None:
+        hook = SYNC_RUN_HOOK.read_text(encoding='utf-8')
+        translations = json.loads(I18N_ZH.read_text(encoding='utf-8'))
+
+        # URL 上的 group 可以是任意字符串：非法值必须本地拒绝，
+        # 不能丢字段回退成空 body，也不能发 null 让后端当成全部订阅。
+        self.assertIn('Number.isInteger', hook)
+        self.assertIn('sync.invalidScope', hook)
+        self.assertIn('sync.invalidScope', translations)
+
     def test_reader_pages_trigger_sync_without_a_trip_to_the_console(self) -> None:
         articles = ARTICLES_PAGE.read_text(encoding='utf-8')
         batch = BATCH_ACTIONS.read_text(encoding='utf-8')

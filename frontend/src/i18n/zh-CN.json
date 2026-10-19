@@ -281,6 +281,7 @@
   "sync.run": "运行",
   "sync.runQueued": "同步任务已进入队列",
   "sync.taskConflict": "已有其它范围的同步在运行，等它结束后再试。",
+  "sync.invalidScope": "同步未开始：筛选条件无效。",
   "sync.showSettings": "展开设置",
   "sync.hideSettings": "收起设置",
   "sync.sectionSchedule": "调度",

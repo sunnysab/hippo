@@ -27,6 +27,15 @@ export interface SyncRunTask {
 const ACTIVE_STATUSES = ['queued', 'pending', 'running', 'cancelling'];
 const POLL_INTERVAL_MS = 2000;
 
+/** A group the caller explicitly asked for must be a real, positive group id. */
+const parseGroupId = (value: string | number): number => {
+  const groupId = typeof value === 'number' ? value : Number(value);
+  if (!Number.isInteger(groupId) || groupId <= 0) {
+    throw new Error(`Invalid group id: ${String(value)}`);
+  }
+  return groupId;
+};
+
 export const isSyncRunActive = (status: string | null | undefined): boolean =>
   ACTIVE_STATUSES.includes(String(status || ''));
 
@@ -47,7 +56,10 @@ const buildRunRequest = (
   const body: Record<string, unknown> = {};
   if (scope.source) body.source = scope.source;
   if (scope.groupId !== undefined && scope.groupId !== '') {
-    body.group_id = Number(scope.groupId);
+    // A URL can carry anything: an explicit group must be a positive integer or
+    // it is refused here. Sending NaN/0/null would drop the filter and silently
+    // widen the run to every subscription.
+    body.group_id = parseGroupId(scope.groupId);
   }
   if (scope.bizList !== undefined) body.biz_list = scope.bizList;
   return { path: '/api/settings/run', body };
@@ -96,6 +108,15 @@ export function useSyncRun() {
   }, []);
 
   const runSync = useCallback(async (scope: SyncRunScope = {}): Promise<string> => {
+    let request: { path: string; body: Record<string, unknown> };
+    try {
+      request = buildRunRequest(scope);
+    } catch {
+      // Refuse locally instead of dropping the filter, which would widen the run.
+      showToast(t('sync.invalidScope', 'Nothing was synced: the selected filter is invalid.'));
+      return '';
+    }
+
     generationRef.current += 1;
     const generation = generationRef.current;
     controllerRef.current?.abort();
@@ -104,7 +125,7 @@ export function useSyncRun() {
     setTask(null);
     setRunning(true);
 
-    const { path, body } = buildRunRequest(scope);
+    const { path, body } = request;
     let taskId = '';
     try {
       const started = await apiSend(path, 'POST', body, { signal: controller.signal });
