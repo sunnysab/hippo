@@ -89,6 +89,9 @@ class AccountOut(BaseModel):
     group_name: str | None = None
     is_disabled: bool = False
     last_synced_at: datetime | None = Field(default=None, description='Last time the sync touched this account.')
+    latest_publish_at: datetime | None = Field(
+        default=None, description='Publication time of the latest stored work; null when unavailable.'
+    )
     sync_mode: str | None = None
     sync_recent_days: int | None = None
     sync_interval_days: int | None = None

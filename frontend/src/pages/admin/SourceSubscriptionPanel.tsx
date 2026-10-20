@@ -10,6 +10,7 @@ interface Account {
   alias: string | null;
   is_disabled: boolean;
   last_synced_at: string | null;
+  latest_publish_at: string | null;
   article_count: number;
 }
 
@@ -103,7 +104,8 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
               <tr>
                 <th>{t('groups.title', '名称')}</th>
                 <th>{t('accounts.articleCount', '文章')}</th>
-                <th>{t('accounts.lastUpdated', '最近更新')}</th>
+                <th>{t('accounts.lastUpdatedLabel', 'Latest publication')}</th>
+                <th>{t('accounts.lastSyncedLabel', 'Last sync')}</th>
                 <th />
               </tr>
             </thead>
@@ -115,6 +117,7 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
                     <div className="account-sub admin-mono">{account.biz}</div>
                   </td>
                   <td>{account.article_count}</td>
+                  <td className="muted">{formatRelativeTime(account.latest_publish_at, t) || '—'}</td>
                   <td className="muted">{formatRelativeTime(account.last_synced_at, t) || '—'}</td>
                   <td>
                     <Link className="btn ghost" to={`/articles?account=${encodeURIComponent(account.biz)}`}>

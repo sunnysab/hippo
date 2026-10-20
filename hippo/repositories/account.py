@@ -363,6 +363,9 @@ class AccountRepository:
             ' SELECT a.biz, a.nickname, a.source, a.alias, a.round_head_img, a.group_id,'
             ' a.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days, g.name AS group_name,'
             ' a.sync_interval_days,'
+            ' (SELECT to_timestamp(ar.publish_at) FROM articles ar'
+            '  WHERE ar.biz = a.biz AND ar.publish_at IS NOT NULL'
+            '  ORDER BY ar.publish_at DESC LIMIT 1) AS latest_publish_at,'
             ' COALESCE(a.article_count, 0) AS article_count,'
             ' (ai.data IS NOT NULL) AS avatar_ready,'
             " (a.backfill_state = 'pending') AS backfill_pending,"
@@ -398,6 +401,9 @@ class AccountRepository:
                 'SELECT a.biz, a.nickname, a.source, a.alias, a.round_head_img, s.group_id,'
                 ' s.is_disabled, a.last_synced_at, a.sync_mode, a.sync_recent_days,'
                 ' s.sync_interval_days, g.name AS group_name,'
+                ' (SELECT to_timestamp(ar.publish_at) FROM articles ar'
+                '  WHERE ar.biz = a.biz AND ar.publish_at IS NOT NULL'
+                '  ORDER BY ar.publish_at DESC LIMIT 1) AS latest_publish_at,'
                 ' COALESCE(a.article_count, 0) AS article_count,'
                 ' (ai.data IS NOT NULL) AS avatar_ready,'
                 " (a.backfill_state = 'pending') AS backfill_pending,"

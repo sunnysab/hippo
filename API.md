@@ -233,6 +233,10 @@ GET /api/account?group_id=2&group_ids=1,3&source=bilibili&q=金融&page=1&page_s
 响应为 `{accounts: [...], page, page_size, total}`。列表会返回 `alias`（`null` 归一为 `""`）、
 `source`、`avatar_url`（即 `/api/account/{biz}/avatar`）以及订阅侧的 `group_id`、`is_disabled`、`sync_interval_days`。
 
+列表和详情将两种时间分开返回（ISO 8601 格式）：
+- `latest_publish_at`：已入库作品中最新的发布时间，用于「最近更新」；没有已知发布时间时为 `null`，不使用同步时间兜底。
+- `last_synced_at`：系统最后同步该账号的时间，用于「同步于」。同步没有发现新作品时，不影响 `latest_publish_at`。
+
 ### 添加
 
 ```

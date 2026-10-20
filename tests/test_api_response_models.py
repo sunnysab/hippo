@@ -38,6 +38,7 @@ ACCOUNT_ROW: dict[str, Any] = {
     'group_id': 1,
     'is_disabled': False,
     'last_synced_at': datetime(2026, 1, 1, tzinfo=UTC),
+    'latest_publish_at': datetime(2025, 12, 31, 17, tzinfo=UTC),
     'sync_mode': None,
     'sync_recent_days': None,
     'sync_interval_days': None,
@@ -149,6 +150,15 @@ class AccountResponseTest(unittest.TestCase):
             body = _client(account_api, SimpleNamespace()).get('/api/account/Mz123').json()
 
         _assert_row_survives(self, ACCOUNT_ROW, body)
+
+    def test_an_account_without_a_publish_time_does_not_use_the_sync_time(self) -> None:
+        row = {**ACCOUNT_ROW, 'latest_publish_at': None}
+        with patch.object(account_api, '_get_account', AsyncMock(return_value=row)):
+            body = _client(account_api, SimpleNamespace()).get('/api/account/Mz123').json()
+
+        self.assertIn('latest_publish_at', body)
+        self.assertIsNone(body['latest_publish_at'])
+        self.assertEqual(_expected(ACCOUNT_ROW['last_synced_at']), body['last_synced_at'])
 
     def test_the_group_list_carries_the_default_group(self) -> None:
         group = AccountGroup(id=1, name='默认', account_count=2)

@@ -15,6 +15,7 @@ export interface Account {
   group_name?: string;
   is_disabled: boolean;
   last_synced_at: string | null;
+  latest_publish_at: string | null;
   sync_interval_days: number | null;
   article_count: number;
   backfill_pending: boolean;

@@ -50,9 +50,13 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
   };
 
   const lastSynced = formatRelativeTime(account.last_synced_at, t);
-  const lastUpdatedText = lastSynced
-    ? t('accounts.lastUpdated', 'Last update {time}').replace('{time}', lastSynced)
-    : t('accounts.lastUpdatedEmpty', 'No updates yet');
+  const lastPublished = formatRelativeTime(account.latest_publish_at, t);
+  const lastUpdatedText = lastPublished
+    ? t('accounts.lastUpdated', 'Last update {time}').replace('{time}', lastPublished)
+    : t('accounts.lastUpdatedEmpty', 'No publication time');
+  const lastSyncedText = lastSynced
+    ? t('accounts.lastSynced', 'Synced {time}').replace('{time}', lastSynced)
+    : t('accounts.lastSyncedEmpty', 'Not synced yet');
   const articleCountText = t('accounts.articleCount', '{n} articles').replace('{n}', String(account.article_count));
 
   const handleViewArticles = () => {
@@ -120,6 +124,7 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
               <span className="account-tag">{t('accounts.syncDisabled', 'Sync disabled')}</span>
             )}
           </div>
+          <div className="account-sub">{lastSyncedText}</div>
         </div>
       </div>
       <div className="account-sync">
