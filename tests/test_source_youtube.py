@@ -124,17 +124,20 @@ def _audio_only(**overrides) -> dict:
 class BestVideoTest(unittest.TestCase):
     """Only a track the pipeline can download, mux and serve may be picked."""
 
-    def test_a_track_above_720p_is_refused(self) -> None:
-        self.assertIsNone(best_video_format([_video(height=1080)]))
+    def test_a_track_above_1080p_is_refused(self) -> None:
+        for height in (1081, 1440, 2160):
+            with self.subTest(height=height):
+                self.assertIsNone(best_video_format([_video(height=height)]))
 
     def test_the_tallest_track_within_the_ceiling_wins(self) -> None:
         formats = [
             _video(height=720, url='https://cdn.test/720.mp4'),
             _video(height=360, url='https://cdn.test/360.mp4'),
             _video(height=1080, url='https://cdn.test/1080.mp4'),
+            _video(height=1440, url='https://cdn.test/1440.mp4'),
         ]
 
-        self.assertEqual('https://cdn.test/720.mp4', best_video_format(formats)['url'])
+        self.assertEqual('https://cdn.test/1080.mp4', best_video_format(formats)['url'])
 
     def test_vp9_is_refused(self) -> None:
         self.assertIsNone(best_video_format([_video(vcodec='vp09.00.51.08', ext='webm')]))
@@ -556,6 +559,7 @@ class ResolverTest(unittest.IsolatedAsyncioTestCase):
     async def test_a_height_limited_h264_track_is_picked_and_muxed_with_aac(self) -> None:
         entry = _flat_entry(
             formats=[
+                _video(height=1440, url='https://googlevideo/1440'),
                 _video(height=1080, url='https://googlevideo/1080'),
                 _video(height=720, url='https://googlevideo/720'),
                 _audio_only(url='https://googlevideo/aac'),
@@ -565,7 +569,7 @@ class ResolverTest(unittest.IsolatedAsyncioTestCase):
         with patch('hippo.sources.youtube.run_ytdlp', new=_ytdlp(entry)):
             media = await YoutubeResolver().resolve(self._JOB)
 
-        self.assertEqual('https://googlevideo/720', media.video_url)
+        self.assertEqual('https://googlevideo/1080', media.video_url)
         # 分轨的音轨必须是能合进 MP4 的 AAC，而不是码率更高的 opus。
         self.assertEqual('https://googlevideo/aac', media.audio_url)
         self.assertFalse(media.video_has_audio)
@@ -638,7 +642,7 @@ class ResolverTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_an_incompatible_video_keeps_the_original_audio(self) -> None:
         formats = [
-            _video(height=1080, url='https://googlevideo/1080'),
+            _video(height=1440, url='https://googlevideo/1440'),
             _video(vcodec='vp09.00.51.08', ext='webm', height=720, url='https://googlevideo/vp9'),
             _audio_only(),
         ]

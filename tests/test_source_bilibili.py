@@ -125,9 +125,10 @@ class AudioTrackTest(unittest.TestCase):
         self.assertEqual('https://cdn/a.m4s', best_audio_track(payload)['baseUrl'])
 
 
-#: Shared DASH pieces for the track tests: a real 720p AVC track, the ordinary AAC
+#: Shared DASH pieces for the track tests: 720p/1080p AVC tracks, the ordinary AAC
 #: track, and a Dolby one that outranks it in bandwidth.
 _AVC_720 = {'id': 64, 'codecid': 7, 'height': 720, 'bandwidth': 1_500_000, 'baseUrl': 'https://cdn/v720.mp4'}
+_AVC_1080 = {'id': 80, 'codecid': 7, 'height': 1080, 'bandwidth': 3_000_000, 'baseUrl': 'https://cdn/v1080.mp4'}
 _AAC_AUDIO = {'id': 30280, 'bandwidth': 175_518, 'baseUrl': 'https://cdn/a.m4s'}
 _DOLBY_AUDIO = {'id': 30250, 'bandwidth': 999_999, 'baseUrl': 'https://cdn/dolby.m4s'}
 
@@ -142,24 +143,25 @@ def _dash_data(*, video=(), audio=()) -> dict:
 
 
 class VideoTrackTest(unittest.TestCase):
-    def test_the_tallest_720p_h264_track_wins(self) -> None:
+    def test_the_tallest_1080p_h264_track_wins(self) -> None:
         tracks = [
-            {'id': 80, 'codecid': 7, 'height': 1080, 'bandwidth': 3_000_000, 'baseUrl': 'https://cdn/v1080.mp4'},
+            _AVC_1080,
             _AVC_720,
             {'id': 32, 'codecid': 7, 'height': 480, 'bandwidth': 900_000, 'baseUrl': 'https://cdn/v480.mp4'},
+            {'id': 116, 'codecid': 7, 'height': 1440, 'bandwidth': 6_000_000, 'baseUrl': 'https://cdn/v1440.mp4'},
         ]
 
-        self.assertEqual('https://cdn/v720.mp4', best_video_track(_dash(video=tracks))['baseUrl'])
+        self.assertEqual('https://cdn/v1080.mp4', best_video_track(_dash(video=tracks))['baseUrl'])
 
-    def test_1080p_leaves_no_compatible_video(self) -> None:
-        track = {'id': 80, 'codecid': 7, 'height': 1080, 'bandwidth': 3_000_000, 'baseUrl': 'https://cdn/v1080.mp4'}
-
-        self.assertIsNone(best_video_track(_dash(video=[track])))
+    def test_a_track_above_1080p_leaves_no_compatible_video(self) -> None:
+        for height in (1081, 1440, 2160):
+            with self.subTest(height=height):
+                self.assertIsNone(best_video_track(_dash(video=[{**_AVC_1080, 'height': height}])))
 
     def test_a_playlist_above_the_ceiling_does_not_hide_a_good_track(self) -> None:
         # 坏的高轨必须在候选阶段就被筛掉，不能遮住合法的低轨。
         tracks = [
-            {'id': 80, 'codecid': 7, 'height': 1080, 'bandwidth': 3_000_000, 'baseUrl': 'https://cdn/v1080.mp4'},
+            {'id': 116, 'codecid': 7, 'height': 1440, 'bandwidth': 6_000_000, 'baseUrl': 'https://cdn/v1440.mp4'},
             {**_AVC_720, 'baseUrl': 'https://cdn/master.m3u8'},
             {**_AVC_720, 'height': 480, 'bandwidth': 900_000, 'baseUrl': 'https://cdn/v480.mp4'},
         ]
@@ -406,12 +408,12 @@ class ResolverTest(unittest.IsolatedAsyncioTestCase):
         client = _FakeClient(
             video={'bvid': 'BV1gHps6yEHL', 'duration': 800, 'pages': [{'cid': 42}]},
             player={'subtitle': {'subtitles': []}},
-            playurl=_dash_data(video=[_AVC_720], audio=[_AAC_AUDIO, _DOLBY_AUDIO]),
+            playurl=_dash_data(video=[_AVC_720, _AVC_1080], audio=[_AAC_AUDIO, _DOLBY_AUDIO]),
         )
 
         media = await BilibiliResolver(client).resolve(self._JOB)
 
-        self.assertEqual('https://cdn/v720.mp4', media.video_url)
+        self.assertEqual('https://cdn/v1080.mp4', media.video_url)
         self.assertFalse(media.video_has_audio)
         self.assertEqual('https://cdn/a.m4s', media.audio_url)
         self.assertIn('Referer', media.headers)
@@ -431,7 +433,7 @@ class ResolverTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('https://cdn/dolby.m4s', media.audio_url)
 
     async def test_a_track_above_the_resource_ceiling_is_not_offered(self) -> None:
-        track = {'id': 80, 'codecid': 7, 'height': 1080, 'bandwidth': 3_000_000, 'baseUrl': 'https://cdn/v1080.mp4'}
+        track = {'id': 116, 'codecid': 7, 'height': 1440, 'bandwidth': 6_000_000, 'baseUrl': 'https://cdn/v1440.mp4'}
         client = _FakeClient(
             video={'bvid': 'BV1gHps6yEHL', 'pages': [{'cid': 42}]},
             player={'subtitle': {'subtitles': []}},

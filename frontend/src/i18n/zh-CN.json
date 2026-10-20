@@ -573,7 +573,7 @@
   "admin.media.maxDuration": "最长媒体时长（秒）",
   "admin.media.bitrate": "留档音频码率",
   "admin.media.keepMedia": "留档音视频并允许在页面播放",
-  "admin.media.keepMediaHint": "音频按上面的码率转码留档，视频不重编码、最高 720p。每个下载任务上限 2 GiB，并受上面的媒体时长设置约束，超出的条目不会留档。已入库的旧条目不会自动回填，可在文章页对单篇重试。",
+  "admin.media.keepMediaHint": "音频按上面的码率转码留档，视频不重编码、最高 1080p。每个下载任务上限 2 GiB，并受上面的媒体时长设置约束，超出的条目不会留档。已入库的旧条目不会自动回填，可在文章页对单篇重试。",
   "admin.media.youtubeCookiesPlaceholder": "留空则不使用登录态；提交后不会回显",
   "admin.media.proxyDefault": "默认代理",
   "admin.media.proxyDefaultPlaceholder": "http://host:port，留空则默认直连",

@@ -288,7 +288,7 @@ export function AdminTranscribePage() {
         <p className="muted admin-note">
           {t(
             'admin.media.keepMediaHint',
-            'Audio is transcoded at the bitrate above; video is copied as-is up to 720p. Each download is capped at 2 GiB and by the media duration setting above, so longer entries are not archived. Existing entries are not backfilled automatically; retry a single article from its page.',
+            'Audio is transcoded at the bitrate above; video is copied as-is up to 1080p. Each download is capped at 2 GiB and by the media duration setting above, so longer entries are not archived. Existing entries are not backfilled automatically; retry a single article from its page.',
           )}
         </p>
         <label className="auth-check">

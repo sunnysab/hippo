@@ -38,7 +38,7 @@ describe('AdminTranscribePage media archiving copy', () => {
     expect(screen.getByText('Archived audio bitrate')).toBeTruthy();
     expect(screen.getByText('Archive audio and video for playback')).toBeTruthy();
 
-    const hint = screen.getByText(/video is copied as-is up to 720p/);
+    const hint = screen.getByText(/video is copied as-is up to 1080p/);
     expect(hint.textContent).toContain('2 GiB');
     expect(hint.textContent).toContain('not backfilled automatically');
   });

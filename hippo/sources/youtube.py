@@ -59,9 +59,8 @@ LIST_TIMEOUT = 300.0
 #: invocation must not hold the queue forever.
 PROBE_TIMEOUT = 180.0
 
-#: Ceiling on the picture Hippo keeps: 720p is the best value the download budget and
-#: the reader's bandwidth want, so a taller track is not chosen at all.
-VIDEO_MAX_HEIGHT = 720
+#: Ceiling on the picture Hippo keeps: tracks above 1080p are not chosen.
+VIDEO_MAX_HEIGHT = 1080
 #: The container the pipeline can mux and serve without re-encoding the video.
 VIDEO_EXTENSIONS = frozenset({'mp4', 'm4v'})
 #: yt-dlp's codec prefix for AAC, the audio an MP4 accepts without re-encoding.

@@ -9,9 +9,9 @@ not have. Two things about this source are worth knowing before reading the code
   The per-video endpoints (``view``, ``playurl``) answer fine without one.
 * **Playback URLs expire.** ``playurl`` hands out signed CDN links, so the audio
   is resolved at transcription time from the page URL, never stored in the queue.
-* **Only a 720p-or-below AVC track becomes a video.** One ``playurl`` reply is read
+* **Only a 1080p-or-below AVC track becomes a video.** One ``playurl`` reply is read
   for both tracks; the picture is taken only when it is H.264 (this round's browser
-  support), at or below this project's 720p ceiling, and has an AAC track with a
+  support), at or below this project's 1080p ceiling, and has an AAC track with a
   direct file URL to be muxed with. HEVC/AV1, DRM replies, oversized tracks and
   manifests are left alone, and the ordinary audio route is what remains.
 """
@@ -207,7 +207,7 @@ def duration_from_length(value: Any) -> int | None:
 _H264_CODEC_ID = 7
 #: This project's own resource ceiling on a queued picture. It is not a paid-tier
 #: check: anything taller is simply not what we download, and audio takes over.
-_MAX_VIDEO_HEIGHT = 720
+_MAX_VIDEO_HEIGHT = 1080
 
 
 def _as_int(value: Any) -> int | None:
@@ -271,11 +271,11 @@ def _direct_url(track: Mapping[str, Any]) -> str | None:
 
 
 def best_video_track(playurl: dict[str, Any]) -> dict[str, Any] | None:
-    """The tallest usable picture at or below 720p, or ``None``.
+    """The tallest usable picture at or below 1080p, or ``None``.
 
     Usable means the reader's browser and this pipeline can both take it: H.264 with a
     direct file URL. HEVC/AV1 would sit in the same MP4 but are out of this round's
-    browser support, and the 720p line is this project's own resource ceiling rather
+    browser support, and the 1080p line is this project's own resource ceiling rather
     than a statement about which tiers the account may fetch. Filters run on the
     candidates so one unusable tall track cannot hide a good shorter one; a reply with
     broken metadata is skipped, never fatal.
