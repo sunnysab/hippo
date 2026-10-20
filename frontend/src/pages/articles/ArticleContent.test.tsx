@@ -244,31 +244,41 @@ describe('ArticleContent media blocks', () => {
     expect(container.querySelector('.reader-anchor')).toBeNull();
   });
 
-  it('highlights the paragraph the audio is currently inside', () => {
+  it.each(['audio', 'video'] as const)('highlights the paragraph the %s is currently inside', (type) => {
     const { container } = renderContent([
-      { type: 'audio', url: '/api/media/7/audio' },
+      { type, url: `/api/media/7/${type}` },
       { type: 'paragraph', text: '开场', t: 0 },
       { type: 'paragraph', text: '正题', t: 30 },
       { type: 'paragraph', text: '结尾', t: 60 },
     ]);
-    const audio = container.querySelector('audio')!;
+    const player = container.querySelector(type)!;
+    const anchors = container.querySelectorAll<HTMLButtonElement>('button.reader-anchor');
+    anchors[0].focus();
     const playing = () =>
       [...container.querySelectorAll('p.is-playing')].map((node) => node.textContent?.replace(/^\d\d:\d\d/, ''));
 
     expect(playing()).toEqual([]);
 
-    audio.currentTime = 5;
-    fireEvent.timeUpdate(audio);
+    player.currentTime = 5;
+    fireEvent.timeUpdate(player);
     expect(playing()).toEqual(['开场']);
 
     // 段落从它自己的 t 开始，直到下一段开始为止。
-    audio.currentTime = 45;
-    fireEvent.timeUpdate(audio);
+    player.currentTime = 45;
+    fireEvent.timeUpdate(player);
     expect(playing()).toEqual(['正题']);
 
-    audio.currentTime = 120;
-    fireEvent.timeUpdate(audio);
+    player.currentTime = 120;
+    fireEvent.timeUpdate(player);
     expect(playing()).toEqual(['结尾']);
+    expect(document.activeElement).toBe(anchors[0]);
+    expect(anchors[0].type).toBe('button');
+    expect(anchors[0].tabIndex).toBe(0);
+    expect(container.querySelectorAll('button.reader-anchor')[0]).toBe(anchors[0]);
+
+    fireEvent.click(anchors[0]);
+    expect(player.currentTime).toBe(0);
+    expect(playing()).toEqual(['开场']);
   });
 
   it('highlights nothing before the first timestamped paragraph', () => {

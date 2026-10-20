@@ -729,14 +729,15 @@
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
+  border-radius: var(--radius-sm);
+  /* Keep the transition on both states so the previous highlight fades out too. */
+  transition: background-color 0.2s ease-out;
 }
 
 /* The paragraph the player is inside. Paint only: any padding or border here
    would reflow the text and make the page jump each time the highlight moves. */
 .reader p.is-playing {
-  background: color-mix(in srgb, var(--info) 9%, transparent);
-  border-radius: var(--radius-sm);
-  transition: background 0.2s ease-out;
+  background-color: color-mix(in srgb, var(--info) 9%, transparent);
 }
 
 .reader p.is-playing .reader-anchor {
