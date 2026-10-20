@@ -13,6 +13,7 @@ GROUP_HEADER = ROOT / 'frontend' / 'src' / 'pages' / 'groups' / 'GroupHeader.tsx
 MEDIA_QUERY_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useMediaQuery.ts'
 ARTICLE_FILTER_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useArticleFilters.ts'
 ARTICLE_READER_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useArticleReader.ts'
+ARTICLE_SOURCES_HOOK = ROOT / 'frontend' / 'src' / 'hooks' / 'useArticleSources.ts'
 VIEW_RAIL = ROOT / 'frontend' / 'src' / 'pages' / 'articles' / 'ViewRail.tsx'
 I18N_ZH = ROOT / 'frontend' / 'src' / 'i18n' / 'zh-CN.json'
 ADMIN_LAYOUT = ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'AdminLayout.tsx'
@@ -46,9 +47,10 @@ class FrontendRegressionTest(unittest.TestCase):
         for page in (ARTICLES_PAGE, ARTICLE_FILTERS, BATCH_ACTIONS):
             self.assertNotIn('window.matchMedia', page.read_text(encoding='utf-8'))
         reader_hook = ARTICLE_READER_HOOK.read_text(encoding='utf-8')
-        filters_hook = ARTICLE_FILTER_HOOK.read_text(encoding='utf-8')
+        articles_page = ARTICLES_PAGE.read_text(encoding='utf-8')
         self.assertIn('useMediaQuery', reader_hook)
-        self.assertIn('useMediaQuery', filters_hook)
+        # 栏位宽度决定视图侧栏在不在，所以页面自己也走同一个 hook。
+        self.assertIn('useMediaQuery', articles_page)
 
     def test_articles_page_defers_data_loading_to_hooks(self) -> None:
         # 数据加载搬进了 useArticleFilters，页面只负责组合
@@ -57,7 +59,7 @@ class FrontendRegressionTest(unittest.TestCase):
 
         self.assertLessEqual(source.count('window.setTimeout(() => {'), 1)
         self.assertIn('loadGroupOptions', filters_hook)
-        self.assertIn('loadAccountOptions(filters.groupId)', filters_hook)
+        self.assertIn('loadAccountOptions(filters.groupId, filters.source)', filters_hook)
         self.assertIn('void loadArticles(nextFilters, true);', filters_hook)
         self.assertIn('void resolveArticleTarget();', filters_hook)
 
@@ -188,11 +190,12 @@ class FrontendRegressionTest(unittest.TestCase):
         # /api/group 会返回 account_count：hook 要是把它丢了，分组行就没有数字可显示。
         hook = ARTICLE_FILTER_HOOK.read_text(encoding='utf-8')
         rail = VIEW_RAIL.read_text(encoding='utf-8')
+        sources_hook = ARTICLE_SOURCES_HOOK.read_text(encoding='utf-8')
 
         self.assertIn('count: group.account_count', hook)
         self.assertIn('articles.railSubscriptions', rail)
-        # 订阅变化会 emitRefresh，这一栏要跟着重取。
-        self.assertIn('onRefresh', rail)
+        # 订阅变化会 emitRefresh，来源计数要跟着重取；查询本身归 useArticleSources。
+        self.assertIn('onRefresh', sources_hook)
 
     def test_article_thumbnails_keep_a_fixed_sixteen_by_nine_box(self) -> None:
         # 封面在列表里必须一样大：按图片自己的比例排，每一行都会不一样高。
