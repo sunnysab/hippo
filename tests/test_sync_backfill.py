@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from hippo.sources.weixin import SOURCE as WEIXIN_SOURCE
 from hippo.sync_worker import (
@@ -80,11 +80,13 @@ class BackfillTest(unittest.IsolatedAsyncioTestCase):
             backfill_cursor=None,
         )
         storage = _storage(account)
+        on_log = Mock(return_value=None)
 
         with patch('hippo.sync_worker.WeixinSource', return_value=_FakeSource()) as source:
-            result = await backfill_account_history(storage, biz='youtube:UC1')
+            result = await backfill_account_history(storage, biz='youtube:UC1', on_log=on_log)
 
         self.assertEqual('skipped', result.status['status'])
+        on_log.assert_called_once()
         source.assert_not_called()
         # 不标 done：跳过不等于回填完了，标了就是谎报
         storage.accounts.mark_backfill_done.assert_not_awaited()
@@ -129,14 +131,16 @@ class BackfillTest(unittest.IsolatedAsyncioTestCase):
             backfill_cursor=None,
         )
         storage = _storage(account)
+        on_log = Mock(return_value=None)
 
         with (
             patch('hippo.sync_worker.WeixinSource', return_value=_FakeSource()),
             patch('hippo.sync_worker.WeixinArticleSync', return_value=sync_impl),
             patch('hippo.sync_worker.asyncio.sleep', AsyncMock()),
         ):
-            result = await backfill_account_history(storage, biz='Mz1')
+            result = await backfill_account_history(storage, biz='Mz1', on_log=on_log)
 
+        self.assertEqual(4, on_log.call_count)
         # 第一页从最新开始（空游标），第二页带上第一页给出的游标
         self.assertEqual(['', 'cur-1'], [call['offset'] for call in calls])
         self.assertEqual(30, result.report.total_saved)
@@ -179,10 +183,12 @@ class BackfillTest(unittest.IsolatedAsyncioTestCase):
             backfill_cursor=None,
         )
         storage = _storage(account, syncable=False)
+        on_log = Mock(return_value=None)
 
-        result = await backfill_account_history(storage, biz='Mz3')
+        result = await backfill_account_history(storage, biz='Mz3', on_log=on_log)
 
         self.assertEqual('skipped', result.status['status'])
+        on_log.assert_called_once()
         storage.accounts.mark_backfill_done.assert_awaited_once_with('Mz3')
 
 

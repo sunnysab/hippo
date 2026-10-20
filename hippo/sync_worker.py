@@ -9,7 +9,7 @@ import math
 import os
 import socket
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -366,7 +366,7 @@ async def backfill_account_history(
     storage: PostgresStorage,
     *,
     biz: str,
-    on_log: Callable[[str], Awaitable[None]] | None = None,
+    on_log: Callable[[str], None] | None = None,
 ) -> SyncJobResult:
     """把一个号的历史文章从新到旧翻到底。
 
@@ -376,16 +376,16 @@ async def backfill_account_history(
     入队只当意图，是否打得出去看账号级开关：所有订阅者都停用了就跳过（与常规同步同一判定）。
     """
 
-    async def log(message: str) -> None:
+    def log(message: str) -> None:
         if on_log is not None:
-            await on_log(message)
+            on_log(message)
 
     empty = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
     account = await storage.accounts.get_account(biz, fallback_to_default=False)
     if account.source != WEIXIN_SOURCE:
         # 回填的列表与正文都走微信 daemon，别的源拿过去只会 400；不标 done（那是谎报完成），
         # 只保证它不再被排进队列（见 maybe_enqueue_backfill_job）。
-        await log(f'{account.nickname}：{account.source} 源暂不支持历史回填，跳过')
+        log(f'{account.nickname}：{account.source} 源暂不支持历史回填，跳过')
         return SyncJobResult(status={'status': 'skipped'}, report=empty, error=None)
     source_key = (account.gh_id or account.alias or '').strip()
     if not source_key:
@@ -395,7 +395,7 @@ async def backfill_account_history(
             error=f'{biz} 既无 gh_id 也无 alias，无法列表',
         )
     if not await storage.accounts.list_syncable_accounts(biz_list=[biz]):
-        await log(f'{account.nickname}：所有订阅者都已停用，跳过回填')
+        log(f'{account.nickname}：所有订阅者都已停用，跳过回填')
         async with storage.transaction():
             await storage.accounts.mark_backfill_done(biz)
         return SyncJobResult(status={'status': 'skipped'}, report=empty, error=None)
@@ -408,7 +408,7 @@ async def backfill_account_history(
     async with WeixinSource() as source:
         sync = WeixinArticleSync(storage=storage, source=source)
         while True:
-            await log(f'{account.nickname}：第 {pages + 1} 页…')
+            log(f'{account.nickname}：第 {pages + 1} 页…')
             stats = await sync.sync_account(
                 biz=biz,
                 source_key=source_key,
@@ -418,7 +418,7 @@ async def backfill_account_history(
             pages += 1
             total += stats.enqueued
             logger.info('回填 %s：第 %d 页 %d 篇，累计入队 %d', source_key, pages, stats.listed, total)
-            await log(f'第 {pages} 页：{stats.listed} 篇，累计入队 {total} 篇')
+            log(f'第 {pages} 页：{stats.listed} 篇，累计入队 {total} 篇')
             if stats.is_end or not stats.next_offset:
                 break
             cursor = stats.next_offset
