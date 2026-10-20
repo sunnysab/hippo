@@ -2,7 +2,9 @@ import { useDeferredValue, useEffect, useCallback, useRef, useState } from 'reac
 import { useSearchParams } from 'react-router-dom';
 import { useArticlesState } from '../store/articles';
 import { useMediaQuery } from './useMediaQuery';
-import { apiGet, apiSend } from '../api';
+import { apiGet, apiSend, isAuthError } from '../api';
+import { useToast } from './useToast';
+import { useI18n } from '../i18n';
 import { ARTICLE_SORT_PUBLISH_AT_DESC } from '../utils/constants';
 import { createLatestOnly } from '../utils/latest';
 import { onRefresh } from '../utils/events';
@@ -17,6 +19,8 @@ import type { Article, ArticlePayload } from '../store/articles';
 
 export function useArticleFilters() {
   const { state, dispatch } = useArticlesState();
+  const { showToast } = useToast();
+  const { t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const routeState = buildArticleRouteStateFromSearchParams(searchParams);
   const {
@@ -53,6 +57,8 @@ export function useArticleFilters() {
   }, [dispatch]);
 
   const isArticleLoadingRef = useRef(state.isArticleLoading);
+  const listRequestRef = useRef(0);
+  const accountRequestRef = useRef(0);
   const articlePageRef = useRef(state.articlePage);
   const articlePageSizeRef = useRef(state.articlePageSize);
   const articlesRef = useRef(state.articles);
@@ -98,7 +104,8 @@ export function useArticleFilters() {
     nextFilters: ArticleFiltersState,
     reset = true,
   ) => {
-    if (isArticleLoadingRef.current) return;
+    if (!reset && isArticleLoadingRef.current) return;
+    const requestId = ++listRequestRef.current;
     dispatch({ type: 'SET_LOADING', loading: true });
     isArticleLoadingRef.current = true;
     const sort = nextFilters.sort || ARTICLE_SORT_PUBLISH_AT_DESC;
@@ -120,6 +127,7 @@ export function useArticleFilters() {
       url.searchParams.set('page_size', String(pageSize));
 
       const payload = await apiGet(url.pathname + url.search);
+      if (requestId !== listRequestRef.current) return;
       const newArticles = (payload.articles || []) as Article[];
       const hasMore = newArticles.length >= pageSize;
       const mergedArticles = reset ? newArticles : [...previousArticles, ...newArticles];
@@ -141,11 +149,17 @@ export function useArticleFilters() {
           item_show_type_facets: (payload.item_show_type_facets || []) as Array<{ item_show_type: number; count: number }>,
         },
       });
+    } catch (error) {
+      if (requestId === listRequestRef.current && !isAuthError(error)) {
+        showToast(error instanceof Error ? error.message : t('articles.loadMoreFailed', 'Failed to load articles.'));
+      }
     } finally {
-      isArticleLoadingRef.current = false;
-      dispatch({ type: 'SET_LOADING', loading: false });
+      if (requestId === listRequestRef.current) {
+        isArticleLoadingRef.current = false;
+        dispatch({ type: 'SET_LOADING', loading: false });
+      }
     }
-  }, [dispatch]);
+  }, [dispatch, showToast, t]);
 
   const syncUrlParams = useCallback((nextFilters: ArticleFiltersState) => {
     setSearchParams(buildArticleSearchParams(nextFilters, {
@@ -155,7 +169,8 @@ export function useArticleFilters() {
   }, [articleIdParam, setSearchParams, itemIdParam]);
 
   const updateFilters = useCallback((patch: Partial<ArticleFiltersState>) => {
-    if (patch.groupId !== undefined) {
+    if (patch.groupId !== undefined || patch.source !== undefined) {
+      accountRequestRef.current += 1;
       setAccountOptions([]);
     }
     pendingRouteTargetRef.current = { articleId: '', itemId: '' };
@@ -163,10 +178,11 @@ export function useArticleFilters() {
     setItemIdParam('');
     setFilters((prev) => {
       const groupChanged = patch.groupId !== undefined && patch.groupId !== prev.groupId;
+      const sourceChanged = patch.source !== undefined && patch.source !== prev.source;
       return {
         ...prev,
         ...patch,
-        ...(groupChanged ? { accountBiz: '' } : null),
+        ...(groupChanged || sourceChanged ? { accountBiz: '' } : null),
       };
     });
   }, []);
@@ -195,10 +211,12 @@ export function useArticleFilters() {
     });
   }, []);
 
-  const loadAccountOptions = useCallback(async (groupId: string) => {
+  const loadAccountOptions = useCallback(async (groupId: string, source: string) => {
     if (!groupId) return;
 
-    const payload = await apiGet(`/api/account?group_id=${groupId}&page_size=200`);
+    const requestId = ++accountRequestRef.current;
+    const payload = await apiGet(`/api/account?group_id=${encodeURIComponent(groupId)}&page_size=200${source ? `&source=${encodeURIComponent(source)}` : ''}`);
+    if (requestId !== accountRequestRef.current || filtersRef.current.groupId !== groupId || filtersRef.current.source !== source) return;
     const accounts = (payload.accounts || []) as Array<{ biz: string; nickname: string }>;
     const options = accounts.map((account) => ({
       value: account.biz,
@@ -312,7 +330,7 @@ export function useArticleFilters() {
         itemShowType: routeItemShowType,
         source: routeSource,
         read: routeRead,
-    starred: routeStarred,
+        starred: routeStarred,
         search: routeSearch,
         sort: routeSort,
       };
@@ -353,9 +371,9 @@ export function useArticleFilters() {
   useEffect(() => {
     if (!filters.groupId) return;
     queueMicrotask(() => {
-      void loadAccountOptions(filters.groupId);
+      void loadAccountOptions(filters.groupId, filters.source);
     });
-  }, [filters.groupId, loadAccountOptions]);
+  }, [filters.groupId, filters.source, loadAccountOptions]);
 
   useEffect(() => {
     syncUrlParams(filters);
@@ -395,7 +413,7 @@ export function useArticleFilters() {
       const nextSearch = deferredSearchRef.current;
       void loadGroupOptions(nextFilters.source);
       if (nextFilters.groupId) {
-        void loadAccountOptions(nextFilters.groupId);
+        void loadAccountOptions(nextFilters.groupId, nextFilters.source);
       }
       void loadArticles({ ...nextFilters, search: nextSearch }, true);
       void resolveArticleTarget();
