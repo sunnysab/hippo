@@ -18,6 +18,8 @@ import { copyToClipboard } from '../../utils/clipboard';
 import { articleToMarkdown } from './exportMarkdown';
 import { useSyncRun } from '../../hooks/useSyncRun';
 import { getSyncRunLabel } from '../../utils/sync';
+import { useArticleSources } from '../../hooks/useArticleSources';
+import { getSourceLabel } from '../../utils/source';
 
 export function ArticlesPage() {
   const { state, dispatch } = useArticlesState();
@@ -33,7 +35,7 @@ export function ArticlesPage() {
     selectArticle,
     loadArticles,
   } = useArticleFilters();
-  // 宽屏才给左栏：窄屏上它会把正文挤到没法读，那里继续用列表头部的控件。
+  // Keep the source selector available whenever the wide navigation is hidden.
   const showViewRail = useMediaQuery('(min-width: 1600px)');
   const {
     config,
@@ -47,6 +49,17 @@ export function ArticlesPage() {
     mobileReading,
     getSelectedArticleLink,
   } = useArticleReader();
+  const { sources, error: sourcesFailed, reload: reloadSources } = useArticleSources();
+  const railVisible = showViewRail && !listCollapsed;
+  const listVisible = isNarrowViewport ? !mobileReading : !listCollapsed;
+  const listLabel = isNarrowViewport
+    ? t('articles.backToList', 'Back to list')
+    : listCollapsed ? t('articles.expandList', 'Show list') : t('articles.collapseList', 'Hide list');
+  const filterCount = [filters.groupId, filters.accountBiz, filters.itemShowType, filters.search.trim(), filters.read, filters.starred].filter(Boolean).length;
+  const revealList = () => {
+    setListCollapsed(false);
+    dispatch({ type: 'SET_MOBILE_READING', reading: false });
+  };
   const { runSync, task: syncTask, running: isSyncing } = useSyncRun();
   // Media entries are the ones with a transcription queue behind them; the button
   // is gated on the kind rather than the source, so a new source needs no change.
@@ -67,15 +80,50 @@ export function ArticlesPage() {
 
   return (
     <section id="view-articles" className="view is-active">
+      <div className="toolbar article-workspace-toolbar" role="toolbar" aria-label={t('articles.navigation', 'Article navigation')}>
+        {!isNarrowViewport || mobileReading ? (
+          <button className="btn ghost article-list-toggle" id="btn-article-toggle" type="button"
+            aria-label={listLabel} title={listLabel} aria-expanded={listVisible} aria-controls="article-list-panel"
+            onClick={() => { if (isNarrowViewport) revealList(); else setListCollapsed((current) => !current); }}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+              {isNarrowViewport ? <path d="m10 5-7 7 7 7M3 12h18" /> : <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>}
+            </svg>
+            <span>{listLabel}</span>
+          </button>
+        ) : null}
+        {!railVisible || sourcesFailed || sources.length === 0 ? (
+          <div className="article-source-control">
+            <select id="article-source-filter" aria-label={t('articles.railSources', 'Source')} value={filters.source}
+              onChange={(event) => { updateFilters({ source: event.target.value }); revealList(); }}>
+              <option value="">{t('articles.railAllSources', 'All sources')}</option>
+              {filters.source && !sources.some((item) => item.source === filters.source) ? (
+                <option value={filters.source}>{getSourceLabel(filters.source, t)}</option>
+              ) : null}
+              {sources.map((item) => <option key={item.source} value={item.source}>{getSourceLabel(item.source, t)}</option>)}
+            </select>
+            {sourcesFailed ? <button className="btn ghost" type="button" onClick={() => { void reloadSources(); }}>
+              {t('articles.retrySources', 'Retry sources')}
+            </button> : null}
+          </div>
+        ) : null}
+        <button className={`btn ghost article-filter-toggle${state.filtersCollapsed ? '' : ' is-active'}`}
+          id="btn-article-filter-toggle" type="button" aria-expanded={listVisible && !state.filtersCollapsed}
+          aria-controls="article-filter-drawer" onClick={() => {
+            revealList();
+            dispatch({ type: 'SET_FILTERS_COLLAPSED', collapsed: listVisible ? !state.filtersCollapsed : false });
+          }}>
+          {t('articles.toggleFilters', 'Filters')}{filterCount ? ` · ${filterCount}` : ''}
+        </button>
+      </div>
       <div
         className={`article-layout${listCollapsed ? ' is-collapsed' : ''}${mobileReading ? ' is-mobile-reading' : ''}${
-          showViewRail && !listCollapsed ? ' with-rail' : ''
+          railVisible ? ' with-rail' : ''
         }`}
       >
-        {showViewRail && !listCollapsed ? (
-          <ViewRail filters={filters} groupOptions={groupOptions} onChange={updateFilters} />
+        {railVisible ? (
+          <ViewRail sources={sources} filters={filters} groupOptions={groupOptions} onChange={updateFilters} />
         ) : null}
-        <div className="panel article-list">
+        <div className="panel article-list" id="article-list-panel">
           <div className="panel-header article-sidebar-header">
             <div>
               <h2>{t('articles.title', 'Articles')}</h2>
@@ -111,16 +159,6 @@ export function ArticlesPage() {
                   {getSyncRunLabel(syncTask.status, t)}
                 </span>
               ) : null}
-              <button
-                className={`btn ghost article-filter-toggle${state.filtersCollapsed ? '' : ' is-active'}`}
-                id="btn-article-filter-toggle"
-                type="button"
-                aria-expanded={!state.filtersCollapsed}
-                aria-controls="article-filter-drawer"
-                onClick={() => dispatch({ type: 'SET_FILTERS_COLLAPSED', collapsed: !state.filtersCollapsed })}
-              >
-                {t('articles.toggleFilters', 'Filters')}
-              </button>
             </div>
           </div>
           <ArticleFilters
@@ -142,19 +180,7 @@ export function ArticlesPage() {
 
         <div className="panel article-preview">
           <div className="panel-header article-preview-topbar">
-            <div>
-              <h2>{t('articles.previewTitle', 'Article Preview')}</h2>
-              <p className="muted">{t('articles.previewSubtitle', 'Review article details and adjust the reading layout.')}</p>
-            </div>
             <div className="toolbar article-preview-toolbar">
-              <button
-                className="btn ghost article-mobile-back"
-                id="btn-article-mobile-back"
-                type="button"
-                onClick={() => dispatch({ type: 'SET_MOBILE_READING', reading: false })}
-              >
-                {t('articles.backToList', 'Back to list')}
-              </button>
               <button
                 className="btn ghost article-toolbar-btn"
                 id="btn-article-open-original"
@@ -267,22 +293,7 @@ export function ArticlesPage() {
               >
                 {t('articles.ai.open', '解读')}
               </button>
-              <button
-                className="icon-btn"
-                id="btn-article-toggle"
-                type="button"
-                aria-label={t('articles.toggleList', 'Toggle list')}
-                title={t('articles.toggleList', 'Toggle list')}
-                onClick={() => {
-                  if (isNarrowViewport && mobileReading) {
-                    dispatch({ type: 'SET_MOBILE_READING', reading: false });
-                    return;
-                  }
-                  setListCollapsed((prev) => !prev);
-                }}
-              >
-                <span className="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path fillRule="evenodd" d="M3 5h18v14H3zM9 5v14H6V5z"/></svg></span>
-              </button>
+
             </div>
           </div>
           <ArticlePreview

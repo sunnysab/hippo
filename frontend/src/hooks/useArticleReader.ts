@@ -12,7 +12,7 @@ export function useArticleReader() {
   const [sidePanel, setSidePanel] = useState<ReadingPanel>('');
   const [listCollapsed, setListCollapsed] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
-  const isNarrowViewport = useMediaQuery('(max-width: 720px)');
+  const isNarrowViewport = useMediaQuery('(max-width: 1100px)');
 
   const getSelectedArticleLink = useCallback(() => {
     const article = state.currentArticlePayload?.article ||
@@ -26,7 +26,7 @@ export function useArticleReader() {
     sidePanel,
     setSidePanel,
     previewRef,
-    listCollapsed,
+    listCollapsed: !isNarrowViewport && listCollapsed,
     setListCollapsed,
     isNarrowViewport,
     mobileReading: state.mobileReading,

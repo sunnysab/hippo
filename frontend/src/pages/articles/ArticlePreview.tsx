@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useRef, type RefObject } from 'react';
+import { lazy, Suspense, useState, useRef, useEffect, type RefObject } from 'react';
 import { ContextMenu } from '../../components/ContextMenu';
 import { useArticlesState } from '../../store/articles';
 import { useI18n } from '../../i18n';
@@ -34,6 +34,17 @@ export function ArticlePreview({ previewRef, sidePanel, onSidePanelToggle }: Art
   } | null>(null);
   const [isBlockingImage, setIsBlockingImage] = useState(false);
   const readerRef = useRef<HTMLDivElement>(null);
+
+  const [overlayPanel, setOverlayPanel] = useState(false);
+  useEffect(() => {
+    const container = previewRef.current;
+    if (!container || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setOverlayPanel(entry.contentRect.width < 800);
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [previewRef]);
 
   const payload = state.currentArticlePayload;
   const outline = buildOutline(payload?.content);
@@ -75,7 +86,7 @@ export function ArticlePreview({ previewRef, sidePanel, onSidePanelToggle }: Art
 
   return (
     <div
-      className={`article-preview-body${payload ? '' : ' is-empty'}${sidePanel && payload ? ' with-panel' : ''}`}
+      className={`article-preview-body${payload ? '' : ' is-empty'}${sidePanel && payload ? ' with-panel' : ''}${overlayPanel ? ' is-overlay-panel' : ''}`}
       id="article-preview"
       ref={previewRef}
     >

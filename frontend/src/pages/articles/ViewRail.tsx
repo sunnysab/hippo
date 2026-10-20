@@ -1,18 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
-import { apiGet } from '../../api';
 import { useI18n } from '../../i18n';
 import { getSourceLabel, getSourceTone } from '../../utils/source';
-import { createLatestOnly } from '../../utils/latest';
-import { onRefresh } from '../../utils/events';
+import type { ArticleSource } from '../../hooks/useArticleSources';
 import type { ArticleFiltersState, ArticleSelectOption } from './filtering';
-
-interface SourceCount {
-  source: string;
-  channels: number;
-}
 
 interface ViewRailProps {
   filters: ArticleFiltersState;
+  sources: ArticleSource[];
   groupOptions: ArticleSelectOption[];
   onChange: (patch: Partial<ArticleFiltersState>) => void;
 }
@@ -23,37 +16,10 @@ interface ViewRailProps {
  * Global navigation stays in the top bar; this is the article list's own scope, so
  * clicking a source or a group narrows the list in place. It only appears when
  * there is room for it (see `.article-layout.with-rail`), which is also why the
- * same view switch still exists in the list header for narrow windows.
+ * view switch stays in the list and sources move to the workspace toolbar.
  */
-export function ViewRail({ filters, groupOptions, onChange }: ViewRailProps) {
+export function ViewRail({ filters, sources, groupOptions, onChange }: ViewRailProps) {
   const { t } = useI18n();
-  const [sources, setSources] = useState<SourceCount[]>([]);
-  // Subscribing or unsubscribing emits a refresh, and these counts are how the
-  // reader sees it land: the newest answer wins, a slow one is dropped.
-  const [loadSources] = useState(() => createLatestOnly<SourceCount[] | null>((next) => {
-    if (next) setSources(next);
-  }));
-
-  const fetchSources = useCallback(async () => {
-    await loadSources(async () => {
-      try {
-        const payload = await apiGet('/api/source') as { sources?: SourceCount[] };
-        return payload.sources || [];
-      } catch {
-        // Reading the source list is decoration: without it the rail keeps the
-        // counts it already had, and the article list is unaffected.
-        return null;
-      }
-    });
-  }, [loadSources]);
-
-  useEffect(() => {
-    void fetchSources();
-    return onRefresh(() => {
-      void fetchSources();
-    });
-  }, [fetchSources]);
-
   // The number is why these rows exist, so it is part of the name a screen
   // reader announces and not only a span on the right.
   const subscriptionCount = (count: number) => (

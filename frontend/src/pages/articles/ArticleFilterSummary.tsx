@@ -1,4 +1,5 @@
 import { useI18n } from '../../i18n';
+import { getSourceLabel } from '../../utils/source';
 import { ITEM_SHOW_TYPE_META } from '../../utils/constants';
 import type {
   ArticleFiltersState,
@@ -29,10 +30,11 @@ export function ArticleFilterSummary({
 }: ArticleFilterSummaryProps) {
   const { t } = useI18n();
   const groupLabel = groupOptions.find((group) => group.value === filters.groupId)?.label || '';
-  const accountLabel = accountOptions.find((account) => account.value === filters.accountBiz)?.label || '';
+  const accountLabel = accountOptions.find((account) => account.value === filters.accountBiz)?.label || filters.accountBiz;
 
   const totalLabel = t('articles.summary.total', '{n} articles').replace('{n}', total.toLocaleString('zh-CN'));
   const tags: string[] = [];
+  if (filters.source) tags.push(getSourceLabel(filters.source, t));
   if (groupLabel && filters.groupId) {
     tags.push(t('articles.summary.group', 'Group: {value}').replace('{value}', groupLabel));
   }

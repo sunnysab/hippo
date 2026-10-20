@@ -7,6 +7,8 @@ import { I18nProvider } from '../i18n';
 import { useArticleFilters } from './useArticleFilters';
 
 const apiGetMock = vi.fn();
+const showToastMock = vi.fn();
+vi.mock('./useToast', () => ({ useToast: () => ({ showToast: showToastMock }) }));
 vi.mock('../api', () => ({
   apiGet: (...args: unknown[]) => apiGetMock(...args),
   apiSend: vi.fn().mockResolvedValue({}),
@@ -34,6 +36,7 @@ const list = (source: string, id = 1) => ({ articles: [{ id, source }], total: 1
 describe('useArticleFilters', () => {
   beforeEach(() => {
     apiGetMock.mockReset();
+    showToastMock.mockClear();
     apiGetMock.mockImplementation(async (path: string) => path.startsWith('/api/group')
       ? { groups: [] } : { articles: [], total: 0 });
     vi.stubGlobal('matchMedia', (media: string) => ({
@@ -130,4 +133,67 @@ describe('useArticleFilters', () => {
     await act(async () => result.current.updateFilters({ source: 'youtube' }));
     await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/api/account?group_id=1&page_size=200&source=youtube'));
   });
+
+  it('does not reopen an old article after switching sources during detail loading', async () => {
+    const old = deferred<unknown>();
+    apiGetMock.mockImplementation((path: string) => path === '/api/article/1' ? old.promise
+      : Promise.resolve(path.startsWith('/api/group') ? { groups: [] } : { articles: [], total: 0 }));
+    const { result } = renderFilters('/articles?article=1&source=feed');
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/api/article/1'));
+    await act(async () => result.current.updateFilters({ source: 'youtube' }));
+    await act(async () => old.resolve({ article: { id: 1, source: 'feed' }, content: [] }));
+    expect(result.current.state.currentArticlePayload).toBeNull();
+    expect(result.current.state.selectedArticleId).toBeNull();
+    expect(result.current.state.mobileReading).toBe(false);
+  });
+
+  it('does not resolve an old item target after switching sources', async () => {
+    const old = deferred<unknown>();
+    apiGetMock.mockImplementation((path: string) => path.includes('article_id=old-item') ? old.promise
+      : Promise.resolve(path.startsWith('/api/group') ? { groups: [] } : { articles: [], total: 0 }));
+    const { result } = renderFilters('/articles?item_id=old-item');
+    await waitFor(() => expect(apiGetMock.mock.calls.some(([path]) => path.includes('article_id=old-item'))).toBe(true));
+    await act(async () => result.current.updateFilters({ source: 'youtube' }));
+    await act(async () => old.resolve(list('feed')));
+    expect(apiGetMock).not.toHaveBeenCalledWith('/api/article/1');
+    expect(result.current.state.mobileReading).toBe(false);
+  });
+
+
+  it('reports group-loading failures without rejecting the page effect', async () => {
+    apiGetMock.mockImplementation(async (path: string) => {
+      if (path.startsWith('/api/group')) throw new Error('Groups unavailable');
+      return { articles: [], total: 0 };
+    });
+    renderFilters();
+    await waitFor(() => expect(showToastMock).toHaveBeenCalledWith('Groups unavailable'));
+  });
+
+  it('reports account-loading failures without replacing the current choices', async () => {
+    apiGetMock.mockImplementation(async (path: string) => {
+      if (path.startsWith('/api/group')) return { groups: [{ id: 1, name: 'One', account_count: 1 }] };
+      if (path.startsWith('/api/account')) throw new Error('Accounts unavailable');
+      return { articles: [], total: 0 };
+    });
+    const { result } = renderFilters('/articles?group=1');
+    await waitFor(() => expect(showToastMock).toHaveBeenCalledWith('Accounts unavailable'));
+    expect(result.current.accountOptions).toEqual([]);
+  });
+
+
+  it('does not show articles from a previous source when the new source fails', async () => {
+    apiGetMock.mockImplementation(async (path: string) => {
+      if (path.startsWith('/api/group')) return { groups: [] };
+      if (path.includes('source=youtube')) throw new Error('YouTube unavailable');
+      return list('feed');
+    });
+    const { result } = renderFilters('/articles?source=feed');
+    await waitFor(() => expect(result.current.state.articles[0]?.source).toBe('feed'));
+    await act(async () => result.current.updateFilters({ source: 'youtube' }));
+    await waitFor(() => expect(showToastMock).toHaveBeenCalledWith('YouTube unavailable'));
+    expect(result.current.state.articles).toEqual([]);
+    expect(result.current.state.lastFacetPayload).toBeNull();
+    expect(result.current.state.isArticleLoading).toBe(false);
+  });
+
 });

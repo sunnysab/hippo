@@ -1,12 +1,10 @@
 import { useDeferredValue, useEffect, useCallback, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useArticlesState } from '../store/articles';
-import { useMediaQuery } from './useMediaQuery';
 import { apiGet, apiSend, isAuthError } from '../api';
 import { useToast } from './useToast';
 import { useI18n } from '../i18n';
 import { ARTICLE_SORT_PUBLISH_AT_DESC } from '../utils/constants';
-import { createLatestOnly } from '../utils/latest';
 import { onRefresh } from '../utils/events';
 import {
   areArticleFiltersEqual,
@@ -41,7 +39,6 @@ export function useArticleFilters() {
   const [accountOptions, setAccountOptions] = useState<ArticleSelectOption[]>([]);
 
   const deferredSearch = useDeferredValue(filters.search.trim());
-  const isNarrowViewport = useMediaQuery('(max-width: 720px)');
 
   // Opening an article is reading it. Failure stays quiet: the read flag is
   // bookkeeping, not something worth interrupting a reader for.
@@ -58,6 +55,7 @@ export function useArticleFilters() {
 
   const isArticleLoadingRef = useRef(state.isArticleLoading);
   const listRequestRef = useRef(0);
+  const listFiltersRef = useRef(filters);
   const accountRequestRef = useRef(0);
   const articlePageRef = useRef(state.articlePage);
   const articlePageSizeRef = useRef(state.articlePageSize);
@@ -68,17 +66,26 @@ export function useArticleFilters() {
   const deferredSearchRef = useRef(deferredSearch);
   const skipNextArticleTargetResolveRef = useRef(false);
   const pendingRouteTargetRef = useRef<{ articleId: string; itemId: string } | null>(null);
-  const latestArticleDetailRef = useRef(createLatestOnly<{
-    id: number;
-    payload: ArticlePayload;
-    openMobileReader: boolean;
-  }>(({ id, payload, openMobileReader }) => {
-    dispatch({ type: 'SELECT_ARTICLE', id, payload });
-    if (openMobileReader) {
+  const articleTargetRequestRef = useRef(0);
+  const loadArticleDetail = useCallback(async (id: number, requestId: number) => {
+    try {
+      const payload = await apiGet(`/api/article/${id}`) as unknown as ArticlePayload;
+      if (requestId !== articleTargetRequestRef.current) return;
+      dispatch({ type: 'SELECT_ARTICLE', id, payload });
       dispatch({ type: 'SET_MOBILE_READING', reading: true });
+      void markArticleRead(id);
+    } catch (error) {
+      if (requestId === articleTargetRequestRef.current && !isAuthError(error)) {
+        showToast(error instanceof Error ? error.message : t('articles.loadFailed', 'Failed to load article.'));
+      }
     }
-    void markArticleRead(id);
-  }));
+  }, [dispatch, markArticleRead, showToast, t]);
+
+  useEffect(() => () => {
+    listRequestRef.current += 1;
+    accountRequestRef.current += 1;
+    articleTargetRequestRef.current += 1;
+  }, []);
 
   useEffect(() => {
     isArticleLoadingRef.current = state.isArticleLoading;
@@ -106,6 +113,12 @@ export function useArticleFilters() {
   ) => {
     if (!reset && isArticleLoadingRef.current) return;
     const requestId = ++listRequestRef.current;
+    if (reset && !areArticleFiltersEqual(listFiltersRef.current, nextFilters)) {
+      articlesRef.current = [];
+      dispatch({ type: 'SET_ARTICLES', articles: [], reset: true });
+      dispatch({ type: 'SET_FACET_PAYLOAD', payload: null });
+    }
+    listFiltersRef.current = nextFilters;
     dispatch({ type: 'SET_LOADING', loading: true });
     isArticleLoadingRef.current = true;
     const sort = nextFilters.sort || ARTICLE_SORT_PUBLISH_AT_DESC;
@@ -169,13 +182,17 @@ export function useArticleFilters() {
   }, [articleIdParam, setSearchParams, itemIdParam]);
 
   const updateFilters = useCallback((patch: Partial<ArticleFiltersState>) => {
-    if (patch.groupId !== undefined || patch.source !== undefined) {
+    if ((patch.groupId !== undefined && patch.groupId !== filtersRef.current.groupId)
+      || (patch.source !== undefined && patch.source !== filtersRef.current.source)) {
       accountRequestRef.current += 1;
       setAccountOptions([]);
     }
+    articleTargetRequestRef.current += 1;
     pendingRouteTargetRef.current = { articleId: '', itemId: '' };
     setArticleIdParam('');
     setItemIdParam('');
+    dispatch({ type: 'SET_MOBILE_READING', reading: false });
+    dispatch({ type: 'SELECT_ARTICLE', id: null, payload: null });
     setFilters((prev) => {
       const groupChanged = patch.groupId !== undefined && patch.groupId !== prev.groupId;
       const sourceChanged = patch.source !== undefined && patch.source !== prev.source;
@@ -185,50 +202,62 @@ export function useArticleFilters() {
         ...(groupChanged || sourceChanged ? { accountBiz: '' } : null),
       };
     });
-  }, []);
+  }, [dispatch]);
 
   // 分组行上的数字回答的是“这个来源下这个组有多少号”，所以来源是它的一部分。
   const loadGroupOptions = useCallback(async (source: string) => {
-    const payload = await apiGet(source ? `/api/group?source=${encodeURIComponent(source)}` : '/api/group');
-    // 快切来源时旧答案可能后到：它数的是别的来源，写进去就是错的数字。
-    if (filtersRef.current.source !== source) return;
-    const groups = (payload.groups || []) as Array<{ id: number; name: string; account_count: number }>;
-    const options = groups.map((group) => ({
-      value: String(group.id),
-      label: group.name,
-      count: group.account_count,
-    }));
-    setGroupOptions(options);
-    setAccountOptions((prev) => {
-      if (!filtersRef.current.groupId) return [];
-      const exists = options.some((group) => group.value === filtersRef.current.groupId);
-      return exists ? prev : [];
-    });
-    setFilters((prev) => {
-      if (!prev.groupId) return prev;
-      const exists = options.some((group) => group.value === prev.groupId);
-      return exists ? prev : { ...prev, groupId: '', accountBiz: '' };
-    });
-  }, []);
+    try {
+      const payload = await apiGet(source ? `/api/group?source=${encodeURIComponent(source)}` : '/api/group');
+      // 快切来源时旧答案可能后到：它数的是别的来源，写进去就是错的数字。
+      if (filtersRef.current.source !== source) return;
+      const groups = (payload.groups || []) as Array<{ id: number; name: string; account_count: number }>;
+      const options = groups.map((group) => ({
+        value: String(group.id),
+        label: group.name,
+        count: group.account_count,
+      }));
+      setGroupOptions(options);
+      setAccountOptions((prev) => {
+        if (!filtersRef.current.groupId) return [];
+        const exists = options.some((group) => group.value === filtersRef.current.groupId);
+        return exists ? prev : [];
+      });
+      setFilters((prev) => {
+        if (!prev.groupId) return prev;
+        const exists = options.some((group) => group.value === prev.groupId);
+        return exists ? prev : { ...prev, groupId: '', accountBiz: '' };
+      });
+    } catch (error) {
+      if (filtersRef.current.source === source && !isAuthError(error)) {
+        showToast(error instanceof Error ? error.message : t('articles.filtersFailed', 'Failed to load filters.'));
+      }
+    }
+  }, [showToast, t]);
 
   const loadAccountOptions = useCallback(async (groupId: string, source: string) => {
     if (!groupId) return;
 
     const requestId = ++accountRequestRef.current;
-    const payload = await apiGet(`/api/account?group_id=${encodeURIComponent(groupId)}&page_size=200${source ? `&source=${encodeURIComponent(source)}` : ''}`);
-    if (requestId !== accountRequestRef.current || filtersRef.current.groupId !== groupId || filtersRef.current.source !== source) return;
-    const accounts = (payload.accounts || []) as Array<{ biz: string; nickname: string }>;
-    const options = accounts.map((account) => ({
-      value: account.biz,
-      label: account.nickname,
-    }));
-    setAccountOptions(options);
-    setFilters((prev) => {
-      if (!prev.accountBiz) return prev;
-      const exists = options.some((account) => account.value === prev.accountBiz);
-      return exists ? prev : { ...prev, accountBiz: '' };
-    });
-  }, []);
+    try {
+      const payload = await apiGet(`/api/account?group_id=${encodeURIComponent(groupId)}&page_size=200${source ? `&source=${encodeURIComponent(source)}` : ''}`);
+      if (requestId !== accountRequestRef.current || filtersRef.current.groupId !== groupId || filtersRef.current.source !== source) return;
+      const accounts = (payload.accounts || []) as Array<{ biz: string; nickname: string }>;
+      const options = accounts.map((account) => ({
+        value: account.biz,
+        label: account.nickname,
+      }));
+      setAccountOptions(options);
+      setFilters((prev) => {
+        if (!prev.accountBiz) return prev;
+        const exists = options.some((account) => account.value === prev.accountBiz);
+        return exists ? prev : { ...prev, accountBiz: '' };
+      });
+    } catch (error) {
+      if (requestId === accountRequestRef.current && !isAuthError(error)) {
+        showToast(error instanceof Error ? error.message : t('articles.filtersFailed', 'Failed to load filters.'));
+      }
+    }
+  }, [showToast, t]);
 
   const selectArticle = useCallback(async (id: number) => {
     skipNextArticleTargetResolveRef.current = true;
@@ -236,12 +265,8 @@ export function useArticleFilters() {
     setArticleIdParam(String(id));
     setItemIdParam('');
     dispatch({ type: 'SELECT_ARTICLE', id, payload: null });
-    await latestArticleDetailRef.current(async () => ({
-      id,
-      payload: await apiGet(`/api/article/${id}`) as unknown as ArticlePayload,
-      openMobileReader: isNarrowViewport,
-    }));
-  }, [dispatch, isNarrowViewport]);
+    await loadArticleDetail(id, ++articleTargetRequestRef.current);
+  }, [dispatch, loadArticleDetail]);
 
   const resetFilters = useCallback(async () => {
     setFilters({
@@ -255,9 +280,11 @@ export function useArticleFilters() {
       sort: ARTICLE_SORT_PUBLISH_AT_DESC,
     });
     setAccountOptions([]);
+    articleTargetRequestRef.current += 1;
     pendingRouteTargetRef.current = { articleId: '', itemId: '' };
     setArticleIdParam('');
     setItemIdParam('');
+    dispatch({ type: 'SET_MOBILE_READING', reading: false });
     dispatch({ type: 'SELECT_ARTICLE', id: null, payload: null });
   }, [dispatch]);
 
@@ -267,6 +294,7 @@ export function useArticleFilters() {
       return;
     }
 
+    const requestId = ++articleTargetRequestRef.current;
     const articleId = articleIdParam.trim();
     const itemId = itemIdParam.trim();
 
@@ -277,11 +305,7 @@ export function useArticleFilters() {
       }
       const numericArticleId = Number(articleId);
       dispatch({ type: 'SELECT_ARTICLE', id: numericArticleId, payload: null });
-      await latestArticleDetailRef.current(async () => ({
-        id: numericArticleId,
-        payload: await apiGet(`/api/article/${articleId}`) as unknown as ArticlePayload,
-        openMobileReader: isNarrowViewport,
-      }));
+      await loadArticleDetail(numericArticleId, requestId);
       return;
     }
 
@@ -296,6 +320,7 @@ export function useArticleFilters() {
     url.searchParams.set('page_size', '1');
     url.searchParams.set('sort', ARTICLE_SORT_PUBLISH_AT_DESC);
     const payload = await apiGet(url.pathname + url.search);
+    if (requestId !== articleTargetRequestRef.current) return;
     const article = ((payload.articles || []) as Article[])[0];
     if (!article) {
       dispatch({ type: 'SELECT_ARTICLE', id: null, payload: null });
@@ -303,12 +328,8 @@ export function useArticleFilters() {
     }
 
     dispatch({ type: 'SELECT_ARTICLE', id: article.id, payload: null });
-    await latestArticleDetailRef.current(async () => ({
-      id: article.id,
-      payload: await apiGet(`/api/article/${article.id}`) as unknown as ArticlePayload,
-      openMobileReader: isNarrowViewport,
-    }));
-  }, [articleIdParam, dispatch, isNarrowViewport, itemIdParam]);
+    await loadArticleDetail(article.id, requestId);
+  }, [articleIdParam, dispatch, itemIdParam, loadArticleDetail]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {

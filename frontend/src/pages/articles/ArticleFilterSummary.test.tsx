@@ -59,4 +59,14 @@ describe('ArticleFilterSummary', () => {
     expect(screen.getByText(zhCN['articles.summary.account'].replace('{value}', '某B站UP'))).toBeTruthy();
     expect(screen.queryByText(/公众号/m)).toBeNull();
   });
+
+  it('shows the source and an account constraint even when its label is not loaded', () => {
+    render(<I18nProvider><ArticleFilterSummary
+      filters={{ groupId: '', accountBiz: 'channel-id', itemShowType: '', source: 'youtube', read: '', starred: '', search: '', sort: '' }}
+      groupOptions={[]} accountOptions={[]} total={0} />
+    </I18nProvider>);
+    expect(screen.getByText('YouTube')).toBeTruthy();
+    expect(screen.getByText(zhCN['articles.summary.account'].replace('{value}', 'channel-id'))).toBeTruthy();
+  });
+
 });

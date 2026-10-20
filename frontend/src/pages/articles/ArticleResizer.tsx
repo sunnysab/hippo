@@ -4,8 +4,8 @@ import { useRef, useCallback, useEffect } from 'react';
 const MIN_LIST_WIDTH = 360;
 const MAX_LIST_WIDTH = 800;
 
-const clampWidth = (value: number) =>
-  Math.min(Math.max(value, MIN_LIST_WIDTH), MAX_LIST_WIDTH);
+const clampWidth = (value: number, maximum = MAX_LIST_WIDTH) =>
+  Math.min(Math.max(value, MIN_LIST_WIDTH), Math.max(MIN_LIST_WIDTH, Math.min(maximum, MAX_LIST_WIDTH)));
 
 export function ArticleResizer() {
   const resizerRef = useRef<HTMLDivElement>(null);
@@ -27,10 +27,14 @@ export function ArticleResizer() {
       if (Number.isFinite(parsed) && parsed > 0) startWidth = parsed;
     }
 
+    const layout = resizerRef.current?.parentElement;
+    const rail = layout?.querySelector('.article-view-rail');
+    // Keep 480px for the preview, plus the splitter and two grid gaps.
+    const maximum = layout ? layout.getBoundingClientRect().width - (rail ? rail.getBoundingClientRect().width + 12 : 0) - 510 : MAX_LIST_WIDTH;
     const onMove = (ev: MouseEvent | TouchEvent) => {
       const clientX = 'touches' in ev ? ev.touches[0].clientX : ev.clientX;
       const delta = clientX - startX;
-      root.style.setProperty('--article-list-width', `${clampWidth(startWidth + delta)}px`);
+      root.style.setProperty('--article-list-width', `${clampWidth(startWidth + delta, maximum)}px`);
     };
 
     const onUp = () => {

@@ -165,6 +165,8 @@
   "articles.view": "视图",
   "articles.updateNow": "立即更新",
   "articles.updateNowHint": "按当前筛选范围更新订阅的文章",
+  "articles.railSources": "来源",
+  "articles.railAllSources": "全部来源",
   "articles.railSubscriptions": "{count} 个订阅",
   "articles.viewAll": "全部",
   "articles.viewUnread": "未读",
@@ -801,5 +803,11 @@
   "articles.outline.playAt": "从此处播放",
   "articles.outline.expand": "展开",
   "articles.outline.collapse": "折叠",
+  "articles.loadFailed": "文章加载失败，请重试。",
+  "articles.filtersFailed": "筛选项加载失败，请重试。",
+  "articles.navigation": "文章导航",
+  "articles.expandList": "展开列表",
+  "articles.collapseList": "收起列表",
+  "articles.retrySources": "重试来源",
   "articles.outline.loadFailed": "大纲读取失败，请重新打开面板重试。"
 }

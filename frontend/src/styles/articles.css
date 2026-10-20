@@ -1,6 +1,7 @@
 .article-layout {
   display: grid;
-  grid-template-columns: minmax(360px, var(--article-list-width, 400px)) 6px minmax(0, 1fr);
+  /* Keep 480px for the preview plus 30px for the splitter and grid gaps. */
+  grid-template-columns: minmax(360px, min(var(--article-list-width, 400px), calc(100% - 510px))) 6px minmax(0, 1fr);
   flex: 1;
   gap: 12px;
   min-height: 0;
@@ -61,9 +62,19 @@
   background: var(--surface-item-active);
 }
 
-.article-mobile-back {
-  display: none;
+.article-workspace-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
 }
+
+.article-list-toggle { flex-shrink: 0; }
+.article-source-control { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.article-source-control select { width: clamp(130px, 18vw, 200px); max-width: 100%; min-height: 34px; }
+.article-preview-topbar { flex: 0 0 auto; }
+.article-preview-toolbar { width: 100%; }
 
 .article-filter-shell {
   margin-bottom: 10px;
@@ -782,9 +793,19 @@
 
 @media (max-width: 1100px) {
   .article-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     height: auto;
     overflow: visible;
+  }
+
+  .article-layout:not(.is-mobile-reading) .article-preview,
+  .article-layout.is-mobile-reading .article-list {
+    display: none;
+  }
+
+  .article-workspace-toolbar .btn,
+  .article-source-control select {
+    min-height: 44px;
   }
 
   .article-filter-grid-top,
@@ -794,10 +815,6 @@
 
   .article-filter-summary {
     justify-content: flex-start;
-  }
-
-  .article-list-scroll {
-    max-height: 44vh;
   }
 
   .article-resizer {
@@ -811,30 +828,10 @@
     overflow: visible;
   }
 
-  .article-layout:not(.is-mobile-reading) .article-preview {
-    display: none;
-  }
-
-  .article-layout.is-mobile-reading .article-list {
-    display: none;
-  }
-
-  .article-layout.is-mobile-reading .article-preview {
-    display: flex;
-  }
-
-  .article-sidebar-actions {
-    width: 100%;
-  }
-
-  .article-mobile-back {
-    display: inline-flex;
-    flex: 1 1 100%;
-  }
-
-  .article-mobile-back.is-hidden {
-    display: none;
-  }
+  .article-workspace-toolbar { gap: 6px; }
+  .article-source-control { flex: 1 1 120px; }
+  .article-source-control select { width: 100%; }
+  .article-list-toggle { padding-inline: 8px; }
 
   .article-list,
   .article-preview {
@@ -844,11 +841,6 @@
   .article-list-scroll {
     max-height: none;
     overflow: visible;
-  }
-
-  .article-sidebar-header .btn,
-  .article-preview-topbar .btn {
-    width: 100%;
   }
 
   .article-preview-topbar,
@@ -871,8 +863,7 @@
   }
 
   .article-toolbar-btn,
-  .article-reset-btn,
-  .article-filter-toggle {
+  .article-reset-btn {
     flex: 1 1 calc(50% - 6px);
     min-width: 0;
   }
@@ -1007,6 +998,28 @@ mark.hippo-highlight:hover {
 
 .article-preview-body.with-panel > .reader {
   min-width: 0;
+}
+
+/* Overlay a narrow reading pane instead of taking width from the text. */
+.article-preview-body.with-panel.is-overlay-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+.is-overlay-panel > .reader,
+.is-overlay-panel > .reader-ai,
+.is-overlay-panel > .reader-toc { grid-area: 1 / 1; }
+
+.is-overlay-panel > .reader-ai,
+.is-overlay-panel > .reader-toc {
+  position: sticky;
+  top: 0;
+  justify-self: end;
+  z-index: 2;
+  width: min(320px, 100%);
+  height: calc(100dvh - 240px);
+  background: var(--surface);
 }
 
 /* ---- Outline ----------------------------------------------------------- */
@@ -1190,19 +1203,23 @@ mark.hippo-highlight:hover {
 }
 
 @media (max-width: 720px) {
-  /* The sidebar becomes a bottom drawer so the article keeps the full width. */
+  /* Leave the bottom navigation reachable while the non-modal drawer is open. */
   .article-preview-body.with-panel {
     display: block;
   }
 
-  .reader-ai,
-  .reader-toc {
+  .article-preview-body > .reader-ai,
+  .article-preview-body > .reader-toc {
     position: fixed;
+    top: auto;
     right: 0;
-    bottom: 0;
+    bottom: var(--app-topbar-height, 64px);
     left: 0;
     z-index: 30;
-    max-height: 60vh;
+    width: 100%;
+    justify-self: stretch;
+    height: min(60dvh, 580px);
+    max-height: 60dvh;
     border-top: 1px solid var(--border);
     border-left: none;
     background: var(--surface);
@@ -1318,7 +1335,7 @@ mark.hippo-highlight:hover {
 --------------------------------------------------------------------------- */
 
 .article-layout.with-rail {
-  grid-template-columns: 200px minmax(320px, var(--article-list-width, 400px)) 6px minmax(0, 1fr);
+  grid-template-columns: 200px minmax(360px, min(var(--article-list-width, 400px), calc(100% - 722px))) 6px minmax(0, 1fr);
 }
 
 .article-layout.with-rail.is-collapsed {
@@ -1515,7 +1532,7 @@ mark.hippo-highlight:hover {
 }
 
 @media (max-width: 720px) {
-  .reader-toc { position: fixed; top: auto; height: min(65dvh, 580px); max-height: 65dvh; padding: 18px 20px max(16px, env(safe-area-inset-bottom)); }
+  .article-preview-body > .reader-toc { position: fixed; top: auto; height: min(65dvh, 580px); max-height: 65dvh; padding: 18px 20px max(16px, env(safe-area-inset-bottom)); }
   .reader-toc-row .reader-toc-item { min-height: 44px; }
   .reader-toc-fold { width: 32px; height: 32px; flex-basis: 32px; margin-top: 4px; }
   .reader-toc-time { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; margin-top: 0; }
