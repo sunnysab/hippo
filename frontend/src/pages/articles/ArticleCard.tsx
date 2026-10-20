@@ -41,7 +41,7 @@ export const ArticleCard = memo(function ArticleCard({
       onClick={onClick}
       onContextMenu={onContextMenu}
       onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
+        if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
           e.preventDefault();
           onClick();
         }

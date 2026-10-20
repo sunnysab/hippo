@@ -146,6 +146,20 @@ describe('ArticleCard', () => {
     expect(onClick).not.toHaveBeenCalled();
   });
 
+  it.each(['Enter', ' '])('does not open the article when pressing %s on an internal action', (key) => {
+    const onClick = vi.fn();
+    const { container } = render(
+      <ArticleCard article={article} isActive={false} onClick={onClick} onContextMenu={vi.fn()}
+        onToggleStar={vi.fn()} onToggleRead={vi.fn()} />,
+    );
+    for (const button of container.querySelectorAll('.article-card-action')) {
+      fireEvent.keyDown(button, { key });
+    }
+    expect(onClick).not.toHaveBeenCalled();
+    fireEvent.keyDown(container.querySelector('.article-card')!, { key });
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
   it('filters by the clicked account with an account-neutral tooltip', () => {
     const onAccountClick = vi.fn();
     const onClick = vi.fn();
