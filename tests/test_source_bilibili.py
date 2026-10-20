@@ -8,8 +8,12 @@ import unittest
 from typing import ClassVar
 from unittest.mock import AsyncMock
 
+import httpx
+
 from hippo.media.pipeline import ResolvedMedia
 from hippo.sources.bilibili import (
+    BilibiliClient,
+    BilibiliCredentialError,
     BilibiliError,
     BilibiliResolver,
     BilibiliSource,
@@ -59,6 +63,34 @@ class ParseRefTest(unittest.TestCase):
     def test_a_space_url_gives_the_mid(self) -> None:
         self.assertEqual(('space', '946974'), parse_ref('https://space.bilibili.com/946974/video'))
 
+    def test_a_collection_url_keeps_both_the_mid_and_season_id(self) -> None:
+        self.assertEqual(
+            ('season', 'season:3493117093218822:5605180'),
+            parse_ref('https://space.bilibili.com/3493117093218822/lists?sid=5605180'),
+        )
+
+    def test_a_collection_id_in_the_path_is_supported(self) -> None:
+        self.assertEqual(
+            ('season', 'season:3493117093218822:5605180'),
+            parse_ref('https://space.bilibili.com/3493117093218822/lists/5605180?type=season'),
+        )
+
+    def test_invalid_collections_never_fall_back_to_the_up(self) -> None:
+        for suffix in (
+            'lists',
+            'lists?sid=',
+            'lists?sid=abc',
+            'lists?sid=0',
+            'lists?sid=-1',
+            'lists?sid=1&sid=2',
+            'lists?sid=1&type=series',
+            'lists/1?sid=2',
+            'lists/abc',
+            'lists/1/extra',
+        ):
+            with self.subTest(suffix=suffix), self.assertRaises(ValueError):
+                parse_ref(f'https://space.bilibili.com/946974/{suffix}')
+
     def test_a_foreign_host_is_refused(self) -> None:
         with self.assertRaises(ValueError):
             parse_ref('https://evil.example/video/BV1gHps6yEHL')
@@ -70,6 +102,37 @@ class ParseRefTest(unittest.TestCase):
     def test_a_non_video_path_is_refused(self) -> None:
         with self.assertRaises(ValueError):
             parse_ref('https://www.bilibili.com/bangumi/play/ep1')
+
+
+class SeasonClientTest(unittest.IsolatedAsyncioTestCase):
+    async def test_the_endpoint_uses_newest_first_and_keeps_pagination(self) -> None:
+        def handle(request: httpx.Request) -> httpx.Response:
+            self.assertEqual('/x/polymer/web-space/seasons_archives_list', request.url.path)
+            self.assertEqual(
+                {
+                    'mid': '3493117093218822',
+                    'season_id': '5605180',
+                    'page_num': '2',
+                    'page_size': '5',
+                    'sort_reverse': 'true',
+                },
+                dict(request.url.params),
+            )
+            self.assertEqual('SESSDATA=test', request.headers['Cookie'])
+            return httpx.Response(200, json={'code': 0, 'data': {'archives': [], 'page': {'total': 36}}})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+            client = BilibiliClient(client=http, cookie='SESSDATA=test')
+            data = await client.season_videos('3493117093218822', '5605180', page=2, size=5)
+
+        self.assertEqual(36, data['page']['total'])
+
+    async def test_risk_control_remains_a_credential_error(self) -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, json={'code': -352}))
+        ) as http:
+            with self.assertRaises(BilibiliCredentialError):
+                await BilibiliClient(client=http).season_videos('1', '2', page=1, size=5)
 
 
 class DurationTest(unittest.TestCase):
@@ -233,7 +296,16 @@ class EmbedBlockTest(unittest.TestCase):
 class _FakeClient:
     def __init__(self, **responses):
         self._responses = responses
-        for name in ('video', 'page_list', 'player', 'playurl', 'space_videos', 'space_info', 'fetch_json'):
+        for name in (
+            'video',
+            'page_list',
+            'player',
+            'playurl',
+            'space_videos',
+            'season_videos',
+            'space_info',
+            'fetch_json',
+        ):
             if not hasattr(self, name):
                 setattr(self, name, AsyncMock(return_value=None))
         for name, value in responses.items():
@@ -327,6 +399,103 @@ class SourceListingTest(unittest.IsolatedAsyncioTestCase):
             await source.list_items(source_key='BV1gHps6yEHL', limit=5)
 
         self.assertIn('不可见', str(ctx.exception))
+
+    async def test_collection_preview_uses_its_name_cover_and_own_identity(self) -> None:
+        client = _FakeClient(
+            season_videos={
+                'meta': {
+                    'title': 'Lumina Talk',
+                    'name': 'Collection: Lumina Talk',
+                    'cover': 'https://cdn/collection.jpg',
+                }
+            }
+        )
+
+        info = await BilibiliSource(client).preview('https://space.bilibili.com/3493117093218822/lists?sid=5605180')
+
+        self.assertEqual('Lumina Talk', info.nickname)
+        self.assertEqual('bilibili:season:3493117093218822:5605180', info.biz)
+        self.assertEqual('season:3493117093218822:5605180', info.source_key)
+        self.assertEqual('https://cdn/collection.jpg', info.avatar_url)
+        client.season_videos.assert_awaited_once_with('3493117093218822', '5605180', page=1, size=1)
+        client.space_info.assert_not_awaited()
+
+    async def test_collection_preview_accepts_a_name_without_title(self) -> None:
+        info = await BilibiliSource(_FakeClient(season_videos={'meta': {'name': 'Lumina Talk'}})).preview(
+            'https://space.bilibili.com/1/lists?sid=2'
+        )
+
+        self.assertEqual('Lumina Talk', info.nickname)
+        self.assertIsNone(info.avatar_url)
+
+    async def test_missing_collection_metadata_never_becomes_an_up_subscription(self) -> None:
+        client = _FakeClient(season_videos={})
+
+        with self.assertRaises(BilibiliError):
+            await BilibiliSource(client).preview('https://space.bilibili.com/1/lists?sid=2')
+
+        client.space_info.assert_not_awaited()
+
+    async def test_collection_preview_propagates_risk_control(self) -> None:
+        client = _FakeClient(season_videos=AsyncMock(side_effect=BilibiliCredentialError('Risk control')))
+
+        with self.assertRaises(BilibiliCredentialError):
+            await BilibiliSource(client).preview('https://space.bilibili.com/1/lists?sid=2')
+
+        client.space_info.assert_not_awaited()
+
+    async def test_collection_listing_maps_archives_and_fetches_only_the_collection(self) -> None:
+        client = _FakeClient(
+            season_videos={
+                'archives': [
+                    {
+                        'bvid': 'BV1Jppq6aEvF',
+                        'aid': 123,
+                        'title': 'Episode 45',
+                        'pic': 'https://cdn/cover.jpg',
+                        'pubdate': 1791897683,
+                        'ctime': 1791897684,
+                        'duration': 6434,
+                    }
+                ],
+                'page': {'page_num': 2, 'page_size': 5, 'total': 36},
+            }
+        )
+
+        listing = await BilibiliSource(client).list_items(
+            source_key='season:3493117093218822:5605180', limit=5, cursor='2'
+        )
+
+        self.assertEqual(1, len(listing.items))
+        item = listing.items[0]
+        self.assertEqual('BV1Jppq6aEvF', item.article_id)
+        self.assertEqual('Episode 45', item.title)
+        self.assertEqual('https://www.bilibili.com/video/BV1Jppq6aEvF', item.link)
+        self.assertEqual(item.link, item.media_url)
+        self.assertEqual(1791897683, item.publish_at)
+        self.assertEqual(6434, item.duration_seconds)
+        self.assertEqual('https://cdn/cover.jpg', item.cover)
+        self.assertEqual({'bvid': 'BV1Jppq6aEvF', 'aid': 123}, item.raw)
+        self.assertEqual('3', listing.next_cursor)
+        self.assertFalse(listing.is_end)
+        client.season_videos.assert_awaited_once_with('3493117093218822', '5605180', page=2, size=5)
+        client.space_videos.assert_not_awaited()
+
+    async def test_collection_last_page_and_empty_collection_end_the_listing(self) -> None:
+        for total, cursor in ((36, '8'), (0, None)):
+            with self.subTest(total=total):
+                client = _FakeClient(season_videos={'archives': [], 'page': {'total': total}})
+                listing = await BilibiliSource(client).list_items(source_key='season:1:2', limit=5, cursor=cursor)
+
+                self.assertTrue(listing.is_end)
+                self.assertIsNone(listing.next_cursor)
+                client.space_videos.assert_not_awaited()
+
+    async def test_invalid_collection_keys_do_not_query_the_up(self) -> None:
+        client = _FakeClient()
+        with self.assertRaises(ValueError):
+            await BilibiliSource(client).list_items(source_key='season:1:bad', limit=5)
+        client.space_videos.assert_not_awaited()
 
     async def test_preview_of_a_space_falls_back_to_the_mid(self) -> None:
         client = _FakeClient(space_info=AsyncMock(side_effect=BilibiliError('风控')))

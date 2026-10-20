@@ -1,4 +1,4 @@
-"""Bilibili: a UP's videos, and the audio underneath one of them.
+"""Bilibili: a UP's videos, a collection, and the audio underneath one of them.
 
 Ported from ``bili-transcribe``'s standalone client, plus the listing half it did
 not have. Two things about this source are worth knowing before reading the code:
@@ -44,7 +44,9 @@ REFERER = f'{WEB_BASE}/'
 _BV_RE = re.compile(r'^BV[0-9A-Za-z]{10}$')
 _AV_RE = re.compile(r'^av(\d+)$')
 _VIDEO_PATH_RE = re.compile(r'^/video/(BV[0-9A-Za-z]{10}|av\d+)')
-_SPACE_PATH_RE = re.compile(r'^/(\d+)')
+_SPACE_PATH_RE = re.compile(r'^/(\d+)(?:/|$)')
+_LIST_PATH_RE = re.compile(r'^/(\d+)/lists(?:/(\d+))?/?$')
+_SEASON_KEY_RE = re.compile(r'^season:(\d+):(\d+)$')
 
 #: The permutation Bilibili's WBI signature is built from. 其长度与内容由官方文档固定
 #: （docs/misc/sign/wbi.md），改不了，也不需要改。
@@ -150,17 +152,17 @@ def sign_wbi(params: dict[str, Any], img_key: str, sub_key: str, *, wts: int | N
     return signed
 
 
-#: A stored source key is what ``preview`` returned, not a URL: an UP's mid, or the
-#: id of the one video someone subscribed to.
+#: A stored source key is what ``preview`` returned, not a URL: an UP's mid,
+#: a video id, or ``season:<mid>:<season_id>`` for a collection.
 _BARE_BVID_RE = re.compile(r'^BV[0-9A-Za-z]{10}$')
 _BARE_AID_RE = re.compile(r'^av(\d+)$', re.IGNORECASE)
 
 
 def parse_ref(value: str) -> tuple[str, str]:
-    """Accept a video URL or an UP's space URL.
+    """Accept a video, UP space, or collection URL.
 
-    Returns ``('video', bvid_or_aid)`` or ``('space', mid)``. Only public,
-    single-page video URLs are understood, matching what the reader would paste.
+    Returns ``('video', bvid_or_aid)``, ``('space', mid)`` or
+    ``('season', 'season:<mid>:<season_id>')``. Video URLs must be single-page.
     """
     parsed = urlparse(value.strip())
     if parsed.scheme not in {'http', 'https'}:
@@ -172,7 +174,21 @@ def parse_ref(value: str) -> tuple[str, str]:
         match = _SPACE_PATH_RE.match(parsed.path)
         if not match:
             raise ValueError('B站空间链接里没有 UP 的 mid')
-        return 'space', match.group(1)
+        mid = match.group(1)
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        if parsed.path.startswith(f'/{mid}/lists'):
+            listing = _LIST_PATH_RE.fullmatch(parsed.path)
+            if not listing or query.get('type', ['season']) != ['season']:
+                raise ValueError('Only Bilibili season collections are supported')
+            season_ids = query.get('sid', [])
+            if listing.group(2):
+                if season_ids and season_ids != [listing.group(2)]:
+                    raise ValueError('Conflicting Bilibili collection IDs')
+                season_ids = [listing.group(2)]
+            if len(season_ids) != 1 or not re.fullmatch(r'[0-9]+', season_ids[0]) or int(season_ids[0]) <= 0:
+                raise ValueError('Bilibili collection URL requires a positive season ID')
+            return 'season', f'season:{mid}:{int(season_ids[0])}'
+        return 'space', mid
     match = _VIDEO_PATH_RE.match(parsed.path)
     if not match:
         raise ValueError('只支持 /video/BV… 或 space.bilibili.com/<mid> 链接')
@@ -464,13 +480,20 @@ class BilibiliClient:
         )
         return payload.get('data') or {}
 
+    async def season_videos(self, mid: str, season_id: str, *, page: int, size: int) -> dict[str, Any]:
+        payload = await self._get_json(
+            '/x/polymer/web-space/seasons_archives_list',
+            {'mid': mid, 'season_id': season_id, 'page_num': page, 'page_size': size, 'sort_reverse': 'true'},
+        )
+        return payload.get('data') or {}
+
     async def space_info(self, mid: str) -> dict[str, Any]:
         payload = await self._get_json('/x/space/acc/info', {'mid': mid})
         return payload.get('data') or {}
 
 
 class BilibiliSource:
-    """List a UP's videos, and describe a channel from a pasted URL."""
+    """List an UP's or collection's videos and describe a subscription URL."""
 
     source = SOURCE
 
@@ -488,6 +511,19 @@ class BilibiliSource:
 
     async def preview(self, ref: str) -> ChannelInfo:
         kind, identity = parse_ref(ref)
+        if kind == 'season':
+            _, mid, season_id = identity.split(':')
+            data = await self._client.season_videos(mid, season_id, page=1, size=1)
+            meta = data.get('meta') or {}
+            name = str(meta.get('title') or meta.get('name') or '').strip()
+            if not name:
+                raise BilibiliError(f'Bilibili collection {season_id} returned no name')
+            return ChannelInfo(
+                biz=f'bilibili:{identity}',
+                nickname=name,
+                source_key=identity,
+                avatar_url=str(meta.get('cover') or '') or None,
+            )
         if kind == 'space':
             # acc/info 也在风控范围内，拿不到就用 mid 当名字，不要因此拒绝订阅。
             try:
@@ -519,10 +555,17 @@ class BilibiliSource:
             # B站 回 -400，整条同步因此失败。
             return await self._single_video(source_key)
         page = int(cursor) if cursor and cursor.isdigit() else 1
-        data = await self._client.space_videos(source_key, page=page, size=max(limit, 1))
-        rows = ((data.get('list') or {}).get('vlist')) or []
-        page_info = data.get('page') or {}
-        total = int(page_info.get('count') or 0)
+        season = _SEASON_KEY_RE.fullmatch(source_key)
+        if season:
+            data = await self._client.season_videos(*season.groups(), page=page, size=max(limit, 1))
+            rows = data.get('archives') or []
+            total = int((data.get('page') or {}).get('total') or 0)
+        else:
+            if source_key.startswith('season:'):
+                raise ValueError('Invalid Bilibili collection source key')
+            data = await self._client.space_videos(source_key, page=page, size=max(limit, 1))
+            rows = ((data.get('list') or {}).get('vlist')) or []
+            total = int((data.get('page') or {}).get('count') or 0)
         items: list[Item] = []
         for row in rows[:limit]:
             bvid = str(row.get('bvid') or '')
@@ -534,11 +577,13 @@ class BilibiliSource:
                     title=str(row.get('title') or bvid),
                     link=f'{WEB_BASE}/video/{bvid}',
                     media_url=f'{WEB_BASE}/video/{bvid}',
-                    publish_at=int(row.get('created') or 0) or None,
+                    publish_at=int(row.get('pubdate') or row.get('created') or 0) or None,
                     cover=str(row.get('pic') or '') or None,
                     digest=str(row.get('description') or '') or None,
                     author=str(row.get('author') or '') or None,
-                    duration_seconds=duration_from_length(row.get('length')),
+                    duration_seconds=_as_int(row.get('duration'))
+                    if season
+                    else duration_from_length(row.get('length')),
                     raw={'bvid': bvid, 'aid': row.get('aid')},
                 )
             )

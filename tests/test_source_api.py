@@ -17,7 +17,7 @@ from hippo.api.routers import source as source_api
 from hippo.api.schemas.source import CredentialRequest, SubscribeRequest
 from hippo.exceptions import ApiError
 from hippo.models import AccountCredential
-from hippo.sources.bilibili import BilibiliError
+from hippo.sources.bilibili import BilibiliError, BilibiliSource
 from hippo.sources.credentials import MAX_CREDENTIAL_BYTES
 from hippo.sources.detect import detect_source
 from hippo.sources.ingest import ChannelInfo
@@ -253,6 +253,34 @@ class PreviewTest(unittest.IsolatedAsyncioTestCase):
 
 
 class SubscribeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_a_bilibili_collection_keeps_its_identity_through_preview_and_subscription(self) -> None:
+        adapter = BilibiliSource(
+            SimpleNamespace(season_videos=AsyncMock(return_value={'meta': {'title': 'Lumina Talk'}}))
+        )
+
+        async def preview(source, url):
+            self.assertEqual('bilibili', source)
+            return await adapter.preview(url)
+
+        sources = SimpleNamespace(preview=preview, aclose=AsyncMock())
+        storage = _storage()
+        url = 'https://space.bilibili.com/3493117093218822/lists?sid=5605180'
+        biz = 'bilibili:season:3493117093218822:5605180'
+        with patch('hippo.api.routers.source._media_sources', new=AsyncMock(return_value=sources)):
+            resolved = await source_api.preview_source(url=url, user=_user(), storage=storage)
+            subscribed = await source_api.subscribe_source(
+                request=_request(), body=SubscribeRequest(url=url, group_id=1), user=_user(), storage=storage
+            )
+
+        self.assertEqual(biz, resolved['biz'])
+        self.assertEqual('Lumina Talk', resolved['nickname'])
+        self.assertEqual(biz, subscribed['biz'])
+        account = storage.accounts.upsert_account.call_args.args[0]
+        self.assertEqual('season:3493117093218822:5605180', account.alias)
+        self.assertEqual('bilibili', account.source)
+        storage.subscriptions.upsert.assert_awaited_once_with(1, biz, group_id=1)
+        self.assertEqual([biz], storage.sync_jobs.create_job.call_args.kwargs['biz_list'])
+
     async def test_subscribing_writes_the_catalogue_and_queues_a_round(self) -> None:
         sources, _ = _sources(_INFO)
         transactions: list[int] = []

@@ -168,12 +168,18 @@ daemon 掉线或会话失效时，同步会整体暂停（不把这种错记成�
 | 来源 | `accounts.source` | `biz` | 列表 | 正文 |
 |---|---|---|---|---|
 | 微信公众号 | `weixin` | `Mz…==`（fakeid） | weixin-rs daemon | daemon 取正文 → markdown |
-| 哔哩哔哩 | `bilibili` | `bilibili:<mid>` | `/x/space/wbi/arc/search`（**需要 SESSDATA**） | CC 字幕优先，否则下载音频转写 |
+| 哔哩哔哩 | `bilibili` | `bilibili:<mid>` / `bilibili:season:<mid>:<sid>` | UP 投稿列表 / 合集列表（可能需要 **SESSDATA**） | CC 字幕优先，否则下载音频转写 |
 | YouTube | `youtube` | `youtube:<UC…>` | yt-dlp | 下载音频转写 |
 | RSS 播客 | `podcast` | `podcast:<feed 的短哈希>` | feed 本身 | `podcast:transcript` 优先，否则转写 |
 
 订阅任意一个地址（视频、频道、feed 都行）：在「分组」页点「添加订阅」粘贴地址即可，
 这一步与微信来源共用同一个 `POST /api/source/channel`；订阅会立刻投递一轮列表同步。
+
+B站合集支持 `https://space.bilibili.com/<mid>/lists?sid=<sid>` 和
+`https://space.bilibili.com/<mid>/lists/<sid>?type=season`。预览显示合集名称，
+同步只读取该合集，按最新投稿优先分页；暂不支持 `type=series` 的旧版视频列表。
+如果之前已将合集误订阅成 UP 主，需要重新粘贴链接订阅合集；旧的 UP 主订阅不会被自动修改或删除。
+验证：`uv run pytest tests/test_source_bilibili.py tests/test_source_api.py`。
 
 ### 转写
 
@@ -240,7 +246,7 @@ uv run ruff check hippo tests
 ### 多源约定
 
 - **区分来源靠 `accounts.source` 列**，不是路由前缀。`source` 是开放的标识符（不是枚举）。
-  `accounts.biz` 是主键，语义是「该来源内的频道标识」（B站是 mid、YouTube 是 channel id、播客是 feed 哈希）。
+  `accounts.biz` 是主键，语义是「该来源内的频道标识」（B站是 mid、合集标识或视频号，YouTube 是 channel id，播客是 feed 哈希）。
 - **写入端必须显式设置 `source`。** 列上的 `DEFAULT 'weixin'` 只是为了让已有数据继续工作；
   依赖默认值会被静默标成微信。
 - **接口不加前缀。** 列表用 `GET /api/article?source=a,b` 过滤，每条文章响应都带 `source`；

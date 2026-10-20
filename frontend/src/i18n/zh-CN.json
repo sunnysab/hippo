@@ -20,7 +20,7 @@
   "sources.addTitle": "添加订阅",
   "sources.inputLabel": "订阅地址或公众号名称",
   "sources.inputPlaceholder": "粘贴链接，或搜索公众号名称 / 微信号",
-  "sources.addHint": "支持 B站视频 / UP、YouTube 频道、播客，以及公众号文章链接。",
+  "sources.addHint": "支持 B站视频 / UP / 合集、YouTube 频道、播客，以及公众号文章链接。",
   "sources.resolve": "解析",
   "sources.resolving": "解析中…",
   "sources.resolveFailed": "解析失败。",
