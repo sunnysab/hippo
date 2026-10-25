@@ -374,6 +374,9 @@ GET /api/article
 - `item_show_type_facets` 是按当前筛选条件统计的版式分布（不受 `item_show_type` 自身影响）。
 - `topics` 是这篇文章的方向标签，**未分类时为空数组**（不是 `null`）。标签由后台按标题与摘要
   生成，所以新文章会先短暂为空。
+- `event` **只在详情响应里出现**，且只在事件至少被 2 个不同来源报道过时才有值，否则为 `null`：
+  `{ "id": 12, "title": "…", "article_count": 4, "source_count": 3 }`。`source_count` 恒 >= 2，
+  单个来源的猜测不会变成一个「事件」。
 - `topic_facets` 是按当前筛选条件统计的方向分布，同样**不受 `topic` 自身影响**，按词表顺序排列。
   未知或已从词表删除的 slug 不出现在这里。
 
@@ -551,10 +554,15 @@ GET /api/feed/mixed
 | `format` | str | `rss` 输出 RSS 2.0 XML，其它值输出 JSON |
 | `since` / `until` | str | 时间范围 |
 | `days` | int | 最近 N 天（与 `since` 同时给出时以 `days` 为准） |
+| `event_id` | int | 只看同一件事的报道；事件未达可见门槛时 `404` |
 | `token` | str | 会话令牌，供无法携带 Cookie 的 RSS 阅读器使用 |
 
 JSON 形态返回 `{"articles": [...]}`；`format=rss` 时返回 `application/rss+xml`，条目里的 `link` 指向本地文章页（用请求头 `Host` 拼绝对地址，建议部署时配置反代传递真实 Host）。
 未提供 Cookie 或有效 `token` 时 `401`。
+
+`event_id` 用于「这件事另有 N 篇报道」：传详情响应里的 `event.id` 即可拿到同一事件的其它报道，
+仍然只返回当前用户订阅范围内的文章。事件没有达到「至少 2 个来源」的门槛时返回 `404`，而不是
+空列表——空列表会暗示这个 id 存在。
 
 ## 8. 同步设置与任务 `/api/settings`
 

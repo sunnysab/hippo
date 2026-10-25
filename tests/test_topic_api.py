@@ -247,3 +247,60 @@ class DocumentedShapeTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class EventVisibilityTest(unittest.TestCase):
+    def test_only_a_multi_publisher_event_is_served_by_the_feed(self):
+        import asyncio
+
+        from hippo.api.routers import feed as feed_api
+
+        storage = SimpleNamespace(
+            sessions=SimpleNamespace(resolve=AsyncMock(return_value=None)),
+            topics=SimpleNamespace(public_event=AsyncMock(return_value=None)),
+        )
+        user = SimpleNamespace(id=1)
+        request = SimpleNamespace(headers={}, url=SimpleNamespace(scheme='http'))
+
+        with self.assertRaises(ApiError) as ctx:
+            asyncio.run(
+                feed_api.list_feed(
+                    request,
+                    limit=10,
+                    event_id=9,
+                    storage=storage,
+                    user=user,
+                )
+            )
+        # "Not found" rather than an empty list: an empty list would confirm the
+        # event id exists without a second publisher behind it.
+        self.assertEqual(404, ctx.exception.status)
+
+    def test_a_visible_event_reaches_the_feed_query(self):
+        import asyncio
+
+        from hippo.api.routers import feed as feed_api
+
+        storage = SimpleNamespace(
+            topics=SimpleNamespace(public_event=AsyncMock(return_value={'id': 9, 'source_count': 2})),
+        )
+        user = SimpleNamespace(id=1)
+        request = SimpleNamespace(headers={}, url=SimpleNamespace(scheme='http'))
+
+        with patch.object(feed_api, '_list_feed', AsyncMock(return_value=[])) as listing:
+            asyncio.run(
+                feed_api.list_feed(request, limit=10, event_id=9, storage=storage, user=user)
+            )
+
+        self.assertEqual(9, listing.await_args.kwargs['event_id'])
+
+
+class EventWhereClauseTest(unittest.TestCase):
+    def test_no_event_adds_no_predicate(self):
+        self.assertEqual(('', []), article_queries._build_event_where_clause(None))
+
+    def test_the_predicate_targets_the_link_table_not_the_article(self):
+        clause, params = article_queries._build_event_where_clause(9)
+        self.assertIn('article_event_link', clause)
+        self.assertIn('el.event_id = %s', clause)
+        self.assertEqual([9], params)
