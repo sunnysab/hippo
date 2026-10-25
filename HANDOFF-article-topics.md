@@ -9,7 +9,7 @@
 随代码漂移，按**文件名和函数名**找，不要按行号找。
 
 - `SCHEMA_VERSION` 已从 `'33'` 提到 `'34'`。
-- 后端：**1743 passed, 14 skipped**，`ruff check hippo tests` 通过。
+- 后端：**1746 passed, 14 skipped**，`ruff check hippo tests` 通过。
 - 前端：**487 passed / 62 files**，`tsc -b`、`eslint --max-warnings 0`、`npm run build` 全通过。
 - 审查补记：首轮交付被独立审查驳回，理由是两条「测试全绿但真实链路不通」的缺陷，见 §6.6。
 
@@ -634,10 +634,24 @@ join #2  候选=2   中国基金报   商务部、海关总署：决定对氦气
 而指纹无法在 SQL 里比较（需要文章标题和摘要）。**加了一列 `prompt_version`**，两列都参与
 重排比较，`finish` 记录生成时用的版本。
 
+### 补的验证：让 worker 循环自己跑
+
+前两轮驳回的共同根因是「测试停在某一层，真实链路的缺口没人看」。所以这次补的不是单元测试，
+而是 `tests/test_topic_pipeline.py`：只替换模型和数据库连接，`topic_worker.run_once()` 本身、
+backfill、候选查询、租约、CAS 发布、事件写入全部走真实代码，连续跑到队列为空。三条断言：
+
+1. 三篇文章跑完只产生 **一个** 可见事件（2 个来源 / 2 篇）；
+2. 第二篇拿到的候选里**确实包含**第一篇创建的事件（这是死锁所在的那一环）；
+3. 不相干的第三篇**不在**事件里。
+
+把 `HAVING >= 2` 加回候选查询，这三条全部失败；去掉后全绿。
+
 ### 教训
 
 - **「可见门槛」和「候选门槛」不是同一个东西。** 任何「先聚合、聚合到 N 个再展示」的设计，
   都必须保证聚合过程中候选可见，否则就是死锁。
+- **跨层功能要有一条贯穿 worker 主循环的测试。** 分别测「仓储能建事件」和「API 能返回事件」，
+  合起来仍然可能一次都不通。
 - **测试里不要直接调用生产路径不会调用的函数。** `attach_event` 应该只能经由候选→join 到达，
   测试也必须走这条路，否则测试在给缺陷背书。
 - 版本号如果参与缓存失效，就必须有**能在存储层比较**的列，否则「提升版本号」是个空操作。
@@ -729,7 +743,7 @@ join #2  候选=2   中国基金报   商务部、海关总署：决定对氦气
 如果以后要重新验证，命令是：
 
 ```bash
-uv run pytest -q                      # 1743 passed, 14 skipped
+uv run pytest -q                      # 1746 passed, 14 skipped
 uv run ruff check hippo tests         # All checks passed
 cd frontend && npm test && npm run build   # 487 tests, tsc -b && vite build
 ```
