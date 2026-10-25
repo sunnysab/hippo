@@ -9,7 +9,7 @@
 随代码漂移，按**文件名和函数名**找，不要按行号找。
 
 - `SCHEMA_VERSION` 已从 `'33'` 提到 `'34'`。
-- 后端：**1724 passed, 14 skipped**，`ruff check hippo tests` 通过。
+- 后端：**1725 passed, 14 skipped**，`ruff check hippo tests` 通过。
 - 前端：**487 passed / 62 files**，`tsc -b`、`eslint --max-warnings 0`、`npm run build` 全通过。
 - 审查补记：首轮交付被独立审查驳回，理由是两条「测试全绿但真实链路不通」的缺陷，见 §6.6。
 
@@ -587,6 +587,9 @@ cd frontend && npx tsc --noEmit && npx eslint . --max-warnings 0 && npm run buil
 2. `/api/article` 增加 `event_id` 参数，套用与 feed 相同的「≥2 个不同来源」门槛，未达标返回 404。
 3. **补的测试都验证过能真的变红**：把两处修复各自回退，新测试分别失败（前端 2 个失败、后端
    2 个失败），恢复后转绿。这一步是必须的——否则只是又写了一批同类型的无效测试。
+4. **补了一个真正贯穿的端到端测试**：`EndToEndFacetPipelineTest` 只伪造数据库行，路由、查询
+   构建和响应模型全部走真的，一次 HTTP 请求断言 `topic_facets` 出现在响应体里。回退修复时它
+   报 `KeyError`，恢复后通过。这条测试才是针对审查所指的那类缺陷的正确答案。
 
 ### 给后续维护者的教训
 
@@ -649,7 +652,7 @@ cd frontend && npx tsc --noEmit && npx eslint . --max-warnings 0 && npm run buil
 
 ## 10. 当前状态与下一步
 
-**已完成**（18 个提交，`6336af9..af01de9`）：
+**已完成**（19 个提交，`6336af9..HEAD`）：
 
 | 阶段 | 状态 |
 |---|---|
@@ -683,7 +686,7 @@ cd frontend && npx tsc --noEmit && npx eslint . --max-warnings 0 && npm run buil
 如果以后要重新验证，命令是：
 
 ```bash
-uv run pytest -q                      # 1724 passed, 14 skipped
+uv run pytest -q                      # 1725 passed, 14 skipped
 uv run ruff check hippo tests         # All checks passed
 cd frontend && npm test && npm run build   # 487 tests, tsc -b && vite build
 ```
