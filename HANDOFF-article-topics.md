@@ -2,14 +2,18 @@
 
 ## 0. 本文档的状态
 
-**已实现，未部署。** 一期（方向标签）与二期（事件聚类）都已落进代码，全部测试通过，停在
-「可部署」状态：数据库没有迁移、服务没有重启、远程主机没有任何改动。
+**已实现，已部署到 `archlinux30`。** 一期（方向标签）与二期（事件聚类）都已上线，
+`schema_version` 已迁移到 34，三个服务均在运行。
+
+**但功能尚未产生数据**：生产库 `llm_provider` 表为空，分类必须有模型。在配置一个 provider
+之前，`article_topic` 会一直停在 `queued`，方向筛选条为空、事件不出现。这是已知的、需要
+运维动作的前置条件，不是故障。详见 §6.9 与 §10。
 
 本文档原先是设计稿；实际实现与原方案有几处偏离，都记在 §3、§4 的对应小节和 §6.5。行号会
 随代码漂移，按**文件名和函数名**找，不要按行号找。
 
 - `SCHEMA_VERSION` 已从 `'33'` 提到 `'34'`。
-- 后端：**1753 passed, 14 skipped**，`ruff check hippo tests` 通过。
+- 后端：**1770 passed, 14 skipped**，`ruff check hippo tests` 通过。
 - 前端：**487 passed / 62 files**，`tsc -b`、`eslint --max-warnings 0`、`npm run build` 全通过。
 - 审查补记：首轮交付被独立审查驳回，理由是两条「测试全绿但真实链路不通」的缺陷，见 §6.6。
 
@@ -703,6 +707,38 @@ backfill、候选查询、租约、CAS 发布、事件写入全部走真实代�
 - **「当前数据里没有这种情况」不是不处理的理由。** 要么写代码处理，要么显式写进「不做」并
   说明后果。留空是最差的选择。
 
+## 6.9 部署时发现的第四个缺陷（已修，已重新部署）
+
+部署到生产后发现两个现象，都值得记下来。
+
+### 缺陷：没有 provider 时把整批文章判死
+
+生产库 `llm_provider` 表是空的。worker 每领一条就走 `resolve_provider`，
+`LlmUnavailableError` 被外层 `except Exception` 吞掉并写成 `topic.generation_failed`。
+后果不是「暂时失败」——**`failed` 不自动重试**，所以以后配好 provider 时，这些文章仍然
+永远不会被分类。当时已经积累了 56 条。
+
+修复：`resolve_provider` 抛 `LlmUnavailableError` 时**释放租约并结束本轮**，不写任何关于
+这篇文章的结论。没配 provider 是运维问题，不是对某篇文章的判决。补了 2 条测试，回退修复后
+两条都失败。
+
+部署后观察：`failed` 从 56 降到 0，日志里是 `topic_provider_unavailable`（每轮一条）而不是
+`topic_classification_failed`（每条文章一条）。已把之前误判的 56 条放回 `queued`。
+
+### 「现在有多少条排队」不是进度，是待办
+
+部署后 `article_topic` 里一直是 `queued`，`ready` 为 0。这不是坏了：分类必须有模型，
+而生产库没配 provider。上线门槛不是「服务起来了」，而是「有一个可用的 provider」。
+
+同理，`candidates()` 和 `public_event()` 只有在有 `ready` 行之后才会有输出，所以事件功能
+在配好 provider 并跑完一批之前看不到任何东西——这是预期中间态，见 §10 的部署后说明。
+
+### 教训
+
+- **「失败」要区分「这次没成功」和「这个环境做不了」。** 前者记失败、等重试；后者必须退出
+  循环，否则会把整个待办队列烧成不可恢复的死行。
+- **不自动重试的失败状态，写入前要想清楚这是不是终局判断。** 当时那个 `failed` 是不可逆的。
+
 ### 边界（不要当成已验证）
 
 - 上文的一致率是**同一输入重复调用的稳定性**，不是准确率。没有人工标注的 ground truth。
@@ -771,6 +807,8 @@ backfill、候选查询、租约、CAS 发布、事件写入全部走真实代�
 | 审查驳回的两处缺陷已修复 | ✅ 见 §6.6 |
 | 第二次驳回：事件候选死锁 + PROMPT_VERSION 空操作已修复 | ✅ 见 §6.7 |
 | 第三次驳回：事件计数未套订阅可见性 + NULL publish_at 未处理已修复 | ✅ 见 §6.8 |
+| 部署时发现「无 provider 会把整批文章判死」并修复、重新部署 | ✅ 见 §6.9 |
+| 已部署到 archlinux30（schema 34，三服务 active） | ✅ 需配置 LLM provider 才会产出数据 |
 | `API.md` 与本文档对齐 | ✅ |
 
 **没做**：数据库没有迁移、服务没有重启、没有部署、没有提交任何密钥。
@@ -779,7 +817,8 @@ backfill、候选查询、租约、CAS 发布、事件写入全部走真实代�
 `schema_version = 33`、`article_topic` 表不存在（只读连接）。也就是说代码里有 34 的 schema，
 数据库还停在 33，`hippo.ops init-db` 一次都没有跑过。
 
-**下一步只有一件**：部署，而它需要单独确认。看 §9。部署后第一次启动时要知道的行为：
+**部署已完成**（2026-10-25，schema 33→34，三服务 active）。**下一步只剩一件：配置 LLM
+provider**，否则分类不会产生任何数据。部署后首次启动的行为：
 
 1. `article_topic` 是空的，worker 会从最近 30 天的文章开始补队，**每轮一条**（与用户对话共享
    `llm/client.py` 的并发 2）。几千篇的量级是几小时的慢热，不是故障。分类没跟上之前，方向
@@ -791,7 +830,7 @@ backfill、候选查询、租约、CAS 发布、事件写入全部走真实代�
 如果以后要重新验证，命令是：
 
 ```bash
-uv run pytest -q                      # 1753 passed, 14 skipped
+uv run pytest -q                      # 1770 passed, 14 skipped
 uv run ruff check hippo tests         # All checks passed
 cd frontend && npm test && npm run build   # 487 tests, tsc -b && vite build
 ```
