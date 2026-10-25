@@ -380,10 +380,11 @@ GET /api/article
 - `topic_facets` 是按当前筛选条件统计的方向分布，同样**不受 `topic` 自身影响**，按词表顺序排列。
   未知或已从词表删除的 slug 不出现在这里。
 
-### 按方向筛选
+### 按方向或事件筛选
 
 ```
 GET /api/article?topic=ai,news&page=1
+GET /api/article?event_id=12&page=1
 ```
 
 `topic` 是逗号分隔的方向 slug，语义为 **OR**。每个 slug 必须在当前词表里（
@@ -392,6 +393,10 @@ GET /api/article?topic=ai,news&page=1
 
 和 `item_show_type` 一样，选中方向时 `total` 会另算一次，因为 `topic_facets` 的计数忽略了
 方向筛选本身。
+
+`event_id` 取详情响应里的 `event.id`，用来读「同一件事的其它报道」。事件未达「至少 2 个不同
+来源」的门槛时返回 `404`，与 `/api/feed/mixed` 一致。详情页的「看这件事的其它报道」按钮就是
+走这条路径。
 
 ### 文章详情
 
