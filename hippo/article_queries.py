@@ -240,6 +240,9 @@ ARTICLE_THUMB_IMAGE_SQL = (
 #: filter is parsed, not validated against a registry.
 MAX_SOURCE_FILTER_LENGTH = 64
 
+#: A topic filter is a handful of slugs; anything longer is a mistake, not a query.
+MAX_TOPIC_FILTER_LENGTH = 128
+
 
 def _normalize_source_filter(value: str | None) -> list[str] | None:
     """`source=weixin,bilibili` becomes a list. Blank entries are skipped, so a
@@ -258,6 +261,47 @@ def _normalize_source_filter(value: str | None) -> list[str] | None:
         if source not in sources:
             sources.append(source)
     return sources or None
+
+
+def _normalize_topic_filter(value: str | None, vocabulary: dict[str, Any]) -> list[str] | None:
+    """``topic=ai,research`` becomes a list of known slugs.
+
+    Every slug must already be in the vocabulary. Rejecting an unknown one with a
+    ``400`` is deliberate: silently ignoring it would make a typo look like "no
+    articles in that direction", and returning an empty list would let a caller
+    probe which directions exist.
+    """
+    if not value:
+        return None
+    if len(value) > MAX_TOPIC_FILTER_LENGTH:
+        raise ApiError('Invalid topic filter', status=400)
+    known = {topic['slug'] for topic in vocabulary.get('topics') or []}
+    topics: list[str] = []
+    for raw in value.split(','):
+        slug = raw.strip()
+        if not slug:
+            continue
+        if slug not in known:
+            raise ApiError('Invalid topic filter', status=400)
+        if slug not in topics:
+            topics.append(slug)
+    return topics or None
+
+
+def _build_topic_where_clause(topics: list[str] | None) -> tuple[str, list[Any]]:
+    """An EXISTS subquery, not a join.
+
+    A join would insert a parameter before the WHERE ones and shift the binding
+    order the join constants already rely on. It would also need DISTINCT, since
+    a row can carry several slugs.
+    """
+    if not topics:
+        return '', []
+    return (
+        "EXISTS (SELECT 1 FROM article_topic t WHERE t.article_pk = a.id"
+        " AND t.state = 'ready' AND t.slugs && %s)",
+        [topics],
+    )
 
 
 def _normalize_read_filter(value: str | None) -> bool:
@@ -291,6 +335,7 @@ def _build_article_where_clause(
     unread_only: bool = False,
     starred_only: bool = False,
     sources: list[str] | None = None,
+    topics: list[str] | None = None,
 ) -> tuple[str, list[Any], str, list[str]]:
     where: list[str] = []
     params: list[Any] = []
@@ -309,6 +354,10 @@ def _build_article_where_clause(
     if sources:
         where.append('acc.source = ANY(%s)')
         params.append(sources)
+    topic_clause, topic_params = _build_topic_where_clause(topics)
+    if topic_clause:
+        where.append(topic_clause)
+        params.extend(topic_params)
     if item_show_type is not None:
         clause, clause_params = _build_item_show_type_where_clause(item_show_type)
         where.append(clause)
@@ -353,6 +402,7 @@ def _build_article_query(
     unread_only: bool = False,
     starred_only: bool = False,
     sources: list[str] | None = None,
+    topics: list[str] | None = None,
 ) -> tuple[str, list[Any]]:
     select_params: list[Any] = []
     rank_select = ''
@@ -370,6 +420,7 @@ def _build_article_query(
         unread_only=unread_only,
         starred_only=starred_only,
         sources=sources,
+        topics=topics,
     )
 
     if sort_mode == ARTICLE_SORT_RELEVANCE_DESC and query_tsquery_sql:
@@ -419,6 +470,7 @@ async def _count_articles(
     unread_only: bool = False,
     starred_only: bool = False,
     sources: list[str] | None = None,
+    topics: list[str] | None = None,
 ) -> int:
     where_sql, params, _tsquery_sql, _tsquery_params = _build_article_where_clause(
         group_ids=group_ids,
@@ -432,6 +484,7 @@ async def _count_articles(
         unread_only=unread_only,
         starred_only=starred_only,
         sources=sources,
+        topics=topics,
     )
     # The extra joins are only worth their cost when a predicate uses them.
     state_join = f'{READ_STATE_JOIN if unread_only else ""}{STAR_JOIN if starred_only else ""}'
@@ -460,6 +513,7 @@ async def _article_item_show_type_facets(
     unread_only: bool = False,
     starred_only: bool = False,
     sources: list[str] | None = None,
+    topics: list[str] | None = None,
 ) -> tuple[list[dict[str, int]], int]:
     """Distribution by layout type, plus the size of the whole set.
 
@@ -480,6 +534,7 @@ async def _article_item_show_type_facets(
         unread_only=unread_only,
         starred_only=starred_only,
         sources=sources,
+        topics=topics,
     )
     state_join = f'{READ_STATE_JOIN if unread_only else ""}{STAR_JOIN if starred_only else ""}'
     state_params = [user_id] * ((1 if unread_only else 0) + (1 if starred_only else 0))
@@ -522,6 +577,95 @@ async def _article_item_show_type_facets(
     return facets, grand_total
 
 
+async def _attach_topics(storage: PostgresStorage, rows: list[dict[str, Any]]) -> None:
+    """Attach each row's topics in one query, not one per row.
+
+    A page of 20 would otherwise mean 20 extra round trips for a field that is
+    often empty. Rows without a classification simply keep the empty list.
+    """
+    if not rows:
+        return
+    pks = [row['id'] for row in rows]
+    stored = await fetchall_rows(
+        storage,
+        "SELECT article_pk, topics FROM article_topic WHERE article_pk = ANY(%s) AND state = 'ready'",
+        [pks],
+        normalize=_normalize_record,
+    )
+    by_pk = {row['article_pk']: row.get('topics') or [] for row in stored}
+    for row in rows:
+        row['topics'] = by_pk.get(row['id'], [])
+
+
+async def _article_topic_facets(
+    *,
+    storage: PostgresStorage,
+    user_id: int,
+    group_ids: list[int] | None,
+    biz: str | None,
+    query: str | None,
+    exclude_keywords: list[str] | None,
+    since_ts: int | None,
+    until_ts: int | None,
+    vocabulary: dict[str, Any],
+    article_id: str | None = None,
+    unread_only: bool = False,
+    starred_only: bool = False,
+    sources: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """How many of the reader's visible articles carry each direction.
+
+    ``topics`` is deliberately not a parameter: a facet ignores its own filter, so
+    the counts stay comparable while a direction is selected. The WHERE clause is
+    the same one the list uses, which is what keeps other people's subscriptions
+    out of the numbers.
+    """
+    where_sql, params, _tsquery_sql, _tsquery_params = _build_article_where_clause(
+        group_ids=group_ids,
+        biz=biz,
+        item_show_type=None,
+        query=query,
+        exclude_keywords=exclude_keywords,
+        since_ts=since_ts,
+        until_ts=until_ts,
+        article_id=article_id,
+        unread_only=unread_only,
+        starred_only=starred_only,
+        sources=sources,
+        topics=None,
+    )
+    state_join = f'{READ_STATE_JOIN if unread_only else ""}{STAR_JOIN if starred_only else ""}'
+    state_params = [user_id] * ((1 if unread_only else 0) + (1 if starred_only else 0))
+    accounts_join = ACCOUNTS_JOIN if sources else ''
+    rows = await fetchall_rows(
+        storage,
+        (
+            'SELECT slug, COUNT(*) AS total'
+            ' FROM (SELECT unnest(t.slugs) AS slug'
+            '       FROM articles a'
+            f'{accounts_join}'
+            f'{SUBSCRIPTION_JOIN}'
+            f'{state_join}'
+            ' JOIN article_topic t ON t.article_pk = a.id AND t.state = \'ready\''
+            f' {where_sql}) AS per_slug'
+            ' GROUP BY slug'
+        ),
+        [user_id, *state_params, *params],
+        normalize=_normalize_record,
+    )
+    # Names come from the vocabulary, never from the stored payload: an admin who
+    # renames a direction expects the filter to follow immediately.
+    names = {topic['slug']: topic['name'] for topic in vocabulary.get('topics') or []}
+    facets = [
+        {'slug': row['slug'], 'name': names.get(row['slug'], row['slug']), 'count': int(row['total'])}
+        for row in rows
+        if row.get('slug') in names and int(row.get('total') or 0) > 0
+    ]
+    order = {topic['slug']: index for index, topic in enumerate(vocabulary.get('topics') or [])}
+    facets.sort(key=lambda item: (order.get(item['slug'], 999), -item['count']))
+    return facets
+
+
 async def _list_articles(
     storage: PostgresStorage,
     *,
@@ -540,6 +684,8 @@ async def _list_articles(
     unread_only: bool = False,
     starred_only: bool = False,
     sources: list[str] | None = None,
+    topics: list[str] | None = None,
+    vocabulary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     offset = max(page - 1, 0) * page_size
     query_sql, params = _build_article_query(
@@ -559,12 +705,30 @@ async def _list_articles(
         unread_only=unread_only,
         starred_only=starred_only,
         sources=sources,
+        topics=topics,
     )
     rows = await fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
     for row in rows:
         row['item_show_type'] = _coalesce_item_show_type(row.get('item_show_type'))
         row['content_kind'] = content_kind(row.get('source'), row.get('item_show_type'))
         row['account_avatar_url'] = f'/api/account/{row["biz"]}/avatar'
+    await _attach_topics(storage, rows)
+    vocabulary = vocabulary or {}
+    topic_facets = await _article_topic_facets(
+        storage=storage,
+        user_id=user_id,
+        group_ids=group_ids,
+        biz=biz,
+        query=query,
+        exclude_keywords=exclude_keywords,
+        since_ts=since_ts,
+        until_ts=until_ts,
+        vocabulary=vocabulary,
+        article_id=article_id,
+        unread_only=unread_only,
+        starred_only=starred_only,
+        sources=sources,
+    )
     item_show_type_facets, facet_total = await _article_item_show_type_facets(
         storage=storage,
         user_id=user_id,
@@ -579,9 +743,9 @@ async def _list_articles(
         starred_only=starred_only,
         sources=sources,
     )
-    # The facets ignore their own filter, so their total is the answer unless a
-    # layout type is selected — only then is a second count worth its cost.
-    if item_show_type is None:
+    # The facets ignore their own filter, so their total is the answer unless one
+    # of them is selected — only then is a second count worth its cost.
+    if item_show_type is None and not topics:
         total = facet_total
     else:
         total = await _count_articles(
@@ -598,6 +762,7 @@ async def _list_articles(
             unread_only=unread_only,
             starred_only=starred_only,
             sources=sources,
+            topics=topics,
         )
     return {
         'articles': rows,
@@ -605,6 +770,7 @@ async def _list_articles(
         'page_size': page_size,
         'total': total,
         'item_show_type_facets': item_show_type_facets,
+        'topic_facets': topic_facets,
     }
 
 

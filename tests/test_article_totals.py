@@ -27,6 +27,8 @@ def _list_kwargs(**overrides):
         'sort_mode': 'publish_at_desc',
         'page': 1,
         'page_size': 20,
+        # The list also reads the vocabulary to label the direction facets.
+        'vocabulary': {'version': 1, 'topics': [{'slug': 'ai', 'name': '人工智能'}]},
     }
     kwargs.update(overrides)
     return kwargs
@@ -41,7 +43,7 @@ class TotalMatchesFacetsTest(unittest.IsolatedAsyncioTestCase):
         ]
 
         with (
-            patch.object(article_queries, 'fetchall_rows', AsyncMock(side_effect=[rows, facet_rows])),
+            patch.object(article_queries, 'fetchall_rows', AsyncMock(side_effect=[rows, [], [], facet_rows])),
             patch.object(article_queries, 'fetchone_row', AsyncMock(return_value={'total': 3})) as count,
         ):
             result = await _list_articles(SimpleNamespace(), **_list_kwargs())
@@ -62,7 +64,7 @@ class TotalMatchesFacetsTest(unittest.IsolatedAsyncioTestCase):
         ]
 
         with (
-            patch.object(article_queries, 'fetchall_rows', AsyncMock(side_effect=[[], facet_rows])),
+            patch.object(article_queries, 'fetchall_rows', AsyncMock(side_effect=[[], [], facet_rows])),
             patch.object(article_queries, 'fetchone_row', AsyncMock()) as count,
         ):
             result = await _list_articles(SimpleNamespace(), **_list_kwargs())
@@ -75,7 +77,7 @@ class TotalMatchesFacetsTest(unittest.IsolatedAsyncioTestCase):
         facet_rows = [{'item_show_type': 0, 'total': 9, 'grand_total': 9}]
 
         with (
-            patch.object(article_queries, 'fetchall_rows', AsyncMock(side_effect=[[], facet_rows])),
+            patch.object(article_queries, 'fetchall_rows', AsyncMock(side_effect=[[], [], facet_rows])),
             patch.object(article_queries, 'fetchone_row', AsyncMock(return_value={'total': 4})) as count,
         ):
             result = await _list_articles(SimpleNamespace(), **_list_kwargs(item_show_type=5))

@@ -26,6 +26,7 @@ from hippo.api.routers import article as article_api
 from hippo.api.routers import feed as feed_api
 from hippo.api.routers import source as source_api
 from hippo.models import AccountGroup
+from hippo.topics import default_vocabulary
 
 #: A row of ``accounts`` joined with ``subscription``, as both account queries
 #: select it. ``last_synced_at`` is the driver's datetime, not a string.
@@ -171,6 +172,10 @@ class AccountResponseTest(unittest.TestCase):
         self.assertEqual(group.model_dump(), body['groups'][0])
 
 
+def _site_settings() -> dict[str, Any]:
+    return {'registration_enabled': False, 'site_name': 'Hippo', 'public_base_url': '', 'vocabulary': default_vocabulary()}
+
+
 class ArticleResponseTest(unittest.TestCase):
     def test_a_list_row_keeps_its_search_score_and_computed_fields(self) -> None:
         payload = {
@@ -179,14 +184,20 @@ class ArticleResponseTest(unittest.TestCase):
             'page_size': 20,
             'total': 1,
             'item_show_type_facets': [{'item_show_type': 0, 'count': 1}],
+            'topic_facets': [{'slug': 'ai', 'name': '人工智能', 'count': 1}],
         }
         storage = SimpleNamespace(users=SimpleNamespace(get_preferences=AsyncMock(return_value={})))
 
-        with patch.object(article_api, '_list_articles', AsyncMock(return_value=payload)):
+        with (
+            patch.object(article_api, '_list_articles', AsyncMock(return_value=payload)),
+            # The route reads the direction vocabulary to validate ``?topic=``.
+            patch.object(article_api, 'get_site_settings', AsyncMock(return_value=_site_settings())),
+        ):
             body = _client(article_api, storage).get('/api/article').json()
 
         _assert_row_survives(self, ARTICLE_ROW, body['articles'][0])
         self.assertEqual([{'item_show_type': 0, 'count': 1}], body['item_show_type_facets'])
+        self.assertEqual([{'slug': 'ai', 'name': '人工智能', 'count': 1}], body['topic_facets'])
 
     def test_a_detail_body_keeps_its_blocks_and_images(self) -> None:
         detail = {

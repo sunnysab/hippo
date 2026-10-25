@@ -69,6 +69,13 @@ class AnnotationListOut(BaseModel):
     items: list[AnnotationOut]
 
 
+class ArticleTopicOut(BaseModel):
+    """One direction an article was classified into."""
+
+    slug: str = Field(description='ASCII identifier, e.g. ``ai``.')
+    name: str = Field(description='Display label from the current vocabulary.')
+
+
 class ArticleOut(BaseModel):
     """One article row, as the list and the detail return it.
 
@@ -101,6 +108,9 @@ class ArticleOut(BaseModel):
     group_name: str | None = None
     image_id: int | None = Field(default=None, description='Cover image row, when one is attached.')
     rank: float | None = Field(default=None, description='Relevance score, set when the query was a search.')
+    topics: list[ArticleTopicOut] = Field(
+        default_factory=list, description='Directions, empty until the article has been classified.'
+    )
 
 
 class FeedArticleOut(ArticleOut):
@@ -121,6 +131,14 @@ class ItemShowTypeFacetOut(BaseModel):
     count: int
 
 
+class ArticleTopicFacetOut(BaseModel):
+    """One bar of the direction filter, in vocabulary order."""
+
+    slug: str
+    name: str
+    count: int
+
+
 class ArticleListOut(BaseModel):
     articles: list[ArticleOut]
     page: int
@@ -128,6 +146,10 @@ class ArticleListOut(BaseModel):
     total: int
     item_show_type_facets: list[ItemShowTypeFacetOut] = Field(
         description='Counts per layout type; unknown types are counted in ``total`` only.'
+    )
+    topic_facets: list[ArticleTopicFacetOut] = Field(
+        default_factory=list,
+        description='Counts per direction over the caller\'s visible articles, ignoring the direction filter.',
     )
 
 

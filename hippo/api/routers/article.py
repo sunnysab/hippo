@@ -25,6 +25,7 @@ from ...article_queries import (
     _normalize_read_filter,
     _normalize_source_filter,
     _normalize_starred_filter,
+    _normalize_topic_filter,
     _parse_date,
     _split_article_exclude_keywords,
 )
@@ -37,6 +38,7 @@ from ...media import audio_export
 from ...media.subtitle import to_markdown, to_srt, to_text
 from ...media_settings import get_media_settings, resolve_proxy
 from ...models import User
+from ...site_settings import get_site_settings
 from ...storage import PostgresStorage, fetchone_row, open_storage
 from ..deps import current_user, get_storage, parse_group_ids
 from ..responses import binary_response
@@ -77,6 +79,7 @@ async def list_articles(
     read: str | None = None,
     starred: str | None = None,
     source: str | None = None,
+    topic: str | None = None,
     page: int = 1,
     page_size: int = 20,
     since: str | None = None,
@@ -96,6 +99,7 @@ async def list_articles(
         read (str | None): 传 `unread` 只返回未读文章。
         starred (str | None): 传 `true` 只返回已收藏文章。
         source (str | None): 按来源筛选，逗号分隔（如 "weixin"）。
+        topic (str | None): 按方向筛选，逗号分隔（如 "ai,research"）；未知方向返回 400。
         page (int): 页码。
         page_size (int): 每页数量。
         since (str | None): 起始日期筛选 (ISO 格式)。
@@ -116,6 +120,7 @@ async def list_articles(
     exclude_terms = _split_article_exclude_keywords(exclude_source)
     sort_mode = _normalize_article_sort(sort, has_query=bool(query_text))
     normalized_item_show_type = _normalize_item_show_type(item_show_type)
+    vocabulary = (await get_site_settings(storage))['vocabulary']
     return await _list_articles(
         storage,
         user_id=user.id,
@@ -133,6 +138,8 @@ async def list_articles(
         unread_only=_normalize_read_filter(read),
         starred_only=_normalize_starred_filter(starred),
         sources=_normalize_source_filter(source),
+        topics=_normalize_topic_filter(topic, vocabulary),
+        vocabulary=vocabulary,
     )
 
 
