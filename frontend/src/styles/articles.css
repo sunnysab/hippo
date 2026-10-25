@@ -1290,10 +1290,9 @@ mark.hippo-highlight:hover {
   to { opacity: 1; transform: none; }
 }
 
-/* The frame is the same element the reader may have just put full screen; a fixed
-   box around a full-screen video would fight the browser's own layout. */
-.reader-video.is-pip:fullscreen,
-:fullscreen .reader-video.is-pip {
+/* The frame is the same element the reader may have just put full screen, and a
+   fixed box around it would fight the browser's own layout. */
+.reader-video.is-pip:fullscreen {
   position: static;
   width: auto;
   animation: none;
