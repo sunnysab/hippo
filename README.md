@@ -300,6 +300,21 @@ uv run ruff check hippo tests
 - **RSS**：`GET /api/feed/mixed?format=rss`（用 `token=` 代替 Cookie）。
 - **可观测**：structlog 结构化日志、可选 OTLP 上报 SignOz、`GET /api/admin/log/tail` 兜底看日志文件。
 
+### 公众号引用链接
+
+阅读文章时会识别正文中的公众号长链、短链和旧式文章链接，包括加粗里的超链接与裸 URL。
+先按文章身份查询本地：已有正文直接在 Hippo 内打开，缺失正文自动进入现有微信抓取队列；页面显示排队、抓取和失败状态，失败可单独重试。
+保留原锚文本，裸 URL 命中后显示文章标题，已收录链接旁可打开微信原文。
+
+- 前提：运行 schema 33 初始化，并启用 sync worker、保持微信 daemon 已登录；不需要新服务或依赖。
+- 只处理已订阅来源文章的直接引用，每篇最多 200 个 URL；不递归抓取，不根据无 URL 的标题猜测文章。
+- 引用其他公众号时只开放对应单篇及其图片，不自动订阅该公众号，也不开放它的其他文章。
+  来源退订、禁用或正文版本变化后，引用授权失效；阅读器重新处理当前正文后才建立新关联。
+- `GET /api/article/{id}/reference` 只读；`POST` 接受空对象以关联和入队，`{"retry_url":"正文中的URL"}` 单独重试失败引用。
+- 验证：`uv run pytest tests/test_wechat_links.py tests/test_article_references.py tests/test_reference_repository.py tests/test_reference_ingest.py`；
+  前端运行 `cd frontend && npm test -- src/utils/markdown.test.tsx src/pages/articles/ArticleReferences.test.tsx`。
+  隔离 PostgreSQL 上可设置 `HIPPO_TEST_PG_DSN` 后运行 `uv run pytest tests/test_reference_postgres.py`，每个用例创建并删除独立测试 schema，不读取生产配置。
+
 ### 文章导航大纲
 
 打开文章后点击「目录」：有原文标题时默认展示原文目录，无标题时可切换或手动「生成大纲」。
@@ -469,17 +484,19 @@ hippo/knowledge/worker.py                   # 知识导入 worker（python -m hi
 `hippo.server`、`hippo.sync_worker` 与（需要知识库时）`hippo.knowledge.worker`。注意顺序：先迁移（`init-db`）、
 后重启服务，schema 版本不匹配时服务会拒绝启动。
 
-上线（含 schema 32）前还有几件必须做的事，**在真实隔离环境验证完成并经授权后再执行**：
+上线（含 schema 33）前还有几件必须做的事，**在真实隔离环境验证完成并经授权后再执行**：
 
-1. 当前代码 `SCHEMA_VERSION = '32'`。31 → 32 追加 `article_outline` 缓存/任务表与待处理索引，
+1. 当前代码 `SCHEMA_VERSION = '33'`。31 → 32 追加 `article_outline` 缓存/任务表与待处理索引；
+   32 → 33 追加 `article_reference` 直接引用表、身份查询及队列关联索引，
    使用**纯追加、幂等**的 `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`；
    完整初始化脚本仍有历史清理语句，执行前必须核对这些清理项不会触及现存数据。
    还需在隔离 PG 上验证 DDL、`pg_jieba`/`pg_trgm`、GIN 索引、UUID 类型、CAS 语义、部分唯一索引与并发锁行为，
    并验证 S3 的上传/下载/删除。
-2. 正式迁移流程：**先备份**（`pg_dump -Fc`），然后**停掉 Web、sync worker 与知识 worker 三个进程**（
-   知识 worker 持有 lease/长事务，迁移前必须停），再人工跑 `python -m hippo.ops init-db`，确认库 `schema_version=32`
+2. 正式迁移流程：**先备份代码和配置**，数据库转储仅在操作者明确要求时执行，不作为日常部署默认步骤；
+   然后**停掉 Web、sync worker 与知识 worker 三个进程**（
+   知识 worker 持有 lease/长事务，迁移前必须停），再人工跑 `python -m hippo.ops init-db`，确认库 `schema_version=33`
    后再重启。不要让旧进程在新 schema 上继续跑。
-3. **schema 只能前进**：库一旦升到 32，回退到 schema 31 的代码会因 `SCHEMA_VERSION(31) != meta.schema_version(32)`
+3. **schema 只能前进**：库一旦升到 33，回退到 schema 32 的代码会因 `SCHEMA_VERSION(32) != meta.schema_version(33)`
    拒绝启动；优先修复并继续迁移，不能改 `meta.schema_version` 蒙混过关。确需恢复时，先将备份恢复到
    **新的隔离数据库**核对，再由操作者批准切换；不要直接用旧快照覆盖生产库，避免丢失备份之后的写入。
 4. **发布窗口压自动同步**：生产 `sync:settings` 当前为 `enabled=false`、`interval_minutes=120`，调度循环不会自动跑；

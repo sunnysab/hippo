@@ -27,6 +27,7 @@ from .repositories import (
     ArticleMediaRepository,
     ArticleQueueRepository,
     ArticleReadRepository,
+    ArticleReferenceRepository,
     ArticleRepository,
     ArticleStarRepository,
     AuditRepository,
@@ -47,7 +48,7 @@ from .repositories import (
 )
 from .sync_jobs import SyncJobRepository
 
-SCHEMA_VERSION = '32'
+SCHEMA_VERSION = '33'
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'schema' / 'postgres.sql'
 
@@ -220,6 +221,7 @@ class PostgresStorage(AbstractAsyncContextManager):
         self.media_assets = ArticleMediaRepository(self.conn)
         self.documents = ArticleDocumentRepository(self.conn)
         self.article_queue = ArticleQueueRepository(self.conn)
+        self.references = ArticleReferenceRepository(self.conn)
         self.media_jobs = MediaJobRepository(self.conn)
         self.images = ImageRepository(self.conn)
         self.knowledge = KnowledgeRepository(self.conn)

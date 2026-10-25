@@ -83,8 +83,18 @@ class PublisherOfTest(unittest.TestCase):
 
     def _body(self, raw: str) -> FetchedArticle:
         return FetchedArticle(
-            url='', short_link='', slug='', title='', author='', digest='',
-            user_name='', nick_name='', publish_time=0, html='', images=[], raw_json=raw,
+            url='',
+            short_link='',
+            slug='',
+            title='',
+            author='',
+            digest='',
+            user_name='',
+            nick_name='',
+            publish_time=0,
+            html='',
+            images=[],
+            raw_json=raw,
         )
 
     def test_reads_the_fakeid_and_the_gh_id_together(self) -> None:
@@ -430,7 +440,12 @@ class BatchFailureAttributionTest(unittest.TestCase):
 
 
 def _storage_with(queue: _RecordingQueue) -> SimpleNamespace:
-    return SimpleNamespace(article_queue=queue, commit=AsyncMock(), rollback=AsyncMock())
+    return SimpleNamespace(
+        article_queue=queue,
+        references=SimpleNamespace(resolve=AsyncMock(return_value={})),
+        commit=AsyncMock(),
+        rollback=AsyncMock(),
+    )
 
 
 class SessionFailureBookkeepingTest(unittest.TestCase):

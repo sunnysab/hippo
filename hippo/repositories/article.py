@@ -149,7 +149,11 @@ class ArticleRepository:
                 source_url=EXCLUDED.source_url,
                 publish_at=COALESCE(EXCLUDED.publish_at, articles.publish_at),
                 duration_seconds=COALESCE(EXCLUDED.duration_seconds, articles.duration_seconds),
-                raw_json=EXCLUDED.raw_json,
+                raw_json=CASE WHEN NULLIF(EXCLUDED.raw_json::jsonb->>'sn', '') IS NULL
+                                   AND articles.raw_json::jsonb ? 'sn'
+                              THEN (EXCLUDED.raw_json::jsonb || jsonb_build_object(
+                                  'sn', articles.raw_json::jsonb->'sn'))::text
+                              ELSE EXCLUDED.raw_json END,
                 updated_at=EXCLUDED.updated_at
             RETURNING id"""
             + (', (xmax = 0) AS inserted' if return_inserted else ''),

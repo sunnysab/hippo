@@ -244,3 +244,19 @@ class RefetchStatusOut(BaseModel):
     started_at: float | None = Field(default=None, description='Monotonic seconds, for measuring the run.')
     finished_at: float | None = None
     error: str | None = None
+
+
+class ArticleReferenceOut(BaseModel):
+    url: str
+    status: Literal['ready', 'missing', 'pending', 'processing', 'failed']
+    article_id: int | None = None
+    title: str | None = None
+    canonical_url: str | None = None
+
+
+class ArticleReferenceListOut(BaseModel):
+    items: list[ArticleReferenceOut]
+
+
+class ArticleReferenceFetchRequest(BaseModel):
+    retry_url: str | None = Field(default=None, min_length=1, max_length=8192)

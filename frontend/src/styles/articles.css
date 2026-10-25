@@ -1721,3 +1721,25 @@ mark.hippo-highlight:hover {
   .reader-toc-pulse { animation: none; }
   .reader-toc-fold svg { transition: none; }
 }
+
+
+.reader-reference-status,
+.reader-reference-original,
+.reader-reference-retry {
+  margin-inline-start: 0.5em;
+  font-size: 0.75em;
+  font-weight: normal;
+}
+
+.reader-reference-status {
+  color: var(--muted);
+}
+
+.reader-reference-retry {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}

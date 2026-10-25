@@ -27,7 +27,7 @@ from hippo import article_queries
 from hippo.api import deps
 from hippo.api.errors import install_exception_handlers
 from hippo.api.routers import article as article_api
-from hippo.article_queries import _ensure_image_visible, _fetch_image, _get_article
+from hippo.article_queries import ARTICLE_ACCESS_JOIN, _ensure_image_visible, _fetch_image, _get_article
 from hippo.exceptions import ApiError
 from hippo.media.archive import ArchiveError, AudioStream, parse_range
 
@@ -445,7 +445,7 @@ class RangeHeaderShapeTest(unittest.TestCase):
 
 
 class ImageVisibilityTest(unittest.IsolatedAsyncioTestCase):
-    """Image access follows the subscription rule the article routes already use."""
+    """Images use the same subscription or direct-reference gate as articles."""
 
     async def _call(self, *, row: dict | None):
         captured: dict = {}
@@ -459,11 +459,11 @@ class ImageVisibilityTest(unittest.IsolatedAsyncioTestCase):
             await _ensure_image_visible(SimpleNamespace(), 7, 9)
         return captured
 
-    async def test_the_visibility_query_requires_an_enabled_subscription(self) -> None:
+    async def test_the_visibility_query_uses_the_shared_article_access_gate(self) -> None:
         captured = await self._call(row={'ok': 1})
 
-        self.assertIn('NOT sub.is_disabled', captured['sql'])
-        self.assertIn('JOIN subscription sub', captured['sql'])
+        self.assertIn(ARTICLE_ACCESS_JOIN, captured['sql'])
+        self.assertIn('NOT s.is_disabled', captured['sql'])
         # Join parameter first, image id second — the order the SQL binds them in.
         self.assertEqual([7, 9], captured['params'])
 

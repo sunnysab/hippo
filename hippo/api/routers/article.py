@@ -28,6 +28,7 @@ from ...article_queries import (
     _parse_date,
     _split_article_exclude_keywords,
 )
+from ...article_references import article_references
 from ...container import build_downloader_container
 from ...exceptions import ApiError
 from ...logger import get_logger
@@ -44,6 +45,8 @@ from ..schemas.article import (
     ArticleDetailOut,
     ArticleImageListOut,
     ArticleListOut,
+    ArticleReferenceFetchRequest,
+    ArticleReferenceListOut,
     BlockedImageOut,
     ReadStateOut,
     ReadUpdateRequest,
@@ -642,3 +645,25 @@ async def refetch_article(
     thread.start()
 
     return {'task_id': task_id, 'status': 'started'}
+
+
+@router.get('/article/{article_id}/reference', response_model=ArticleReferenceListOut)
+async def get_article_references(
+    article_id: int,
+    storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
+) -> dict[str, Any]:
+    """Read direct WeChat reference states without making upstream requests."""
+    return await article_references(storage, user.id, article_id)
+
+
+@router.post('/article/{article_id}/reference', response_model=ArticleReferenceListOut, status_code=202)
+async def fetch_article_references(
+    article_id: int,
+    body: ArticleReferenceFetchRequest,
+    storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
+) -> dict[str, Any]:
+    """Queue missing direct references; only an explicit URL retries a failed job."""
+    async with storage.transaction():
+        return await article_references(storage, user.id, article_id, enqueue=True, retry_url=body.retry_url)

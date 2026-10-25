@@ -9,7 +9,9 @@ import {
   useState,
 } from 'react';
 import { useI18n } from '../../i18n';
-import { renderInlineNodes } from '../../utils/markdown';
+import { normalizeSafeUrl, renderInlineNodes, type InlineLinkRenderer } from '../../utils/markdown';
+import { ArticleReferenceLink } from './ArticleReferenceLink';
+import { useArticleReferences } from './useArticleReferences';
 import { EmptyState } from '../../components/EmptyState';
 import { apiGet, apiSend, isAuthError } from '../../api';
 import type { ArticlePayload, ArticleContentBlock } from '../../store/articles';
@@ -121,6 +123,7 @@ interface ArticleContentProps {
 }
 
 interface ContentBlockProps {
+  renderLink: InlineLinkRenderer;
   block: ArticleContentBlock;
   images: ArticlePayload['images'];
   hideSmall: boolean;
@@ -135,6 +138,7 @@ interface AnchorableBlockProps extends ContentBlockProps {
 
 const ArticleImageBlock = memo(function ArticleImageBlock({
   block,
+  renderLink,
   images,
   hideSmall,
   onImageContextMenu,
@@ -181,29 +185,34 @@ const ArticleImageBlock = memo(function ArticleImageBlock({
 
   if (!block.image_id) return null;
 
+  const image = (
+    <img
+      key={`image-${block.image_id}`}
+      src={`/api/image/${block.image_id}`}
+      alt={block.alt || ''}
+      loading='lazy'
+      data-image-id={String(block.image_id)}
+      // An image we cannot serve (origin gone, blocked, upstream down) is dropped
+      // like the small ones above, so the reader shows no broken-image glyph.
+      onError={(event) => {
+        const figure = event.currentTarget.closest('figure');
+        if (figure) (figure as HTMLElement).style.display = 'none';
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onImageContextMenu({
+          imageId: block.image_id!,
+          x: event.clientX,
+          y: event.clientY,
+        });
+      }}
+    />
+  );
+  const href = normalizeSafeUrl(block.href || '');
   return (
     <figure ref={figureRef} data-image-id={String(block.image_id)}>
-      <img
-        src={`/api/image/${block.image_id}`}
-        alt={block.alt || ''}
-        loading='lazy'
-        data-image-id={String(block.image_id)}
-        // An image we cannot serve (origin gone, blocked, upstream down) is dropped
-        // like the small ones above, so the reader shows no broken-image glyph.
-        onError={(event) => {
-          const figure = event.currentTarget.closest('figure');
-          if (figure) (figure as HTMLElement).style.display = 'none';
-        }}
-        onContextMenu={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onImageContextMenu({
-            imageId: block.image_id!,
-            x: event.clientX,
-            y: event.clientY,
-          });
-        }}
-      />
+      {href ? renderLink(href, [image], `image-${block.image_id}`) : image}
     </figure>
   );
 });
@@ -458,6 +467,7 @@ const PlayerDock = memo(function PlayerDock() {
 
 const ContentBlock = memo(function ContentBlock({
   block,
+  renderLink,
   index,
   images,
   hideSmall,
@@ -486,7 +496,10 @@ const ContentBlock = memo(function ContentBlock({
 
   if (['paragraph', 'text', 'link'].includes(block.type)) {
     const label = anchorLabel(block.t);
-    const text = renderInlineNodes(block.text || '');
+    const href = block.type === 'link' ? normalizeSafeUrl(block.href || '') : null;
+    const text = href
+      ? renderLink(href, renderInlineNodes(block.text || href, (_href, label) => label), `block-${index}`)
+      : renderInlineNodes(block.text || '', renderLink);
     const className = isPlayingBlock ? 'is-playing' : undefined;
     const playingProps = isPlayingBlock ? { ref: playingRef } : {};
     if (!label) return <p {...anchor} {...playingProps} className={className}>{text}</p>;
@@ -572,18 +585,19 @@ const ContentBlock = memo(function ContentBlock({
     const id = headingAnchorId(index);
     const level = Math.min(Math.max(Number(block.level) || 2, 2), 4);
     if (level === 2) {
-      return <h2 {...anchor} id={id}>{renderInlineNodes(block.text || '')}</h2>;
+      return <h2 {...anchor} id={id}>{renderInlineNodes(block.text || '', renderLink)}</h2>;
     }
     if (level === 3) {
-      return <h3 {...anchor} id={id}>{renderInlineNodes(block.text || '')}</h3>;
+      return <h3 {...anchor} id={id}>{renderInlineNodes(block.text || '', renderLink)}</h3>;
     }
-    return <h4 {...anchor} id={id}>{renderInlineNodes(block.text || '')}</h4>;
+    return <h4 {...anchor} id={id}>{renderInlineNodes(block.text || '', renderLink)}</h4>;
   }
 
   if (block.type === 'image') {
     return (
       <ArticleImageBlock
         block={block}
+        renderLink={renderLink}
         images={images}
         hideSmall={hideSmall}
         onImageContextMenu={onImageContextMenu}
@@ -668,6 +682,12 @@ function RenderedContent({
   miniPlayer,
   onImageContextMenu,
 }: RenderedContentProps) {
+  const { references, failed: referenceFailed, retry: retryReference } = useArticleReferences(payload);
+  const renderLink = useCallback<InlineLinkRenderer>((href, label, key) => {
+    const normalized = href.replace(/^http:/, 'https:').replace(/&amp;/g, '&');
+    return <ArticleReferenceLink key={key} href={href} label={label} reference={references.get(normalized)}
+      failed={referenceFailed} onRetry={retryReference} />;
+  }, [referenceFailed, references, retryReference]);
   const audioRef = useRef<HTMLAudioElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const playingRef = useRef<HTMLParagraphElement>(null);
@@ -1049,6 +1069,7 @@ function RenderedContent({
         <ContentBlock
           key={contentKeys[index]}
           block={block}
+          renderLink={renderLink}
           index={index}
           outlineIndex={outlineIndexes[index]}
           images={payload.images}

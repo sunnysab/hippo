@@ -166,6 +166,7 @@ class ArticleUpsertTest(unittest.IsolatedAsyncioTestCase):
         )
 
         # 传 None 的字段不能被清空：重抓的 stub 只有标题和链接。
+        self.assertIn("'sn', articles.raw_json::jsonb->'sn'", queries[0])
         for column in ('author', 'digest', 'publish_at'):
             self.assertIn(f'{column}=COALESCE(EXCLUDED.{column}, articles.{column})', queries[0])
 

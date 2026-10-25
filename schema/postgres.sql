@@ -884,3 +884,19 @@ CREATE TABLE IF NOT EXISTS article_outline (
 
 CREATE INDEX IF NOT EXISTS idx_article_outline_pending
 ON article_outline (updated_at, article_pk) WHERE state IN ('queued', 'processing');
+
+
+-- Direct references grant access to one article, never to its publisher's feed.
+CREATE TABLE IF NOT EXISTS article_reference (
+    source_article_pk INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+    source_updated_at TIMESTAMPTZ NOT NULL,
+    url TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    target_article_pk INTEGER REFERENCES articles(id) ON DELETE SET NULL,
+    queue_id BIGINT REFERENCES article_queue(id) ON DELETE SET NULL,
+    PRIMARY KEY (source_article_pk, identity)
+);
+CREATE INDEX IF NOT EXISTS idx_article_reference_identity ON article_reference (identity);
+CREATE INDEX IF NOT EXISTS idx_article_reference_target ON article_reference (target_article_pk);
+CREATE INDEX IF NOT EXISTS idx_article_reference_queue ON article_reference (queue_id);
+CREATE INDEX IF NOT EXISTS idx_articles_wechat_sn ON articles (biz, (raw_json::jsonb->>'sn'));

@@ -38,6 +38,7 @@ export interface ArticleContentBlock {
   level?: number;
   image_id?: number;
   alt?: string;
+  href?: string;
   /**
    * Seconds into the recording this paragraph starts at. Video and podcast
    * articles carry it, which is what the anchor in front of a paragraph seeks to.

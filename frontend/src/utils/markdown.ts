@@ -6,11 +6,15 @@ const parseWechatUrl = (urlStr: string) => {
     if (fullUrl.startsWith('//')) fullUrl = `https:${fullUrl}`;
     if (!/^https?:\/\//i.test(fullUrl)) return null;
     const url = new URL(fullUrl);
-    if (url.hostname !== 'mp.weixin.qq.com') return null;
+    if (url.hostname !== 'mp.weixin.qq.com' || url.username || url.password || url.port) return null;
     const biz = url.searchParams.get('__biz');
-    const mid = url.searchParams.get('mid');
-    const idx = url.searchParams.get('idx');
-    if (biz && mid && idx) return { biz, mid, idx };
+    const mid = url.searchParams.get('mid') || url.searchParams.get('appmsgid');
+    const idx = url.searchParams.get('idx') || url.searchParams.get('itemidx');
+    const sn = url.searchParams.get('sn');
+    if (/^\/s\/[A-Za-z0-9_-]{1,128}$/.test(url.pathname)) return { biz, mid, idx };
+    if (['/s', '/mp/appmsg/show'].includes(url.pathname) && biz && (sn || (mid && idx))) {
+      return { biz, mid, idx };
+    }
   } catch {
     return null;
   }
@@ -18,11 +22,11 @@ const parseWechatUrl = (urlStr: string) => {
 };
 
 const normalizeSafeUrl = (urlStr: string) => {
-  const rawUrl = urlStr.trim();
-  if (rawUrl.startsWith('//')) return `https:${rawUrl}`;
-  if (!/^https?:\/\//i.test(rawUrl)) return null;
+  const rawUrl = urlStr.trim().replace(/&amp;/gi, '&');
+  const fullUrl = rawUrl.startsWith('//') ? `https:${rawUrl}` : rawUrl;
+  if (!/^https?:\/\//i.test(fullUrl)) return null;
   try {
-    const url = new URL(rawUrl);
+    const url = new URL(fullUrl);
     if (!['http:', 'https:'].includes(url.protocol)) return null;
     return url.toString();
   } catch {
@@ -67,59 +71,105 @@ const withCjkSpacing = (text: string, key: string): ReactNode[] => {
   return nodes;
 };
 
-const renderLineNodes = (line: string, lineIndex: number): ReactNode[] => {
-  const normalizedLine = line.replace(/\\\|/g, '|');
-  const nodes: ReactNode[] = [];
-  const pattern = /\[([^\]]+)\]\(([^)]+)\)|\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`/g;
-  let cursor = 0;
-  let matchIndex = 0;
+export type InlineLinkRenderer = (href: string, label: ReactNode[], key: string) => ReactNode;
 
-  for (const match of normalizedLine.matchAll(pattern)) {
-    const start = match.index ?? 0;
-    if (start > cursor) {
-      nodes.push(...withCjkSpacing(normalizedLine.slice(cursor, start), `text-${lineIndex}-${matchIndex}`));
-    }
-
-    if (match[1] && match[2]) {
-      const label = match[1];
-      const href = normalizeSafeUrl(match[2]);
-      if (!href) {
-        nodes.push(match[0]);
-      } else {
-        const meta = parseWechatUrl(href);
-        nodes.push(createElement('a', {
-          key: `link-${lineIndex}-${matchIndex}`,
-          href,
-          target: '_blank',
-          rel: 'noopener noreferrer',
-          className: meta ? 'js-article-link' : undefined,
-          'data-hippo-biz': meta?.biz,
-          'data-hippo-mid': meta?.mid,
-          'data-hippo-idx': meta?.idx,
-        }, withCjkSpacing(label, `link-${lineIndex}-${matchIndex}`)));
-      }
-    } else if (match[3]) {
-      nodes.push(createElement('strong', { key: `strong-${lineIndex}-${matchIndex}` }, withCjkSpacing(match[3], `strong-${lineIndex}-${matchIndex}`)));
-    } else if (match[4]) {
-      nodes.push(createElement('em', { key: `em-${lineIndex}-${matchIndex}` }, withCjkSpacing(match[4], `em-${lineIndex}-${matchIndex}`)));
-    } else if (match[5]) {
-      nodes.push(createElement('code', { key: `code-${lineIndex}-${matchIndex}` }, match[5]));
-    } else {
-      nodes.push(...withCjkSpacing(match[0], `raw-${lineIndex}-${matchIndex}`));
-    }
-
-    cursor = start + match[0].length;
-    matchIndex += 1;
-  }
-
-  if (cursor < normalizedLine.length) {
-    nodes.push(...withCjkSpacing(normalizedLine.slice(cursor), `tail-${lineIndex}`));
-  }
-
-  return nodes;
+const renderDefaultLink: InlineLinkRenderer = (href, label, key) => {
+  const meta = parseWechatUrl(href);
+  return createElement('a', {
+    key,
+    href,
+    target: '_blank',
+    rel: 'noopener noreferrer',
+    className: meta ? 'js-article-link' : undefined,
+    'data-hippo-biz': meta?.biz,
+    'data-hippo-mid': meta?.mid,
+    'data-hippo-idx': meta?.idx,
+  }, label);
 };
 
-export const renderInlineNodes = (text: string): ReactNode[] => {
+const renderLineNodes = (
+  line: string,
+  keyPrefix: string,
+  renderLink: InlineLinkRenderer,
+  allowLinks = true,
+): ReactNode[] => {
+  const normalizedLine = line.replace(/\\\|/g, '|');
+  // shortcut: this is an inline Markdown subset; use a parser if full CommonMark is needed.
+  const pattern = /(?<fence>`+)(?<code>.*?)\k<fence>|\[(?<label>(?:[^[\]]|\[[^\]]*\])+)\]\((?<href>(?:[^\s()]|\([^()]*\))+)\)|<(?<auto>https?:\/\/[^\s<>]+)>|(?<bare>https?:\/\/[^\s<>`，。！？；：、”’》】）]+)|(?<stars>\*+)/gi;
+  const frames: { marker: string; nodes: ReactNode[]; key: string }[] = [
+    { marker: '', nodes: [], key: keyPrefix },
+  ];
+  let cursor = 0;
+  let matchIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(normalizedLine))) {
+    const key = `${keyPrefix}-${matchIndex++}`;
+    let nodes = frames[frames.length - 1].nodes;
+    nodes.push(...withCjkSpacing(normalizedLine.slice(cursor, match.index), `${key}-text`));
+    const groups = match.groups!;
+
+    if (groups.code !== undefined) {
+      nodes.push(createElement('code', { key }, groups.code));
+    } else if (groups.stars) {
+      let remaining = groups.stars.length;
+      while (remaining > 0) {
+        const frame = frames[frames.length - 1];
+        const marker = frame.marker && remaining >= frame.marker.length
+          ? frame.marker
+          : remaining >= 2 ? '**' : '*';
+        remaining -= marker.length;
+        if (frame.marker === marker) {
+          frames.pop();
+          frames[frames.length - 1].nodes.push(createElement(
+            marker === '**' ? 'strong' : 'em', { key: frame.key }, frame.nodes,
+          ));
+        } else {
+          frames.push({ marker, nodes: [], key: `${key}-${remaining}` });
+        }
+      }
+    } else {
+      let destination = groups.href ?? groups.auto ?? groups.bare;
+      if (groups.bare) {
+        destination = destination.replace(/[.,!?;:，。！？；：、”’》】）\]]+$/u, '');
+        const closingStars = Math.min(
+          destination.match(/\*+$/)?.[0].length ?? 0,
+          frames.reduce((count, frame) => count + frame.marker.length, 0),
+        );
+        if (closingStars) destination = destination.slice(0, -closingStars);
+        // Keep balanced URL parentheses, but leave prose/Markdown wrappers outside.
+        while (destination.endsWith(')') &&
+          destination.split(')').length > destination.split('(').length) {
+          destination = destination.slice(0, -1);
+        }
+        pattern.lastIndex = match.index + destination.length;
+      }
+      const href = normalizeSafeUrl(destination);
+      nodes = frames[frames.length - 1].nodes;
+      if (href && allowLinks) {
+        const label = groups.label !== undefined
+          ? renderLineNodes(groups.label, `${key}-label`, renderLink, false)
+          : withCjkSpacing(destination, `${key}-label`);
+        nodes.push(renderLink(href, label, key));
+      } else {
+        nodes.push(...withCjkSpacing(normalizedLine.slice(match.index, pattern.lastIndex), key));
+      }
+    }
+    cursor = pattern.lastIndex;
+  }
+
+  frames[frames.length - 1].nodes.push(...withCjkSpacing(normalizedLine.slice(cursor), `${keyPrefix}-tail`));
+  while (frames.length > 1) {
+    const frame = frames.pop()!;
+    frames[frames.length - 1].nodes.push(frame.marker, ...frame.nodes);
+  }
+  return frames[0].nodes;
+};
+
+export const renderInlineNodes = (
+  text: string,
+  renderLink: InlineLinkRenderer = renderDefaultLink,
+): ReactNode[] => {
   const lines = text.split('\n');
   const nodes: ReactNode[] = [];
 
@@ -127,7 +177,7 @@ export const renderInlineNodes = (text: string): ReactNode[] => {
     if (lineIndex > 0) {
       nodes.push(createElement('br', { key: `br-${lineIndex}` }));
     }
-    const lineNodes = renderLineNodes(line, lineIndex);
+    const lineNodes = renderLineNodes(line, `line-${lineIndex}`, renderLink);
     if (!lineNodes.length) {
       nodes.push(createElement(Fragment, { key: `empty-${lineIndex}` }));
       return;
@@ -138,4 +188,4 @@ export const renderInlineNodes = (text: string): ReactNode[] => {
   return nodes;
 };
 
-export { parseWechatUrl };
+export { normalizeSafeUrl, parseWechatUrl };

@@ -178,6 +178,25 @@ def _tokenize_query(text: str) -> list[str]:
 #: before every WHERE parameter because the join appears first in the SQL.
 SUBSCRIPTION_JOIN = ' JOIN subscription sub ON sub.biz = a.biz AND sub.user_id = %s AND NOT sub.is_disabled'
 
+# A direct reference grants one article while its source version and subscription remain valid.
+ARTICLE_ACCESS_JOIN = """
+ JOIN (SELECT %s::integer AS user_id) viewer ON TRUE
+ JOIN LATERAL (
+     SELECT s.group_id FROM subscription s
+      WHERE s.biz = a.biz AND s.user_id = viewer.user_id AND NOT s.is_disabled
+     UNION ALL
+     SELECT NULL::integer AS group_id
+       FROM article_reference r
+       JOIN articles origin ON origin.id = r.source_article_pk
+       JOIN article_content origin_content ON origin_content.article_pk = origin.id
+                                          AND origin_content.updated_at = r.source_updated_at
+       JOIN subscription s ON s.biz = origin.biz AND s.user_id = viewer.user_id AND NOT s.is_disabled
+      WHERE r.target_article_pk = a.id
+     LIMIT 1
+ ) sub ON TRUE
+"""
+
+
 #: Read state is per reader, so it hangs off a side table joined by (user, article).
 #: It follows the subscription join, so its ``user_id`` is bound second.
 READ_STATE_JOIN = ' LEFT JOIN article_read ar ON ar.article_pk = a.id AND ar.user_id = %s'
@@ -603,7 +622,7 @@ async def _get_article(storage: PostgresStorage, user_id: int, article_id: int) 
             ' acc.round_head_img AS account_avatar, sub.group_id, g.name AS group_name'
             ' FROM articles a'
             f'{ACCOUNTS_JOIN}'
-            f'{SUBSCRIPTION_JOIN}'
+            f'{ARTICLE_ACCESS_JOIN}'
             ' LEFT JOIN account_groups g ON g.id = sub.group_id'
             ' WHERE a.id = %s'
         ),
@@ -702,14 +721,14 @@ async def _get_article(storage: PostgresStorage, user_id: int, article_id: int) 
 
 
 async def _assert_article_visible(storage: PostgresStorage, user_id: int, article_id: int) -> None:
-    """Raise 404 unless the article belongs to an account the user follows.
+    """Raise 404 unless a subscription or a current direct reference grants access.
 
     404 rather than 403: a caller must not be able to tell a foreign article
     apart from one that does not exist.
     """
     row = await fetchone_row(
         storage,
-        f'SELECT 1 AS ok FROM articles a{SUBSCRIPTION_JOIN} WHERE a.id = %s',
+        f'SELECT 1 AS ok FROM articles a{ARTICLE_ACCESS_JOIN} WHERE a.id = %s',
         [user_id, article_id],
         normalize=_normalize_record,
     )
@@ -921,16 +940,10 @@ async def _ensure_image_hash(
 
 
 async def _ensure_image_visible(storage: PostgresStorage, user_id: int, image_id: int) -> None:
-    """404 unless the image belongs to an article this user subscribes to.
-
-    Images are addressed by a global id, so without this check any signed-in
-    user could walk the ids and read (or block) images from other people's
-    subscriptions. The subscription has to be enabled, the same rule the article
-    and media routes apply — a disabled feed is not a grant to its images.
-    """
+    """Apply the same subscription/direct-reference gate as the article route."""
     row = await fetchone_row(
         storage,
-        (f'SELECT 1 FROM article_images i JOIN articles a ON a.id = i.article_pk{SUBSCRIPTION_JOIN} WHERE i.id = %s'),
+        (f'SELECT 1 FROM article_images i JOIN articles a ON a.id = i.article_pk{ARTICLE_ACCESS_JOIN} WHERE i.id = %s'),
         [user_id, image_id],
     )
     if not row:

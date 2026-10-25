@@ -20,7 +20,8 @@ from .models import ArticleRecord
 from .storage import PostgresStorage
 from .sync_types import SyncStats
 from .utils import strip_nul
-from .weixin_daemon import FetchedArticle, SessionExpiredError, WeixinSource, classify_daemon_error
+from .wechat_links import parse_wechat_link
+from .weixin_daemon import FetchedArticle, SessionExpiredError, WeixinSource, classify_daemon_error, publisher_of
 
 logger = get_logger(__name__)
 
@@ -121,6 +122,24 @@ class WeixinArticleSync:
             raise
 
     async def _process_batch_inner(self, batch: list[dict[str, Any]], stats: SyncStats) -> None:
+        # Another reader or a different URL spelling may have archived a queued article already.
+        links = {str(row['long_link']): parse_wechat_link(str(row['long_link'])) for row in batch}
+        targets = await self._storage.references.resolve([link for link in links.values() if link is not None])
+        pending = []
+        for row in batch:
+            link = links[str(row['long_link'])]
+            target = targets.get(link.identity) if link else None
+            if target and target['ready']:
+                await self._storage.references.complete(int(row['id']), int(target['id']))
+                await self._storage.article_queue.mark_done([int(row['id'])])
+                stats.ingested += 1
+            else:
+                pending.append(row)
+        if len(pending) != len(batch):
+            await self._storage.commit()
+        batch = pending
+        if not batch:
+            return
         urls = [str(row['long_link']) for row in batch]
         try:
             await self._source.fetch_bodies(urls)
@@ -184,8 +203,29 @@ class WeixinArticleSync:
         payload = row.get('payload') or {}
         if isinstance(payload, str):
             payload = json.loads(payload)
+        biz = str(row['biz'])
+        if payload.get('source') == 'article_reference':
+            publisher = publisher_of(body)
+            if publisher and biz and publisher.biz != biz:
+                raise RuntimeError('Fetched publisher does not match the reference')
+            biz = publisher.biz if publisher else biz
+            if not biz:
+                raise RuntimeError('Fetched article has no publisher identity')
+            await self._storage.references.ensure_publisher(
+                biz=biz,
+                nickname=strip_nul(publisher.nickname if publisher else body.nick_name) or biz,
+                gh_id=publisher.gh_id if publisher else None,
+                alias=publisher.alias if publisher else None,
+                avatar_url=publisher.avatar_url if publisher else None,
+            )
+        original = parse_wechat_link(str(row['long_link']))
+        canonical = parse_wechat_link(body.short_link)
+        if canonical is None or canonical.slug != body.slug:
+            raise RuntimeError('Fetched article has an invalid canonical URL')
+        if original and original.slug and original.slug != body.slug:
+            raise RuntimeError('Fetched article does not match the reference slug')
         article = ArticleRecord(
-            biz=str(row['biz']),
+            biz=biz,
             article_id=body.slug,
             title=strip_nul(body.title or str(payload.get('title') or '(untitled)')),
             item_show_type=(body.item_show_type if body.item_show_type is not None else payload.get('item_show_type')),
@@ -195,7 +235,10 @@ class WeixinArticleSync:
             link=strip_nul(body.short_link),
             source_url=strip_nul(body.source_url),
             publish_at=body.publish_time or payload.get('publish_time'),
-            raw={'sn': row['sn'], 'list': payload},
+            raw={
+                'sn': original.sn if original and original.sn else row['sn'] if not original else None,
+                'list': payload,
+            },
         )
         # with_images=False：图片只登记进 article_images，由独立的回填循环去抓，
         # 避免正文（客户端协议）与图片（普通 HTTPS CDN）互相拖累、也没了两条独立的节奏。
@@ -208,6 +251,7 @@ class WeixinArticleSync:
         )
         if article_pk is None:
             raise RuntimeError('articles 写入后没有拿到 id')
+        await self._storage.references.complete(int(row['id']), article_pk)
         await self._storage.documents.save(
             article_pk=article_pk,
             source=DOCUMENT_SOURCE,

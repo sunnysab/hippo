@@ -25,6 +25,7 @@ from .meta import MetaRepository
 from .outline import OutlineRepository
 from .queue import ArticleQueueRepository
 from .read import ArticleReadRepository
+from .reference import ArticleReferenceRepository
 from .session import UserSessionRepository
 from .star import ArticleStarRepository
 from .subscription import SubscriptionRepository
@@ -41,6 +42,7 @@ __all__ = [
     'ArticleMediaRepository',
     'ArticleQueueRepository',
     'ArticleReadRepository',
+    'ArticleReferenceRepository',
     'ArticleRepository',
     'ArticleStarRepository',
     'AuditRepository',

@@ -293,6 +293,8 @@ GET /api/account/search?q=中投&page=1&page_size=10
 | PUT | `/api/article/{id}/read` | 登录 | 标记单篇文章已读 / 未读 |
 | PUT | `/api/article/{id}/star` | 登录 | 收藏 / 取消收藏单篇文章 |
 | GET | `/api/article/{id}/image` | 登录 | 文章图片列表 |
+| GET | `/api/article/{id}/reference` | 登录 | 批量查询正文中公众号引用的状态（只读） |
+| POST | `/api/article/{id}/reference` | 登录 | 关联已收录文章并排队抓取缺失正文 |
 | POST | `/api/article/{id}/refetch` | 登录 | 重新抓取正文 |
 | GET | `/api/article/refetch/{task_id}` | 登录 | 轮询重新抓取进度 |
 | GET | `/api/image/{image_id}` | 登录 | 图片二进制 |
@@ -391,6 +393,25 @@ GET /api/article/42
 - `content_status`：`ok` | `missing`（没抓过）| `empty` | `invalid`（解析失败）。
 - `content_fetch_diagnostic`：非 `ok` 时给出抓取失败诊断（`last_error`、`error_type`、`retryable`、`attempts`），否则 `null`。
 - `images` 只含 `article_images` 的元数据；`kind` 目前是 `cover` 或 `inline`。
+
+### 公众号引用
+
+```text
+GET  /api/article/{id}/reference
+POST /api/article/{id}/reference
+```
+
+GET 只解析当前正文并查询本地，不写入或请求微信。POST 的请求体为 `{}`，或 `{"retry_url":"正文中已有的URL"}`，
+成功返回 `202`，它只建立关联、提交后台队列，不等待微信正文。读 API Key 只能 GET，POST 仍要求写权限。
+未知或不可见来源返回 `404`；任意非正文 URL 不能用作重试目标（`400`）。
+
+两者返回 `{"items":[{"url":"…","status":"ready","article_id":42,"title":"…","canonical_url":"…"}]}`。
+`status` 为 `ready / missing / pending / processing / failed`；仅 `ready` 返回可阅读的 `article_id`，未确认的标题和标准链接为 `null`。
+同一文章不同分享 URL 分别保留，按身份共享查库和队列。POST 不重置处理中或失败的任务，显式 `retry_url` 才重试失败。
+
+跨公众号单篇访问由 POST 建立的直接引用关系授权；只读 GET 不建立权限，因此未关联的跨公众号命中需先 POST 才能站内阅读。
+只从当前用户直接订阅的来源处理引用，未订阅引用文章的下一层返回空列表，不自动订阅账号或递归抓取。
+来源退订、禁用或正文版本变化会撤销相应授权。每篇最多 200 个 URL，超出返回 `422`。
 
 ### 导航大纲
 
@@ -1128,6 +1149,8 @@ Content-Type: application/pdf
 | POST | `/api/article/{article_id}/annotation` | 登录 |
 | DELETE | `/api/article/{article_id}/annotation/{annotation_id}` | 登录 |
 | GET | `/api/article/{article_id}/image` | 登录 |
+| GET | `/api/article/{article_id}/reference` | 登录 |
+| POST | `/api/article/{article_id}/reference` | 登录 |
 | GET | `/api/article/{article_id}/outline` | 登录 |
 | POST | `/api/article/{article_id}/outline` | 登录 |
 | PUT | `/api/article/{article_id}/read` | 登录 |
