@@ -9,8 +9,9 @@
 随代码漂移，按**文件名和函数名**找，不要按行号找。
 
 - `SCHEMA_VERSION` 已从 `'33'` 提到 `'34'`。
-- 后端：**1720 passed, 14 skipped**，`ruff check hippo tests` 通过。
-- 前端：**484 passed / 62 files**，`tsc -b`、`eslint --max-warnings 0`、`npm run build` 全通过。
+- 后端：**1724 passed, 14 skipped**，`ruff check hippo tests` 通过。
+- 前端：**487 passed / 62 files**，`tsc -b`、`eslint --max-warnings 0`、`npm run build` 全通过。
+- 审查补记：首轮交付被独立审查驳回，理由是两条「测试全绿但真实链路不通」的缺陷，见 §6.6。
 
 参考实现：`/home/sunnysab/Code/0-Cloned/0-Internet/AISafetyHot/`（只读，另一套项目，
 无共享代码）。它提供的是**思路**，不是可以搬的代码——那边是内容导出仓库，没有服务端。
@@ -556,6 +557,46 @@ cd frontend && npx tsc --noEmit && npx eslint . --max-warnings 0 && npm run buil
 这也正是「可见门槛由代码执行、不交给模型」的价值：漏合并只是晚一点聚合，误合并会让读者读到
 一个错的故事。
 
+## 6.6 审查驳回与修复（重要教训）
+
+首轮交付被独立审查驳回。两处缺陷都具备同一个特征：**单元测试全绿，但真实运行时功能不存在。**
+
+### 缺陷一：方向筛选条永远不渲染
+
+`ArticleTopicFacets` 没有任何 facet 数据时 `return null`。但接线代码
+（`useArticleFilters.ts` 的 `SET_FACET_PAYLOAD`）只搬了 `total` 和 `item_show_type_facets`，
+把 API 返回的 `topic_facets` **整个丢掉**。结果是线上的方向筛选条恒为 `null`，一期功能对读者
+完全不可见，只能手写 `?topic=` URL。
+
+测试为什么没抓到：`ArticleTopicFacets.test.tsx` 自己 `dispatch({SET_FACET_PAYLOAD, payload})`
+把数据直接塞进 store，**绕过了真实的数据链路**。测的是「有数据时能否渲染」，而不是「数据能否
+抵达」。这是典型的测试替身掩盖空壳。
+
+### 缺陷二：事件跳转落到未筛选的列表
+
+详情页「看这件事的其它报道」→ `updateFilters({eventId})` → `/api/article?event_id=7`。但
+`/api/article` 当时**根本没有 `event_id` 参数**，FastAPI 对未知 query 参数静默忽略，请求返回
+200 和一个完整列表。用户点进去看到的是全部文章，不是同一件事的报道。
+
+`event_id` 当时只接在 `/api/feed/mixed` 上，测试也只覆盖了 feed，没有覆盖前端实际依赖的列表
+路径。
+
+### 修复
+
+1. `useArticleFilters.ts` 补上 `topic_facets` 的搬运。
+2. `/api/article` 增加 `event_id` 参数，套用与 feed 相同的「≥2 个不同来源」门槛，未达标返回 404。
+3. **补的测试都验证过能真的变红**：把两处修复各自回退，新测试分别失败（前端 2 个失败、后端
+   2 个失败），恢复后转绿。这一步是必须的——否则只是又写了一批同类型的无效测试。
+
+### 给后续维护者的教训
+
+- **facet 类组件要测数据抵达，不是测渲染。** 用真实 `apiGet` 的返回值驱动 hook，断言 store
+  里有那个字段。
+- **FastAPI 会静默吞掉未知 query 参数。** 新增前端筛选维度时，必须同时断言「参数确实传到了
+  query 函数」，不能只看 HTTP 200。`tests/test_topic_api.py::ArticleEventRouteTest` 就是这个
+  形状。
+- **「全部测试通过」不构成完成证据。** 本次 1720 + 484 个测试全绿时，两个用户可见功能都是坏的。
+
 ### 边界（不要当成已验证）
 
 - 上文的一致率是**同一输入重复调用的稳定性**，不是准确率。没有人工标注的 ground truth。
@@ -608,7 +649,7 @@ cd frontend && npx tsc --noEmit && npx eslint . --max-warnings 0 && npm run buil
 
 ## 10. 当前状态与下一步
 
-**已完成**（13 个提交，`6336af9..044dbca`）：
+**已完成**（18 个提交，`6336af9..af01de9`）：
 
 | 阶段 | 状态 |
 |---|---|
@@ -621,6 +662,7 @@ cd frontend && npx tsc --noEmit && npx eslint . --max-warnings 0 && npm run buil
 | API：`?topic=` + facets + `topics` 字段 | ✅ |
 | 前端：方向筛选条 + 详情页方向标签 | ✅ |
 | 二期：事件聚类 + 热度 + `?event_id=` + 详情页事件块（可跳转） | ✅ |
+| 审查驳回的两处缺陷已修复 | ✅ 见 §6.6 |
 | `API.md` 与本文档对齐 | ✅ |
 
 **没做**：数据库没有迁移、服务没有重启、没有部署、没有提交任何密钥。
@@ -641,9 +683,9 @@ cd frontend && npx tsc --noEmit && npx eslint . --max-warnings 0 && npm run buil
 如果以后要重新验证，命令是：
 
 ```bash
-uv run pytest -q                      # 1720 passed, 14 skipped
+uv run pytest -q                      # 1724 passed, 14 skipped
 uv run ruff check hippo tests         # All checks passed
-cd frontend && npm run build          # tsc -b && vite build（484 个前端测试用 npm test）
+cd frontend && npm test && npm run build   # 487 tests, tsc -b && vite build
 ```
 
 **本次没有部署，也没有在生产库上执行任何迁移。**
