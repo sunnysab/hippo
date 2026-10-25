@@ -47,6 +47,7 @@ from .outline_worker import run_loop as run_outline_loop
 from .report_scheduler import ReportScheduler
 from .storage import open_storage
 from .sync_scheduler import SyncScheduler
+from .topic_worker import run_loop as run_topic_loop
 
 SERVICE_NAME = WEB_SERVICE
 
@@ -198,12 +199,15 @@ def create_app(
             app.state.sync_scheduler = None
             app.state.report_scheduler = None
         outline_task = asyncio.create_task(run_outline_loop())
+        topic_task = asyncio.create_task(run_topic_loop())
         try:
             yield
         finally:
-            outline_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await outline_task
+            for task in (outline_task, topic_task):
+                task.cancel()
+            for task in (outline_task, topic_task):
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
             scheduler = getattr(app.state, 'sync_scheduler', None)
             if scheduler:
                 await scheduler.stop()
