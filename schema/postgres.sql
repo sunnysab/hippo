@@ -778,6 +778,70 @@ CREATE INDEX IF NOT EXISTS idx_api_key_user
 ON api_key (user_id);
 
 -- ============================================================
+-- Content classification: topic vocabulary and event clustering
+--
+-- Shared derived data, shaped like article_outline: cached by content
+-- fingerprint, claimed through a lease, and never allowed to overwrite the
+-- article itself. Authorization always goes through the caller's subscription
+-- (see article_queries), exactly like the outline cache.
+-- ============================================================
+
+-- One topic set per article. An empty fingerprint means "queued but not hashed
+-- yet"; only a ready row carries a usable one. vocabulary_version is a separate
+-- column rather than part of the fingerprint, because a vocabulary change must
+-- be selectable in SQL to requeue the rows behind it.
+CREATE TABLE IF NOT EXISTS article_topic (
+    article_pk INTEGER PRIMARY KEY REFERENCES articles(id) ON DELETE CASCADE,
+    fingerprint TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL CHECK (state IN ('queued', 'processing', 'ready', 'failed')),
+    topics JSONB NOT NULL DEFAULT '[]'::jsonb,
+    slugs TEXT[] NOT NULL DEFAULT '{}',
+    vocabulary_version INTEGER NOT NULL DEFAULT 0,
+    lease_token UUID,
+    model TEXT,
+    error_code TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    CHECK ((state = 'processing') = (lease_token IS NOT NULL))
+);
+
+CREATE INDEX IF NOT EXISTS idx_article_topic_pending
+ON article_topic (updated_at, article_pk) WHERE state IN ('queued', 'processing');
+
+-- Every filter and facet reads slugs, never topics: unnesting a TEXT[] groups
+-- cleanly where a JSONB object array does not. Both columns are written by the
+-- same finish call, so they cannot drift.
+CREATE INDEX IF NOT EXISTS idx_article_topic_slugs
+ON article_topic USING GIN (slugs);
+
+CREATE INDEX IF NOT EXISTS idx_article_topic_vocabulary
+ON article_topic (vocabulary_version);
+
+-- One story, reported by several publishers. The title is mutable because the
+-- model may sharpen it; an event becomes visible only once at least two distinct
+-- biz rows link to it, and that rule is enforced in code, not here.
+CREATE TABLE IF NOT EXISTS article_event (
+    id SERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX IF NOT EXISTS idx_article_event_recent
+ON article_event (last_seen_at DESC);
+
+-- article_pk is the primary key: an article belongs to at most one event, and a
+-- repeated classification cannot link it twice.
+CREATE TABLE IF NOT EXISTS article_event_link (
+    article_pk INTEGER PRIMARY KEY REFERENCES articles(id) ON DELETE CASCADE,
+    event_id INTEGER NOT NULL REFERENCES article_event(id) ON DELETE CASCADE,
+    confidence REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_article_event_link_event
+ON article_event_link (event_id);
+
+
+-- ============================================================
 -- Private knowledge base: knowledge base / document / chunk
 -- ============================================================
 

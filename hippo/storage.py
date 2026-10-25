@@ -48,7 +48,7 @@ from .repositories import (
 )
 from .sync_jobs import SyncJobRepository
 
-SCHEMA_VERSION = '33'
+SCHEMA_VERSION = '34'
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'schema' / 'postgres.sql'
 
