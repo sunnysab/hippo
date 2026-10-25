@@ -825,5 +825,13 @@
   "articles.reference.processing": "抓取中…",
   "articles.reference.ready": "已收录",
   "articles.reference.retry": "重试",
-  "articles.reference.original": "查看原文"
+  "articles.reference.original": "查看原文",
+  "admin.site.vocabulary": "方向词表",
+  "admin.site.vocabularyHint": "文章分类只能从这些方向里选。改动后版本号会自动 +1，已有分类会在后台分批重算。",
+  "admin.site.vocabularyVersion": "当前版本",
+  "admin.site.vocabularyInvalid": "标识只能是小写字母、数字和连字符，名称不能为空",
+  "admin.site.topicSlug": "标识",
+  "admin.site.topicName": "名称",
+  "admin.site.topicAdd": "添加方向",
+  "admin.site.topicRemove": "删除"
 }
