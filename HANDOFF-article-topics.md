@@ -652,7 +652,7 @@ cd frontend && npx tsc --noEmit && npx eslint . --max-warnings 0 && npm run buil
 
 ## 10. 当前状态与下一步
 
-**已完成**（19 个提交，`6336af9..HEAD`）：
+**已完成**（自 `6336af9` 起的连续提交，用 `git log --oneline 6336af9^..HEAD` 查看）：
 
 | 阶段 | 状态 |
 |---|---|
