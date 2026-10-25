@@ -11,6 +11,7 @@ describe('ArticleFilterSummary', () => {
       groupId: 'g1',
       accountBiz: '',
       itemShowType: '',
+      topic: '',
       source: '',
       read: '',
       starred: '',
@@ -38,6 +39,7 @@ describe('ArticleFilterSummary', () => {
       groupId: '',
       accountBiz: 'b1',
       itemShowType: '',
+      topic: '',
       source: '',
       read: '',
       starred: '',
@@ -62,7 +64,7 @@ describe('ArticleFilterSummary', () => {
 
   it('shows the source and an account constraint even when its label is not loaded', () => {
     render(<I18nProvider><ArticleFilterSummary
-      filters={{ groupId: '', accountBiz: 'channel-id', itemShowType: '', source: 'youtube', read: '', starred: '', search: '', sort: '' }}
+      filters={{ groupId: '', accountBiz: 'channel-id', itemShowType: '', topic: '', source: 'youtube', read: '', starred: '', search: '', sort: '' }}
       groupOptions={[]} accountOptions={[]} total={0} />
     </I18nProvider>);
     expect(screen.getByText('YouTube')).toBeTruthy();

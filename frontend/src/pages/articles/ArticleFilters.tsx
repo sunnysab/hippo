@@ -1,5 +1,6 @@
 import { useArticlesState } from '../../store/articles';
 import { useI18n } from '../../i18n';
+import { ArticleTopicFacets } from './ArticleTopicFacets';
 import { ArticleTypeFacets } from './ArticleTypeFacets';
 import type {
   ArticleFiltersState,
@@ -115,6 +116,10 @@ export function ArticleFilters({
               dispatch({ type: 'SET_TYPE_FACETS_EXPANDED', expanded: false });
               onChange({ itemShowType });
             }}
+          />
+          <ArticleTopicFacets
+            activeTopic={filters.topic}
+            onChange={(topic) => onChange({ topic })}
           />
           <button
             className="btn ghost article-reset-btn"

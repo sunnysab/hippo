@@ -124,6 +124,7 @@ describe('visual hierarchy semantics', () => {
           groupId: '1',
           accountBiz: '',
           itemShowType: '',
+          topic: '',
           source: '',
           read: '',
           starred: '',

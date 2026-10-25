@@ -30,6 +30,8 @@ export interface Article {
   read_at: string | null;
   /** When this user starred it; null means not starred. */
   starred_at: string | null;
+  /** Directions, empty until the article has been classified. */
+  topics?: ArticleTopic[];
 }
 
 export interface ArticleContentBlock {
@@ -73,9 +75,21 @@ export interface FacetItem {
   count: number;
 }
 
+export interface TopicFacetItem {
+  slug: string;
+  name: string;
+  count: number;
+}
+
 export interface FacetPayload {
   total: number;
   item_show_type_facets: FacetItem[];
+  topic_facets?: TopicFacetItem[];
+}
+
+export interface ArticleTopic {
+  slug: string;
+  name: string;
 }
 
 interface ArticlesState {

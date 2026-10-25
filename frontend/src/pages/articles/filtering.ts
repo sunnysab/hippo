@@ -7,6 +7,8 @@ export interface ArticleFiltersState {
   groupId: string;
   accountBiz: string;
   itemShowType: string;
+  /** '' for every direction, otherwise a comma-separated slug list (ai,news). */
+  topic: string;
   /** '' for every source, otherwise `accounts.source` (weixin/bilibili/…). */
   source: string;
   /** '' for every article, `unread` for the unread box. */
@@ -37,6 +39,7 @@ export const areArticleFiltersEqual = (
   left.groupId === right.groupId &&
   left.accountBiz === right.accountBiz &&
   left.itemShowType === right.itemShowType &&
+  left.topic === right.topic &&
   left.source === right.source &&
   left.read === right.read &&
   left.starred === right.starred &&
@@ -57,6 +60,7 @@ export const buildArticleRouteStateFromSearchParams = (
       groupId: searchParams.get('group') || '',
       accountBiz: searchParams.get('account') || '',
       itemShowType: searchParams.get('type') || '',
+      topic: searchParams.get('topic') || '',
       source: searchParams.get('source') || '',
       read: searchParams.get('read') || '',
       starred: searchParams.get('starred') || '',
@@ -76,6 +80,7 @@ export const buildArticleSearchParams = (
   if (filters.groupId) params.set('group', filters.groupId);
   if (filters.accountBiz) params.set('account', filters.accountBiz);
   if (filters.itemShowType) params.set('type', filters.itemShowType);
+  if (filters.topic) params.set('topic', filters.topic);
   if (filters.source) params.set('source', filters.source);
   if (filters.read) params.set('read', filters.read);
   if (filters.starred) params.set('starred', filters.starred);

@@ -833,5 +833,7 @@
   "admin.site.topicSlug": "标识",
   "admin.site.topicName": "名称",
   "admin.site.topicAdd": "添加方向",
-  "admin.site.topicRemove": "删除"
+  "admin.site.topicRemove": "删除",
+  "filters.allTopics": "全部方向",
+  "articles.meta.directions": "方向"
 }

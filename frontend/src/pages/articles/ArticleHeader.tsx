@@ -13,6 +13,8 @@ export function ArticleHeader({ article }: ArticleHeaderProps) {
 
   const avatarUrl = article.account_avatar_url || '';
   const sourceLabel = getSourceLabel(article.source, t);
+  // Absent until the background classifier has seen this article.
+  const topics = Array.isArray(article.topics) ? article.topics : [];
 
   return (
     <div className="article-header">
@@ -46,6 +48,16 @@ export function ArticleHeader({ article }: ArticleHeaderProps) {
             <span className="article-preview-label">{t('articles.meta.publishedAt', 'Published')}</span>
             <span className="article-preview-value">{formatDateTime(article.publish_at || article.created_at)}</span>
           </div>
+          {topics.length ? (
+            <div className="article-preview-item">
+              <span className="article-preview-label">{t('articles.meta.directions', '方向')}</span>
+              <span className="article-preview-value article-preview-topics">
+                {topics.map((topic) => (
+                  <span className="topic-chip" key={topic.slug}>{topic.name}</span>
+                ))}
+              </span>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

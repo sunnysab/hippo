@@ -8,6 +8,7 @@ const filters = (overrides: Partial<ArticleFiltersState> = {}): ArticleFiltersSt
   groupId: '',
   accountBiz: '',
   itemShowType: '',
+  topic: '',
   source: '',
   read: '',
   starred: '',

@@ -25,6 +25,7 @@ export function useArticleFilters() {
     groupId: routeGroupId,
     accountBiz: routeAccountBiz,
     itemShowType: routeItemShowType,
+    topic: routeTopic,
     source: routeSource,
     read: routeRead,
     starred: routeStarred,
@@ -131,6 +132,7 @@ export function useArticleFilters() {
       if (nextFilters.groupId) url.searchParams.set('group_id', nextFilters.groupId);
       if (nextFilters.accountBiz) url.searchParams.set('biz', nextFilters.accountBiz);
       if (nextFilters.itemShowType) url.searchParams.set('item_show_type', nextFilters.itemShowType);
+      if (nextFilters.topic) url.searchParams.set('topic', nextFilters.topic);
       if (nextFilters.source) url.searchParams.set('source', nextFilters.source);
       if (nextFilters.read) url.searchParams.set('read', nextFilters.read);
       if (nextFilters.starred) url.searchParams.set('starred', nextFilters.starred);
@@ -273,6 +275,7 @@ export function useArticleFilters() {
       groupId: '',
       accountBiz: '',
       itemShowType: '',
+      topic: '',
       source: '',
       read: '',
       starred: '',
@@ -349,6 +352,7 @@ export function useArticleFilters() {
         groupId: routeGroupId,
         accountBiz: routeAccountBiz,
         itemShowType: routeItemShowType,
+    topic: routeTopic,
         source: routeSource,
         read: routeRead,
         starred: routeStarred,
@@ -375,6 +379,7 @@ export function useArticleFilters() {
     routeState.articleId,
     routeGroupId,
     routeItemShowType,
+    routeTopic,
     routeSource,
     routeRead,
     routeStarred,
@@ -405,6 +410,7 @@ export function useArticleFilters() {
       groupId: filters.groupId,
       accountBiz: filters.accountBiz,
       itemShowType: filters.itemShowType,
+      topic: filters.topic,
       source: filters.source,
       read: filters.read,
       starred: filters.starred,
@@ -417,6 +423,7 @@ export function useArticleFilters() {
     filters.accountBiz,
     filters.groupId,
     filters.itemShowType,
+    filters.topic,
     filters.source,
     filters.read,
     filters.starred,

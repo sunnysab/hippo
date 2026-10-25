@@ -10,6 +10,7 @@ const filters = (overrides: Partial<ArticleFiltersState> = {}): ArticleFiltersSt
   groupId: '',
   accountBiz: '',
   itemShowType: '',
+  topic: '',
   source: '',
   read: '',
   starred: '',
@@ -32,5 +33,33 @@ describe('source filter', () => {
 
   it('counts as a difference, so the list actually reloads', () => {
     expect(areArticleFiltersEqual(filters(), filters({ source: 'podcast' }))).toBe(false);
+  });
+});
+
+describe('topic filter', () => {
+  it('round-trips through the URL so a filter is shareable', () => {
+    const params = buildArticleSearchParams(filters({ topic: 'ai,news' }));
+
+    expect(params.get('topic')).toBe('ai,news');
+    expect(buildArticleRouteStateFromSearchParams(params).filters.topic).toBe('ai,news');
+  });
+
+  it('stays out of the URL when no direction is selected', () => {
+    expect(buildArticleSearchParams(filters()).get('topic')).toBeNull();
+    expect(buildArticleRouteStateFromSearchParams(new URLSearchParams()).filters.topic).toBe('');
+  });
+
+  it('counts as a difference, so the list actually reloads', () => {
+    expect(areArticleFiltersEqual(filters(), filters({ topic: 'ai' }))).toBe(false);
+    expect(areArticleFiltersEqual(filters({ topic: 'ai' }), filters({ topic: 'ai' }))).toBe(true);
+    // Order is part of the value: the facet component writes vocabulary order.
+    expect(areArticleFiltersEqual(filters({ topic: 'ai,news' }), filters({ topic: 'news,ai' }))).toBe(false);
+  });
+
+  it('coexists with the layout type filter', () => {
+    const params = buildArticleSearchParams(filters({ itemShowType: '5', topic: 'ai' }));
+
+    expect(params.get('type')).toBe('5');
+    expect(params.get('topic')).toBe('ai');
   });
 });

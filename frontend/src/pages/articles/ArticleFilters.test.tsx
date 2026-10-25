@@ -10,6 +10,7 @@ const filters: ArticleFiltersState = {
   groupId: '',
   accountBiz: '',
   itemShowType: '',
+  topic: '',
   source: '',
   read: '',
   starred: '',

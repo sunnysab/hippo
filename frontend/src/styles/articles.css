@@ -1743,3 +1743,21 @@ mark.hippo-highlight:hover {
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* Directions on an article header: read-only chips, not a control. */
+.article-preview-topics {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.topic-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+  white-space: nowrap;
+}
