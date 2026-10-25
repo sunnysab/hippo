@@ -162,7 +162,12 @@ class TopicRepository:
             return await cur.fetchone()
 
     async def event_of(self, article_pk: int) -> dict[str, Any] | None:
-        """The visible event this article belongs to, if any."""
+        """The event this article is linked to, whether or not it is visible yet.
+
+        Deliberately unscoped: the caller needs the id before it can ask whether
+        *this reader* may see the event. Never show this title directly -- pass the
+        id to ``public_event``, which applies the threshold and the subscription.
+        """
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """SELECT e.id, e.title FROM article_event_link l
