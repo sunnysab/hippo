@@ -9,7 +9,7 @@
 随代码漂移，按**文件名和函数名**找，不要按行号找。
 
 - `SCHEMA_VERSION` 已从 `'33'` 提到 `'34'`。
-- 后端：**1725 passed, 14 skipped**，`ruff check hippo tests` 通过。
+- 后端：**1743 passed, 14 skipped**，`ruff check hippo tests` 通过。
 - 前端：**487 passed / 62 files**，`tsc -b`、`eslint --max-warnings 0`、`npm run build` 全通过。
 - 审查补记：首轮交付被独立审查驳回，理由是两条「测试全绿但真实链路不通」的缺陷，见 §6.6。
 
@@ -600,6 +600,48 @@ cd frontend && npx tsc --noEmit && npx eslint . --max-warnings 0 && npm run buil
   形状。
 - **「全部测试通过」不构成完成证据。** 本次 1720 + 484 个测试全绿时，两个用户可见功能都是坏的。
 
+## 6.7 第二次审查驳回：候选清单与可见门槛被混成一条
+
+第二次审查驳回了交付，理由是**二期在真实链路上一次都不可能生效**：
+
+`candidates()` 带着 `HAVING COUNT(DISTINCT a.biz) >= 2`。而新建事件按定义只有 1 个来源，
+于是它永远进不了候选；进不了候选就没有文章能 join；没有 join 就永远到不了 2 个来源。
+**闭环死锁**——详情页事件块、`?event_id=`、热度指标全部是不可达代码。
+
+而当时的测试把缺陷写成了正确行为：断言 `candidates() == []`，然后直接调 `attach_event()`
+伪造第二个来源——`attach_event` 在生产的这条路径上根本不会被调用。这又一次是「单元测试
+全绿，真实链路不通」。
+
+**修复**：把两条规则拆开。
+
+- **可见性**（`public_event` 的 `HAVING >= 2`）：面向读者的门，决定「算不算一件事」。
+- **候选资格**（`candidates`）：面向模型的门，只按窗口和条数裁剪，**不设来源数门槛**。
+
+这正是设计稿 §4 原本写的「≥2 由代码决定**建/显示**，而不是候选资格」——是实现时偏离了设计。
+
+修复后按 worker 的真实顺序跑真实仓储 + 真实模型：
+
+```
+new #2   候选=1   财新        中国临时实施氦气出口禁令
+join #2  候选=2   半导体芯闻   突发，氦气临时禁止出口
+join #2  候选=2   中国基金报   商务部、海关总署：决定对氦气实施临时禁止出口管理
+→ 事件 #2：3 来源 / 3 篇，从不可见变为可见
+```
+
+### 顺带修掉的第二个问题：PROMPT_VERSION 提升不会重排
+
+文档声称提升 `PROMPT_VERSION` 可以全量重刷，但 `requeue_stale` 只比较 `vocabulary_version`，
+而指纹无法在 SQL 里比较（需要文章标题和摘要）。**加了一列 `prompt_version`**，两列都参与
+重排比较，`finish` 记录生成时用的版本。
+
+### 教训
+
+- **「可见门槛」和「候选门槛」不是同一个东西。** 任何「先聚合、聚合到 N 个再展示」的设计，
+  都必须保证聚合过程中候选可见，否则就是死锁。
+- **测试里不要直接调用生产路径不会调用的函数。** `attach_event` 应该只能经由候选→join 到达，
+  测试也必须走这条路，否则测试在给缺陷背书。
+- 版本号如果参与缓存失效，就必须有**能在存储层比较**的列，否则「提升版本号」是个空操作。
+
 ### 边界（不要当成已验证）
 
 - 上文的一致率是**同一输入重复调用的稳定性**，不是准确率。没有人工标注的 ground truth。
@@ -666,6 +708,7 @@ cd frontend && npx tsc --noEmit && npx eslint . --max-warnings 0 && npm run buil
 | 前端：方向筛选条 + 详情页方向标签 | ✅ |
 | 二期：事件聚类 + 热度 + `?event_id=` + 详情页事件块（可跳转） | ✅ |
 | 审查驳回的两处缺陷已修复 | ✅ 见 §6.6 |
+| 第二次驳回：事件候选死锁 + PROMPT_VERSION 空操作已修复 | ✅ 见 §6.7 |
 | `API.md` 与本文档对齐 | ✅ |
 
 **没做**：数据库没有迁移、服务没有重启、没有部署、没有提交任何密钥。
@@ -686,7 +729,7 @@ cd frontend && npx tsc --noEmit && npx eslint . --max-warnings 0 && npm run buil
 如果以后要重新验证，命令是：
 
 ```bash
-uv run pytest -q                      # 1725 passed, 14 skipped
+uv run pytest -q                      # 1743 passed, 14 skipped
 uv run ruff check hippo tests         # All checks passed
 cd frontend && npm test && npm run build   # 487 tests, tsc -b && vite build
 ```
