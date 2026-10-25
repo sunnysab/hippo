@@ -110,16 +110,26 @@ def _tree(tmp_path: Path, *, dist: str = 'complete') -> Path:
     return tree
 
 
-def _run(tree: Path, fake_bin: Path, log: Path, *, fail_on: str = '', skip_build: bool = False):
+def _run(
+    tree: Path,
+    fake_bin: Path,
+    log: Path,
+    *,
+    fail_on: str = '',
+    skip_build: bool = False,
+    backup_database: bool = False,
+):
     env = dict(os.environ)
     env['PATH'] = f'{fake_bin}{os.pathsep}{env["PATH"]}'
     env['FAKE_LOG'] = str(log)
-    env.pop('FAKE_FAIL_ON', None)
-    env.pop('SKIP_FRONTEND_BUILD', None)
+    for key in ('FAKE_FAIL_ON', 'SKIP_FRONTEND_BUILD', 'BACKUP_DATABASE'):
+        env.pop(key, None)
     if fail_on:
         env['FAKE_FAIL_ON'] = fail_on
     if skip_build:
         env['SKIP_FRONTEND_BUILD'] = '1'
+    if backup_database:
+        env['BACKUP_DATABASE'] = '1'
     return subprocess.run(
         ['bash', str(DEPLOY_SH)],
         cwd=tree,
@@ -266,10 +276,13 @@ def test_dist_that_names_a_stale_asset_is_refused(tmp_path):
 
 
 def test_failure_never_points_at_overwriting_production(tmp_path):
+    """A requested dump is offered for inspection in a new database, never restored here."""
     tree = _tree(tmp_path)
     fake_bin, log = _fake_bin(tmp_path)
 
-    result = _run(tree, fake_bin, log, fail_on='init-db', skip_build=True)
+    # The recovery guidance only mentions the snapshot when one was asked for;
+    # a routine deploy backs up code and config alone.
+    result = _run(tree, fake_bin, log, fail_on='init-db', skip_build=True, backup_database=True)
 
     assert result.returncode != 0
     assert 'hippo.ops init-db' in result.stderr
@@ -277,6 +290,21 @@ def test_failure_never_points_at_overwriting_production(tmp_path):
     assert 'pg_restore' not in result.stderr
     assert '--clean' not in result.stderr
     assert '--clean' not in DEPLOY_SH.read_text()
+
+
+def test_routine_failure_promises_no_snapshot(tmp_path):
+    """No dump was taken, so the recovery text must not offer one to inspect."""
+    tree = _tree(tmp_path)
+    fake_bin, log = _fake_bin(tmp_path)
+
+    result = _run(tree, fake_bin, log, fail_on='init-db', skip_build=True)
+
+    assert result.returncode != 0
+    assert 'hippo.ops init-db' in result.stderr
+    assert 'the services stay DOWN on purpose' in result.stderr
+    # Nothing was dumped, so there is nothing to restore anywhere.
+    assert 'NEW database' not in result.stderr
+    assert 'pg_restore' not in result.stderr
 
 
 def test_url_dsn_reaches_pg_dump_through_the_environment(tmp_path):
