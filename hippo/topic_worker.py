@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .exceptions import ApiError
-from .llm.client import resolve_provider
+from .llm.client import LlmUnavailableError, resolve_provider
 from .logger import get_logger
 from .site_settings import get_site_settings
 from .storage import open_storage
@@ -90,7 +90,18 @@ async def run_once() -> bool:
                 return True
 
             async with open_storage() as storage:
-                provider = await resolve_provider(storage)
+                try:
+                    provider = await resolve_provider(storage)
+                except LlmUnavailableError:
+                    # No provider is an operator problem, not a verdict about this
+                    # article. Publishing a `failed` row here would mark every
+                    # article permanent dead: `failed` is not retried, so the whole
+                    # backlog would stay unclassified after the provider is added.
+                    # Put the row back and stop this tick instead.
+                    async with open_storage() as storage, storage.transaction():
+                        await storage.topics.release(claim)
+                    logger.warning('topic_provider_unavailable')
+                    return False
                 candidates = await storage.topics.candidates()
             topics, event = await classify(
                 provider,

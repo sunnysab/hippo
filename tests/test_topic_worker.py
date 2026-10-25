@@ -198,3 +198,29 @@ class PromptVersionTest(TopicWorkerTest):
     async def test_a_published_row_records_the_prompt_version_that_produced_it(self):
         await worker.run_once()
         self.assertEqual(worker.PROMPT_VERSION, self.repo.finish.await_args.kwargs['prompt_version'])
+
+class NoProviderTest(TopicWorkerTest):
+    """A missing provider must pause the queue, not kill every article in it."""
+
+    async def test_a_missing_provider_releases_the_row_instead_of_failing_it(self):
+        from hippo.llm.client import LlmUnavailableError
+
+        with patch.object(worker, 'resolve_provider', AsyncMock(side_effect=LlmUnavailableError('没有 provider'))):
+            worked = await worker.run_once()
+
+        # Not worked: the loop sleeps instead of spinning through the backlog.
+        self.assertFalse(worked)
+        # The row goes back to the queue: `failed` is never retried, so marking it
+        # would strand every article once the provider is finally configured.
+        self.repo.release.assert_awaited_once_with(self.claim)
+        self.repo.finish.assert_not_awaited()
+        self.classify.assert_not_awaited()
+
+    async def test_the_row_is_not_consumed_so_it_is_classified_later(self):
+        from hippo.llm.client import LlmUnavailableError
+
+        with patch.object(worker, 'resolve_provider', AsyncMock(side_effect=LlmUnavailableError('没有 provider'))):
+            await worker.run_once()
+
+        # Nothing was written about the article itself.
+        self.repo.finish.assert_not_awaited()
