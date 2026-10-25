@@ -167,6 +167,7 @@ export function useArticleFilters() {
           // Dropping this left the direction bar permanently empty: the component
           // renders nothing without a payload, so the filter never appeared at all.
           topic_facets: (payload.topic_facets || []) as TopicFacetItem[],
+          classified_total: Number(payload.classified_total || 0),
         },
       });
     } catch (error) {

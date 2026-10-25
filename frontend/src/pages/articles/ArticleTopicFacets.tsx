@@ -24,7 +24,9 @@ export function ArticleTopicFacets({ activeTopic, onChange }: ArticleTopicFacets
   if (!facets.length) return null;
 
   const active = new Set(activeTopic ? activeTopic.split(',') : []);
-  const total = facets.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
+  // Not the sum of the per-direction counts: an article may carry two directions
+  // and would then be counted twice.
+  const total = Number(state.lastFacetPayload?.classified_total || 0);
 
   const toggle = (slug: string) => {
     const next = new Set(active);

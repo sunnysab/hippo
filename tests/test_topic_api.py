@@ -89,7 +89,10 @@ class FacetTest(unittest.IsolatedAsyncioTestCase):
             seen['params'] = params
             return []
 
-        with patch.object(article_queries, 'fetchall_rows', fake_fetchall):
+        with (
+            patch.object(article_queries, 'fetchall_rows', fake_fetchall),
+            patch.object(article_queries, 'fetchone_row', AsyncMock(return_value={'total': 0})),
+        ):
             await article_queries._article_topic_facets(
                 storage=SimpleNamespace(),
                 user_id=7,
@@ -114,8 +117,11 @@ class FacetTest(unittest.IsolatedAsyncioTestCase):
             {'slug': 'retired-direction', 'total': 2},
             {'slug': 'news', 'total': 1},
         ]
-        with patch.object(article_queries, 'fetchall_rows', AsyncMock(return_value=rows)):
-            facets = await article_queries._article_topic_facets(
+        with (
+            patch.object(article_queries, 'fetchall_rows', AsyncMock(return_value=rows)),
+            patch.object(article_queries, 'fetchone_row', AsyncMock(return_value={'total': 0})),
+        ):
+            facets, _total = await article_queries._article_topic_facets(
                 storage=SimpleNamespace(),
                 user_id=1,
                 group_ids=None,
@@ -133,8 +139,11 @@ class FacetTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_facets_follow_vocabulary_order_not_count_order(self):
         rows = [{'slug': 'news', 'total': 9}, {'slug': 'research', 'total': 1}]
-        with patch.object(article_queries, 'fetchall_rows', AsyncMock(return_value=rows)):
-            facets = await article_queries._article_topic_facets(
+        with (
+            patch.object(article_queries, 'fetchall_rows', AsyncMock(return_value=rows)),
+            patch.object(article_queries, 'fetchone_row', AsyncMock(return_value={'total': 0})),
+        ):
+            facets, _total = await article_queries._article_topic_facets(
                 storage=SimpleNamespace(),
                 user_id=1,
                 group_ids=None,
@@ -176,28 +185,40 @@ class AttachTopicsTest(unittest.IsolatedAsyncioTestCase):
 
 
 class ListTotalTest(unittest.IsolatedAsyncioTestCase):
-    async def test_selecting_a_direction_costs_one_more_count(self):
+    async def test_selecting_a_direction_counts_the_filtered_set(self):
         facet_rows = [{'item_show_type': 0, 'total': 9, 'grand_total': 9}]
         with (
             patch.object(article_queries, 'fetchall_rows', AsyncMock(side_effect=[[], [], facet_rows])),
+            # Two counts now: the classified total for the direction bar, then the
+            # filtered total because a direction is selected.
             patch.object(article_queries, 'fetchone_row', AsyncMock(return_value={'total': 2})) as count,
         ):
             result = await _list_articles(SimpleNamespace(), **_list_kwargs(topics=['ai']))
 
         # The facet total ignores its own filter, so it cannot be the answer here.
-        count.assert_awaited_once()
+        self.assertEqual(2, count.await_count)
         self.assertEqual(2, result['total'])
 
     async def test_without_a_direction_filter_the_facet_total_is_still_the_answer(self):
         facet_rows = [{'item_show_type': 0, 'total': 9, 'grand_total': 9}]
         with (
             patch.object(article_queries, 'fetchall_rows', AsyncMock(side_effect=[[], [], facet_rows])),
-            patch.object(article_queries, 'fetchone_row', AsyncMock()) as count,
+            patch.object(article_queries, 'fetchone_row', AsyncMock(return_value={'total': 0})),
         ):
             result = await _list_articles(SimpleNamespace(), **_list_kwargs())
 
-        count.assert_not_awaited()
         self.assertEqual(9, result['total'])
+
+    async def test_the_classified_total_is_reported_for_the_all_directions_bar(self):
+        with (
+            patch.object(article_queries, 'fetchall_rows', AsyncMock(side_effect=[[], [], []])),
+            patch.object(article_queries, 'fetchone_row', AsyncMock(return_value={'total': 4})),
+        ):
+            result = await _list_articles(SimpleNamespace(), **_list_kwargs())
+
+        # Not the sum of the per-slug counts: an article with two directions is
+        # still one article.
+        self.assertEqual(4, result['classified_total'])
 
 
 class RouteTest(unittest.TestCase):
@@ -443,3 +464,66 @@ class EndToEndFacetPipelineTest(unittest.IsolatedAsyncioTestCase):
             body['topic_facets'],
         )
         self.assertEqual([{'slug': 'ai', 'name': '人工智能'}], body['articles'][0]['topics'])
+
+
+class FacetAppliesOtherFiltersTest(unittest.IsolatedAsyncioTestCase):
+    """A facet ignores its own filter and every other filter still applies."""
+
+    async def _capture(self, **kwargs) -> list[str]:
+        seen = []
+
+        async def fake_fetchall(storage, sql, params, **kw):
+            seen.append(sql)
+            return []
+
+        with (
+            patch.object(article_queries, 'fetchall_rows', fake_fetchall),
+            patch.object(article_queries, 'fetchone_row', AsyncMock(return_value={'total': 0})),
+        ):
+            await article_queries._article_topic_facets(
+                storage=SimpleNamespace(),
+                user_id=1,
+                group_ids=None,
+                biz=None,
+                query=None,
+                exclude_keywords=None,
+                since_ts=None,
+                until_ts=None,
+                vocabulary=VOCABULARY,
+                **kwargs,
+            )
+        return seen
+
+    async def test_the_direction_facet_applies_the_event_filter(self):
+        sql = (await self._capture(event_id=7))[0]
+        self.assertIn('article_event_link', sql)
+        # ...but not the direction filter itself, or the bars would be empty while
+        # a direction is selected.
+        self.assertNotIn('&&', sql)
+
+    async def test_the_layout_facet_applies_both_the_event_and_direction_filters(self):
+        seen = []
+
+        async def fake_fetchall(storage, sql, params, **kw):
+            seen.append(sql)
+            return []
+
+        with (
+            patch.object(article_queries, 'fetchall_rows', fake_fetchall),
+            patch.object(article_queries, 'fetchone_row', AsyncMock(return_value={'total': 0})),
+        ):
+            await article_queries._article_item_show_type_facets(
+                storage=SimpleNamespace(),
+                user_id=1,
+                group_ids=None,
+                biz=None,
+                query=None,
+                exclude_keywords=None,
+                since_ts=None,
+                until_ts=None,
+                topics=['ai'],
+                event_id=7,
+            )
+
+        self.assertIn('article_event_link', seen[0])
+        self.assertIn('&&', seen[0])

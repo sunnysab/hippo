@@ -81,8 +81,10 @@ class ArticleEventOut(BaseModel):
 
     id: int
     title: str
-    article_count: int = Field(description='Reports in this event the caller can see.')
-    source_count: int = Field(description='Distinct publishers; always at least two.')
+    article_count: int = Field(description='Reports of this event inside the caller\'s subscriptions.')
+    source_count: int = Field(
+        description='Distinct publishers the caller follows; always at least two, or no event is returned.'
+    )
 
 
 class ArticleOut(BaseModel):
@@ -162,6 +164,11 @@ class ArticleListOut(BaseModel):
     topic_facets: list[ArticleTopicFacetOut] = Field(
         default_factory=list,
         description='Counts per direction over the caller\'s visible articles, ignoring the direction filter.',
+    )
+    classified_total: int = Field(
+        default=0,
+        description='Articles with a direction, counted once each. Not the sum of topic_facets: '
+        'an article may carry two directions.',
     )
 
 

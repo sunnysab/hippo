@@ -54,8 +54,10 @@ class TotalMatchesFacetsTest(unittest.IsolatedAsyncioTestCase):
             result['total'],
             sum(facet['count'] for facet in result['item_show_type_facets']),
         )
-        # No second count: the whole point of the window function.
-        count.assert_not_awaited()
+        # One count for the direction bar's article total, and no *second* count for
+        # the list itself: that is still the whole point of the window function.
+        self.assertEqual(1, count.await_count)
+        self.assertEqual(3, result['classified_total'])
 
     async def test_an_unknown_layout_type_still_counts_towards_the_total(self) -> None:
         # The facet list drops types it does not render; the window total must not.
@@ -66,13 +68,14 @@ class TotalMatchesFacetsTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(article_queries, 'fetchall_rows', AsyncMock(side_effect=[[], [], facet_rows])),
-            patch.object(article_queries, 'fetchone_row', AsyncMock()) as count,
+            patch.object(article_queries, 'fetchone_row', AsyncMock(return_value={'total': 0})) as count,
         ):
             result = await _list_articles(SimpleNamespace(), **_list_kwargs())
 
         self.assertEqual(4, result['total'])
         self.assertEqual([{'item_show_type': 0, 'count': 2}], result['item_show_type_facets'])
-        count.assert_not_awaited()
+        # Only the direction bar's article total is counted here.
+        self.assertEqual(1, count.await_count)
 
     async def test_selecting_a_layout_type_counts_that_type(self) -> None:
         facet_rows = [{'item_show_type': 0, 'total': 9, 'grand_total': 9}]
@@ -84,7 +87,9 @@ class TotalMatchesFacetsTest(unittest.IsolatedAsyncioTestCase):
             result = await _list_articles(SimpleNamespace(), **_list_kwargs(item_show_type=5))
 
         self.assertEqual(4, result['total'])
-        count.assert_awaited_once()
+        # Two counts: the direction bar's article total, then the filtered total
+        # that a selected layout type requires.
+        self.assertEqual(2, count.await_count)
 
 
 if __name__ == '__main__':

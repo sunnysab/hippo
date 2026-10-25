@@ -533,6 +533,7 @@ async def _article_item_show_type_facets(
     starred_only: bool = False,
     sources: list[str] | None = None,
     topics: list[str] | None = None,
+    event_id: int | None = None,
 ) -> tuple[list[dict[str, int]], int]:
     """Distribution by layout type, plus the size of the whole set.
 
@@ -554,6 +555,7 @@ async def _article_item_show_type_facets(
         starred_only=starred_only,
         sources=sources,
         topics=topics,
+        event_id=event_id,
     )
     state_join = f'{READ_STATE_JOIN if unread_only else ""}{STAR_JOIN if starred_only else ""}'
     state_params = [user_id] * ((1 if unread_only else 0) + (1 if starred_only else 0))
@@ -610,6 +612,62 @@ async def _attach_topics(storage: PostgresStorage, rows: list[dict[str, Any]]) -
         row['topics'] = by_pk.get(row['id'], [])
 
 
+async def _count_classified_articles(
+    *,
+    storage: PostgresStorage,
+    user_id: int,
+    group_ids: list[int] | None,
+    biz: str | None,
+    query: str | None,
+    exclude_keywords: list[str] | None,
+    since_ts: int | None,
+    until_ts: int | None,
+    article_id: str | None = None,
+    unread_only: bool = False,
+    starred_only: bool = False,
+    sources: list[str] | None = None,
+    event_id: int | None = None,
+) -> int:
+    """How many *classified* articles match, counted once each.
+
+    The direction bars cannot be summed for their own "all" figure: an article with
+    two directions appears in two of them. Counting articles instead of labels is a
+    different question and needs its own query.
+    """
+    where_sql, params, _tsquery_sql, _tsquery_params = _build_article_where_clause(
+        group_ids=group_ids,
+        biz=biz,
+        item_show_type=None,
+        query=query,
+        exclude_keywords=exclude_keywords,
+        since_ts=since_ts,
+        until_ts=until_ts,
+        article_id=article_id,
+        unread_only=unread_only,
+        starred_only=starred_only,
+        sources=sources,
+        topics=None,
+        event_id=event_id,
+    )
+    state_join = f'{READ_STATE_JOIN if unread_only else ""}{STAR_JOIN if starred_only else ""}'
+    state_params = [user_id] * ((1 if unread_only else 0) + (1 if starred_only else 0))
+    accounts_join = ACCOUNTS_JOIN if sources else ''
+    row = await fetchone_row(
+        storage,
+        (
+            'SELECT COUNT(DISTINCT a.id) AS total FROM articles a'
+            f'{accounts_join}'
+            f'{SUBSCRIPTION_JOIN}'
+            f'{state_join}'
+            " JOIN article_topic t ON t.article_pk = a.id AND t.state = 'ready'"
+            f' {where_sql}'
+        ),
+        [user_id, *state_params, *params],
+        normalize=_normalize_record,
+    )
+    return int((row or {}).get('total') or 0)
+
+
 async def _article_topic_facets(
     *,
     storage: PostgresStorage,
@@ -625,11 +683,14 @@ async def _article_topic_facets(
     unread_only: bool = False,
     starred_only: bool = False,
     sources: list[str] | None = None,
-) -> list[dict[str, Any]]:
+    event_id: int | None = None,
+) -> tuple[list[dict[str, Any]], int]:
     """How many of the reader's visible articles carry each direction.
 
-    ``topics`` is deliberately not a parameter: a facet ignores its own filter, so
-    the counts stay comparable while a direction is selected. The WHERE clause is
+    ``topics`` is deliberately not a parameter: a facet ignores *its own* filter,
+    so the counts stay comparable while a direction is selected. Every other
+    filter -- including ``event_id`` -- does apply, or the numbers would describe a
+    different set of articles than the list underneath them. The WHERE clause is
     the same one the list uses, which is what keeps other people's subscriptions
     out of the numbers.
     """
@@ -646,6 +707,7 @@ async def _article_topic_facets(
         starred_only=starred_only,
         sources=sources,
         topics=None,
+        event_id=event_id,
     )
     state_join = f'{READ_STATE_JOIN if unread_only else ""}{STAR_JOIN if starred_only else ""}'
     state_params = [user_id] * ((1 if unread_only else 0) + (1 if starred_only else 0))
@@ -666,6 +728,21 @@ async def _article_topic_facets(
         [user_id, *state_params, *params],
         normalize=_normalize_record,
     )
+    classified_total = await _count_classified_articles(
+        storage=storage,
+        user_id=user_id,
+        group_ids=group_ids,
+        biz=biz,
+        query=query,
+        exclude_keywords=exclude_keywords,
+        since_ts=since_ts,
+        until_ts=until_ts,
+        article_id=article_id,
+        unread_only=unread_only,
+        starred_only=starred_only,
+        sources=sources,
+        event_id=event_id,
+    )
     # Names come from the vocabulary, never from the stored payload: an admin who
     # renames a direction expects the filter to follow immediately.
     names = {topic['slug']: topic['name'] for topic in vocabulary.get('topics') or []}
@@ -676,7 +753,7 @@ async def _article_topic_facets(
     ]
     order = {topic['slug']: index for index, topic in enumerate(vocabulary.get('topics') or [])}
     facets.sort(key=lambda item: (order.get(item['slug'], 999), -item['count']))
-    return facets
+    return facets, classified_total
 
 
 async def _list_articles(
@@ -729,7 +806,7 @@ async def _list_articles(
         row['account_avatar_url'] = f'/api/account/{row["biz"]}/avatar'
     await _attach_topics(storage, rows)
     vocabulary = vocabulary or {}
-    topic_facets = await _article_topic_facets(
+    topic_facets, classified_total = await _article_topic_facets(
         storage=storage,
         user_id=user_id,
         group_ids=group_ids,
@@ -743,6 +820,7 @@ async def _list_articles(
         unread_only=unread_only,
         starred_only=starred_only,
         sources=sources,
+        event_id=event_id,
     )
     item_show_type_facets, facet_total = await _article_item_show_type_facets(
         storage=storage,
@@ -757,6 +835,7 @@ async def _list_articles(
         unread_only=unread_only,
         starred_only=starred_only,
         sources=sources,
+        event_id=event_id,
     )
     # The facets ignore their own filter, so their total is the answer unless one
     # of them is selected — only then is a second count worth its cost.
@@ -787,6 +866,7 @@ async def _list_articles(
         'total': total,
         'item_show_type_facets': item_show_type_facets,
         'topic_facets': topic_facets,
+        'classified_total': classified_total,
     }
 
 

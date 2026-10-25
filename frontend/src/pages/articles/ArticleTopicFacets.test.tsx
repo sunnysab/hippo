@@ -13,6 +13,9 @@ const payload: FacetPayload = {
     { slug: 'ai', name: '人工智能', count: 6 },
     { slug: 'news', name: '新闻与时事', count: 4 },
   ],
+  // Deliberately not 6 + 4: one article may carry two directions, so counting once
+  // per article gives a smaller number than summing the bars.
+  classified_total: 8,
 };
 
 /** Seeds the shared facet payload the component reads, then renders it. */
@@ -42,6 +45,14 @@ describe('ArticleTopicFacets', () => {
     expect(screen.getByText('新闻与时事')).toBeTruthy();
     expect(screen.getByText('6')).toBeTruthy();
     expect(screen.getByText('4')).toBeTruthy();
+  });
+
+  it('shows the all-directions count as articles, not the sum of the bars', () => {
+    renderWith('');
+    const all = screen.getByText('全部方向').closest('button')!;
+    // 8, not 6 + 4 = 10: an article with two directions is still one article.
+    expect(all.textContent).toContain('8');
+    expect(all.textContent).not.toContain('10');
   });
 
   it('renders nothing before a facet payload arrives', () => {

@@ -94,6 +94,8 @@ export interface FacetPayload {
   total: number;
   item_show_type_facets: FacetItem[];
   topic_facets?: TopicFacetItem[];
+  /** Classified articles, counted once each; not the sum of topic_facets. */
+  classified_total?: number;
 }
 
 export interface ArticleTopic {
