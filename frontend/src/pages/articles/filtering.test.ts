@@ -11,6 +11,7 @@ const filters = (overrides: Partial<ArticleFiltersState> = {}): ArticleFiltersSt
   accountBiz: '',
   itemShowType: '',
   topic: '',
+  eventId: '',
   source: '',
   read: '',
   starred: '',
@@ -61,5 +62,22 @@ describe('topic filter', () => {
 
     expect(params.get('type')).toBe('5');
     expect(params.get('topic')).toBe('ai');
+  });
+});
+
+describe('event filter', () => {
+  it('round-trips through the URL as event_id', () => {
+    const params = buildArticleSearchParams(filters({ eventId: '12' }));
+
+    expect(params.get('event')).toBe('12');
+    expect(buildArticleRouteStateFromSearchParams(params).filters.eventId).toBe('12');
+  });
+
+  it('stays out of the URL when every story is shown', () => {
+    expect(buildArticleSearchParams(filters()).get('event')).toBeNull();
+  });
+
+  it('counts as a difference, so switching stories reloads', () => {
+    expect(areArticleFiltersEqual(filters(), filters({ eventId: '12' }))).toBe(false);
   });
 });

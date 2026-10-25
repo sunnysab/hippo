@@ -32,6 +32,15 @@ export interface Article {
   starred_at: string | null;
   /** Directions, empty until the article has been classified. */
   topics?: ArticleTopic[];
+  /** The story behind this article, set only on the detail response. */
+  event?: ArticleEvent | null;
+}
+
+export interface ArticleEvent {
+  id: number;
+  title: string;
+  article_count: number;
+  source_count: number;
 }
 
 export interface ArticleContentBlock {

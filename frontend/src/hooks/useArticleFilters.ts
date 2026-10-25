@@ -26,6 +26,7 @@ export function useArticleFilters() {
     accountBiz: routeAccountBiz,
     itemShowType: routeItemShowType,
     topic: routeTopic,
+    eventId: routeEventId,
     source: routeSource,
     read: routeRead,
     starred: routeStarred,
@@ -133,6 +134,7 @@ export function useArticleFilters() {
       if (nextFilters.accountBiz) url.searchParams.set('biz', nextFilters.accountBiz);
       if (nextFilters.itemShowType) url.searchParams.set('item_show_type', nextFilters.itemShowType);
       if (nextFilters.topic) url.searchParams.set('topic', nextFilters.topic);
+      if (nextFilters.eventId) url.searchParams.set('event_id', nextFilters.eventId);
       if (nextFilters.source) url.searchParams.set('source', nextFilters.source);
       if (nextFilters.read) url.searchParams.set('read', nextFilters.read);
       if (nextFilters.starred) url.searchParams.set('starred', nextFilters.starred);
@@ -276,6 +278,7 @@ export function useArticleFilters() {
       accountBiz: '',
       itemShowType: '',
       topic: '',
+      eventId: '',
       source: '',
       read: '',
       starred: '',
@@ -352,7 +355,8 @@ export function useArticleFilters() {
         groupId: routeGroupId,
         accountBiz: routeAccountBiz,
         itemShowType: routeItemShowType,
-    topic: routeTopic,
+        topic: routeTopic,
+        eventId: routeEventId,
         source: routeSource,
         read: routeRead,
         starred: routeStarred,
@@ -380,6 +384,7 @@ export function useArticleFilters() {
     routeGroupId,
     routeItemShowType,
     routeTopic,
+    routeEventId,
     routeSource,
     routeRead,
     routeStarred,
@@ -411,6 +416,7 @@ export function useArticleFilters() {
       accountBiz: filters.accountBiz,
       itemShowType: filters.itemShowType,
       topic: filters.topic,
+      eventId: filters.eventId,
       source: filters.source,
       read: filters.read,
       starred: filters.starred,
@@ -424,6 +430,7 @@ export function useArticleFilters() {
     filters.groupId,
     filters.itemShowType,
     filters.topic,
+    filters.eventId,
     filters.source,
     filters.read,
     filters.starred,

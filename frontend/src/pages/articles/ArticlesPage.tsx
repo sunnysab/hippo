@@ -300,6 +300,12 @@ export function ArticlesPage() {
             previewRef={previewRef}
             sidePanel={sidePanel}
             onSidePanelToggle={(panel) => setSidePanel((current) => (current === panel ? '' : panel))}
+            onOpenEvent={(eventId) => {
+              // Switching to the story clears the direction filter: the two are
+              // different questions and combining them usually empties the list.
+              updateFilters({ eventId: String(eventId), topic: '' });
+              revealList();
+            }}
           />
         </div>
       </div>

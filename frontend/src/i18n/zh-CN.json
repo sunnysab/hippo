@@ -835,5 +835,7 @@
   "admin.site.topicAdd": "添加方向",
   "admin.site.topicRemove": "删除",
   "filters.allTopics": "全部方向",
-  "articles.meta.directions": "方向"
+  "articles.meta.directions": "方向",
+  "articles.event.reports": "这件事共 {n} 篇报道",
+  "articles.event.open": "看这件事的其它报道"
 }

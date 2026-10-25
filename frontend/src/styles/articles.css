@@ -1761,3 +1761,30 @@ mark.hippo-highlight:hover {
   color: var(--muted);
   white-space: nowrap;
 }
+
+/* The story an article belongs to. Muted: it is context, not the headline. */
+.article-event {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 6px 0 10px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--border-strong);
+  background: var(--surface-soft, transparent);
+}
+
+.article-event-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.article-event-count {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.article-event-open {
+  font-size: 12px;
+  padding: 2px 8px;
+}

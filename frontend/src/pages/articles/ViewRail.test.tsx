@@ -9,6 +9,7 @@ const filters = (overrides: Partial<ArticleFiltersState> = {}): ArticleFiltersSt
   accountBiz: '',
   itemShowType: '',
   topic: '',
+  eventId: '',
   source: '',
   read: '',
   starred: '',

@@ -6,19 +6,36 @@ import { getItemShowTypeLabel } from './itemShowType';
 
 interface ArticleHeaderProps {
   article: Article;
+  /** Jumps to the same story's other reports; absent when the list cannot filter. */
+  onOpenEvent?: (eventId: number) => void;
 }
 
-export function ArticleHeader({ article }: ArticleHeaderProps) {
+export function ArticleHeader({ article, onOpenEvent }: ArticleHeaderProps) {
   const { t } = useI18n();
 
   const avatarUrl = article.account_avatar_url || '';
   const sourceLabel = getSourceLabel(article.source, t);
   // Absent until the background classifier has seen this article.
   const topics = Array.isArray(article.topics) ? article.topics : [];
+  // Only present once a second publisher reported the same story.
+  const event = article.event || null;
 
   return (
     <div className="article-header">
       <h1 className="article-preview-title">{article.title || ''}</h1>
+      {event ? (
+        <div className="article-event">
+          <span className="article-event-title">{event.title}</span>
+          <span className="article-event-count">
+            {t('articles.event.reports', '这件事共 {n} 篇报道').replace('{n}', String(event.article_count))}
+          </span>
+          {onOpenEvent ? (
+            <button className="btn ghost article-event-open" type="button" onClick={() => onOpenEvent(event.id)}>
+              {t('articles.event.open', '看这件事的其它报道')}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="article-preview-meta">
         <div className="article-preview-account">
           {avatarUrl ? (

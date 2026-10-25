@@ -125,6 +125,7 @@ describe('visual hierarchy semantics', () => {
           accountBiz: '',
           itemShowType: '',
           topic: '',
+          eventId: '',
           source: '',
           read: '',
           starred: '',

@@ -11,6 +11,7 @@ const filters: ArticleFiltersState = {
   accountBiz: '',
   itemShowType: '',
   topic: '',
+  eventId: '',
   source: '',
   read: '',
   starred: '',

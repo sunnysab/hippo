@@ -20,9 +20,11 @@ interface ArticlePreviewProps {
   previewRef: RefObject<HTMLDivElement | null>;
   sidePanel: ReadingPanel;
   onSidePanelToggle: (panel: Exclude<ReadingPanel, ''>) => void;
+  /** Filter the list down to one story; omitted when the caller cannot filter. */
+  onOpenEvent?: (eventId: number) => void;
 }
 
-export function ArticlePreview({ previewRef, sidePanel, onSidePanelToggle }: ArticlePreviewProps) {
+export function ArticlePreview({ previewRef, sidePanel, onSidePanelToggle, onOpenEvent }: ArticlePreviewProps) {
   const { state, dispatch } = useArticlesState();
   const { t } = useI18n();
   const { showToast } = useToast();
@@ -96,7 +98,7 @@ export function ArticlePreview({ previewRef, sidePanel, onSidePanelToggle }: Art
         </div>
       ) : (
         <div className="reader" ref={readerRef}>
-          <ArticleHeader article={payload.article} />
+          <ArticleHeader article={payload.article} onOpenEvent={onOpenEvent} />
           <ArticleContent
             payload={payload}
             hideSmall={config.hideSmall}
