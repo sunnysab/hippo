@@ -788,12 +788,19 @@ GET /api/admin/source
 ### 站点设置
 
 ```
-GET   /api/admin/site → { "site_name": "Hippo", "public_base_url": "", "registration_enabled": false }
+GET   /api/admin/site → { "site_name": "Hippo", "public_base_url": "", "registration_enabled": false,
+                          "vocabulary": { "version": 1, "topics": [ { "slug": "ai", "name": "人工智能" } ] } }
 PATCH /api/admin/site { "site_name": "Hippo", "registration_enabled": true, "public_base_url": "https://hippo.example" }
+PATCH /api/admin/site { "vocabulary": { "version": 1, "topics": [ { "slug": "ai", "name": "人工智能" } ] } }
 ```
 
 `registration_enabled` 关掉只是停止新注册，不影响已有账号；`public_base_url` 用于拼邮件里的链接，留空则按请求头推断。
 改动会写审计（`admin.site_settings_updated`，只记变化的键）。
+
+`vocabulary` 是文章方向分类的封闭词表：模型只能从这些 `slug` 里选，选不出就留空。请求里的
+`version` 会被忽略——`topics` 一旦变化，服务端把它 `+1`；没有变化则保持不变。这个版本号就是
+分类缓存的失效开关：版本一变，已有分类会在后台分批重算，所以**只在真的改了方向时才动它**。
+`slug` 只能是 `^[a-z][a-z0-9-]*$`，重复或非法会被 `400` 拒绝（`topic.invalid_vocabulary`）。
 
 ### 用户管理
 

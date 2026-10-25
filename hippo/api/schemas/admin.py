@@ -54,6 +54,10 @@ class SiteSettingsUpdateRequest(BaseModel):
     )
     site_name: str | None = None
     public_base_url: str | None = Field(default=None, description='Absolute URL used in mails and report links.')
+    vocabulary: dict[str, Any] | None = Field(
+        default=None,
+        description='Direction vocabulary for article classification. Its version is bumped when topics change.',
+    )
 
 
 class MediaSettingsUpdateRequest(BaseModel):
@@ -128,6 +132,9 @@ class SiteSettingsOut(BaseModel):
     registration_enabled: bool
     site_name: str
     public_base_url: str = Field(description='Empty means links fall back to the request host.')
+    vocabulary: dict[str, Any] = Field(
+        description='Direction vocabulary: {"version": int, "topics": [{"slug", "name"}]}.'
+    )
 
 
 class MediaSettingsOut(BaseModel):
