@@ -376,3 +376,70 @@ class ListAppliesEventTest(unittest.IsolatedAsyncioTestCase):
         sql, params = fetch.await_args_list[0].args[1], fetch.await_args_list[0].args[2]
         self.assertIn('article_event_link', sql)
         self.assertIn(7, params)
+
+
+class EndToEndFacetPipelineTest(unittest.IsolatedAsyncioTestCase):
+    """Route -> _list_articles -> facet SQL -> response body, nothing stubbed mid-way.
+
+    The first review rejected this work because every layer was tested in isolation
+    while the assembled path dropped the field. This test only doubles the database
+    rows; the route, the query builder and the response model are the real ones.
+    """
+
+    async def test_topic_facets_survive_from_sql_to_the_response_body(self):
+        import hippo.api.routers.article as article_api_module
+
+        # The columns the real query selects, so the response model accepts the row.
+        article_rows = [
+            {'id': 1, 'biz': 'b1', 'article_id': 'a1', 'title': 'T1', 'item_show_type': 0,
+             'author': None, 'digest': None, 'cover': None, 'link': 'https://example.com/a1',
+             'source_url': None, 'publish_at': 1792916311, 'duration_seconds': None,
+             'created_at': '2026-10-25T00:00:00Z', 'read_at': None, 'starred_at': None,
+             'source': 'weixin', 'account_nickname': '某号', 'account_alias': None,
+             'account_avatar': None, 'group_id': 1, 'group_name': '分组', 'image_id': None},
+        ]
+        topic_facet_rows = [{'slug': 'ai', 'total': 2}, {'slug': 'news', 'total': 1}]
+        item_facet_rows = [{'item_show_type': 0, 'total': 1, 'grand_total': 1}]
+
+        # Only the database rows are doubled; the route, the query builder and the
+        # response model all run for real.
+        async def fake_fetchall(storage, sql, params, **kwargs):
+            if 'unnest' in sql:
+                return topic_facet_rows
+            if 'GROUP BY COALESCE' in sql:
+                return item_facet_rows
+            return article_rows
+
+        # The route reads these through the real query module, so patch only at the
+        # storage boundary and let everything else run.
+        storage = SimpleNamespace(
+            users=SimpleNamespace(get_preferences=AsyncMock(return_value={})),
+            topics=SimpleNamespace(
+                topics_for=AsyncMock(return_value={1: [{'slug': 'ai', 'name': '人工智能'}]}),
+                public_event=AsyncMock(return_value=None),
+            ),
+        )
+
+        with (
+            patch.object(article_api_module, 'get_site_settings', AsyncMock(return_value={'vocabulary': VOCABULARY})),
+            patch.object(article_queries, 'fetchall_rows', fake_fetchall),
+            patch.object(article_queries, 'fetchone_row', AsyncMock(return_value={'total': 1})),
+        ):
+            app = FastAPI()
+            install_exception_handlers(app)
+            app.include_router(article_api_module.router, prefix='/api')
+            app.dependency_overrides[deps.get_storage] = lambda: storage
+            app.dependency_overrides[deps.current_user] = lambda: SimpleNamespace(
+                id=1, username='u', role='user'
+            )
+            response = TestClient(app, raise_server_exceptions=False).get('/api/article?topic=ai')
+
+        self.assertEqual(200, response.status_code)
+        body = response.json()
+        # The bar reads exactly this field; it being absent is what broke the feature.
+        self.assertEqual(
+            [{'slug': 'ai', 'name': '人工智能', 'count': 2},
+             {'slug': 'news', 'name': '新闻与时事', 'count': 1}],
+            body['topic_facets'],
+        )
+        self.assertEqual([{'slug': 'ai', 'name': '人工智能'}], body['articles'][0]['topics'])
