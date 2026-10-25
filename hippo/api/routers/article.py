@@ -80,6 +80,7 @@ async def list_articles(
     starred: str | None = None,
     source: str | None = None,
     topic: str | None = None,
+    event_id: int | None = None,
     page: int = 1,
     page_size: int = 20,
     since: str | None = None,
@@ -100,6 +101,7 @@ async def list_articles(
         starred (str | None): 传 `true` 只返回已收藏文章。
         source (str | None): 按来源筛选，逗号分隔（如 "weixin"）。
         topic (str | None): 按方向筛选，逗号分隔（如 "ai,research"）；未知方向返回 400。
+        event_id (int | None): 只看同一件事的报道；事件未达可见门槛时返回 404。
         page (int): 页码。
         page_size (int): 每页数量。
         since (str | None): 起始日期筛选 (ISO 格式)。
@@ -121,6 +123,9 @@ async def list_articles(
     sort_mode = _normalize_article_sort(sort, has_query=bool(query_text))
     normalized_item_show_type = _normalize_item_show_type(item_show_type)
     vocabulary = (await get_site_settings(storage))['vocabulary']
+    if event_id is not None and await storage.topics.public_event(event_id) is None:
+        # Same rule as the feed: one publisher's guess is not a story.
+        raise ApiError('Event not found', status=404)
     return await _list_articles(
         storage,
         user_id=user.id,
@@ -140,6 +145,7 @@ async def list_articles(
         sources=_normalize_source_filter(source),
         topics=_normalize_topic_filter(topic, vocabulary),
         vocabulary=vocabulary,
+        event_id=event_id,
     )
 
 

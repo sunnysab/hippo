@@ -304,3 +304,75 @@ class EventWhereClauseTest(unittest.TestCase):
         self.assertIn('article_event_link', clause)
         self.assertIn('el.event_id = %s', clause)
         self.assertEqual([9], params)
+
+
+class ArticleEventRouteTest(unittest.TestCase):
+    """The list endpoint must accept event_id: the detail page links to it."""
+
+    def _client(self, storage):
+        app = FastAPI()
+        install_exception_handlers(app)
+        app.include_router(article_api.router, prefix='/api')
+        app.dependency_overrides[deps.get_storage] = lambda: storage
+        app.dependency_overrides[deps.current_user] = lambda: SimpleNamespace(id=1, username='u', role='user')
+        return TestClient(app, raise_server_exceptions=False)
+
+    def _payload(self):
+        return {
+            'articles': [],
+            'page': 1,
+            'page_size': 20,
+            'total': 0,
+            'item_show_type_facets': [],
+            'topic_facets': [],
+        }
+
+    def _storage(self):
+        return SimpleNamespace(
+            users=SimpleNamespace(get_preferences=AsyncMock(return_value={})),
+            topics=SimpleNamespace(public_event=AsyncMock(return_value={'id': 7, 'source_count': 2})),
+        )
+
+    def test_the_list_forwards_event_id_to_the_query(self):
+        with (
+            patch.object(article_api, 'get_site_settings', AsyncMock(return_value={'vocabulary': VOCABULARY})),
+            patch.object(article_api, '_list_articles', AsyncMock(return_value=self._payload())) as listing,
+        ):
+            response = self._client(self._storage()).get('/api/article?event_id=7')
+
+        self.assertEqual(200, response.status_code)
+        # FastAPI silently drops unknown query params, so asserting the call is the
+        # only way to know the filter actually reached the query.
+        self.assertEqual(7, listing.await_args.kwargs['event_id'])
+
+    def test_an_invisible_event_is_refused_like_the_feed_does(self):
+        storage = self._storage()
+        storage.topics.public_event = AsyncMock(return_value=None)
+        with patch.object(article_api, 'get_site_settings', AsyncMock(return_value={'vocabulary': VOCABULARY})):
+            response = self._client(storage).get('/api/article?event_id=99')
+        self.assertEqual(404, response.status_code)
+
+    def test_no_event_means_no_filter(self):
+        with (
+            patch.object(article_api, 'get_site_settings', AsyncMock(return_value={'vocabulary': VOCABULARY})),
+            patch.object(article_api, '_list_articles', AsyncMock(return_value=self._payload())) as listing,
+        ):
+            self._client(self._storage()).get('/api/article')
+
+        self.assertIsNone(listing.await_args.kwargs['event_id'])
+
+
+class ListAppliesEventTest(unittest.IsolatedAsyncioTestCase):
+    """The event predicate has to reach the SQL, not just the signature."""
+
+    async def test_the_generated_query_carries_the_event_predicate(self):
+        # First call is the list itself, then the two facet scans.
+        with (
+            patch.object(article_queries, 'fetchall_rows', AsyncMock(side_effect=[[], [], []])) as fetch,
+            patch.object(article_queries, 'fetchone_row', AsyncMock(return_value={'total': 0})),
+        ):
+            await article_queries._list_articles(SimpleNamespace(), **_list_kwargs(event_id=7))
+
+        sql, params = fetch.await_args_list[0].args[1], fetch.await_args_list[0].args[2]
+        self.assertIn('article_event_link', sql)
+        self.assertIn(7, params)

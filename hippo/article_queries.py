@@ -699,6 +699,7 @@ async def _list_articles(
     sources: list[str] | None = None,
     topics: list[str] | None = None,
     vocabulary: dict[str, Any] | None = None,
+    event_id: int | None = None,
 ) -> dict[str, Any]:
     offset = max(page - 1, 0) * page_size
     query_sql, params = _build_article_query(
@@ -719,6 +720,7 @@ async def _list_articles(
         starred_only=starred_only,
         sources=sources,
         topics=topics,
+        event_id=event_id,
     )
     rows = await fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
     for row in rows:
@@ -758,7 +760,7 @@ async def _list_articles(
     )
     # The facets ignore their own filter, so their total is the answer unless one
     # of them is selected — only then is a second count worth its cost.
-    if item_show_type is None and not topics:
+    if item_show_type is None and not topics and event_id is None:
         total = facet_total
     else:
         total = await _count_articles(
@@ -776,6 +778,7 @@ async def _list_articles(
             starred_only=starred_only,
             sources=sources,
             topics=topics,
+            event_id=event_id,
         )
     return {
         'articles': rows,
