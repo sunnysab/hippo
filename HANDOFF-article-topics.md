@@ -9,7 +9,7 @@
 随代码漂移，按**文件名和函数名**找，不要按行号找。
 
 - `SCHEMA_VERSION` 已从 `'33'` 提到 `'34'`。
-- 后端：**1746 passed, 14 skipped**，`ruff check hippo tests` 通过。
+- 后端：**1753 passed, 14 skipped**，`ruff check hippo tests` 通过。
 - 前端：**487 passed / 62 files**，`tsc -b`、`eslint --max-warnings 0`、`npm run build` 全通过。
 - 审查补记：首轮交付被独立审查驳回，理由是两条「测试全绿但真实链路不通」的缺陷，见 §6.6。
 
@@ -410,8 +410,15 @@ CREATE INDEX IF NOT EXISTS idx_article_event_recent ON article_event (last_seen_
 唯一约束**，同一事件下的报道标题本来就各不相同。
 
 热度算 `COUNT(DISTINCT a.biz)`，不是条数——10 个号转发比 1 个号发 10 篇更能说明是热点。查询时
-必须套订阅可见性（`hippo/article_queries.py:179` 的 `SUBSCRIPTION_JOIN`），否则事件会泄露别人
-订阅了什么。
+**必须**套订阅可见性（`hippo/article_queries.py:179` 的 `SUBSCRIPTION_JOIN`），否则事件会泄露
+别人订阅了什么。
+
+这条规则最初**没落实**，第三次审查驳回时才发现（见 §6.8）。现在的分工是：
+
+- `public_event(event_id, user_id)`：带订阅 join，两个计数（`article_count` / `source_count`）
+  都只算该读者能打开的文章，「≥2 个不同来源」这条门槛也用**可见**来源数判定。
+- `candidates()`：**不带**订阅过滤，保持全站。因为「这篇是不是同一件事」不取决于某个读者订了谁；
+  模型必须看到所有来源才认得出重复。收窄的只有「告诉读者什么」。
 
 **和一期共用一次模型调用。** 分类 prompt 里多给一段「当前事件候选项」，让模型一次返回
 `{"topics": [...], "event": {"action": "join"|"new"|"none", "id": 123, "title": "..."}}`。
@@ -656,6 +663,46 @@ backfill、候选查询、租约、CAS 发布、事件写入全部走真实代�
   测试也必须走这条路，否则测试在给缺陷背书。
 - 版本号如果参与缓存失效，就必须有**能在存储层比较**的列，否则「提升版本号」是个空操作。
 
+## 6.8 第三次审查驳回：热度没套订阅可见性，且 NULL publish_at 未处理
+
+第三次审查驳回了交付，两条都成立。
+
+### 缺陷一：事件计数泄露了别人订阅了什么
+
+设计稿 §4 白纸黑字要求热度「必须套订阅可见性」，但 `public_event(event_id)` **连读者参数都
+没有**，直接数全站。后果是可测量的：三个号在报同一件事，读者只订了其中一个，界面告诉他
+「这件事共 3 篇报道」，点进去只列出 1 篇。
+
+更糟的是 `ArticleEventOut` 的字段注释写着 `'Reports in this event the caller can see.'`
+——**代码与它自己的契约相反**。这正是前两次驳回的同一类问题：注释/文档承诺了实现没做的事。
+
+修复：`public_event(event_id, user_id)` 带订阅 join，两个计数和「≥2」门槛都作用在可见集合上。
+`candidates()` 保持全站，理由见 §4。
+
+审计的度量方式值得记住：它构造「3 个来源 / 读者只订 1 个」的数据，对比「详情页说的数」与
+「点进去实际列出的数」。两者不一致即为泄露。这是比读代码更硬的证据。
+
+### 缺陷二：`publish_at` NULL 的文章被静默排除
+
+设计稿 §3.5 第 3 条明确要求：`publish_at` 为 NULL 的文章进不了补队窗口，**必须显式二选一**
+（用 `COALESCE`，或明确接受不分类）。实现里是裸的 `a.publish_at >= %s`，而 §3.10 的偏离清单
+和 §6.6/§6.7 的边界里都没提——等于「没看见」。
+
+生产库当前 NULL `publish_at` 为 0 条，所以这个缺口暂时不产生错误数据。但**「现在没有」不是
+「不需要处理」**：新来源接入、RSS 缺日期时，那些文章会永远拿不到标签，且没有任何错误或日志。
+
+修复：`COALESCE(a.publish_at, EXTRACT(EPOCH FROM a.created_at)::bigint) >= %s`，并在 docstring
+里写明为什么要有这个回退。
+
+### 教训
+
+- **自己写的设计规则，也要在实现后逐条回去核对。** 「必须套订阅可见性」在 §4 里加粗过，
+  实现时仍然漏了；写文档不等于落实。
+- **字段描述是契约。** 注释写「the caller can see」，代码就必须真的按调用方过滤；否则注释
+  本身成了误导证据。
+- **「当前数据里没有这种情况」不是不处理的理由。** 要么写代码处理，要么显式写进「不做」并
+  说明后果。留空是最差的选择。
+
 ### 边界（不要当成已验证）
 
 - 上文的一致率是**同一输入重复调用的稳定性**，不是准确率。没有人工标注的 ground truth。
@@ -723,6 +770,7 @@ backfill、候选查询、租约、CAS 发布、事件写入全部走真实代�
 | 二期：事件聚类 + 热度 + `?event_id=` + 详情页事件块（可跳转） | ✅ |
 | 审查驳回的两处缺陷已修复 | ✅ 见 §6.6 |
 | 第二次驳回：事件候选死锁 + PROMPT_VERSION 空操作已修复 | ✅ 见 §6.7 |
+| 第三次驳回：事件计数未套订阅可见性 + NULL publish_at 未处理已修复 | ✅ 见 §6.8 |
 | `API.md` 与本文档对齐 | ✅ |
 
 **没做**：数据库没有迁移、服务没有重启、没有部署、没有提交任何密钥。
@@ -743,7 +791,7 @@ backfill、候选查询、租约、CAS 发布、事件写入全部走真实代�
 如果以后要重新验证，命令是：
 
 ```bash
-uv run pytest -q                      # 1746 passed, 14 skipped
+uv run pytest -q                      # 1753 passed, 14 skipped
 uv run ruff check hippo tests         # All checks passed
 cd frontend && npm test && npm run build   # 487 tests, tsc -b && vite build
 ```
