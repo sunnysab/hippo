@@ -48,6 +48,15 @@ interface PlayerControls {
   backToParagraph: () => void;
   /** The reader scrolled away from the playing paragraph, so the dock is shown. */
   showDock: boolean;
+  /** True while the video floats over the page instead of sitting in the text. */
+  pip: boolean;
+  /** Where the floating video was dragged to, as a distance from its corner. */
+  pipPos: { right: number; bottom: number } | null;
+  /** Returns the video to its block, and closes the mini player for good. */
+  returnToVideo: () => void;
+  /** Hides the mini player until the video scrolls back into view by itself. */
+  closePip: () => void;
+  startPipDrag: (event: React.PointerEvent<HTMLElement>) => void;
 }
 
 // Only render-time values live here; the two media refs travel down as props so
@@ -65,6 +74,11 @@ const PlayerContext = createContext<PlayerControls>({
   togglePlay: () => {},
   backToParagraph: () => {},
   showDock: false,
+  pip: false,
+  pipPos: null,
+  returnToVideo: () => {},
+  closePip: () => {},
+  startPipDrag: () => {},
 });
 
 /**
@@ -247,34 +261,80 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({
   onPlayback: PlayerRefProps['onPlayback'];
 }) {
   const { t } = useI18n();
-  const { originalHref, pauseOther, showModeButton } = useContext(PlayerContext);
+  const {
+    originalHref, pauseOther, showModeButton, pip, pipPos, returnToVideo, closePip, startPipDrag,
+  } = useContext(PlayerContext);
 
   // The archived copy streams from Hippo with Range support, so it plays at once
   // and never contacts the provider — even when a legacy block still carries an
-  // `embed_url`.
+  // `embed_url`. The floating player is the same element wearing another class:
+  // moving it in the DOM would stop the sound and lose the position.
   if (isArchivedVideoUrl(block.url)) {
     return (
-      <div className="reader-video" data-provider={block.provider || ''}>
-        <video
-          ref={videoRef}
-          src={block.url}
-          controls
-          preload='metadata'
-          playsInline
-          poster={block.cover_url || undefined}
-          onPlay={(event) => {
-            pauseOther(event.currentTarget);
-            onTimeUpdate(event);
-            onPlayback(true, event.currentTarget);
-          }}
-          onPause={(event) => onPlayback(false, event.currentTarget)}
-          onEnded={(event) => onPlayback(false, event.currentTarget)}
-          onTimeUpdate={onTimeUpdate}
-          onLoadedMetadata={onReady}
-          data-testid='reader-video-file'
-        />
-        {showModeButton ? <PlayerModeButton /> : null}
-      </div>
+      <>
+        {/* Fixed takes the frame out of the text flow; the slot keeps its height so
+            the transcript does not jump when the video floats away. */}
+        {pip ? <div className='reader-video-slot' aria-hidden='true' /> : null}
+        <div
+          className={`reader-video${pip ? ' is-pip' : ''}`}
+          data-provider={block.provider || ''}
+          style={pip && pipPos ? { right: pipPos.right, bottom: pipPos.bottom } : undefined}
+        >
+          <video
+            ref={videoRef}
+            src={block.url}
+            controls
+            preload='metadata'
+            playsInline
+            poster={block.cover_url || undefined}
+            onPlay={(event) => {
+              pauseOther(event.currentTarget);
+              onTimeUpdate(event);
+              onPlayback(true, event.currentTarget);
+            }}
+            onPause={(event) => onPlayback(false, event.currentTarget)}
+            onEnded={(event) => onPlayback(false, event.currentTarget)}
+            onTimeUpdate={onTimeUpdate}
+            onLoadedMetadata={onReady}
+            data-testid='reader-video-file'
+          />
+          {pip ? (
+            // The bar sits outside the picture: the native controls need every
+            // pixel of the video itself, and a drag surface over them would eat
+            // the seek bar.
+            <div className='reader-pip-bar'>
+              <span
+                className='reader-pip-grip'
+                title={t('articles.pipDragHint', '拖动移动小窗')}
+                onPointerDown={startPipDrag}
+                aria-hidden='true'
+              >
+                <svg viewBox='0 0 24 24'>
+                  <circle cx='9' cy='7' r='1.4' /><circle cx='15' cy='7' r='1.4' />
+                  <circle cx='9' cy='12' r='1.4' /><circle cx='15' cy='12' r='1.4' />
+                  <circle cx='9' cy='17' r='1.4' /><circle cx='15' cy='17' r='1.4' />
+                </svg>
+              </span>
+              <button className='reader-pip-btn' type='button' onClick={returnToVideo}>
+                {t('articles.backToVideo', '回到视频')}
+              </button>
+              <button
+                className='reader-pip-btn is-icon'
+                type='button'
+                onClick={closePip}
+                aria-label={t('articles.closePip', '关闭小窗')}
+                title={t('articles.closePip', '关闭小窗')}
+              >
+                <svg viewBox='0 0 24 24' aria-hidden='true'>
+                  <path d='M6 6l12 12M18 6L6 18' />
+                </svg>
+              </button>
+            </div>
+          ) : showModeButton ? (
+            <PlayerModeButton />
+          ) : null}
+        </div>
+      </>
     );
   }
 
@@ -631,6 +691,12 @@ function RenderedContent({
   const [following, setFollowing] = useState(true);
   // Sound is running somewhere; the dock's and the mini player's button flips this.
   const [playing, setPlaying] = useState(false);
+  // A video that has been playing keeps its mini player through a pause: pausing
+  // from the floating frame is one of the things it is there for.
+  const [started, setStarted] = useState(false);
+  // The mini player is dismissed by hand or by scrolling back, per article.
+  const [pipDismissed, setPipDismissed] = useState(false);
+  const [pipPos, setPipPos] = useState<{ right: number; bottom: number } | null>(null);
   // Another article (or a refetched body) replaces every block, so the previous
   // index points at text that is no longer there. Adjusted during render, which is
   // where React wants state derived from a prop to be reset.
@@ -643,6 +709,9 @@ function RenderedContent({
     setPreparingAudio(false);
     setFollowing(true);
     setPlaying(false);
+    setStarted(false);
+    setPipDismissed(false);
+    setPipPos(null);
   }
   const markAt = useCallback((seconds: number) => {
     // Last start at or before `seconds`; -1 before the first paragraph.
@@ -736,19 +805,25 @@ function RenderedContent({
   // pause on purpose -- pausing from the dock is the whole point of drawing it, and
   // a control that vanishes the moment it is used cannot be pressed twice.
   const [paragraphGone, setParagraphGone] = useState(false);
+  // True once the video has been scrolled out of the reading pane while it runs.
+  const [videoGone, setVideoGone] = useState(false);
   useEffect(() => {
-    if (activeIndex < 0) return;
+    if (activeIndex < 0 && !hasVideo) return;
     const pane = scrollPane(playingRef.current ?? videoRef.current ?? audioRef.current);
+    const box = () => (pane ?? document.documentElement).getBoundingClientRect();
+    // An unlaid-out box (a hidden pane, a test that has no layout) says nothing
+    // about visibility, so it never counts as "scrolled away".
+    const offscreen = (node: HTMLElement | null) => {
+      if (!node) return false;
+      const rect = node.getBoundingClientRect();
+      const view = box();
+      return rect.height > 0 && (rect.bottom <= view.top || rect.top >= view.bottom);
+    };
     let frame = 0;
     const update = () => {
       frame = 0;
-      const paragraph = playingRef.current;
-      if (!paragraph) return;
-      const box = (pane ?? document.documentElement).getBoundingClientRect();
-      const rect = paragraph.getBoundingClientRect();
-      // An unlaid-out box (a hidden pane, a test that has no layout) says nothing
-      // about visibility, so it must not count as "scrolled away".
-      setParagraphGone(rect.height > 0 && (rect.bottom <= box.top || rect.top >= box.bottom));
+      setParagraphGone(activeIndex >= 0 && offscreen(playingRef.current));
+      setVideoGone(offscreen(videoRef.current?.closest<HTMLElement>('.reader-video') ?? null));
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
     // The first measurement lands in a frame too, which is what keeps the effect
@@ -757,16 +832,59 @@ function RenderedContent({
     (pane ?? window).addEventListener('scroll', schedule, { passive: true });
     window.addEventListener('resize', schedule);
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedule);
-    const paragraph = playingRef.current;
-    if (paragraph) observer?.observe(paragraph);
+    for (const node of [playingRef.current, videoRef.current?.closest<HTMLElement>('.reader-video')]) {
+      if (node) observer?.observe(node);
+    }
     return () => {
       cancelAnimationFrame(frame);
       (pane ?? window).removeEventListener('scroll', schedule);
       window.removeEventListener('resize', schedule);
       observer?.disconnect();
     };
-  }, [activeIndex]);
+  }, [activeIndex, hasVideo, audioOnly]);
   const showDock = activeIndex >= 0 && paragraphGone;
+
+  // The mini player: the video floats over the page once it has been scrolled out
+  // of sight while it plays. It is dismissed by hand or by scrolling back, and both
+  // ways are per article -- nothing here is remembered beyond the open payload.
+  const pip = hasVideo && !audioOnly && started && videoGone && !pipDismissed;
+  // Coming back into view is the reset: the next scroll away may float it again.
+  // Adjusted during render, the same way the previous article's state is cleared.
+  const [pipWasGone, setPipWasGone] = useState(videoGone);
+  if (pipWasGone !== videoGone) {
+    setPipWasGone(videoGone);
+    if (!videoGone) setPipDismissed(false);
+  }
+  const returnToVideo = useCallback(() => {
+    setPipDismissed(true);
+    videoRef.current?.closest<HTMLElement>('.reader-video')
+      ?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+  }, []);
+  const startPipDrag = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    const frame = videoRef.current?.closest<HTMLElement>('.reader-video');
+    if (!frame) return;
+    const rect = frame.getBoundingClientRect();
+    const originX = event.clientX;
+    const originY = event.clientY;
+    const start = { right: window.innerWidth - rect.right, bottom: window.innerHeight - rect.bottom };
+    const grip = event.currentTarget;
+    grip.setPointerCapture?.(event.pointerId);
+    const move = (moveEvent: PointerEvent) => {
+      // Clamp so the frame cannot be dragged off the screen and lost.
+      setPipPos({
+        right: Math.min(Math.max(start.right + originX - moveEvent.clientX, 8), Math.max(window.innerWidth - rect.width - 8, 8)),
+        bottom: Math.min(Math.max(start.bottom + originY - moveEvent.clientY, 8), Math.max(window.innerHeight - rect.height - 8, 8)),
+      });
+    };
+    const stop = () => {
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', stop);
+      grip.removeEventListener('pointercancel', stop);
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', stop);
+    grip.addEventListener('pointercancel', stop);
+  }, []);
 
   // Older video articles have no audio track to switch to. The server extracts one
   // from the archived copy, and this polls until it is there instead of making the
@@ -808,6 +926,7 @@ function RenderedContent({
     // A player the reader switched away from must not report a pause over the one
     // that replaced it, which is already running.
     if (!running && player !== mounted()) return;
+    if (running) setStarted(true);
     setPlaying(running);
   }, [mounted]);
 
@@ -859,6 +978,11 @@ function RenderedContent({
         setFollowRequest((previous) => previous + 1);
       },
       showDock,
+      pip,
+      pipPos,
+      returnToVideo,
+      closePip: () => setPipDismissed(true),
+      startPipDrag,
       pauseOther,
       seek: (seconds: number) => {
         const target: HTMLMediaElement | null = videoRef.current || audioRef.current;
@@ -875,7 +999,10 @@ function RenderedContent({
         void target.play().catch(() => {});
       },
     };
-  }, [audioOnly, audioUrl, canSeek, hasVideo, markAt, mounted, originalHref, playing, prepareAudio, preparingAudio, showDock]);
+  }, [
+    audioOnly, audioUrl, canSeek, hasVideo, markAt, mounted, originalHref, pip, pipPos,
+    playing, prepareAudio, preparingAudio, returnToVideo, showDock, startPipDrag,
+  ]);
   const contentKeys = buildContentBlockKeys(content);
   let outlineIndex = 0;
   const outlineIndexes = content.map((block) => isOutlineBlock(block) ? outlineIndex++ : undefined);

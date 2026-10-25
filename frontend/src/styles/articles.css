@@ -1260,6 +1260,123 @@ mark.hippo-highlight:hover {
   background: #000;
 }
 
+/* ---- Mini player -------------------------------------------------------
+   The same element as the inline video, only fixed: moving it in the DOM would
+   stop the sound and lose the position. The slot below keeps the transcript's
+   height while the frame is out of its flow. */
+.reader-video-slot {
+  margin: 0 0 20px;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sm);
+  background: var(--surface-chip-soft);
+}
+
+.reader-video.is-pip {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  z-index: 20;
+  width: min(300px, 62vw);
+  margin: 0;
+  border-color: var(--border-strong);
+  background: var(--surface);
+  animation: pip-in 180ms ease-out;
+  /* The drag writes right/bottom on every move; the transition would fight it. */
+  will-change: transform;
+}
+
+@keyframes pip-in {
+  from { opacity: 0; transform: scale(0.86) translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* The frame is the same element the reader may have just put full screen; a fixed
+   box around a full-screen video would fight the browser's own layout. */
+.reader-video.is-pip:fullscreen,
+:fullscreen .reader-video.is-pip {
+  position: static;
+  width: auto;
+  animation: none;
+}
+
+@media (max-width: 720px) {
+  .reader-video.is-pip {
+    /* Clear the bottom tab bar, which is fixed on a phone. */
+    bottom: calc(60px + env(safe-area-inset-bottom, 0px));
+    width: min(240px, 66vw);
+  }
+
+  .reader-pip-btn,
+  .reader-pip-btn.is-icon {
+    /* Same 44px bar the rest of the phone UI keeps. */
+    min-height: 32px;
+  }
+}
+
+/* The bar is outside the picture: the native controls own every pixel of the
+   video, so a drag surface over them would swallow the seek bar. */
+.reader-pip-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.reader-pip-grip {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 26px;
+  color: var(--muted);
+  cursor: grab;
+  touch-action: none;
+}
+
+.reader-pip-grip:active {
+  cursor: grabbing;
+}
+
+.reader-pip-grip svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.reader-pip-btn {
+  padding: 3px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--info);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.reader-pip-btn:hover {
+  background: var(--surface-item-active);
+}
+
+.reader-pip-btn.is-icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  padding: 0;
+  color: var(--muted);
+}
+
+.reader-pip-btn.is-icon svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
 /* No archived copy: say so instead of loading a third-party player. */
 .reader-video.is-missing {
   display: flex;

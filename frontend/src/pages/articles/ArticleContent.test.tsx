@@ -34,8 +34,10 @@ const layoutStub = () => {
     toJSON: () => ({}),
   });
   document.documentElement.getBoundingClientRect = () => rect(0) as DOMRect;
+  // 段落和视频框是「会滚走」的那两个;其它盒子留在原位。
   Element.prototype.getBoundingClientRect = function getRect(this: Element) {
-    return rect(this.tagName === 'P' && state.gone ? 4000 : 10) as DOMRect;
+    const scrolls = this.tagName === 'P' || this.classList.contains('reader-video');
+    return rect(scrolls && state.gone ? 4000 : 10) as DOMRect;
   };
   return state;
 };
@@ -432,6 +434,113 @@ describe('ArticleContent media blocks', () => {
     expect(dock.querySelector('button')!.getAttribute('aria-label')).toBe('播放');
     fireEvent.click(dock.querySelector('button')!);
     expect(playMock).toHaveBeenCalled();
+  });
+
+  it('floats the playing video once it is scrolled out of sight, and never remounts it', async () => {
+    const layout = layoutStub();
+    const { container } = renderContent([
+      { type: 'video', provider: 'bilibili', url: '/api/media/7/video' },
+      { type: 'paragraph', text: '开场', t: 0 },
+    ]);
+    const video = container.querySelector('video')!;
+    Object.defineProperty(video, 'paused', { configurable: true, get: () => false });
+    const frame = () => container.querySelector('.reader-video')!;
+
+    // 播放中但还在原位：不弹小窗。
+    fireEvent.play(video);
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
+    expect(frame().className).not.toContain('is-pip');
+
+    layout.gone = true;
+    fireEvent.scroll(window);
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
+
+    expect(frame().className).toContain('is-pip');
+    // 同一个元素只是换了类名：DOM 搬运会打断播放并丢位置。
+    expect(container.querySelectorAll('video').length).toBe(1);
+    expect(container.querySelector('video')).toBe(video);
+    expect(container.querySelector('.reader-video-slot')).not.toBeNull();
+    expect(container.querySelector('.reader-pip-bar')?.textContent).toContain('回到视频');
+  });
+
+  it('pauses and resumes from the mini player', async () => {
+    const pause = vi.fn();
+    window.HTMLMediaElement.prototype.pause = pause as unknown as HTMLMediaElement['pause'];
+    const layout = layoutStub();
+    const { container } = renderContent([
+      { type: 'video', provider: 'bilibili', url: '/api/media/7/video' },
+      { type: 'paragraph', text: '开场', t: 0 },
+    ]);
+    const video = container.querySelector('video')!;
+    const state = { paused: false };
+    Object.defineProperty(video, 'paused', { configurable: true, get: () => state.paused });
+
+    fireEvent.play(video);
+    layout.gone = true;
+    fireEvent.scroll(window);
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
+    expect(container.querySelector('.reader-video.is-pip')).not.toBeNull();
+
+    // 滚走之后原生控制条可能不在视野里，所以暂停也在小胶囊上。
+    video.pause();
+    expect(pause).toHaveBeenCalled();
+    state.paused = true;
+    fireEvent.pause(video);
+    // 暂停不会让小窗消失，否则这个按钮按不动第二次。
+    expect(container.querySelector('.reader-video.is-pip')).not.toBeNull();
+    const dockButton = container.querySelector('.reader-dock button')!;
+    expect(dockButton.getAttribute('aria-label')).toBe('播放');
+    fireEvent.click(dockButton);
+    expect(playMock).toHaveBeenCalled();
+  });
+
+  it('closes the mini player on request, and only reopens it after the video returns', async () => {
+    const layout = layoutStub();
+    const { container } = renderContent([
+      { type: 'video', provider: 'bilibili', url: '/api/media/7/video' },
+      { type: 'paragraph', text: '开场', t: 0 },
+    ]);
+    const video = container.querySelector('video')!;
+    Object.defineProperty(video, 'paused', { configurable: true, get: () => false });
+
+    fireEvent.play(video);
+    layout.gone = true;
+    fireEvent.scroll(window);
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
+    expect(container.querySelector('.reader-video.is-pip')).not.toBeNull();
+
+    fireEvent.click(container.querySelector('.reader-pip-btn.is-icon')!);
+    expect(container.querySelector('.reader-video.is-pip')).toBeNull();
+    // 关掉之后仍在播放的它滚来滚去也不再自己弹出来。
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
+    expect(container.querySelector('.reader-video.is-pip')).toBeNull();
+
+    // 回到视口即重置：下一次滚走才会重新浮起来。
+    layout.gone = false;
+    fireEvent.scroll(window);
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
+    layout.gone = true;
+    fireEvent.scroll(window);
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
+    expect(container.querySelector('.reader-video.is-pip')).not.toBeNull();
+  });
+
+  it('never floats a podcast, which has no picture to keep on screen', async () => {
+    const layout = layoutStub();
+    const { container } = renderContent([
+      { type: 'audio', url: '/api/media/7/audio' },
+      { type: 'paragraph', text: '开场', t: 0 },
+    ]);
+    const audio = container.querySelector('audio')!;
+    Object.defineProperty(audio, 'paused', { configurable: true, get: () => false });
+
+    fireEvent.play(audio);
+    layout.gone = true;
+    fireEvent.scroll(window);
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
+
+    expect(container.querySelector('.is-pip')).toBeNull();
+    expect(container.querySelector('.reader-video-slot')).toBeNull();
   });
 
   it('highlights nothing before the first timestamped paragraph', () => {

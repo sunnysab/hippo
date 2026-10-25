@@ -84,3 +84,41 @@ describe('Player dock styles', () => {
     expect(commonStyles).toContain('animation-iteration-count: 1 !important;');
   });
 });
+
+describe('Mini player styles', () => {
+  let style: HTMLStyleElement;
+
+  beforeEach(() => {
+    style = document.createElement('style');
+    style.textContent = commonStyles + articleStyles;
+    document.head.append(style);
+  });
+
+  afterEach(() => {
+    style.remove();
+  });
+
+  it('floats the video above the page and below the top bar', () => {
+    const frame = document.createElement('div');
+    frame.className = 'reader-video is-pip';
+    document.body.append(frame);
+    const computed = getComputedStyle(frame);
+    expect(computed.position).toBe('fixed');
+    expect(Number(computed.zIndex)).toBeLessThan(30);
+    expect(computed.animation).toContain('pip-in');
+    frame.remove();
+  });
+
+  it('keeps the transcript height with a slot that replaces the frame in flow', () => {
+    const slot = document.createElement('div');
+    slot.className = 'reader-video-slot';
+    document.body.append(slot);
+    expect(getComputedStyle(slot).aspectRatio).toBe('16 / 9');
+    slot.remove();
+  });
+
+  it('keeps the drag grip out of the browser gesture that would scroll the page', () => {
+    // jsdom's CSSOM drops touch-action, so the source is the only witness here.
+    expect(articleStyles).toContain('touch-action: none;');
+  });
+});
