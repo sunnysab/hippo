@@ -76,6 +76,15 @@ class ArticleTopicOut(BaseModel):
     name: str = Field(description='Display label from the current vocabulary.')
 
 
+class ArticleEventOut(BaseModel):
+    """The story this article belongs to, once at least two publishers covered it."""
+
+    id: int
+    title: str
+    article_count: int = Field(description='Reports in this event the caller can see.')
+    source_count: int = Field(description='Distinct publishers; always at least two.')
+
+
 class ArticleOut(BaseModel):
     """One article row, as the list and the detail return it.
 
@@ -110,6 +119,9 @@ class ArticleOut(BaseModel):
     rank: float | None = Field(default=None, description='Relevance score, set when the query was a search.')
     topics: list[ArticleTopicOut] = Field(
         default_factory=list, description='Directions, empty until the article has been classified.'
+    )
+    event: ArticleEventOut | None = Field(
+        default=None, description='Set on the detail response only, and only for a visible event.'
     )
 
 

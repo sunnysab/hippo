@@ -70,18 +70,28 @@ async def run_once() -> bool:
             # The queue row was written before the title was ever read, so this is
             # where an unchanged article is recognised and skipped for free.
             if claim['fingerprint'] == current and claim['state'] == 'processing' and claim['topics']:
+                # Keep whatever event the article already had: skipping the model
+                # is not a statement that the story disappeared.
                 async with open_storage() as storage, storage.transaction():
                     await storage.topics.finish(
                         claim,
                         topics=claim['topics'],
                         fingerprint=current,
                         vocabulary_version=int(vocabulary['version']),
+                        keep_event=True,
                     )
                 return True
 
             async with open_storage() as storage:
                 provider = await resolve_provider(storage)
-            topics = await classify(provider, title=row['title'], digest=row['digest'], vocabulary=vocabulary)
+                candidates = await storage.topics.candidates()
+            topics, event = await classify(
+                provider,
+                title=row['title'],
+                digest=row['digest'],
+                vocabulary=vocabulary,
+                candidates=candidates,
+            )
 
             async with open_storage() as storage, storage.transaction():
                 latest = await storage.topics.source(claim['article_pk'])
@@ -93,6 +103,7 @@ async def run_once() -> bool:
                     fingerprint=current,
                     vocabulary_version=int(vocabulary['version']),
                     model=provider['model'],
+                    event=event,
                 )
     except asyncio.CancelledError:
         async with open_storage() as storage, storage.transaction():

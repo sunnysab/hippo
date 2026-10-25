@@ -31,6 +31,7 @@ class TopicWorkerTest(unittest.IsolatedAsyncioTestCase):
             source=AsyncMock(return_value=self.source),
             finish=AsyncMock(return_value=True),
             release=AsyncMock(),
+            candidates=AsyncMock(return_value=[]),
         )
         self.connections = 0
 
@@ -49,7 +50,7 @@ class TopicWorkerTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 self.connections -= 1
 
-        self.classify = AsyncMock(return_value=TOPICS)
+        self.classify = AsyncMock(return_value=(TOPICS, None))
         self.patches = [
             patch.object(worker, 'open_storage', storage),
             patch.object(worker, '_vocabulary', AsyncMock(return_value=VOCABULARY)),
@@ -69,7 +70,7 @@ class TopicWorkerTest(unittest.IsolatedAsyncioTestCase):
     async def test_the_model_runs_without_holding_a_connection(self):
         async def classify(*args, **kwargs):
             self.assertEqual(0, self.connections)
-            return TOPICS
+            return TOPICS, None
 
         self.classify.side_effect = classify
         self.assertTrue(await worker.run_once())
@@ -106,7 +107,7 @@ class TopicWorkerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(TOPICS, self.repo.finish.await_args.kwargs['topics'])
 
     async def test_an_empty_topic_list_is_still_published_not_retried(self):
-        self.classify.return_value = []
+        self.classify.return_value = ([], None)
         await worker.run_once()
         self.assertEqual([], self.repo.finish.await_args.kwargs['topics'])
         self.assertNotIn('error', self.repo.finish.await_args.kwargs)
@@ -150,3 +151,38 @@ class TopicWorkerTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class WorkerEventTest(TopicWorkerTest):
+    """The event decision rides along with the topics, in the same publish."""
+
+    async def test_candidates_are_offered_to_the_model_and_the_decision_published(self):
+        self.repo.candidates.return_value = [{'id': 4, 'title': '已有事件', 'sources': 3}]
+        self.classify.return_value = (TOPICS, {'action': 'join', 'id': 4})
+
+        self.assertTrue(await worker.run_once())
+
+        self.assertEqual(
+            [{'id': 4, 'title': '已有事件', 'sources': 3}], self.classify.await_args.kwargs['candidates']
+        )
+        self.assertEqual({'action': 'join', 'id': 4}, self.repo.finish.await_args.kwargs['event'])
+
+    async def test_no_event_is_published_as_none_so_the_old_link_drops(self):
+        self.classify.return_value = (TOPICS, None)
+        await worker.run_once()
+        self.assertIsNone(self.repo.finish.await_args.kwargs['event'])
+        # The explicit flag is what lets finish tell "not a story" from "not asked".
+        self.assertNotIn('keep_event', self.repo.finish.await_args.kwargs)
+
+    async def test_a_skipped_model_call_keeps_the_existing_event(self):
+        self.claim.update({'fingerprint': fingerprint('Title', 'Digest'), 'topics': TOPICS})
+        await worker.run_once()
+
+        self.classify.assert_not_awaited()
+        self.assertTrue(self.repo.finish.await_args.kwargs['keep_event'])
+
+    async def test_a_failed_classification_never_publishes_an_event(self):
+        self.classify.side_effect = ApiError('bad', code='topic.invalid_result')
+        await worker.run_once()
+        kwargs = self.repo.finish.await_args.kwargs
+        self.assertEqual('topic.invalid_result', kwargs['error'])
+        self.assertNotIn('event', kwargs)

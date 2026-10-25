@@ -150,28 +150,29 @@ class FacetTest(unittest.IsolatedAsyncioTestCase):
 
 
 class AttachTopicsTest(unittest.IsolatedAsyncioTestCase):
-    async def test_one_query_fills_every_row(self):
+    async def test_one_call_fills_every_row(self):
         rows = [{'id': 1}, {'id': 2}, {'id': 3}]
-        stored = [{'article_pk': 1, 'topics': [{'slug': 'ai', 'name': '人工智能'}]}]
-        calls = []
+        repo = SimpleNamespace(
+            topics_for=AsyncMock(return_value={1: [{'slug': 'ai', 'name': '人工智能'}]})
+        )
 
-        async def fake_fetchall(storage, sql, params, **kwargs):
-            calls.append(params[0])
-            return stored
+        await _attach_topics(SimpleNamespace(topics=repo), rows)
 
-        with patch.object(article_queries, 'fetchall_rows', fake_fetchall):
-            await _attach_topics(SimpleNamespace(), rows)
-
-        self.assertEqual(1, len(calls))
-        self.assertEqual([1, 2, 3], calls[0])
+        repo.topics_for.assert_awaited_once_with([1, 2, 3])
         self.assertEqual([{'slug': 'ai', 'name': '人工智能'}], rows[0]['topics'])
         self.assertEqual([], rows[1]['topics'])
         self.assertEqual([], rows[2]['topics'])
 
     async def test_an_empty_page_costs_no_query(self):
-        with patch.object(article_queries, 'fetchall_rows', AsyncMock()) as fetch:
-            await _attach_topics(SimpleNamespace(), [])
-        fetch.assert_not_awaited()
+        repo = SimpleNamespace(topics_for=AsyncMock(return_value={}))
+        await _attach_topics(SimpleNamespace(topics=repo), [])
+        repo.topics_for.assert_not_awaited()
+
+
+    async def test_storage_without_a_topic_repository_degrades_to_empty(self):
+        rows = [{'id': 1}]
+        await _attach_topics(SimpleNamespace(), rows)
+        self.assertEqual([], rows[0]['topics'])
 
 
 class ListTotalTest(unittest.IsolatedAsyncioTestCase):

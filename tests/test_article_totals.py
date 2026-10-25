@@ -42,8 +42,9 @@ class TotalMatchesFacetsTest(unittest.IsolatedAsyncioTestCase):
             {'item_show_type': 5, 'total': 1, 'grand_total': 3},
         ]
 
+        # The list query, then the topic facet scan, then the layout facet scan.
         with (
-            patch.object(article_queries, 'fetchall_rows', AsyncMock(side_effect=[rows, [], [], facet_rows])),
+            patch.object(article_queries, 'fetchall_rows', AsyncMock(side_effect=[rows, [], facet_rows])),
             patch.object(article_queries, 'fetchone_row', AsyncMock(return_value={'total': 3})) as count,
         ):
             result = await _list_articles(SimpleNamespace(), **_list_kwargs())

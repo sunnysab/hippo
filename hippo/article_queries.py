@@ -288,6 +288,16 @@ def _normalize_topic_filter(value: str | None, vocabulary: dict[str, Any]) -> li
     return topics or None
 
 
+def _build_event_where_clause(event_id: int | None) -> tuple[str, list[Any]]:
+    """Restrict the list to one story's reports."""
+    if event_id is None:
+        return '', []
+    return (
+        'EXISTS (SELECT 1 FROM article_event_link el WHERE el.article_pk = a.id AND el.event_id = %s)',
+        [event_id],
+    )
+
+
 def _build_topic_where_clause(topics: list[str] | None) -> tuple[str, list[Any]]:
     """An EXISTS subquery, not a join.
 
@@ -336,6 +346,7 @@ def _build_article_where_clause(
     starred_only: bool = False,
     sources: list[str] | None = None,
     topics: list[str] | None = None,
+    event_id: int | None = None,
 ) -> tuple[str, list[Any], str, list[str]]:
     where: list[str] = []
     params: list[Any] = []
@@ -358,6 +369,10 @@ def _build_article_where_clause(
     if topic_clause:
         where.append(topic_clause)
         params.extend(topic_params)
+    event_clause, event_params = _build_event_where_clause(event_id)
+    if event_clause:
+        where.append(event_clause)
+        params.extend(event_params)
     if item_show_type is not None:
         clause, clause_params = _build_item_show_type_where_clause(item_show_type)
         where.append(clause)
@@ -403,6 +418,7 @@ def _build_article_query(
     starred_only: bool = False,
     sources: list[str] | None = None,
     topics: list[str] | None = None,
+    event_id: int | None = None,
 ) -> tuple[str, list[Any]]:
     select_params: list[Any] = []
     rank_select = ''
@@ -421,6 +437,7 @@ def _build_article_query(
         starred_only=starred_only,
         sources=sources,
         topics=topics,
+        event_id=event_id,
     )
 
     if sort_mode == ARTICLE_SORT_RELEVANCE_DESC and query_tsquery_sql:
@@ -471,6 +488,7 @@ async def _count_articles(
     starred_only: bool = False,
     sources: list[str] | None = None,
     topics: list[str] | None = None,
+    event_id: int | None = None,
 ) -> int:
     where_sql, params, _tsquery_sql, _tsquery_params = _build_article_where_clause(
         group_ids=group_ids,
@@ -485,6 +503,7 @@ async def _count_articles(
         starred_only=starred_only,
         sources=sources,
         topics=topics,
+        event_id=event_id,
     )
     # The extra joins are only worth their cost when a predicate uses them.
     state_join = f'{READ_STATE_JOIN if unread_only else ""}{STAR_JOIN if starred_only else ""}'
@@ -585,14 +604,8 @@ async def _attach_topics(storage: PostgresStorage, rows: list[dict[str, Any]]) -
     """
     if not rows:
         return
-    pks = [row['id'] for row in rows]
-    stored = await fetchall_rows(
-        storage,
-        "SELECT article_pk, topics FROM article_topic WHERE article_pk = ANY(%s) AND state = 'ready'",
-        [pks],
-        normalize=_normalize_record,
-    )
-    by_pk = {row['article_pk']: row.get('topics') or [] for row in stored}
+    topics_repo = getattr(storage, 'topics', None)
+    by_pk = await topics_repo.topics_for([row['id'] for row in rows]) if topics_repo else {}
     for row in rows:
         row['topics'] = by_pk.get(row['id'], [])
 
@@ -800,6 +813,24 @@ async def _get_article(storage: PostgresStorage, user_id: int, article_id: int) 
     article['item_show_type'] = _coalesce_item_show_type(article.get('item_show_type'))
     article['content_kind'] = content_kind(article.get('source'), article.get('item_show_type'))
     article['account_avatar_url'] = f'/api/account/{article["biz"]}/avatar'
+    await _attach_topics(storage, [article])
+    # The event is only reported once it is visible, so the reader is never told
+    # "one other report" about a story no second publisher has confirmed. The
+    # lookup is skipped when the caller's storage has no topic repository: the
+    # event is an enrichment, never a reason for the article to fail to load.
+    topics_repo = getattr(storage, 'topics', None)
+    linked = await topics_repo.event_of(int(article['id'])) if topics_repo else None
+    event = await topics_repo.public_event(int(linked['id'])) if linked else None
+    article['event'] = (
+        {
+            'id': int(event['id']),
+            'title': event['title'],
+            'article_count': int(event['article_count']),
+            'source_count': int(event['source_count']),
+        }
+        if event
+        else None
+    )
 
     content_row = await fetchone_row(
         storage,
@@ -1172,6 +1203,7 @@ async def _list_feed(
     since_ts: int | None,
     until_ts: int | None,
     limit: int,
+    event_id: int | None = None,
 ) -> list[dict[str, Any]]:
     query_text = (query or '').strip()
     sort_mode = _normalize_article_sort(None, has_query=bool(query_text))
@@ -1188,5 +1220,6 @@ async def _list_feed(
         sort_mode=sort_mode,
         limit=limit,
         offset=0,
+        event_id=event_id,
     )
     return await fetchall_rows(storage, query_sql, params, normalize=_normalize_record)

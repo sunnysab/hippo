@@ -63,7 +63,8 @@ class ParseAnswerTest(unittest.TestCase):
         self.vocabulary = topics.default_vocabulary()
 
     def test_duplicates_collapse_and_leading_order_is_kept(self):
-        parsed = topics.parse_answer(answer('research', 'ai', 'research', 'ai'), self.vocabulary)
+        parsed, event = topics.parse_answer(answer('research', 'ai', 'research', 'ai'), self.vocabulary)
+        self.assertIsNone(event)
         self.assertEqual(['research', 'ai'], topics.slugs_of(parsed))
         self.assertEqual('研究与论文', parsed[0]['name'])
 
@@ -71,10 +72,11 @@ class ParseAnswerTest(unittest.TestCase):
         self.assertEqual(2, topics.MAX_TOPICS)
 
     def test_an_empty_answer_is_a_legitimate_result_not_a_failure(self):
-        self.assertEqual([], topics.parse_answer('{"topics":[]}', self.vocabulary))
+        self.assertEqual(([], None), topics.parse_answer('{"topics":[]}', self.vocabulary))
 
     def test_fenced_json_is_accepted(self):
-        self.assertEqual(['ai'], topics.slugs_of(topics.parse_answer('```json\n' + answer('ai') + '\n```', self.vocabulary)))
+        parsed, _ = topics.parse_answer('```json\n' + answer('ai') + '\n```', self.vocabulary)
+        self.assertEqual(['ai'], topics.slugs_of(parsed))
 
     def test_a_slug_outside_the_vocabulary_rejects_the_whole_answer(self):
         with self.assertRaises(ApiError) as ctx:
@@ -95,7 +97,7 @@ class ParseAnswerTest(unittest.TestCase):
             self.assertEqual('topic.invalid_result', ctx.exception.code)
 
     def test_the_name_always_comes_from_the_vocabulary_not_the_model(self):
-        self.assertEqual('人工智能', topics.parse_answer(answer('ai'), self.vocabulary)[0]['name'])
+        self.assertEqual('人工智能', topics.parse_answer(answer('ai'), self.vocabulary)[0][0]['name'])
 
 
 class BuildMessagesTest(unittest.IsolatedAsyncioTestCase):
@@ -114,10 +116,89 @@ class BuildMessagesTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_classify_runs_one_call_and_validates_the_answer(self):
         with patch('hippo.llm.client.complete', AsyncMock(return_value=answer('ai'))) as call:
-            parsed = await topics.classify({'model': 'test'}, title='T', digest='D', vocabulary=topics.default_vocabulary())
+            parsed, event = await topics.classify(
+                {'model': 'test'}, title='T', digest='D', vocabulary=topics.default_vocabulary()
+            )
         self.assertEqual(1, call.await_count)
         self.assertEqual(['ai'], topics.slugs_of(parsed))
+        self.assertIsNone(event)
 
 
 if __name__ == '__main__':
     unittest.main()
+
+class EventDecisionTest(unittest.TestCase):
+    def setUp(self):
+        self.vocabulary = topics.default_vocabulary()
+
+    def _answer(self, event):
+        return json.dumps({'topics': ['ai'], 'event': event})
+
+    def test_no_event_section_still_yields_topics(self):
+        parsed, event = topics.parse_answer(answer('ai'), self.vocabulary)
+        self.assertEqual(['ai'], topics.slugs_of(parsed))
+        self.assertIsNone(event)
+
+    def test_none_is_reduced_to_no_event(self):
+        for value in ({'action': 'none'}, {'action': 'none', 'id': 5}, {'action': 'none', 'title': 'x'}):
+            with self.subTest(value=value):
+                parsed, event = topics.parse_answer(self._answer(value), self.vocabulary, candidate_ids={1})
+                self.assertEqual(['ai'], topics.slugs_of(parsed))
+                self.assertIsNone(event)
+
+    def test_joining_a_supplied_candidate_is_accepted(self):
+        _, event = topics.parse_answer(
+            self._answer({'action': 'join', 'id': 7}), self.vocabulary, candidate_ids={7, 8}
+        )
+        self.assertEqual({'action': 'join', 'id': 7}, event)
+
+    def test_joining_an_unsupplied_candidate_rejects_the_whole_answer(self):
+        # Attaching an article to an unrelated story is worse than leaving it loose.
+        with self.assertRaises(ApiError) as ctx:
+            topics.parse_answer(self._answer({'action': 'join', 'id': 99}), self.vocabulary, candidate_ids={7})
+        self.assertEqual('topic.invalid_result', ctx.exception.code)
+
+    def test_joining_without_an_id_is_rejected(self):
+        with self.assertRaises(ApiError) as ctx:
+            topics.parse_answer(self._answer({'action': 'join'}), self.vocabulary, candidate_ids={7})
+        self.assertEqual('topic.invalid_result', ctx.exception.code)
+
+    def test_a_new_event_needs_a_non_blank_title(self):
+        _, event = topics.parse_answer(self._answer({'action': 'new', 'title': ' 某事发生 '}), self.vocabulary)
+        self.assertEqual({'action': 'new', 'title': '某事发生'}, event)
+
+        for value in ({'action': 'new'}, {'action': 'new', 'title': '   '}):
+            with self.subTest(value=value), self.assertRaises(ApiError) as ctx:
+                topics.parse_answer(self._answer(value), self.vocabulary)
+            self.assertEqual('topic.invalid_result', ctx.exception.code)
+
+    def test_an_unknown_action_or_an_extra_key_is_rejected(self):
+        for value in ({'action': 'merge'}, {'action': 'none', 'confidence': 0.9}):
+            with self.subTest(value=value), self.assertRaises(ApiError) as ctx:
+                topics.parse_answer(self._answer(value), self.vocabulary)
+            self.assertEqual('topic.invalid_result', ctx.exception.code)
+
+
+class EventCandidatePromptTest(unittest.TestCase):
+    def test_candidates_are_sent_with_the_vocabulary_in_one_call(self):
+        candidates = [{'id': 3, 'title': 'Existing story', 'sources': 4}]
+        payload = json.loads(
+            topics.build_messages('T', 'D', topics.default_vocabulary(), candidates)[1]['content']
+        )
+        self.assertEqual([{'id': 3, 'title': 'Existing story'}], payload['events'])
+        # One call: the vocabulary and the candidates arrive together.
+        self.assertEqual(['slug', 'name'], list(payload['vocabulary'][0]))
+
+    def test_the_candidate_list_is_capped_so_the_prompt_stays_flat(self):
+        candidates = [{'id': index, 'title': f'S{index}'} for index in range(topics.MAX_EVENT_CANDIDATES + 20)]
+        payload = json.loads(topics.build_messages('T', 'D', topics.default_vocabulary(), candidates)[1]['content'])
+        self.assertEqual(topics.MAX_EVENT_CANDIDATES, len(payload['events']))
+
+    def test_no_candidates_still_sends_an_empty_list(self):
+        payload = json.loads(topics.build_messages('T', 'D', topics.default_vocabulary())[1]['content'])
+        self.assertEqual([], payload['events'])
+
+    def test_the_prompt_carries_the_event_rules(self):
+        system = topics.build_messages('T', 'D', topics.default_vocabulary())[0]['content']
+        self.assertIn('"none"', system)
+        self.assertIn('prefer "none" over inventing one', system)

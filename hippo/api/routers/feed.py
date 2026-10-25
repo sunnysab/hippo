@@ -36,6 +36,7 @@ async def list_feed(
     biz: str | None = None,
     q: str | None = None,
     limit: int = 50,
+    event_id: int | None = None,
     format: str | None = None,
     since: str | None = None,
     until: str | None = None,
@@ -55,6 +56,7 @@ async def list_feed(
         biz (str | None): 按公众号 biz 筛选。
         q (str | None): 搜索关键词。
         limit (int): 返回条目数量 (默认: 50)。
+        event_id (int | None): 只看同一件事的报道；事件未达可见门槛时返回 404。
         format (str | None): 输出格式 ("rss" 表示 RSS Feed)。
         since (str | None): 起始日期筛选。
         until (str | None): 结束日期筛选。
@@ -119,6 +121,10 @@ async def list_feed(
             content=xml.encode('utf-8'),
             media_type='application/rss+xml; charset=utf-8',
         )
+    if event_id is not None and await storage.topics.public_event(event_id) is None:
+        # One publisher's guess is not a story; saying "not found" is honest and
+        # keeps the threshold from leaking through an empty list.
+        raise ApiError('Event not found', status=404)
     payload = await _list_feed(
         storage,
         user_id=user_id,
@@ -128,5 +134,6 @@ async def list_feed(
         since_ts=since_ts,
         until_ts=until_ts,
         limit=min(max(limit, 1), 500),
+        event_id=event_id,
     )
     return {'articles': payload}
