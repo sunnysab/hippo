@@ -41,6 +41,7 @@ from .repositories import (
     MetaRepository,
     OutlineRepository,
     SubscriptionRepository,
+    TopicRepository,
     UserCredentialRepository,
     UserRepository,
     UserSessionRepository,
@@ -240,6 +241,7 @@ class PostgresStorage(AbstractAsyncContextManager):
         self.stars = ArticleStarRepository(self.conn)
         self.chat = ChatRepository(self.conn)
         self.outlines = OutlineRepository(self.conn)
+        self.topics = TopicRepository(self.conn)
         self.reports = ReportRepository(self.conn)
 
     async def close(self) -> None:

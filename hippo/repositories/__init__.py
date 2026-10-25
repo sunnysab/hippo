@@ -30,6 +30,7 @@ from .session import UserSessionRepository
 from .star import ArticleStarRepository
 from .subscription import SubscriptionRepository
 from .token import UserTokenRepository
+from .topic import TopicRepository
 from .user import UserRepository
 
 __all__ = [
@@ -56,6 +57,7 @@ __all__ = [
     'MetaRepository',
     'OutlineRepository',
     'SubscriptionRepository',
+    'TopicRepository',
     'UserCredentialRepository',
     'UserRepository',
     'UserSessionRepository',
