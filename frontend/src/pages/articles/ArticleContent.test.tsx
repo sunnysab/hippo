@@ -398,6 +398,8 @@ describe('ArticleContent audio-only mode', () => {
     const { container } = renderContent(bothBlocks);
     const video = container.querySelector('video')!;
     video.currentTime = 132;
+    // 倍速是读者的选择，换一个播放器不该把它丢掉。
+    video.playbackRate = 2;
     // jsdom 的 paused 永远是 true，这里只验证「切过去继续播」这条分支。
     Object.defineProperty(video, 'paused', { value: false, configurable: true });
 
@@ -408,6 +410,7 @@ describe('ArticleContent audio-only mode', () => {
     const audio = container.querySelector('audio')!;
     fireEvent.loadedMetadata(audio);
     expect(audio.currentTime).toBe(132);
+    expect(audio.playbackRate).toBe(2);
     expect(play).toHaveBeenCalled();
     expect(container.querySelector('.reader-audio-toggle')?.textContent).toBe('看视频');
   });

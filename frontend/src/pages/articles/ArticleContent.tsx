@@ -517,8 +517,10 @@ function RenderedContent({
   const [preparingAudio, setPreparingAudio] = useState(false);
   const articleId = payload.article?.id ?? null;
   // Where the player was when the reader switched. The other element starts empty,
-  // so it is told where to go once its metadata has arrived.
-  const handoverRef = useRef<{ time: number; playing: boolean } | null>(null);
+  // so it is told where to go once its metadata has arrived. The speed travels with
+  // it: a fresh element always starts at 1x, and losing a 2x listen is losing the
+  // reader's choice.
+  const handoverRef = useRef<{ time: number; playing: boolean; rate: number } | null>(null);
 
   // A paragraph is on screen from its own `t` until the next one starts, so the
   // timeline only needs the sorted start times. Every paragraph carries one for a
@@ -631,6 +633,7 @@ function RenderedContent({
     if (!handover) return;
     handoverRef.current = null;
     event.currentTarget.currentTime = handover.time;
+    event.currentTarget.playbackRate = handover.rate;
     if (handover.playing) void event.currentTarget.play().catch(() => {});
   }, []);
 
@@ -649,7 +652,7 @@ function RenderedContent({
       toggleMode: () => {
         const current = audioOnly ? audioRef.current : videoRef.current;
         handoverRef.current = current
-          ? { time: current.currentTime, playing: !current.paused }
+          ? { time: current.currentTime, playing: !current.paused, rate: current.playbackRate }
           : null;
         if (current && !current.paused) current.pause();
         if (!audioOnly && !audioUrl) {
