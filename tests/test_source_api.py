@@ -458,7 +458,8 @@ class WeixinArticleTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(502, ctx.exception.status)
 
     async def test_subscribing_by_article_writes_the_account_and_follows_it(self) -> None:
-        storage = _storage()
+        transactions: list[int] = []
+        storage = _storage(transactions=transactions)
         storage.articles.find_biz_by_link = AsyncMock(return_value='MzU2MDI3MDk5NQ==')
         storage.accounts.get_account = AsyncMock(return_value=SimpleNamespace(
             biz='MzU2MDI3MDk5NQ==', nickname='TopView', gh_id='gh_3eb1a1b60c4c', alias='TopView_Skyfall',
@@ -474,6 +475,9 @@ class WeixinArticleTest(unittest.IsolatedAsyncioTestCase):
                 storage=storage,
             )
 
+        # The request handle rolls back on close, so the subscription and the
+        # audit row each need a commit of their own.
+        self.assertEqual(2, len(transactions))
         self.assertEqual('weixin', result['source'])
         self.assertEqual(1, result['group_id'])
         account: AccountCredential = storage.accounts.upsert_account.call_args.args[0]

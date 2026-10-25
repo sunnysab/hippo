@@ -168,13 +168,14 @@ async def _subscribe_weixin(
         gh_id=info.source_key or None,
         group_id=group_id,
     )
-    await storage.audit.record(
-        user.id,
-        'source.subscribed',
-        target=info.biz,
-        detail={'source': 'weixin', 'via': 'article'},
-        ip=client_ip(request),
-    )
+    async with storage.transaction():
+        await storage.audit.record(
+            user.id,
+            'source.subscribed',
+            target=info.biz,
+            detail={'source': 'weixin', 'via': 'article'},
+            ip=client_ip(request),
+        )
     logger.info('按文章订阅 %s（%s）', info.biz, info.nickname)
     return {
         'biz': account['biz'],
