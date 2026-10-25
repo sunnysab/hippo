@@ -60,6 +60,18 @@ export function ReaderControls({ config, updateConfig }: ReaderControlsProps) {
         <p className="muted reader-controls-note">
           {t('reader.followPlaybackHint', '播放音视频时，正在播放的段落会自动滚到视口中间。')}
         </p>
+        <label className="switch">
+          <input
+            id="reader-mini-player"
+            type="checkbox"
+            checked={config.miniPlayer}
+            onChange={(event) => updateConfig({ miniPlayer: event.target.checked })}
+          />
+          <span>{t('reader.miniPlayer', '播放时小窗')}</span>
+        </label>
+        <p className="muted reader-controls-note">
+          {t('reader.miniPlayerHint', '视频滚出视野后浮在角落继续播，可以暂停、拖开或关掉。')}
+        </p>
       </div>
     </div>
   );

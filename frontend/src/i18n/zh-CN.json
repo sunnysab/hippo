@@ -260,6 +260,8 @@
   "reader.hideSmallImagesHint": "自动隐藏装饰性或信息较少的小图。",
   "reader.followPlayback": "跟随播放滚动",
   "reader.followPlaybackHint": "播放音视频时，正在播放的段落会自动滚到视口中间。",
+  "reader.miniPlayer": "播放时小窗",
+  "reader.miniPlayerHint": "视频滚出视野后浮在角落继续播，可以暂停、拖开或关掉。",
   "filters.allGroups": "全部分组",
   "filters.allAccounts": "全部账号",
   "filters.allTypes": "全部类型",

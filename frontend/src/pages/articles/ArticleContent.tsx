@@ -115,6 +115,8 @@ interface ArticleContentProps {
   hideSmall: boolean;
   /** Scroll the playing paragraph into view as the player moves on. */
   followPlayback: boolean;
+  /** Float the video over the page once it is scrolled out of sight. */
+  miniPlayer: boolean;
   onImageContextMenu: (detail: { imageId: number; x: number; y: number }) => void;
 }
 
@@ -589,7 +591,13 @@ const ContentBlock = memo(function ContentBlock({
   return null;
 });
 
-export function ArticleContent({ payload, hideSmall, followPlayback, onImageContextMenu }: ArticleContentProps) {
+export function ArticleContent({
+  payload,
+  hideSmall,
+  followPlayback,
+  miniPlayer,
+  onImageContextMenu,
+}: ArticleContentProps) {
   const { t } = useI18n();
 
   const content = payload.content;
@@ -623,6 +631,7 @@ export function ArticleContent({ payload, hideSmall, followPlayback, onImageCont
       content={content}
       hideSmall={hideSmall}
       followPlayback={followPlayback}
+      miniPlayer={miniPlayer}
       onImageContextMenu={onImageContextMenu}
     />
   );
@@ -643,6 +652,7 @@ function RenderedContent({
   content,
   hideSmall,
   followPlayback,
+  miniPlayer,
   onImageContextMenu,
 }: RenderedContentProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -847,7 +857,7 @@ function RenderedContent({
   // The mini player: the video floats over the page once it has been scrolled out
   // of sight while it plays. It is dismissed by hand or by scrolling back, and both
   // ways are per article -- nothing here is remembered beyond the open payload.
-  const pip = hasVideo && !audioOnly && started && videoGone && !pipDismissed;
+  const pip = miniPlayer && hasVideo && !audioOnly && started && videoGone && !pipDismissed;
   // Coming back into view is the reset: the next scroll away may float it again.
   // Adjusted during render, the same way the previous article's state is cleared.
   const [pipWasGone, setPipWasGone] = useState(videoGone);

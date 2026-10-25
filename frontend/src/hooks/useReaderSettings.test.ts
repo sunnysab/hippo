@@ -14,6 +14,7 @@ const config = (patch: Partial<ReaderConfig>): ReaderConfig => ({
   serif: false,
   hideSmall: false,
   followPlayback: true,
+  miniPlayer: true,
   ...patch,
 });
 
@@ -37,6 +38,11 @@ describe('normalizeReaderConfig', () => {
     // 老版本的配置里没有这个字段，缺省即打开。
     expect(normalizeReaderConfig({ ...config({}), followPlayback: undefined as unknown as boolean }).followPlayback).toBe(true);
     expect(normalizeReaderConfig(config({ followPlayback: false })).followPlayback).toBe(false);
+  });
+
+  it('floats the video unless it was turned off', () => {
+    expect(normalizeReaderConfig({ ...config({}), miniPlayer: undefined as unknown as boolean }).miniPlayer).toBe(true);
+    expect(normalizeReaderConfig(config({ miniPlayer: false })).miniPlayer).toBe(false);
   });
 
   it('falls back when a stored value is not a number', () => {

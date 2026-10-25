@@ -9,6 +9,8 @@ export interface ReaderConfig {
   hideSmall: boolean;
   /** Keep the paragraph the player is inside on screen while it plays. */
   followPlayback: boolean;
+  /** Float the video over the page once it is scrolled out of sight. */
+  miniPlayer: boolean;
 }
 
 const defaultConfig: ReaderConfig = {
@@ -19,6 +21,7 @@ const defaultConfig: ReaderConfig = {
   serif: false,
   hideSmall: false,
   followPlayback: true,
+  miniPlayer: true,
 };
 
 /**
@@ -40,6 +43,7 @@ const LEGACY_WIDTH_DEFAULT = '860';
 export const normalizeReaderConfig = (config: ReaderConfig): ReaderConfig => ({
   ...config,
   followPlayback: config.followPlayback !== false,
+  miniPlayer: config.miniPlayer !== false,
   width: config.width === LEGACY_WIDTH_DEFAULT
     ? defaultConfig.width
     : clamp(config.width, READER_WIDTH_RANGE.min, READER_WIDTH_RANGE.max, 760),

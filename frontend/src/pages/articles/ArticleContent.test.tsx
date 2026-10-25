@@ -52,6 +52,7 @@ const renderContent = (
       payload={payload(blocks, article)}
       hideSmall={false}
       followPlayback={followPlayback}
+      miniPlayer
       onImageContextMenu={vi.fn()}
     />,
   );
