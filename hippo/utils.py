@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import re
 import unicodedata
 from datetime import UTC, date, datetime, time, timedelta, timezone
@@ -12,6 +13,8 @@ if TYPE_CHECKING:
     from .storage import PostgresStorage
 
 _slug_pattern = re.compile(r'[^a-z0-9-]+')
+#: 真正的标签开头（``<a`` / ``</p`` / ``<!--``），不是标题里的字面 ``1+1<1``、``<一>``。
+_tag_pattern = re.compile(r'<[a-zA-Z!/]')
 
 #: Deliberately loose: only rejects what is obviously not an address.
 EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
@@ -20,6 +23,22 @@ EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 def strip_nul(value: Any) -> Any:
     """去掉 NUL（``\\u0000``）：PG 的 text/jsonb 拒收，而微信的 title/digest 偶尔带一个。"""
     return value.replace('\x00', '') if isinstance(value, str) else value
+
+
+def unescape_text(value: Any) -> Any:
+    """还原文案字段里的 HTML 实体（``户型图&amp;效果图``）：daemon 给的是转义过的纯文本。
+
+    重复转义（``&amp;amp;``）一并还原到稳定为止。含原始标签的片段
+    （``<a href="…&amp;mid=…">``）原样返回：那里的 ``&amp;`` 是合法转义，unescape
+    会把属性里的 URL 写坏。
+    """
+    if not isinstance(value, str) or '&' not in value or _tag_pattern.search(value):
+        return value
+    while True:
+        unescaped = html.unescape(value)
+        if unescaped == value:
+            return value
+        value = unescaped
 
 
 def slugify(value: str, *, max_length: int = 80) -> str:
@@ -264,6 +283,7 @@ __all__ = [
     'slugify',
     'strip_nul',
     'to_utc_dt',
+    'unescape_text',
     'utc_now_dt',
     'utc_now_iso',
 ]

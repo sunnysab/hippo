@@ -138,6 +138,52 @@ class WeixinSourceListTest(unittest.TestCase):
         self.assertEqual('https://example.invalid/c.png', payload['cover_url'])
         self.assertEqual('cur', listed.next_offset)
 
+    def test_the_list_payload_resolves_escaped_entities(self) -> None:
+        source = WeixinSource(auto_login=False)
+        source._bot = _ListBot(
+            [
+                {
+                    'title': '招商&amp;港中旅',
+                    'digest': '高层&quot;',
+                    'url': 'https://mp.weixin.qq.com/s?__biz=Mz1&sn=abc',
+                    'publish_time': 1,
+                }
+            ]
+        )
+
+        payload = asyncio.run(source.list_articles('gh_1', 'Mz1')).items[0].payload
+
+        self.assertEqual('招商&港中旅', payload['title'])
+        self.assertEqual('高层"', payload['digest'])
+
+
+class DaemonTextFieldsTest(unittest.TestCase):
+    """daemon 的 title/author/digest 是转义过的纯文本，落库前要还原。
+
+    digest 里可能出现真的 HTML 片段（``<a href="…&amp;mid=…">``），那里的 ``&amp;``
+    是属性内合法转义，必须原样保留。
+    """
+
+    def test_escaped_entities_in_text_fields_are_resolved(self) -> None:
+        body = FetchedArticle.from_dict(
+            {
+                'title': '户型图&amp;效果图&#39;26',
+                'author': 'A&amp;B',
+                'digest': '高层+叠加&quot;',
+            }
+        )
+
+        self.assertEqual(("户型图&效果图'26", 'A&B', '高层+叠加"'), (body.title, body.author, body.digest))
+
+    def test_a_literal_angle_bracket_is_not_mistaken_for_markup(self) -> None:
+        # 「1+1<1」是标题本身的内容，不是标签，实体照样要还原。
+        self.assertEqual('1+1<1 & 2', FetchedArticle.from_dict({'slug': 'a', 'title': '1+1<1 &amp; 2'}).title)
+
+    def test_a_digest_that_is_html_keeps_its_escapes(self) -> None:
+        digest = '<a href="https://mp.weixin.qq.com/s?__biz=Mz1&amp;mid=2">标题</a>'
+
+        self.assertEqual(digest, FetchedArticle.from_dict({'slug': 'a', 'digest': digest}).digest)
+
 
 class CoverSelectionTest(unittest.TestCase):
     """One cover rule for the list, the article detail and the push event."""

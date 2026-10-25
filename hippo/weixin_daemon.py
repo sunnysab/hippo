@@ -29,7 +29,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .config import get_settings
 from .observability.otel import add_span_attributes, traced, traceparent
-from .utils import strip_nul
+from .utils import strip_nul, unescape_text
 
 # 会话类错误（daemon 侧 -13/未登录）：不是文章的错，不计 attempts、整体暂停等重新登录。
 # 普通 CGI 的 -13 是会话死；心跳/NewSync 的 -13 由 daemon 的定性阶梯先救，救不回来才到这。
@@ -190,9 +190,9 @@ class FetchedArticle:
             url=d.get('url', ''),
             short_link=d.get('short_link', ''),
             slug=d.get('slug', ''),
-            title=d.get('title', ''),
-            author=d.get('author', ''),
-            digest=d.get('digest', ''),
+            title=unescape_text(d.get('title', '')),
+            author=unescape_text(d.get('author', '')),
+            digest=unescape_text(d.get('digest', '')),
             user_name=d.get('user_name', ''),
             nick_name=d.get('nick_name', ''),
             publish_time=int(d.get('publish_time') or 0),
@@ -332,8 +332,8 @@ class WeixinSource:
                     sn=sn,
                     long_link=strip_nul(long_link),
                     payload={
-                        'title': strip_nul(article.get('title')),
-                        'digest': strip_nul(article.get('digest')),
+                        'title': unescape_text(strip_nul(article.get('title'))),
+                        'digest': unescape_text(strip_nul(article.get('digest'))),
                         'publish_time': article.get('publish_time'),
                         'cover_url': strip_nul(select_cover_url(article.get('cover_urls'), article.get('cover_url'))),
                     },
