@@ -1363,18 +1363,27 @@ mark.hippo-highlight:hover {
   place-items: center;
   width: 26px;
   height: 26px;
-  margin-left: auto;
   padding: 0;
+  color: var(--text);
+}
+
+.reader-pip-btn.is-icon:last-child {
+  margin-left: auto;
   color: var(--muted);
 }
 
 .reader-pip-btn.is-icon svg {
-  width: 14px;
-  height: 14px;
-  fill: none;
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
   stroke: currentColor;
   stroke-width: 1.6;
   stroke-linecap: round;
+}
+
+/* The close glyph is drawn, the play/pause ones are filled. */
+.reader-pip-btn.is-icon:last-child svg {
+  fill: none;
 }
 
 /* No archived copy: say so instead of loading a third-party player. */

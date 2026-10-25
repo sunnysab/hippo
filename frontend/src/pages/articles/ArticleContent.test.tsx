@@ -482,16 +482,18 @@ describe('ArticleContent media blocks', () => {
     await act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
     expect(container.querySelector('.reader-video.is-pip')).not.toBeNull();
 
-    // 滚走之后原生控制条可能不在视野里，所以暂停也在小胶囊上。
-    video.pause();
+    // 滚走之后原生控制条可能不在视野里，所以暂停也在小窗自己的工具条上。
+    const [toggle] = container.querySelectorAll<HTMLButtonElement>('.reader-pip-btn');
+    expect(toggle.getAttribute('aria-label')).toBe('暂停');
+    fireEvent.click(toggle);
     expect(pause).toHaveBeenCalled();
+
     state.paused = true;
     fireEvent.pause(video);
     // 暂停不会让小窗消失，否则这个按钮按不动第二次。
     expect(container.querySelector('.reader-video.is-pip')).not.toBeNull();
-    const dockButton = container.querySelector('.reader-dock button')!;
-    expect(dockButton.getAttribute('aria-label')).toBe('播放');
-    fireEvent.click(dockButton);
+    expect(toggle.getAttribute('aria-label')).toBe('播放');
+    fireEvent.click(toggle);
     expect(playMock).toHaveBeenCalled();
   });
 
@@ -510,7 +512,7 @@ describe('ArticleContent media blocks', () => {
     await act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
     expect(container.querySelector('.reader-video.is-pip')).not.toBeNull();
 
-    fireEvent.click(container.querySelector('.reader-pip-btn.is-icon')!);
+    fireEvent.click(container.querySelector('.reader-pip-btn.is-icon:last-child')!);
     expect(container.querySelector('.reader-video.is-pip')).toBeNull();
     // 关掉之后仍在播放的它滚来滚去也不再自己弹出来。
     await act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
@@ -524,6 +526,26 @@ describe('ArticleContent media blocks', () => {
     fireEvent.scroll(window);
     await act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
     expect(container.querySelector('.reader-video.is-pip')).not.toBeNull();
+  });
+
+  it('shows one floating object at a time: the mini player carries the dock buttons', async () => {
+    const layout = layoutStub();
+    const { container } = renderContent([
+      { type: 'video', provider: 'bilibili', url: '/api/media/7/video' },
+      { type: 'paragraph', text: '开场', t: 0 },
+    ]);
+    const video = container.querySelector('video')!;
+    Object.defineProperty(video, 'paused', { configurable: true, get: () => false });
+
+    fireEvent.play(video);
+    layout.gone = true;
+    fireEvent.scroll(window);
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
+
+    // 同一个角落不能叠两个浮层，回到当前由小窗自己提供。
+    expect(container.querySelector('.reader-video.is-pip')).not.toBeNull();
+    expect(container.querySelector('.reader-dock')).toBeNull();
+    expect(container.querySelector('.reader-pip-bar')?.textContent).toContain('回到当前');
   });
 
   it('never floats a podcast, which has no picture to keep on screen', async () => {

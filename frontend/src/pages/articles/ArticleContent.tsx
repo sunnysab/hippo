@@ -264,7 +264,8 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({
 }) {
   const { t } = useI18n();
   const {
-    originalHref, pauseOther, showModeButton, pip, pipPos, returnToVideo, closePip, startPipDrag,
+    originalHref, pauseOther, showModeButton, pip, pipPos, playing, togglePlay,
+    backToParagraph, returnToVideo, closePip, startPipDrag,
   } = useContext(PlayerContext);
 
   // The archived copy streams from Hippo with Range support, so it plays at once
@@ -317,6 +318,18 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({
                   <circle cx='9' cy='17' r='1.4' /><circle cx='15' cy='17' r='1.4' />
                 </svg>
               </span>
+              <button
+                className='reader-pip-btn is-icon'
+                type='button'
+                onClick={togglePlay}
+                aria-label={playing ? t('articles.pause', '暂停') : t('articles.play', '播放')}
+                title={playing ? t('articles.pause', '暂停') : t('articles.play', '播放')}
+              >
+                {playing ? <PauseGlyph /> : <PlayGlyph />}
+              </button>
+              <button className='reader-pip-btn' type='button' onClick={backToParagraph}>
+                {t('articles.backToParagraph', '回到当前')}
+              </button>
               <button className='reader-pip-btn' type='button' onClick={returnToVideo}>
                 {t('articles.backToVideo', '回到视频')}
               </button>
@@ -829,11 +842,21 @@ function RenderedContent({
       const view = box();
       return rect.height > 0 && (rect.bottom <= view.top || rect.top >= view.bottom);
     };
+    // The floating frame reports its own fixed position, which is always on
+    // screen: measuring it would switch the mini player off the moment it appeared
+    // and back on again on the next frame. The slot holds the video's place in the
+    // text and does not move, so it is what gets measured.
+    const videoHome = () => (
+      videoRef.current?.closest<HTMLElement>('.reader-video')?.parentElement
+        ?.querySelector<HTMLElement>('.reader-video-slot')
+      ?? videoRef.current?.closest<HTMLElement>('.reader-video')
+      ?? null
+    );
     let frame = 0;
     const update = () => {
       frame = 0;
       setParagraphGone(activeIndex >= 0 && offscreen(playingRef.current));
-      setVideoGone(offscreen(videoRef.current?.closest<HTMLElement>('.reader-video') ?? null));
+      setVideoGone(offscreen(videoHome()));
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
     // The first measurement lands in a frame too, which is what keeps the effect
@@ -842,7 +865,7 @@ function RenderedContent({
     (pane ?? window).addEventListener('scroll', schedule, { passive: true });
     window.addEventListener('resize', schedule);
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedule);
-    for (const node of [playingRef.current, videoRef.current?.closest<HTMLElement>('.reader-video')]) {
+    for (const node of [playingRef.current, videoHome()]) {
       if (node) observer?.observe(node);
     }
     return () => {
@@ -852,12 +875,14 @@ function RenderedContent({
       observer?.disconnect();
     };
   }, [activeIndex, hasVideo, audioOnly]);
-  const showDock = activeIndex >= 0 && paragraphGone;
 
   // The mini player: the video floats over the page once it has been scrolled out
   // of sight while it plays. It is dismissed by hand or by scrolling back, and both
   // ways are per article -- nothing here is remembered beyond the open payload.
   const pip = miniPlayer && hasVideo && !audioOnly && started && videoGone && !pipDismissed;
+  // Two floats in the same corner would sit on top of each other, and the frame
+  // carries its own controls while it is there.
+  const showDock = activeIndex >= 0 && paragraphGone && !pip;
   // Coming back into view is the reset: the next scroll away may float it again.
   // Adjusted during render, the same way the previous article's state is cleared.
   const [pipWasGone, setPipWasGone] = useState(videoGone);
