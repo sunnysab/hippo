@@ -63,9 +63,12 @@ class ParseAnswerTest(unittest.TestCase):
         self.vocabulary = topics.default_vocabulary()
 
     def test_duplicates_collapse_and_leading_order_is_kept(self):
-        parsed = topics.parse_answer(answer('research', 'ai', 'research'), self.vocabulary)
+        parsed = topics.parse_answer(answer('research', 'ai', 'research', 'ai'), self.vocabulary)
         self.assertEqual(['research', 'ai'], topics.slugs_of(parsed))
         self.assertEqual('研究与论文', parsed[0]['name'])
+
+    def test_the_cap_is_two_so_a_third_label_cannot_drift(self):
+        self.assertEqual(2, topics.MAX_TOPICS)
 
     def test_an_empty_answer_is_a_legitimate_result_not_a_failure(self):
         self.assertEqual([], topics.parse_answer('{"topics":[]}', self.vocabulary))
