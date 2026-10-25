@@ -186,3 +186,15 @@ class WorkerEventTest(TopicWorkerTest):
         kwargs = self.repo.finish.await_args.kwargs
         self.assertEqual('topic.invalid_result', kwargs['error'])
         self.assertNotIn('event', kwargs)
+
+class PromptVersionTest(TopicWorkerTest):
+    """The worker passes the current prompt version everywhere the row records it."""
+
+    async def test_the_backfill_and_requeue_carry_the_prompt_version(self):
+        await worker.run_once()
+        self.assertEqual(worker.PROMPT_VERSION, self.repo.backfill.await_args.kwargs['prompt_version'])
+        self.assertEqual(worker.PROMPT_VERSION, self.repo.requeue_stale.await_args.kwargs['prompt_version'])
+
+    async def test_a_published_row_records_the_prompt_version_that_produced_it(self):
+        await worker.run_once()
+        self.assertEqual(worker.PROMPT_VERSION, self.repo.finish.await_args.kwargs['prompt_version'])

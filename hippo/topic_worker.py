@@ -17,7 +17,7 @@ from .llm.client import resolve_provider
 from .logger import get_logger
 from .site_settings import get_site_settings
 from .storage import open_storage
-from .topics import classify, fingerprint
+from .topics import PROMPT_VERSION, classify, fingerprint
 
 logger = get_logger(__name__)
 
@@ -43,11 +43,17 @@ async def _vocabulary(storage) -> dict[str, Any]:
 
 async def _backfill(storage, vocabulary: dict[str, Any]) -> None:
     since = int((datetime.now(UTC) - timedelta(days=BACKFILL_DAYS)).timestamp())
-    await storage.topics.backfill(since_ts=since, vocabulary_version=int(vocabulary['version']))
-    # Only the rows behind the current vocabulary: this is the switch that makes
-    # an edited topic list take effect, and it must not block normal work.
+    await storage.topics.backfill(
+        since_ts=since, vocabulary_version=int(vocabulary['version']), prompt_version=PROMPT_VERSION
+    )
+    # Rows behind the current vocabulary *or* the current prompt. Both are the
+    # switch that makes an edit take effect, and neither may block normal work.
     try:
-        await storage.topics.requeue_stale(vocabulary_version=int(vocabulary['version']), limit=REQUEUE_BATCH)
+        await storage.topics.requeue_stale(
+            vocabulary_version=int(vocabulary['version']),
+            prompt_version=PROMPT_VERSION,
+            limit=REQUEUE_BATCH,
+        )
     except Exception:
         logger.warning('topic_requeue_unavailable')
 
@@ -78,6 +84,7 @@ async def run_once() -> bool:
                         topics=claim['topics'],
                         fingerprint=current,
                         vocabulary_version=int(vocabulary['version']),
+                        prompt_version=PROMPT_VERSION,
                         keep_event=True,
                     )
                 return True
@@ -102,6 +109,7 @@ async def run_once() -> bool:
                     topics=topics,
                     fingerprint=current,
                     vocabulary_version=int(vocabulary['version']),
+                    prompt_version=PROMPT_VERSION,
                     model=provider['model'],
                     event=event,
                 )

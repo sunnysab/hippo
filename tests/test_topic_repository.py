@@ -117,20 +117,20 @@ class TopicRepositoryTest(unittest.IsolatedAsyncioTestCase):
 
         # Four articles, two per round: the second call must pick up the rest
         # rather than re-selecting the rows it just inserted.
-        self.assertEqual(2, await self.repo.backfill(since_ts=1000, vocabulary_version=1, limit=2))
-        self.assertEqual(2, await self.repo.backfill(since_ts=1000, vocabulary_version=1, limit=2))
+        self.assertEqual(2, await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1, limit=2))
+        self.assertEqual(2, await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1, limit=2))
         # Nothing left: the same call must terminate rather than re-select the same rows.
-        self.assertEqual(0, await self.repo.backfill(since_ts=1000, vocabulary_version=1, limit=2))
+        self.assertEqual(0, await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1, limit=2))
         self.assertEqual(4, self.connection.db.execute('SELECT COUNT(*) FROM article_topic').fetchone()[0])
 
     async def test_backfill_ignores_articles_older_than_the_window(self):
         self.connection.db.execute('INSERT INTO articles VALUES (?, ?, ?, ?, ?)', (2, 'T', 'D', 10, 'biz_a'))
-        self.assertEqual(1, await self.repo.backfill(since_ts=1000, vocabulary_version=1))
-        self.assertEqual(0, await self.repo.backfill(since_ts=1000, vocabulary_version=1))
+        self.assertEqual(1, await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1))
+        self.assertEqual(0, await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1))
         self.assertIsNone(await self.repo.get(2))
 
     async def test_claim_transitions_to_processing_and_owns_a_lease(self):
-        await self.repo.backfill(since_ts=1000, vocabulary_version=1)
+        await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1)
         claim = await self.repo.claim()
         self.assertEqual('processing', claim['state'])
         self.assertTrue(claim['lease_token'])
@@ -138,7 +138,7 @@ class TopicRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any('FOR UPDATE SKIP LOCKED' in sql for sql in self.connection.queries))
 
     async def test_finish_publishes_topics_and_the_matching_slugs(self):
-        await self.repo.backfill(since_ts=1000, vocabulary_version=1)
+        await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1)
         claim = await self.repo.claim()
         topics = [{'slug': 'ai', 'name': '人工智能'}, {'slug': 'research', 'name': '研究与论文'}]
 
@@ -154,7 +154,7 @@ class TopicRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(row['lease_token'])
 
     async def test_an_empty_topic_list_is_a_published_result(self):
-        await self.repo.backfill(since_ts=1000, vocabulary_version=1)
+        await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1)
         claim = await self.repo.claim()
         self.assertTrue(await self.repo.finish(claim, topics=[], fingerprint='fp', vocabulary_version=1))
         row = await self.repo.get(1)
@@ -163,7 +163,7 @@ class TopicRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], row['slugs'])
 
     async def test_a_stale_lease_can_never_publish(self):
-        await self.repo.backfill(since_ts=1000, vocabulary_version=1)
+        await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1)
         stale = await self.repo.claim()
         self.connection.db.execute('UPDATE article_topic SET updated_at = ?', (time.time() - 901,))
         current = await self.repo.claim()
@@ -177,7 +177,7 @@ class TopicRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('new', (await self.repo.get(1))['fingerprint'])
 
     async def test_a_failure_is_recorded_without_publishing_partial_topics(self):
-        await self.repo.backfill(since_ts=1000, vocabulary_version=1)
+        await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1)
         claim = await self.repo.claim()
         self.assertTrue(await self.repo.finish(claim, error='topic.invalid_result'))
         row = await self.repo.get(1)
@@ -186,15 +186,15 @@ class TopicRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], row['topics'])
 
     async def test_a_failed_row_is_not_picked_up_again_without_help(self):
-        await self.repo.backfill(since_ts=1000, vocabulary_version=1)
+        await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1)
         claim = await self.repo.claim()
         await self.repo.finish(claim, error='topic.invalid_result')
         # Backfill only adds rows that do not exist; it never resurrects a failure.
-        self.assertEqual(0, await self.repo.backfill(since_ts=1000, vocabulary_version=1))
+        self.assertEqual(0, await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1))
         self.assertEqual('failed', (await self.repo.get(1))['state'])
 
     async def test_only_the_current_lease_can_be_released(self):
-        await self.repo.backfill(since_ts=1000, vocabulary_version=1)
+        await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1)
         claim = await self.repo.claim()
         await self.repo.release(dict(claim, lease_token='not-owned'))
         self.assertEqual('processing', (await self.repo.get(1))['state'])
@@ -203,11 +203,11 @@ class TopicRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone((await self.repo.get(1))['lease_token'])
 
     async def test_requeue_stale_moves_only_the_old_vocabulary_and_is_batched(self):
-        await self.repo.backfill(since_ts=1000, vocabulary_version=1)
+        await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1)
         claim = await self.repo.claim()
         await self.repo.finish(claim, topics=[{'slug': 'ai', 'name': 'x'}], fingerprint='fp', vocabulary_version=1)
 
-        self.assertEqual(1, await self.repo.requeue_stale(vocabulary_version=2, limit=10))
+        self.assertEqual(1, await self.repo.requeue_stale(vocabulary_version=2, prompt_version=1, limit=10))
         row = await self.repo.get(1)
         self.assertEqual('queued', row['state'])
         self.assertEqual([], row['topics'])
@@ -215,14 +215,14 @@ class TopicRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(row['model'])
         self.assertEqual(2, row['vocabulary_version'])
         # Already current: a second pass has nothing to do.
-        self.assertEqual(0, await self.repo.requeue_stale(vocabulary_version=2, limit=10))
+        self.assertEqual(0, await self.repo.requeue_stale(vocabulary_version=2, prompt_version=1, limit=10))
 
     async def test_requeue_stale_respects_its_batch_limit(self):
         for article_pk in (2, 3, 4):
             self.connection.db.execute('INSERT INTO articles VALUES (?, ?, ?, ?, ?)', (article_pk, f'T{article_pk}', 'D', 2000, 'biz_a'))
-        await self.repo.backfill(since_ts=1000, vocabulary_version=1)
-        self.assertEqual(2, await self.repo.requeue_stale(vocabulary_version=2, limit=2))
-        self.assertEqual(2, await self.repo.requeue_stale(vocabulary_version=2, limit=2))
+        await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1)
+        self.assertEqual(2, await self.repo.requeue_stale(vocabulary_version=2, prompt_version=1, limit=2))
+        self.assertEqual(2, await self.repo.requeue_stale(vocabulary_version=2, prompt_version=1, limit=2))
 
     async def test_the_source_row_is_the_only_thing_the_classifier_sees(self):
         self.assertEqual({'title': 'Title', 'digest': 'Digest'}, await self.repo.source(1))
@@ -253,12 +253,24 @@ class TopicEventTest(unittest.IsolatedAsyncioTestCase):
             'INSERT INTO article_event_link (article_pk, event_id) VALUES (?, ?)', (pk, event_id)
         )
 
-    async def test_an_event_is_hidden_until_a_second_publisher_covers_it(self):
+    async def test_a_new_event_is_offered_as_a_candidate_before_it_is_visible(self):
+        """The loop that made phase two unreachable.
+
+        A new event has one publisher, so it is not visible yet. If the candidate
+        list applied the same threshold, no second article could ever join it and
+        no event could ever become visible -- the feature would be dead code. This
+        pins the two rules apart: visibility is a reader-facing gate, candidacy is
+        how an event earns that visibility.
+        """
         self._article(1, 'biz_a')
         event_id = await self.repo.create_event('某事发生', 1)
 
+        # Not yet a story for readers...
         self.assertIsNone(await self.repo.public_event(event_id))
-        self.assertEqual([], await self.repo.candidates())
+        # ...but the model must be able to see it, or nobody can ever join.
+        candidates = await self.repo.candidates()
+        self.assertEqual([event_id], [item['id'] for item in candidates])
+        self.assertEqual(1, candidates[0]['sources'])
 
         self._article(2, 'biz_b')
         await self.repo.attach_event(2, event_id)
@@ -266,7 +278,23 @@ class TopicEventTest(unittest.IsolatedAsyncioTestCase):
         visible = await self.repo.public_event(event_id)
         self.assertEqual(2, visible['source_count'])
         self.assertEqual(2, visible['article_count'])
-        self.assertEqual(1, len(await self.repo.candidates()))
+
+    async def test_joining_a_candidate_is_what_makes_an_event_visible(self):
+        """End to end over the real repository: create, offer, join, become visible."""
+        self._article(1, 'biz_a')
+        event_id = await self.repo.create_event('某事发生', 1)
+        self.assertIsNone(await self.repo.public_event(event_id))
+
+        # A second publisher joins *through the candidate list*, the only path the
+        # worker has. Nothing here calls attach_event out of band.
+        offered = await self.repo.candidates()
+        target = next(item['id'] for item in offered if item['id'] == event_id)
+        self._article(2, 'biz_b')
+        await self.repo.attach_event(2, target)
+
+        visible = await self.repo.public_event(event_id)
+        self.assertIsNotNone(visible)
+        self.assertEqual(2, visible['source_count'])
 
     async def test_two_articles_from_the_same_publisher_are_not_a_story(self):
         for pk in (1, 2, 3):
@@ -329,7 +357,7 @@ class TopicEventTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self.repo.event_of(2))
 
     async def test_finish_applies_the_event_in_the_same_call(self):
-        await self.repo.backfill(since_ts=1000, vocabulary_version=1)
+        await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1)
         claim = await self.repo.claim()
         self.assertTrue(
             await self.repo.finish(
@@ -347,7 +375,7 @@ class TopicEventTest(unittest.IsolatedAsyncioTestCase):
         old = await self.repo.create_event('甲', 1)
         self.assertEqual(old, (await self.repo.event_of(1))['id'])
 
-        await self.repo.backfill(since_ts=1000, vocabulary_version=1)
+        await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1)
         claim = await self.repo.claim()
         await self.repo.finish(claim, topics=[], fingerprint='fp', vocabulary_version=1, event=None)
 
@@ -357,7 +385,7 @@ class TopicEventTest(unittest.IsolatedAsyncioTestCase):
         self._article(1, 'a')
         old = await self.repo.create_event('甲', 1)
 
-        await self.repo.backfill(since_ts=1000, vocabulary_version=1)
+        await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1)
         claim = await self.repo.claim()
         await self.repo.finish(claim, topics=[], fingerprint='fp', vocabulary_version=1, keep_event=True)
 
@@ -366,9 +394,58 @@ class TopicEventTest(unittest.IsolatedAsyncioTestCase):
     async def test_a_failed_classification_never_touches_the_event(self):
         self._article(1, 'a')
         old = await self.repo.create_event('甲', 1)
-        await self.repo.backfill(since_ts=1000, vocabulary_version=1)
+        await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1)
         claim = await self.repo.claim()
         await self.repo.finish(claim, error='topic.invalid_result', event={'action': 'new', 'title': '不该写'})
 
         self.assertEqual(old, (await self.repo.event_of(1))['id'])
         self.assertEqual(1, self.connection.db.execute('SELECT COUNT(*) FROM article_event').fetchone()[0])
+
+
+class PromptVersionRequeueTest(unittest.IsolatedAsyncioTestCase):
+    """Bumping PROMPT_VERSION must actually requeue, not just change the fingerprint."""
+
+    def setUp(self):
+        self.connection = Connection()
+        self.repo = TopicRepository(self.connection)
+        self.addCleanup(self.connection.db.close)
+
+    async def _ready_row(self, *, vocabulary_version: int, prompt_version: int):
+        await self.repo.backfill(
+            since_ts=1000, vocabulary_version=vocabulary_version, prompt_version=prompt_version
+        )
+        claim = await self.repo.claim()
+        await self.repo.finish(
+            claim,
+            topics=[{'slug': 'ai', 'name': '人工智能'}],
+            fingerprint='fp',
+            vocabulary_version=vocabulary_version,
+            prompt_version=prompt_version,
+        )
+
+    async def test_a_prompt_bump_requeues_even_when_the_vocabulary_is_unchanged(self):
+        await self._ready_row(vocabulary_version=1, prompt_version=1)
+
+        # Same vocabulary, newer prompt: the only thing that changed is the prompt.
+        self.assertEqual(1, await self.repo.requeue_stale(vocabulary_version=1, prompt_version=2))
+
+        row = await self.repo.get(1)
+        self.assertEqual('queued', row['state'])
+        self.assertEqual(2, row['prompt_version'])
+
+    async def test_a_prompt_bump_is_recorded_when_the_row_is_reclassified(self):
+        await self._ready_row(vocabulary_version=1, prompt_version=1)
+        await self.repo.requeue_stale(vocabulary_version=1, prompt_version=2)
+
+        claim = await self.repo.claim()
+        await self.repo.finish(
+            claim, topics=[], fingerprint='fp2', vocabulary_version=1, prompt_version=2
+        )
+
+        self.assertEqual(2, (await self.repo.get(1))['prompt_version'])
+        # Nothing is stale any more, so the next pass has no work.
+        self.assertEqual(0, await self.repo.requeue_stale(vocabulary_version=1, prompt_version=2))
+
+    async def test_a_vocabulary_bump_alone_still_requeues(self):
+        await self._ready_row(vocabulary_version=1, prompt_version=1)
+        self.assertEqual(1, await self.repo.requeue_stale(vocabulary_version=2, prompt_version=1))

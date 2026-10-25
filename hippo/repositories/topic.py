@@ -30,7 +30,9 @@ class TopicRepository:
             await cur.execute('SELECT * FROM article_topic WHERE article_pk = %s', (article_pk,))
             return await cur.fetchone()
 
-    async def backfill(self, *, since_ts: int, vocabulary_version: int, limit: int = 200) -> int:
+    async def backfill(
+        self, *, since_ts: int, vocabulary_version: int, prompt_version: int, limit: int = 200
+    ) -> int:
         """Queue articles that have no classification row yet.
 
         ``NOT EXISTS`` is what makes this terminate: with only ``ON CONFLICT DO
@@ -39,20 +41,27 @@ class TopicRepository:
         """
         async with self._conn.cursor() as cur:
             await cur.execute(
-                """INSERT INTO article_topic (article_pk, state, vocabulary_version)
-                   SELECT a.id, 'queued', %s
+                """INSERT INTO article_topic (article_pk, state, vocabulary_version, prompt_version)
+                   SELECT a.id, 'queued', %s, %s
                    FROM articles a
                    WHERE a.publish_at >= %s
                      AND NOT EXISTS (SELECT 1 FROM article_topic t WHERE t.article_pk = a.id)
                    ORDER BY a.id
                    LIMIT %s
                    ON CONFLICT (article_pk) DO NOTHING""",
-                (vocabulary_version, since_ts, limit),
+                (vocabulary_version, prompt_version, since_ts, limit),
             )
             return cur.rowcount
 
-    async def requeue_stale(self, *, vocabulary_version: int, limit: int = 500) -> int:
-        """Requeue rows classified under an older vocabulary or prompt.
+    async def requeue_stale(
+        self, *, vocabulary_version: int, prompt_version: int, limit: int = 500
+    ) -> int:
+        """Requeue rows produced by an older vocabulary or an older prompt.
+
+        Both versions are compared here. ``PROMPT_VERSION`` is also hashed into the
+        fingerprint, but a fingerprint cannot be compared in SQL (it needs the
+        article's title and digest), so the version needs a column of its own or a
+        prompt change would silently requeue nothing.
 
         Batched on purpose: a whole-library requeue in one statement would hold
         locks and grow the WAL for as long as it runs.
@@ -62,12 +71,12 @@ class TopicRepository:
                 """UPDATE article_topic
                    SET state = 'queued', topics = '[]'::jsonb, slugs = '{}', lease_token = NULL,
                        model = NULL, error_code = NULL, updated_at = clock_timestamp(),
-                       vocabulary_version = %s
+                       vocabulary_version = %s, prompt_version = %s
                    WHERE article_pk IN (
                        SELECT article_pk FROM article_topic
-                       WHERE vocabulary_version <> %s
+                       WHERE vocabulary_version <> %s OR prompt_version <> %s
                        ORDER BY article_pk LIMIT %s)""",
-                (vocabulary_version, vocabulary_version, limit),
+                (vocabulary_version, prompt_version, vocabulary_version, prompt_version, limit),
             )
             return cur.rowcount
 
@@ -93,6 +102,12 @@ class TopicRepository:
         Ranked by how many distinct publishers covered them, not by raw report
         count: ten publishers reporting once is a story, one publisher posting ten
         times is a habit. The window and the limit are what keep the prompt flat.
+
+        Crucially this does **not** require two publishers. Visibility does, but a
+        candidate list filtered the same way is a closed loop: a new event has one
+        publisher by definition, so it would never be offered, so no second article
+        could ever join it, so it would never reach the threshold. The threshold
+        decides what a reader may see; it must not decide what the model may join.
         """
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
@@ -102,7 +117,6 @@ class TopicRepository:
                    JOIN articles a ON a.id = l.article_pk
                    WHERE e.last_seen_at > clock_timestamp() - make_interval(hours => %s)
                    GROUP BY e.id, e.title
-                   HAVING COUNT(DISTINCT a.biz) >= 2
                    ORDER BY sources DESC, e.last_seen_at DESC
                    LIMIT %s""",
                 (hours, limit),
@@ -200,6 +214,7 @@ class TopicRepository:
         topics: list[dict[str, str]] | None = None,
         fingerprint: str | None = None,
         vocabulary_version: int | None = None,
+        prompt_version: int | None = None,
         model: str | None = None,
         error: str | None = None,
         event: dict[str, Any] | None = None,
@@ -222,6 +237,7 @@ class TopicRepository:
                    SET state = %s, topics = %s, slugs = %s, model = %s, error_code = %s,
                        fingerprint = COALESCE(%s, fingerprint),
                        vocabulary_version = COALESCE(%s, vocabulary_version),
+                       prompt_version = COALESCE(%s, prompt_version),
                        lease_token = NULL, updated_at = clock_timestamp()
                    WHERE article_pk = %s AND state = 'processing' AND lease_token = %s""",
                 (
@@ -232,6 +248,7 @@ class TopicRepository:
                     error,
                     fingerprint,
                     vocabulary_version,
+                    prompt_version,
                     claim['article_pk'],
                     claim['lease_token'],
                 ),

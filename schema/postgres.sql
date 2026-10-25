@@ -797,6 +797,10 @@ CREATE TABLE IF NOT EXISTS article_topic (
     topics JSONB NOT NULL DEFAULT '[]'::jsonb,
     slugs TEXT[] NOT NULL DEFAULT '{}',
     vocabulary_version INTEGER NOT NULL DEFAULT 0,
+    -- The prompt that produced this row. A column for the same reason as the
+    -- vocabulary version: bumping PROMPT_VERSION must be selectable in SQL,
+    -- and a fingerprint cannot be (it needs the article's title and digest).
+    prompt_version INTEGER NOT NULL DEFAULT 0,
     lease_token UUID,
     model TEXT,
     error_code TEXT,
