@@ -288,7 +288,7 @@ GET /api/account/search?q=中投&page=1&page_size=10
 
 | 方法 | 路径 | 权限 | 用途 |
 |---|---|---|---|
-| GET | `/api/article` | 登录 | 文章列表（筛选 + 全文检索 + 分面） |
+| GET | `/api/article` | 登录 | 文章列表（筛选 + 全文检索 + 分面，含 `topic` 方向筛选） |
 | GET | `/api/article/{id}` | 登录 | 文章详情（含正文块与图片） |
 | PUT | `/api/article/{id}/read` | 登录 | 标记单篇文章已读 / 未读 |
 | PUT | `/api/article/{id}/star` | 登录 | 收藏 / 取消收藏单篇文章 |
@@ -356,7 +356,9 @@ GET /api/article
   "page": 1,
   "page_size": 20,
   "total": 380178,
-  "item_show_type_facets": [ { "item_show_type": 0, "count": 120 }, { "item_show_type": 8, "count": 3 } ]
+  "item_show_type_facets": [ { "item_show_type": 0, "count": 120 }, { "item_show_type": 8, "count": 3 } ],
+  "topic_facets": [ { "slug": "ai", "name": "人工智能", "count": 41 },
+                    { "slug": "news", "name": "新闻与时事", "count": 17 } ]
 }
 ```
 
@@ -370,6 +372,23 @@ GET /api/article
 - `source` 是数据来源标识（`accounts.source`），目前只有 `weixin`；新来源接入后列表与详情都会带上它。
   来源取值是开放集合，不是枚举：服务端只做长度与 ASCII 校验，不做白名单。
 - `item_show_type_facets` 是按当前筛选条件统计的版式分布（不受 `item_show_type` 自身影响）。
+- `topics` 是这篇文章的方向标签，**未分类时为空数组**（不是 `null`）。标签由后台按标题与摘要
+  生成，所以新文章会先短暂为空。
+- `topic_facets` 是按当前筛选条件统计的方向分布，同样**不受 `topic` 自身影响**，按词表顺序排列。
+  未知或已从词表删除的 slug 不出现在这里。
+
+### 按方向筛选
+
+```
+GET /api/article?topic=ai,news&page=1
+```
+
+`topic` 是逗号分隔的方向 slug，语义为 **OR**。每个 slug 必须在当前词表里（
+`GET /api/admin/site` 的 `vocabulary`），否则整个请求返回 `400`——这样打错一个字母不会被当成
+「这个方向没有文章」，也不会让调用方靠试探摸出有哪些方向。空值等同于不筛选。
+
+和 `item_show_type` 一样，选中方向时 `total` 会另算一次，因为 `topic_facets` 的计数忽略了
+方向筛选本身。
 
 ### 文章详情
 
