@@ -50,3 +50,37 @@ describe('ArticleContent playback highlight styles', () => {
     expect(commonStyles).toContain('transition-duration: 0.01ms !important;');
   });
 });
+
+describe('Player dock styles', () => {
+  let style: HTMLStyleElement;
+
+  beforeEach(() => {
+    style = document.createElement('style');
+    style.textContent = commonStyles + articleStyles;
+    document.head.append(style);
+  });
+
+  afterEach(() => {
+    style.remove();
+  });
+
+  it('floats the dock above the page but below the top bar and toasts', () => {
+    const dock = document.createElement('div');
+    dock.className = 'reader-dock';
+    document.body.append(dock);
+    const computed = getComputedStyle(dock);
+    expect(computed.position).toBe('fixed');
+    expect(Number(computed.zIndex)).toBeLessThan(30);
+    expect(computed.animation).toContain('dock-in');
+    dock.remove();
+  });
+
+  it('has a reduced-motion rule covering the dock entrance', () => {
+    const reduced = [...style.sheet!.cssRules].find(
+      (rule): rule is CSSMediaRule => rule instanceof CSSMediaRule
+        && rule.conditionText === '(prefers-reduced-motion: reduce)',
+    )!;
+    expect(reduced).toBeTruthy();
+    expect(commonStyles).toContain('animation-iteration-count: 1 !important;');
+  });
+});

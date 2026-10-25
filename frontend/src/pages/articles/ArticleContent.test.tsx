@@ -23,6 +23,23 @@ const payload = (
   images: [],
 });
 
+/**
+ * jsdom lays nothing out, so every box is 0x0 and nothing can be "scrolled out of
+ * sight". These tests ask for a verdict instead, and flip it as they scroll.
+ */
+const layoutStub = () => {
+  const state = { gone: false };
+  const rect = (top: number) => ({
+    top, bottom: top + 40, height: 40, left: 0, right: 100, width: 100, x: 0, y: top,
+    toJSON: () => ({}),
+  });
+  document.documentElement.getBoundingClientRect = () => rect(0) as DOMRect;
+  Element.prototype.getBoundingClientRect = function getRect(this: Element) {
+    return rect(this.tagName === 'P' && state.gone ? 4000 : 10) as DOMRect;
+  };
+  return state;
+};
+
 const renderContent = (
   blocks: ArticlePayload['content'],
   article: Partial<ArticlePayload['article']> = {},
@@ -312,6 +329,109 @@ describe('ArticleContent media blocks', () => {
     audio.currentTime = 90;
     await frames();
     expect(playing()).toBe('正题');
+  });
+
+  it('stops scrolling itself once the reader scrolls, but keeps the highlight moving', async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const { container } = renderContent(
+      [
+        { type: 'audio', url: '/api/media/7/audio' },
+        { type: 'paragraph', text: '开场', t: 0 },
+        { type: 'paragraph', text: '正题', t: 30 },
+      ],
+      {},
+      true,
+    );
+    const audio = container.querySelector('audio')!;
+
+    audio.currentTime = 5;
+    fireEvent.play(audio);
+    fireEvent.timeUpdate(audio);
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+    // 读者自己滚动：之后再换段就不许再把视口拽回去。
+    fireEvent.wheel(document);
+    audio.currentTime = 45;
+    fireEvent.timeUpdate(audio);
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    // 高亮仍然跟着走，只是不滚。
+    expect(container.querySelector('p.is-playing')?.textContent).toContain('正题');
+  });
+
+  it('offers the way back, and resumes following when it is taken', async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    // jsdom has no layout: the paragraph reports where the test wants it to be.
+    const layout = layoutStub();
+    layout.gone = false;
+    const { container } = renderContent(
+      [
+        { type: 'audio', url: '/api/media/7/audio' },
+        { type: 'paragraph', text: '开场', t: 0 },
+        { type: 'paragraph', text: '正题', t: 30 },
+      ],
+      {},
+      true,
+    );
+    const audio = container.querySelector('audio')!;
+
+    audio.currentTime = 5;
+    fireEvent.play(audio);
+    fireEvent.timeUpdate(audio);
+    expect(container.querySelector('.reader-dock')).toBeNull();
+
+    // 读者自己滚走：高亮继续走，视口不再被拽回去，小胶囊顶上。
+    fireEvent.wheel(document);
+    layout.gone = true;
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
+
+    const dock = container.querySelector('.reader-dock')!;
+    expect(dock).not.toBeNull();
+    expect(dock.textContent).toContain('回到当前');
+    expect(dock.querySelector('button')!.getAttribute('aria-label')).toBe('暂停');
+
+    layout.gone = false;
+    scrollIntoView.mockClear();
+    fireEvent.click([...dock.querySelectorAll('button')].find((node) => node.textContent === '回到当前')!);
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+    // 拿回视口之后跟随也回来了。
+    audio.currentTime = 45;
+    fireEvent.timeUpdate(audio);
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('p.is-playing')?.textContent).toContain('正题');
+  });
+
+  it('pauses and resumes the mounted player from the dock', async () => {
+    const pause = vi.fn();
+    window.HTMLMediaElement.prototype.pause = pause as unknown as HTMLMediaElement['pause'];
+    const layout = layoutStub();
+    layout.gone = true;
+    const { container } = renderContent([
+      { type: 'audio', url: '/api/media/7/audio' },
+      { type: 'paragraph', text: '开场', t: 0 },
+    ]);
+    const audio = container.querySelector('audio')!;
+    let paused = false;
+    Object.defineProperty(audio, 'paused', { configurable: true, get: () => paused });
+
+    audio.currentTime = 5;
+    fireEvent.play(audio);
+    fireEvent.timeUpdate(audio);
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
+
+    const dock = container.querySelector('.reader-dock')!;
+    expect(dock.querySelector('button')!.getAttribute('aria-label')).toBe('暂停');
+
+    fireEvent.click(dock.querySelector('button')!);
+    expect(pause).toHaveBeenCalled();
+
+    paused = true;
+    fireEvent.pause(audio);
+    expect(dock.querySelector('button')!.getAttribute('aria-label')).toBe('播放');
+    fireEvent.click(dock.querySelector('button')!);
+    expect(playMock).toHaveBeenCalled();
   });
 
   it('highlights nothing before the first timestamped paragraph', () => {

@@ -1308,6 +1308,59 @@ mark.hippo-highlight:hover {
   color: var(--text);
 }
 
+/* ---- Player dock -------------------------------------------------------
+   Two controls for the reader who has scrolled away from the text that is
+   playing: the sound, and the way back to it. Fixed, because what it replaces is
+   off screen by definition. */
+.reader-dock {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  animation: dock-in 160ms ease-out;
+}
+
+.reader-dock-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.reader-dock-btn:hover {
+  background: var(--surface-item-active);
+}
+
+.reader-dock-btn.is-text {
+  color: var(--info);
+}
+
+.reader-dock-btn .icon svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+@keyframes dock-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
 .reader-anchor {
   margin-right: 8px;
   color: var(--muted);

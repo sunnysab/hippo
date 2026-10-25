@@ -41,6 +41,13 @@ interface PlayerControls {
   /** An extraction is running, so the switch is busy rather than pressable. */
   preparingAudio: boolean;
   toggleMode: () => void;
+  /** The mounted player is running, which is what the dock's button flips. */
+  playing: boolean;
+  togglePlay: () => void;
+  /** Brings the paragraph that is playing back into view, and resumes following. */
+  backToParagraph: () => void;
+  /** The reader scrolled away from the playing paragraph, so the dock is shown. */
+  showDock: boolean;
 }
 
 // Only render-time values live here; the two media refs travel down as props so
@@ -54,6 +61,10 @@ const PlayerContext = createContext<PlayerControls>({
   showModeButton: false,
   preparingAudio: false,
   toggleMode: () => {},
+  playing: false,
+  togglePlay: () => {},
+  backToParagraph: () => {},
+  showDock: false,
 });
 
 /**
@@ -69,6 +80,21 @@ const AUDIO_POLL_ATTEMPTS = 20;
 
 const isArchivedVideoUrl = (url: string | undefined): url is string =>
   typeof url === 'string' && ARCHIVED_VIDEO_PATH.test(url);
+
+/**
+ * The nearest ancestor that scrolls, which is what "still on screen" has to be
+ * measured against: the reader scrolls inside its own pane, not the document, so
+ * a viewport test would call a clipped paragraph visible.
+ */
+const scrollPane = (node: Element | null): Element | null => {
+  for (let el = node?.parentElement ?? null; el; el = el.parentElement) {
+    if (/auto|scroll/.test(getComputedStyle(el).overflowY)) return el;
+  }
+  return null;
+};
+
+/** Keys a reader scrolls with; pressing one means the transcript is being steered. */
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 
 interface ArticleContentProps {
   payload: ArticlePayload;
@@ -173,6 +199,8 @@ interface PlayerRefProps {
   onTimeUpdate: (event: React.SyntheticEvent<HTMLMediaElement>) => void;
   /** Called once the other player has loaded, to take over position and playback. */
   onReady: (event: React.SyntheticEvent<HTMLMediaElement>) => void;
+  /** Reports a play, a pause and an end alike, so the dock knows if sound is running. */
+  onPlayback: (playing: boolean, player: HTMLMediaElement) => void;
 }
 
 /**
@@ -210,11 +238,13 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({
   videoRef,
   onTimeUpdate,
   onReady,
+  onPlayback,
 }: {
   block: ArticleContentBlock;
   videoRef: React.RefObject<HTMLVideoElement | null>;
   onTimeUpdate: PlayerRefProps['onTimeUpdate'];
   onReady: PlayerRefProps['onReady'];
+  onPlayback: PlayerRefProps['onPlayback'];
 }) {
   const { t } = useI18n();
   const { originalHref, pauseOther, showModeButton } = useContext(PlayerContext);
@@ -232,7 +262,13 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({
           preload='metadata'
           playsInline
           poster={block.cover_url || undefined}
-          onPlay={(event) => { pauseOther(event.currentTarget); onTimeUpdate(event); }}
+          onPlay={(event) => {
+            pauseOther(event.currentTarget);
+            onTimeUpdate(event);
+            onPlayback(true, event.currentTarget);
+          }}
+          onPause={(event) => onPlayback(false, event.currentTarget)}
+          onEnded={(event) => onPlayback(false, event.currentTarget)}
           onTimeUpdate={onTimeUpdate}
           onLoadedMetadata={onReady}
           data-testid='reader-video-file'
@@ -268,11 +304,13 @@ const ArticleAudioBlock = memo(function ArticleAudioBlock({
   audioRef,
   onTimeUpdate,
   onReady,
+  onPlayback,
 }: {
   block: ArticleContentBlock;
   audioRef: React.RefObject<HTMLAudioElement | null>;
   onTimeUpdate: PlayerRefProps['onTimeUpdate'];
   onReady: PlayerRefProps['onReady'];
+  onPlayback: PlayerRefProps['onPlayback'];
 }) {
   const { pauseOther, showModeButton } = useContext(PlayerContext);
   if (!block.url) return null;
@@ -285,11 +323,60 @@ const ArticleAudioBlock = memo(function ArticleAudioBlock({
         controls
         preload='metadata'
         src={block.url}
-        onPlay={(event) => { pauseOther(event.currentTarget); onTimeUpdate(event); }}
+        onPlay={(event) => {
+          pauseOther(event.currentTarget);
+          onTimeUpdate(event);
+          onPlayback(true, event.currentTarget);
+        }}
+        onPause={(event) => onPlayback(false, event.currentTarget)}
+        onEnded={(event) => onPlayback(false, event.currentTarget)}
         onTimeUpdate={onTimeUpdate}
         onLoadedMetadata={onReady}
       />
       {showModeButton ? <PlayerModeButton /> : null}
+    </div>
+  );
+});
+
+const PlayGlyph = memo(function PlayGlyph() {
+  return (
+    <span className='icon' aria-hidden='true'>
+      <svg viewBox='0 0 24 24'><path d='M8 5v14l11-7z' /></svg>
+    </span>
+  );
+});
+
+const PauseGlyph = memo(function PauseGlyph() {
+  return (
+    <span className='icon' aria-hidden='true'>
+      <svg viewBox='0 0 24 24'><path d='M6 5h4v14H6zm8 0h4v14h-4z' /></svg>
+    </span>
+  );
+});
+
+/**
+ * The player's controls, shown while the reader is somewhere other than the
+ * paragraph that is playing. Two buttons, because those are the two things that
+ * are then out of reach: sound, and the text that goes with it.
+ */
+const PlayerDock = memo(function PlayerDock() {
+  const { t } = useI18n();
+  const { playing, togglePlay, backToParagraph, showDock } = useContext(PlayerContext);
+  if (!showDock) return null;
+  return (
+    <div className='reader-dock' role='group' aria-label={t('articles.playerControls', '播放控制')}>
+      <button
+        className='reader-dock-btn'
+        type='button'
+        onClick={togglePlay}
+        aria-label={playing ? t('articles.pause', '暂停') : t('articles.play', '播放')}
+        title={playing ? t('articles.pause', '暂停') : t('articles.play', '播放')}
+      >
+        {playing ? <PauseGlyph /> : <PlayGlyph />}
+      </button>
+      <button className='reader-dock-btn is-text' type='button' onClick={backToParagraph}>
+        {t('articles.backToParagraph', '回到当前')}
+      </button>
     </div>
   );
 });
@@ -304,6 +391,7 @@ const ContentBlock = memo(function ContentBlock({
   videoRef,
   onTimeUpdate,
   onReady,
+  onPlayback,
   isPlayingBlock,
   outlineIndex,
   playingRef,
@@ -376,6 +464,7 @@ const ContentBlock = memo(function ContentBlock({
           audioRef={audioRef}
           onTimeUpdate={onTimeUpdate}
           onReady={onReady}
+          onPlayback={onPlayback}
         />
       );
     }
@@ -385,6 +474,7 @@ const ContentBlock = memo(function ContentBlock({
         videoRef={videoRef}
         onTimeUpdate={onTimeUpdate}
         onReady={onReady}
+        onPlayback={onPlayback}
       />
     );
   }
@@ -397,6 +487,7 @@ const ContentBlock = memo(function ContentBlock({
         audioRef={audioRef}
         onTimeUpdate={onTimeUpdate}
         onReady={onReady}
+        onPlayback={onPlayback}
       />
     );
   }
@@ -534,6 +625,12 @@ function RenderedContent({
   }, [content]);
 
   const [activeIndex, setActiveIndex] = useState(-1);
+  // Following is a claim on the reader's scroll position, so it lasts only until
+  // the reader takes it back: a scroll of their own stops the auto-scroll while the
+  // highlight keeps moving, and the dock offers the way back.
+  const [following, setFollowing] = useState(true);
+  // Sound is running somewhere; the dock's and the mini player's button flips this.
+  const [playing, setPlaying] = useState(false);
   // Another article (or a refetched body) replaces every block, so the previous
   // index points at text that is no longer there. Adjusted during render, which is
   // where React wants state derived from a prop to be reset.
@@ -544,6 +641,8 @@ function RenderedContent({
     setAudioOnly(false);
     setFetchedAudio(null);
     setPreparingAudio(false);
+    setFollowing(true);
+    setPlaying(false);
   }
   const markAt = useCallback((seconds: number) => {
     // Last start at or before `seconds`; -1 before the first paragraph.
@@ -595,11 +694,79 @@ function RenderedContent({
 
   // Follow the player: the highlight is useless if it has scrolled out of sight.
   // Keyed on the index, so this runs once per paragraph rather than on every
-  // `timeupdate`, and never while paused.
+  // `timeupdate`, and never while the reader is steering. `followRequest` is the
+  // explicit "take me back" that has to fire even when following never stopped:
+  // both counters change in the same render, so it is still one scroll.
+  const [followRequest, setFollowRequest] = useState(0);
   useEffect(() => {
-    if (!followPlayback || activeIndex < 0) return;
+    if (!followPlayback || !following || activeIndex < 0) return;
     playingRef.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
-  }, [activeIndex, followPlayback]);
+  }, [activeIndex, followPlayback, following, followRequest]);
+
+  // A scroll the reader caused (wheel, drag, key, touch) has to end the following,
+  // but a scroll this component caused must not. `scroll` carries no cause, so the
+  // intent is taken from the input that precedes it instead. Only the reading pane
+  // counts: scrolling the article list must not steal the transcript's follow.
+  useEffect(() => {
+    if (!playing) return;
+    const pane = scrollPane(playingRef.current ?? audioRef.current ?? videoRef.current);
+    const stop = (event: Event) => {
+      if (pane && event.target instanceof Element && !pane.contains(event.target)) return;
+      setFollowing(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !SCROLL_KEYS.has(event.key)) return;
+      if (event.target instanceof HTMLElement && /^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName)) return;
+      setFollowing(false);
+    };
+    document.addEventListener('wheel', stop, { passive: true });
+    document.addEventListener('touchstart', stop, { passive: true });
+    document.addEventListener('pointerdown', stop, { passive: true });
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('wheel', stop);
+      document.removeEventListener('touchstart', stop);
+      document.removeEventListener('pointerdown', stop);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [playing]);
+
+  // The dock exists for the case where the text has left the screen: while the
+  // playing paragraph is visible the reader has everything already. It outlives a
+  // pause on purpose -- pausing from the dock is the whole point of drawing it, and
+  // a control that vanishes the moment it is used cannot be pressed twice.
+  const [paragraphGone, setParagraphGone] = useState(false);
+  useEffect(() => {
+    if (activeIndex < 0) return;
+    const pane = scrollPane(playingRef.current ?? videoRef.current ?? audioRef.current);
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const paragraph = playingRef.current;
+      if (!paragraph) return;
+      const box = (pane ?? document.documentElement).getBoundingClientRect();
+      const rect = paragraph.getBoundingClientRect();
+      // An unlaid-out box (a hidden pane, a test that has no layout) says nothing
+      // about visibility, so it must not count as "scrolled away".
+      setParagraphGone(rect.height > 0 && (rect.bottom <= box.top || rect.top >= box.bottom));
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
+    // The first measurement lands in a frame too, which is what keeps the effect
+    // from setting state during the commit that mounted it.
+    schedule();
+    (pane ?? window).addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedule);
+    const paragraph = playingRef.current;
+    if (paragraph) observer?.observe(paragraph);
+    return () => {
+      cancelAnimationFrame(frame);
+      (pane ?? window).removeEventListener('scroll', schedule);
+      window.removeEventListener('resize', schedule);
+      observer?.disconnect();
+    };
+  }, [activeIndex]);
+  const showDock = activeIndex >= 0 && paragraphGone;
 
   // Older video articles have no audio track to switch to. The server extracts one
   // from the archived copy, and this polls until it is there instead of making the
@@ -627,6 +794,22 @@ function RenderedContent({
       setPreparingAudio(false);
     }
   }, [articleId]);
+
+  // Whichever element is on screen right now. Only one is ever mounted, and a
+  // podcast mounts the audio without any video in the body.
+  const mounted = useCallback(
+    () => (audioOnly ? audioRef.current : videoRef.current || audioRef.current),
+    [audioOnly],
+  );
+
+  // The dock and the players share one notion of "running", whichever element is
+  // mounted at the time: a switch to audio-only or back hands it over.
+  const onPlayback = useCallback((running: boolean, player: HTMLMediaElement) => {
+    // A player the reader switched away from must not report a pause over the one
+    // that replaced it, which is already running.
+    if (!running && player !== mounted()) return;
+    setPlaying(running);
+  }, [mounted]);
 
   const onReady = useCallback((event: React.SyntheticEvent<HTMLMediaElement>) => {
     const handover = handoverRef.current;
@@ -663,6 +846,19 @@ function RenderedContent({
         }
         setAudioOnly((previous) => !previous);
       },
+      playing,
+      togglePlay: () => {
+        const target = mounted();
+        if (!target) return;
+        if (target.paused) void target.play().catch(() => {});
+        else target.pause();
+      },
+      backToParagraph: () => {
+        // Asking for the paragraph is asking to be followed again.
+        setFollowing(true);
+        setFollowRequest((previous) => previous + 1);
+      },
+      showDock,
       pauseOther,
       seek: (seconds: number) => {
         const target: HTMLMediaElement | null = videoRef.current || audioRef.current;
@@ -672,12 +868,14 @@ function RenderedContent({
         // The transcript follows the click at once instead of on the next
         // `timeupdate`, which keeps the highlight and the player in step.
         markAt(seconds);
+        // An anchor is the reader asking for that paragraph, so following resumes.
+        setFollowing(true);
         // Browsers may refuse the autoplay; the position is set, so the reader can
         // press play themselves. The rejection must still be consumed.
         void target.play().catch(() => {});
       },
     };
-  }, [audioOnly, audioUrl, canSeek, hasVideo, markAt, originalHref, prepareAudio, preparingAudio]);
+  }, [audioOnly, audioUrl, canSeek, hasVideo, markAt, mounted, originalHref, playing, prepareAudio, preparingAudio, showDock]);
   const contentKeys = buildContentBlockKeys(content);
   let outlineIndex = 0;
   const outlineIndexes = content.map((block) => isOutlineBlock(block) ? outlineIndex++ : undefined);
@@ -697,12 +895,14 @@ function RenderedContent({
           videoRef={videoRef}
           onTimeUpdate={onTimeUpdate}
           onReady={onReady}
+          onPlayback={onPlayback}
           isPlayingBlock={index === activeIndex}
           playingRef={playingRef}
           hasAudioBlock={Boolean(archivedAudio)}
           fallbackAudioUrl={audioUrl}
         />
       ))}
+      <PlayerDock />
     </PlayerContext.Provider>
   );
 }
