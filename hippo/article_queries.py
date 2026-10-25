@@ -817,13 +817,13 @@ async def _get_article(storage: PostgresStorage, user_id: int, article_id: int) 
     article['content_kind'] = content_kind(article.get('source'), article.get('item_show_type'))
     article['account_avatar_url'] = f'/api/account/{article["biz"]}/avatar'
     await _attach_topics(storage, [article])
-    # The event is only reported once it is visible, so the reader is never told
-    # "one other report" about a story no second publisher has confirmed. The
-    # lookup is skipped when the caller's storage has no topic repository: the
-    # event is an enrichment, never a reason for the article to fail to load.
+    # The event is only reported once it is visible *to this reader*, so the counts
+    # match what clicking through will actually list. The lookup is skipped when the
+    # caller's storage has no topic repository: the event is an enrichment, never a
+    # reason for the article to fail to load.
     topics_repo = getattr(storage, 'topics', None)
     linked = await topics_repo.event_of(int(article['id'])) if topics_repo else None
-    event = await topics_repo.public_event(int(linked['id'])) if linked else None
+    event = await topics_repo.public_event(int(linked['id']), user_id) if linked else None
     article['event'] = (
         {
             'id': int(event['id']),

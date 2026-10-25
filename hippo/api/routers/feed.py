@@ -121,7 +121,7 @@ async def list_feed(
             content=xml.encode('utf-8'),
             media_type='application/rss+xml; charset=utf-8',
         )
-    if event_id is not None and await storage.topics.public_event(event_id) is None:
+    if event_id is not None and await storage.topics.public_event(event_id, user.id) is None:
         # One publisher's guess is not a story; saying "not found" is honest and
         # keeps the threshold from leaking through an empty list.
         raise ApiError('Event not found', status=404)

@@ -38,13 +38,19 @@ class TopicRepository:
         ``NOT EXISTS`` is what makes this terminate: with only ``ON CONFLICT DO
         NOTHING`` the same first N rows would be selected every round, insert
         nothing, and the queue would never reach the rows behind them.
+
+        The window falls back to ``created_at`` when a source supplies no publish
+        date (some RSS feeds do not). Using bare ``publish_at`` would silently drop
+        those articles from classification forever, with no error and no log line --
+        the sort of gap nobody notices until someone asks why a feed never has
+        topics.
         """
         async with self._conn.cursor() as cur:
             await cur.execute(
                 """INSERT INTO article_topic (article_pk, state, vocabulary_version, prompt_version)
                    SELECT a.id, 'queued', %s, %s
                    FROM articles a
-                   WHERE a.publish_at >= %s
+                   WHERE COALESCE(a.publish_at, EXTRACT(EPOCH FROM a.created_at)::bigint) >= %s
                      AND NOT EXISTS (SELECT 1 FROM article_topic t WHERE t.article_pk = a.id)
                    ORDER BY a.id
                    LIMIT %s
@@ -123,12 +129,21 @@ class TopicRepository:
             )
             return list(await cur.fetchall())
 
-    async def public_event(self, event_id: int) -> dict[str, Any] | None:
-        """One event, but only if at least two publishers reported it.
+    async def public_event(self, event_id: int, user_id: int) -> dict[str, Any] | None:
+        """One event as *this reader* may see it: counts and threshold scoped to them.
 
-        The threshold lives here rather than in a view so every reader -- list,
-        detail, feed -- gets the same answer, and a single-publisher guess never
-        becomes a visible "story".
+        Two rules ride on the subscription join, and both matter:
+
+        * The counts answer "how many reports can I open", not "how many exist".
+          A reader following one of three publishers would otherwise be told
+          "3 reports" and then click through to a single article.
+        * The two-publisher threshold is applied to the *visible* publishers, so a
+          returned event always has ``source_count >= 2`` and the response never
+          reveals that other publishers covered a story this reader cannot reach.
+
+        The candidate list stays global on purpose: clustering is about what the
+        story is, and the model must see every publisher to recognise a repeat.
+        Only what a reader is told is scoped.
         """
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
@@ -138,10 +153,11 @@ class TopicRepository:
                    FROM article_event e
                    JOIN article_event_link l ON l.event_id = e.id
                    JOIN articles a ON a.id = l.article_pk
+                   JOIN subscription sub ON sub.biz = a.biz AND sub.user_id = %s AND NOT sub.is_disabled
                    WHERE e.id = %s
                    GROUP BY e.id, e.title, e.first_seen_at, e.last_seen_at
                    HAVING COUNT(DISTINCT a.biz) >= 2""",
-                (event_id,),
+                (user_id, event_id),
             )
             return await cur.fetchone()
 

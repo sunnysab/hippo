@@ -69,6 +69,10 @@ class WorkerPipelineTest(unittest.IsolatedAsyncioTestCase):
                 ' biz = excluded.biz, publish_at = excluded.publish_at',
                 (pk, title, digest, RECENT, biz),
             )
+            # Reader 1 follows all three publishers, so the event is visible to them.
+            self.connection.db.execute(
+                'INSERT OR IGNORE INTO subscription (user_id, biz) VALUES (1, ?)', (biz,)
+            )
         self.model = _FakeModel()
 
     @asynccontextmanager
@@ -100,7 +104,7 @@ class WorkerPipelineTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(3, runs)
 
         # Exactly one event, and it is visible because two distinct publishers joined it.
-        visible = [event for event in [await self.repo.public_event(i) for i in range(1, 6)] if event]
+        visible = [event for event in [await self.repo.public_event(i, 1) for i in range(1, 6)] if event]
         self.assertEqual(1, len(visible), f'expected one visible event, got {visible}')
         self.assertEqual('中国临时实施氦气出口禁令', visible[0]['title'])
         self.assertEqual(2, visible[0]['source_count'])

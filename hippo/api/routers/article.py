@@ -123,7 +123,7 @@ async def list_articles(
     sort_mode = _normalize_article_sort(sort, has_query=bool(query_text))
     normalized_item_show_type = _normalize_item_show_type(item_show_type)
     vocabulary = (await get_site_settings(storage))['vocabulary']
-    if event_id is not None and await storage.topics.public_event(event_id) is None:
+    if event_id is not None and await storage.topics.public_event(event_id, user.id) is None:
         # Same rule as the feed: one publisher's guess is not a story.
         raise ApiError('Event not found', status=404)
     return await _list_articles(

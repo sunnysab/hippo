@@ -37,6 +37,12 @@ class Cursor:
         sql = sql.replace("clock_timestamp() - INTERVAL '15 minutes'", '(clock_timestamp() - 900)')
         sql = sql.replace('clock_timestamp() - make_interval(hours => ?)', '(clock_timestamp() - (0 + ?) * 3600)')
         sql = sql.replace(' FOR UPDATE SKIP LOCKED', '').replace('RETURNING t.*', 'RETURNING *')
+        # The publish_at fallback: SQLite stores created_at the same way, so the
+        # COALESCE collapses to the column itself.
+        sql = sql.replace(
+            'COALESCE(a.publish_at, EXTRACT(EPOCH FROM a.created_at)::bigint)',
+            'COALESCE(a.publish_at, a.created_at)',
+        )
         # The PostgreSQL empty-array literal has no SQLite equivalent.
         sql = sql.replace("slugs = '{}'", "slugs = '[]'")
         values = tuple(
@@ -76,10 +82,15 @@ class Connection:
         self.db.executescript(
             """
             CREATE TABLE accounts (biz TEXT PRIMARY KEY, nickname TEXT);
+            -- Every fixture article is subscribed by user 1 unless a test says otherwise.
+            CREATE TABLE subscription (
+                user_id INTEGER NOT NULL, biz TEXT NOT NULL, is_disabled BOOLEAN NOT NULL DEFAULT FALSE,
+                PRIMARY KEY (user_id, biz));
             CREATE TABLE articles (
-                id INTEGER PRIMARY KEY, title TEXT, digest TEXT, publish_at INTEGER, biz TEXT
+                id INTEGER PRIMARY KEY, title TEXT, digest TEXT, publish_at INTEGER, biz TEXT,
+                created_at INTEGER
             );
-            INSERT INTO articles VALUES (1, 'Title', 'Digest', 2000, 'biz_a');
+            INSERT INTO articles VALUES (1, 'Title', 'Digest', 2000, 'biz_a', 2000);
         """
             + 'CREATE TABLE article_topic ('
             + table.replace('::jsonb', '').replace('DEFAULT clock_timestamp()', 'DEFAULT (clock_timestamp())')
@@ -112,7 +123,7 @@ class TopicRepositoryTest(unittest.IsolatedAsyncioTestCase):
     async def test_backfill_queues_each_article_once_and_keeps_moving(self):
         for article_pk in (2, 3, 4):
             self.connection.db.execute(
-                'INSERT INTO articles VALUES (?, ?, ?, ?, ?)', (article_pk, f'T{article_pk}', 'D', 2000, 'biz_a')
+                'INSERT INTO articles VALUES (?, ?, ?, ?, ?, ?)', (article_pk, f'T{article_pk}', 'D', 2000, 'biz_a', 2000)
             )
 
         # Four articles, two per round: the second call must pick up the rest
@@ -124,7 +135,7 @@ class TopicRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(4, self.connection.db.execute('SELECT COUNT(*) FROM article_topic').fetchone()[0])
 
     async def test_backfill_ignores_articles_older_than_the_window(self):
-        self.connection.db.execute('INSERT INTO articles VALUES (?, ?, ?, ?, ?)', (2, 'T', 'D', 10, 'biz_a'))
+        self.connection.db.execute('INSERT INTO articles VALUES (?, ?, ?, ?, ?, ?)', (2, 'T', 'D', 10, 'biz_a', 10))
         self.assertEqual(1, await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1))
         self.assertEqual(0, await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1))
         self.assertIsNone(await self.repo.get(2))
@@ -219,7 +230,7 @@ class TopicRepositoryTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_requeue_stale_respects_its_batch_limit(self):
         for article_pk in (2, 3, 4):
-            self.connection.db.execute('INSERT INTO articles VALUES (?, ?, ?, ?, ?)', (article_pk, f'T{article_pk}', 'D', 2000, 'biz_a'))
+            self.connection.db.execute('INSERT INTO articles VALUES (?, ?, ?, ?, ?, ?)', (article_pk, f'T{article_pk}', 'D', 2000, 'biz_a', 2000))
         await self.repo.backfill(since_ts=1000, vocabulary_version=1, prompt_version=1)
         self.assertEqual(2, await self.repo.requeue_stale(vocabulary_version=2, prompt_version=1, limit=2))
         self.assertEqual(2, await self.repo.requeue_stale(vocabulary_version=2, prompt_version=1, limit=2))
@@ -243,10 +254,15 @@ class TopicEventTest(unittest.IsolatedAsyncioTestCase):
 
     def _article(self, pk, biz):
         self.connection.db.execute(
-            'INSERT OR IGNORE INTO articles VALUES (?, ?, ?, ?, ?)', (pk, f'T{pk}', 'D', 2000, biz)
+            'INSERT OR IGNORE INTO articles (id, title, digest, publish_at, biz, created_at)'
+            ' VALUES (?, ?, ?, ?, ?, 2000)', (pk, f'T{pk}', 'D', 2000, biz)
         )
         self.connection.db.execute('INSERT OR IGNORE INTO accounts VALUES (?, ?)', (biz, biz))
         self.connection.db.execute('UPDATE articles SET biz = ? WHERE id = ?', (biz, pk))
+        # Reader 1 follows every fixture publisher; scoping tests remove some.
+        self.connection.db.execute(
+            'INSERT OR IGNORE INTO subscription (user_id, biz) VALUES (1, ?)', (biz,)
+        )
 
     def _link(self, pk, event_id):
         self.connection.db.execute(
@@ -266,7 +282,7 @@ class TopicEventTest(unittest.IsolatedAsyncioTestCase):
         event_id = await self.repo.create_event('某事发生', 1)
 
         # Not yet a story for readers...
-        self.assertIsNone(await self.repo.public_event(event_id))
+        self.assertIsNone(await self.repo.public_event(event_id, 1))
         # ...but the model must be able to see it, or nobody can ever join.
         candidates = await self.repo.candidates()
         self.assertEqual([event_id], [item['id'] for item in candidates])
@@ -275,7 +291,7 @@ class TopicEventTest(unittest.IsolatedAsyncioTestCase):
         self._article(2, 'biz_b')
         await self.repo.attach_event(2, event_id)
 
-        visible = await self.repo.public_event(event_id)
+        visible = await self.repo.public_event(event_id, 1)
         self.assertEqual(2, visible['source_count'])
         self.assertEqual(2, visible['article_count'])
 
@@ -283,7 +299,7 @@ class TopicEventTest(unittest.IsolatedAsyncioTestCase):
         """End to end over the real repository: create, offer, join, become visible."""
         self._article(1, 'biz_a')
         event_id = await self.repo.create_event('某事发生', 1)
-        self.assertIsNone(await self.repo.public_event(event_id))
+        self.assertIsNone(await self.repo.public_event(event_id, 1))
 
         # A second publisher joins *through the candidate list*, the only path the
         # worker has. Nothing here calls attach_event out of band.
@@ -292,7 +308,7 @@ class TopicEventTest(unittest.IsolatedAsyncioTestCase):
         self._article(2, 'biz_b')
         await self.repo.attach_event(2, target)
 
-        visible = await self.repo.public_event(event_id)
+        visible = await self.repo.public_event(event_id, 1)
         self.assertIsNotNone(visible)
         self.assertEqual(2, visible['source_count'])
 
@@ -303,7 +319,7 @@ class TopicEventTest(unittest.IsolatedAsyncioTestCase):
         await self.repo.attach_event(2, event_id)
         await self.repo.attach_event(3, event_id)
 
-        self.assertIsNone(await self.repo.public_event(event_id))
+        self.assertIsNone(await self.repo.public_event(event_id, 1))
 
     async def test_candidates_rank_by_distinct_publishers_then_recency(self):
         for pk, biz in ((1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')):
@@ -332,8 +348,8 @@ class TopicEventTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, self.connection.db.execute(
             'SELECT COUNT(*) FROM article_event_link WHERE article_pk = 1').fetchone()[0])
         # The event it left is empty again, so it no longer reaches the threshold.
-        self.assertIsNone(await self.repo.public_event(first))
-        self.assertEqual(2, (await self.repo.public_event(second))['article_count'])
+        self.assertIsNone(await self.repo.public_event(first, 1))
+        self.assertEqual(2, (await self.repo.public_event(second, 1))['article_count'])
 
     async def test_attaching_refreshes_the_recency_window(self):
         self._article(1, 'a')
@@ -449,3 +465,109 @@ class PromptVersionRequeueTest(unittest.IsolatedAsyncioTestCase):
     async def test_a_vocabulary_bump_alone_still_requeues(self):
         await self._ready_row(vocabulary_version=1, prompt_version=1)
         self.assertEqual(1, await self.repo.requeue_stale(vocabulary_version=2, prompt_version=1))
+
+class EventSubscriptionScopeTest(unittest.IsolatedAsyncioTestCase):
+    """Counts answer "what can this reader open", and the threshold uses that number."""
+
+    def setUp(self):
+        self.connection = Connection()
+        self.repo = TopicRepository(self.connection)
+        self.addCleanup(self.connection.db.close)
+
+    def _article(self, pk, biz):
+        self.connection.db.execute('INSERT OR IGNORE INTO accounts VALUES (?, ?)', (biz, biz))
+        self.connection.db.execute(
+            'INSERT OR REPLACE INTO articles VALUES (?, ?, ?, ?, ?, ?)', (pk, f'T{pk}', 'D', 2000, biz, 2000)
+        )
+
+    def _subscribe(self, user_id, biz):
+        self.connection.db.execute('INSERT INTO subscription (user_id, biz) VALUES (?, ?)', (user_id, biz))
+
+    async def _event_with_three_publishers(self) -> int:
+        for pk, biz in ((1, 'a'), (2, 'b'), (3, 'c')):
+            self._article(pk, biz)
+            self._subscribe(1, biz)
+            self._subscribe(2, biz)
+        event_id = await self.repo.create_event('三家都在报', 1)
+        await self.repo.attach_event(2, event_id)
+        await self.repo.attach_event(3, event_id)
+        return event_id
+
+    async def test_counts_are_scoped_to_what_the_reader_can_open(self):
+        event_id = await self._event_with_three_publishers()
+        # Reader 2 drops two of the three publishers.
+        for biz in ('b', 'c'):
+            self.connection.db.execute('DELETE FROM subscription WHERE user_id = 2 AND biz = ?', (biz,))
+
+        self.assertEqual(3, (await self.repo.public_event(event_id, 1))['article_count'])
+
+        # One report left, so the story is not visible to reader 2 at all: telling
+        # them "3 reports" and then listing one would be the leak this prevents.
+        self.assertIsNone(await self.repo.public_event(event_id, 2))
+
+    async def test_the_threshold_counts_only_the_readers_own_publishers(self):
+        event_id = await self._event_with_three_publishers()
+        for biz in ('b', 'c'):
+            self.connection.db.execute('DELETE FROM subscription WHERE user_id = 2 AND biz = ?', (biz,))
+
+        self.assertEqual(3, (await self.repo.public_event(event_id, 1))['source_count'])
+        self.assertIsNone(await self.repo.public_event(event_id, 2))
+
+    async def test_two_of_the_readers_publishers_are_enough(self):
+        event_id = await self._event_with_three_publishers()
+        self.connection.db.execute("DELETE FROM subscription WHERE user_id = 2 AND biz = 'c'")
+
+        visible = await self.repo.public_event(event_id, 2)
+        self.assertEqual(2, visible['source_count'])
+        self.assertEqual(2, visible['article_count'])
+
+    async def test_a_disabled_subscription_is_not_counted(self):
+        event_id = await self._event_with_three_publishers()
+        self.connection.db.execute("UPDATE subscription SET is_disabled = TRUE WHERE user_id = 2 AND biz = 'b'")
+
+        # Two visible publishers left (a and c): still above the threshold...
+        visible = await self.repo.public_event(event_id, 2)
+        self.assertEqual(2, visible['source_count'])
+        # ...and the disabled one is not counted in the report total either.
+        self.assertEqual(2, visible['article_count'])
+
+    async def test_the_candidate_list_stays_global(self):
+        """Clustering must see every publisher; only readers are scoped."""
+        event_id = await self._event_with_three_publishers()
+        for biz in ('b', 'c'):
+            self.connection.db.execute('DELETE FROM subscription WHERE user_id = 2 AND biz = ?', (biz,))
+
+        # Even though reader 2 can see only one report, the model is still offered
+        # the event, because whether it is a repeat is not a question about reader 2.
+        self.assertEqual([event_id], [item['id'] for item in await self.repo.candidates()])
+
+class PublishAtFallbackTest(unittest.IsolatedAsyncioTestCase):
+    """A source without a publish date must still be classified."""
+
+    def setUp(self):
+        self.connection = Connection()
+        self.repo = TopicRepository(self.connection)
+        self.addCleanup(self.connection.db.close)
+
+    async def test_an_article_without_publish_at_is_queued_by_its_created_at(self):
+        # Some RSS feeds carry no publication date; created_at is all there is.
+        self.connection.db.execute(
+            'INSERT INTO articles (id, title, digest, publish_at, biz, created_at)'
+            ' VALUES (2, ?, ?, NULL, ?, ?)',
+            ('无日期的文章', '摘要', 'biz_a', 1792916311),
+        )
+
+        self.assertEqual(1, await self.repo.backfill(since_ts=1792000000, vocabulary_version=1, prompt_version=1))
+
+        row = await self.repo.get(2)
+        self.assertIsNotNone(row, 'an article with no publish_at was silently dropped')
+
+    async def test_an_old_article_without_publish_at_stays_out_of_the_window(self):
+        self.connection.db.execute(
+            'INSERT INTO articles (id, title, digest, publish_at, biz, created_at)'
+            ' VALUES (3, ?, ?, NULL, ?, ?)',
+            ('很久以前', '摘要', 'biz_a', 1000),
+        )
+        self.assertEqual(0, await self.repo.backfill(
+            since_ts=1792000000, vocabulary_version=1, prompt_version=1
+        ))
