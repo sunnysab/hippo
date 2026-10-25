@@ -802,10 +802,11 @@ function RenderedContent({
   useEffect(() => {
     if (!playing) return;
     const pane = scrollPane(playingRef.current ?? audioRef.current ?? videoRef.current);
-    const stop = (event: Event) => {
-      if (pane && event.target instanceof Element && !pane.contains(event.target)) return;
-      setFollowing(false);
-    };
+    const inPane = (event: Event) => !pane || (event.target instanceof Node && pane.contains(event.target));
+    const stop = (event: Event) => { if (inPane(event)) setFollowing(false); };
+    // Dragging the pane's own scrollbar is a scroll; pressing a link or selecting
+    // text is not, and must not take the follow away.
+    const onPointerDown = (event: Event) => { if (event.target === pane) setFollowing(false); };
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || !SCROLL_KEYS.has(event.key)) return;
       if (event.target instanceof HTMLElement && /^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName)) return;
@@ -813,12 +814,12 @@ function RenderedContent({
     };
     document.addEventListener('wheel', stop, { passive: true });
     document.addEventListener('touchstart', stop, { passive: true });
-    document.addEventListener('pointerdown', stop, { passive: true });
+    document.addEventListener('pointerdown', onPointerDown, { passive: true });
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('wheel', stop);
       document.removeEventListener('touchstart', stop);
-      document.removeEventListener('pointerdown', stop);
+      document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKey);
     };
   }, [playing]);
@@ -846,12 +847,12 @@ function RenderedContent({
     // screen: measuring it would switch the mini player off the moment it appeared
     // and back on again on the next frame. The slot holds the video's place in the
     // text and does not move, so it is what gets measured.
-    const videoHome = () => (
-      videoRef.current?.closest<HTMLElement>('.reader-video')?.parentElement
-        ?.querySelector<HTMLElement>('.reader-video-slot')
-      ?? videoRef.current?.closest<HTMLElement>('.reader-video')
-      ?? null
-    );
+    const videoHome = () => {
+      const frame = videoRef.current?.closest<HTMLElement>('.reader-video') ?? null;
+      if (!frame) return null;
+      const slot = frame.previousElementSibling;
+      return slot?.classList.contains('reader-video-slot') ? (slot as HTMLElement) : frame;
+    };
     let frame = 0;
     const update = () => {
       frame = 0;
