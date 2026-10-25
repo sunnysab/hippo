@@ -197,3 +197,40 @@ describe('useArticleFilters', () => {
   });
 
 });
+
+describe('useArticleFilters · direction facets reach the store', () => {
+  it('keeps topic_facets from the list response, which is the bar\'s only data source', async () => {
+    // The bar renders nothing without this payload, so dropping the field made the
+    // whole direction filter unreachable while every unit test still passed.
+    apiGetMock.mockImplementation(async (path: string) => path.startsWith('/api/group')
+      ? { groups: [] }
+      : {
+        articles: [{ id: 1, source: 'weixin' }],
+        total: 1,
+        item_show_type_facets: [{ item_show_type: 0, count: 1 }],
+        topic_facets: [{ slug: 'ai', name: '人工智能', count: 1 }],
+      });
+    const { result } = renderFilters();
+    await waitFor(() => expect(result.current.state.lastFacetPayload?.topic_facets).toEqual([
+      { slug: 'ai', name: '人工智能', count: 1 },
+    ]));
+  });
+
+  it('sends the selected directions to the list endpoint', async () => {
+    const { result } = renderFilters();
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalled());
+    await act(async () => result.current.updateFilters({ topic: 'ai,news' }));
+    await waitFor(() => expect(apiGetMock.mock.calls.some(([path]) => (
+      path.startsWith('/api/article?') && path.includes('topic=ai%2Cnews')
+    ))).toBe(true));
+  });
+
+  it('sends the event filter as event_id, the name the list endpoint accepts', async () => {
+    const { result } = renderFilters();
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalled());
+    await act(async () => result.current.updateFilters({ eventId: '7' }));
+    await waitFor(() => expect(apiGetMock.mock.calls.some(([path]) => (
+      path.startsWith('/api/article?') && path.includes('event_id=7')
+    ))).toBe(true));
+  });
+});

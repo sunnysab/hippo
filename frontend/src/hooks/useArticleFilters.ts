@@ -13,7 +13,7 @@ import {
   type ArticleFiltersState,
   type ArticleSelectOption,
 } from '../pages/articles/filtering';
-import type { Article, ArticlePayload } from '../store/articles';
+import type { Article, ArticlePayload, TopicFacetItem } from '../store/articles';
 
 export function useArticleFilters() {
   const { state, dispatch } = useArticlesState();
@@ -164,6 +164,9 @@ export function useArticleFilters() {
         payload: {
           total: payload.total as number,
           item_show_type_facets: (payload.item_show_type_facets || []) as Array<{ item_show_type: number; count: number }>,
+          // Dropping this left the direction bar permanently empty: the component
+          // renders nothing without a payload, so the filter never appeared at all.
+          topic_facets: (payload.topic_facets || []) as TopicFacetItem[],
         },
       });
     } catch (error) {
