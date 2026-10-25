@@ -181,7 +181,9 @@ async def set_article_read(
         dict: 文章 ID 与已读时间（未读时为 null）。
     """
     await _assert_article_visible(storage, user.id, article_id)
-    read_at = await storage.reads.set_read(user_id=user.id, article_pk=article_id, read=body.read)
+    # The request handle rolls back on close, so the write needs its own commit.
+    async with storage.transaction():
+        read_at = await storage.reads.set_read(user_id=user.id, article_pk=article_id, read=body.read)
     return {'article_id': article_id, 'read_at': read_at}
 
 
@@ -203,7 +205,8 @@ async def set_article_star(
         dict: 文章 ID 与收藏时间（未收藏时为 null）。
     """
     await _assert_article_visible(storage, user.id, article_id)
-    starred_at = await storage.stars.set_starred(user_id=user.id, article_pk=article_id, starred=body.starred)
+    async with storage.transaction():
+        starred_at = await storage.stars.set_starred(user_id=user.id, article_pk=article_id, starred=body.starred)
     return {'article_id': article_id, 'starred_at': starred_at}
 
 

@@ -6,6 +6,7 @@ order of the join that carries it into the list query.
 """
 
 import unittest
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -26,10 +27,29 @@ def _user(user_id: int = 7) -> SimpleNamespace:
     return SimpleNamespace(id=user_id, username='reader', role='user')
 
 
+def _with_transaction(storage: SimpleNamespace) -> SimpleNamespace:
+    """Give a storage double the commit the real request handle never does.
+
+    ``get_storage`` only closes, and closing rolls back, so every write route has
+    to open ``storage.transaction()`` itself; ``commits`` counts that.
+    """
+    storage.commits = 0
+
+    @asynccontextmanager
+    async def transaction():
+        yield storage
+        storage.commits += 1
+
+    storage.transaction = transaction
+    return storage
+
+
 def _storage(*, read_at: str | None = '2026-05-02T11:00:00+00:00') -> SimpleNamespace:
-    return SimpleNamespace(
-        reads=SimpleNamespace(set_read=AsyncMock(return_value=read_at)),
-        users=SimpleNamespace(get_preferences=AsyncMock(return_value={})),
+    return _with_transaction(
+        SimpleNamespace(
+            reads=SimpleNamespace(set_read=AsyncMock(return_value=read_at)),
+            users=SimpleNamespace(get_preferences=AsyncMock(return_value={})),
+        )
     )
 
 
@@ -103,6 +123,7 @@ class SetReadEndpointTest(unittest.IsolatedAsyncioTestCase):
             )
 
         storage.reads.set_read.assert_awaited_once_with(user_id=7, article_pk=5, read=True)
+        self.assertEqual(1, storage.commits)
         self.assertEqual({'article_id': 5, 'read_at': '2026-05-02T11:00:00+00:00'}, result)
 
     async def test_marking_unread_reports_no_read_time(self) -> None:
@@ -114,6 +135,7 @@ class SetReadEndpointTest(unittest.IsolatedAsyncioTestCase):
             )
 
         storage.reads.set_read.assert_awaited_once_with(user_id=7, article_pk=5, read=False)
+        self.assertEqual(1, storage.commits)
         self.assertIsNone(result['read_at'])
 
     async def test_a_non_boolean_read_is_rejected(self) -> None:
@@ -272,8 +294,8 @@ class StarFilterTest(unittest.TestCase):
 
 class SetStarEndpointTest(unittest.IsolatedAsyncioTestCase):
     async def test_starring_reports_the_star_time(self) -> None:
-        storage = SimpleNamespace(
-            stars=SimpleNamespace(set_starred=AsyncMock(return_value='2026-05-02T11:00:00+00:00'))
+        storage = _with_transaction(
+            SimpleNamespace(stars=SimpleNamespace(set_starred=AsyncMock(return_value='2026-05-02T11:00:00+00:00')))
         )
 
         with patch.object(article_api, '_assert_article_visible', AsyncMock()):
@@ -282,6 +304,7 @@ class SetStarEndpointTest(unittest.IsolatedAsyncioTestCase):
             )
 
         storage.stars.set_starred.assert_awaited_once_with(user_id=7, article_pk=5, starred=True)
+        self.assertEqual(1, storage.commits)
         self.assertEqual({'article_id': 5, 'starred_at': '2026-05-02T11:00:00+00:00'}, result)
 
     async def test_a_non_boolean_starred_is_rejected(self) -> None:
