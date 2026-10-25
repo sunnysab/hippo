@@ -232,7 +232,7 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({
           preload='metadata'
           playsInline
           poster={block.cover_url || undefined}
-          onPlay={(event) => pauseOther(event.currentTarget)}
+          onPlay={(event) => { pauseOther(event.currentTarget); onTimeUpdate(event); }}
           onTimeUpdate={onTimeUpdate}
           onLoadedMetadata={onReady}
           data-testid='reader-video-file'
@@ -285,7 +285,7 @@ const ArticleAudioBlock = memo(function ArticleAudioBlock({
         controls
         preload='metadata'
         src={block.url}
-        onPlay={(event) => pauseOther(event.currentTarget)}
+        onPlay={(event) => { pauseOther(event.currentTarget); onTimeUpdate(event); }}
         onTimeUpdate={onTimeUpdate}
         onLoadedMetadata={onReady}
       />
@@ -531,9 +531,6 @@ function RenderedContent({
     return { starts: sorted.map((item) => item.t as number), indexes: sorted.map((item) => item.index) };
   }, [content]);
 
-  // `timeupdate` fires about four times a second, which is too coarse for a short
-  // paragraph but adequate for a highlight; the state only changes when the
-  // paragraph does, so React re-renders about once a paragraph.
   const [activeIndex, setActiveIndex] = useState(-1);
   // Another article (or a refetched body) replaces every block, so the previous
   // index points at text that is no longer there. Adjusted during render, which is
@@ -563,9 +560,36 @@ function RenderedContent({
     const next = found === -1 ? -1 : indexes[found];
     setActiveIndex((previous) => (next === previous ? previous : next));
   }, [indexes, starts]);
+  // `timeupdate` is measured in wall-clock time and fires about four times a
+  // second, but it advances the media position by `playbackRate / 4` seconds. At
+  // 4x the highlight would trail the sound by a whole second, so while the player
+  // runs the clock is read every frame instead. The loop stops itself once the
+  // player pauses: nothing ticks while a transcript is merely being read.
+  const clockRef = useRef<HTMLMediaElement | null>(null);
+  const frameRef = useRef(0);
+  // The loop outlives the render that started it, so it reads the newest
+  // timeline through a ref instead of the closure it was created in.
+  const markRef = useRef(markAt);
+  useEffect(() => { markRef.current = markAt; }, [markAt]);
   const onTimeUpdate = useCallback((event: React.SyntheticEvent<HTMLMediaElement>) => {
-    markAt(event.currentTarget.currentTime);
-  }, [markAt]);
+    const player = event.currentTarget;
+    markRef.current(player.currentTime);
+    clockRef.current = player;
+    if (frameRef.current) return;
+    const tick = () => {
+      const current = clockRef.current;
+      // A player swapped out (audio-only mode, another article) may still be
+      // playing while detached, and its clock no longer belongs to this timeline.
+      if (!current || current.paused || !current.isConnected) {
+        frameRef.current = 0;
+        return;
+      }
+      markRef.current(current.currentTime);
+      frameRef.current = requestAnimationFrame(tick);
+    };
+    frameRef.current = requestAnimationFrame(tick);
+  }, []);
+  useEffect(() => () => cancelAnimationFrame(frameRef.current), []);
 
   // Follow the player: the highlight is useless if it has scrolled out of sight.
   // Keyed on the index, so this runs once per paragraph rather than on every

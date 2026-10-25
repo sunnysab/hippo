@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ArticlePayload } from '../../store/articles';
 import { ArticleContent } from './ArticleContent';
@@ -279,6 +279,39 @@ describe('ArticleContent media blocks', () => {
     fireEvent.click(anchors[0]);
     expect(player.currentTime).toBe(0);
     expect(playing()).toEqual(['开场']);
+  });
+
+  it('follows the clock every frame while playing, not only on timeupdate', async () => {
+    // 倍速下 timeupdate 每次跳过的时间与播放速率成正比（4x 时约 1s），
+    // 高亮只能靠逐帧读时钟才跟得上声音。
+    const { container } = renderContent([
+      { type: 'audio', url: '/api/media/7/audio' },
+      { type: 'paragraph', text: '开场', t: 0 },
+      { type: 'paragraph', text: '正题', t: 30 },
+    ]);
+    const audio = container.querySelector('audio')!;
+    let paused = true;
+    Object.defineProperty(audio, 'paused', { configurable: true, get: () => paused });
+    const playing = () => container.querySelector('p.is-playing')?.textContent?.replace(/^\d\d:\d\d/, '');
+    // jsdom 有 requestAnimationFrame，等两帧它就跑到下一次读了。
+    const frames = () => act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
+
+    audio.currentTime = 5;
+    fireEvent.timeUpdate(audio);
+    expect(playing()).toBe('开场');
+
+    paused = false;
+    fireEvent.timeUpdate(audio);
+    // 只在帧循环里推进，不再补 timeupdate。
+    audio.currentTime = 45;
+    await frames();
+    expect(playing()).toBe('正题');
+
+    // 暂停后循环自己停下：位置再怎么变，高亮也不动。
+    paused = true;
+    audio.currentTime = 90;
+    await frames();
+    expect(playing()).toBe('正题');
   });
 
   it('highlights nothing before the first timestamped paragraph', () => {
