@@ -342,6 +342,8 @@ async def classify(
 
 
 __all__ = [
+    'DECISION_STORY_QUESTION',
+    'DECISION_STORY_THRESHOLD',
     'DECISION_TOPIC_THRESHOLD',
     'DEFAULT_VOCABULARY',
     'MAX_ANSWER_TOKENS',
@@ -353,6 +355,7 @@ __all__ = [
     'decision_event_question',
     'decision_questions',
     'decision_state',
+    'decision_story_question',
     'default_vocabulary',
     'fingerprint',
     'known_slugs',
@@ -385,6 +388,29 @@ def decision_event_question(candidates: list[dict[str, Any]]) -> dict[str, Any] 
     }
 
 
+#: Question asked when there is no candidate to join, so the model still gets a
+#: say in whether this article is a story at all. A yes means open one.
+DECISION_STORY_QUESTION = 'story'
+
+#: Where the ``story`` answer lives, next to the direction questions.
+DECISION_STORY_THRESHOLD = 0.5
+
+
+
+
+def decision_story_question() -> dict[str, Any]:
+    """Asked only when there is nothing to join: is this a story worth tracking?
+
+    Without it the decision path could never open an event. A ``choice`` over an
+    empty candidate list has no option but ``none``, so every article would be
+    detached forever and the event feature would go quiet without one error.
+    """
+    return {
+        'type': 'noul',
+        'instructions': '这篇文章在报道一件具体的、可被多家媒体跟进的事吗？',
+    }
+
+
 def parse_decision_event(
     answers: dict[str, Any],
     candidates: list[dict[str, Any]],
@@ -400,16 +426,36 @@ def parse_decision_event(
     the repository, not in a single article's answer.
     """
     payload = answers.get('event')
+    if payload is None:
+        # No candidates were offered, so the only question left is whether this is
+        # a story. ``title`` is what the event would be called: the first report of
+        # a story is its summary until a second publisher arrives.
+        return _new_event_from_story(answers, title)
     if not isinstance(payload, dict) or payload.get('type') != 'choice':
         return None
     choice = str(payload.get('choice') or '')
     if choice == 'none' or not choice:
-        return None
+        return _new_event_from_story(answers, title)
     offered = {str(int(item['id'])) for item in candidates[:MAX_EVENT_CANDIDATES]}
     if choice not in offered:
         # A model that picked an option it was not given is a bug, not a hint.
         raise ApiError('模型选择了不存在的候选事件。', status=502, code='topic.invalid_result')
     confidence = payload.get('confidence')
     if isinstance(confidence, (int, float)) and float(confidence) < join_threshold:
-        return None
+        return _new_event_from_story(answers, title)
     return {'action': 'join', 'id': int(choice)}
+
+
+def _new_event_from_story(answers: dict[str, Any], title: str | None) -> dict[str, Any] | None:
+    """Open an event when the model says this is a followable story.
+
+    Requiring a title keeps the writer honest: an event with no name would show
+    up as an empty heading once a second publisher made it visible.
+    """
+    story = answers.get(DECISION_STORY_QUESTION)
+    if not title or not isinstance(story, dict):
+        return None
+    score = story.get('noul')
+    if not isinstance(score, (int, float)) or float(score) < DECISION_STORY_THRESHOLD:
+        return None
+    return {'action': 'new', 'title': title}

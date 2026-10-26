@@ -24,11 +24,13 @@ from .logger import get_logger
 from .site_settings import get_site_settings
 from .storage import open_storage
 from .topics import (
+    DECISION_STORY_QUESTION,
     PROMPT_VERSION,
     classify,
     decision_event_question,
     decision_questions,
     decision_state,
+    decision_story_question,
     fingerprint,
     parse_decision,
     parse_decision_event,
@@ -78,17 +80,21 @@ async def _classify(
 ) -> tuple[list[dict[str, str]], dict[str, Any] | None]:
     """Dispatch on the provider's protocol, not on a global setting."""
     if provider.get('kind') == 'decision':
+        question = decision_event_question(candidates)
         answers = await decide(
             provider,
             state=decision_state(row['title'], row['digest']),
             questions={
                 **decision_questions(vocabulary),
-                **({'event': question} if (question := decision_event_question(candidates)) else {}),
+                # With candidates the model picks one; without any, the story
+                # question is what stops the event feature from going silent.
+                **({'event': question} if question else {}),
+                **({} if question else {DECISION_STORY_QUESTION: decision_story_question()}),
             },
         )
         return (
             parse_decision(answers, vocabulary),
-            parse_decision_event(answers, candidates),
+            parse_decision_event(answers, candidates, title=row['title']),
         )
     return await classify(
         provider,

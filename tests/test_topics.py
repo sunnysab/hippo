@@ -288,3 +288,38 @@ class DecisionEventTest(unittest.TestCase):
 
     def test_a_missing_event_answer_is_simply_no_event(self):
         self.assertIsNone(topics.parse_decision_event({}, self.CANDIDATES))
+
+    def test_with_no_candidates_the_story_question_can_open_an_event(self):
+        # Without this path the decision provider could never create an event:
+        # a choice over an empty candidate list offers only "none".
+        answers = {'story': {'type': 'noul', 'noul': 0.81}}
+        self.assertEqual(
+            {'action': 'new', 'title': '中国临时实施氦气出口禁令'},
+            topics.parse_decision_event(answers, [], title='中国临时实施氦气出口禁令'),
+        )
+
+    def test_a_low_story_score_opens_nothing(self):
+        answers = {'story': {'type': 'noul', 'noul': 0.2}}
+        self.assertIsNone(topics.parse_decision_event(answers, [], title='物流延迟'))
+
+    def test_a_story_yes_needs_a_title(self):
+        answers = {'story': {'type': 'noul', 'noul': 0.9}}
+        self.assertIsNone(topics.parse_decision_event(answers, [], title=None))
+
+    def test_a_weak_join_falls_back_to_the_story_question(self):
+        # Confident enough to rule out every candidate, not confident enough to
+        # join one: the article is its own story rather than nothing.
+        answers = {
+            'event': {'type': 'choice', 'choice': '3', 'confidence': 0.2},
+            'story': {'type': 'noul', 'noul': 0.77},
+        }
+        self.assertEqual({'action': 'new', 'title': '某事件'},
+                         topics.parse_decision_event(answers, self.CANDIDATES, title='某事件'))
+
+    def test_a_confident_none_falls_back_to_the_story_question(self):
+        answers = {
+            'event': {'type': 'choice', 'choice': 'none', 'confidence': 0.95},
+            'story': {'type': 'noul', 'noul': 0.88},
+        }
+        self.assertEqual({'action': 'new', 'title': '某事件'},
+                         topics.parse_decision_event(answers, self.CANDIDATES, title='某事件'))

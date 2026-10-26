@@ -298,3 +298,39 @@ class DecisionProviderTest(TopicWorkerTest):
             self.assertFalse(await worker.run_once())
         self.repo.release.assert_awaited_once_with(self.claim)
         self.repo.finish.assert_not_awaited()
+
+
+class DecisionEventCreationTest(DecisionProviderTest):
+    """The decision path must be able to open an event, not only join one."""
+
+    async def test_no_candidates_asks_the_story_question_instead_of_nothing(self):
+        self.repo.candidates.return_value = []
+        decide = AsyncMock(return_value={
+            'ai': {'type': 'noul', 'noul': 0.9},
+            'story': {'type': 'noul', 'noul': 0.85},
+        })
+        with (
+            patch.object(worker, 'resolve_decision_provider', AsyncMock(return_value={'model': 'clef-flash', 'kind': 'decision'})),
+            patch.object(worker, 'decide', decide),
+        ):
+            await worker.run_once()
+
+        questions = decide.await_args.kwargs['questions']
+        self.assertIn(worker.DECISION_STORY_QUESTION, questions)
+        self.assertNotIn('event', questions)
+        self.assertEqual('new', self.repo.finish.await_args.kwargs['event']['action'])
+
+    async def test_candidates_suppress_the_story_question(self):
+        self.repo.candidates.return_value = [{'id': 4, 'title': '已有事件', 'sources': 2}]
+        decide = AsyncMock(return_value={
+            'ai': {'type': 'noul', 'noul': 0.9},
+            'event': {'type': 'choice', 'choice': '4', 'confidence': 0.9},
+        })
+        with (
+            patch.object(worker, 'resolve_decision_provider', AsyncMock(return_value={'model': 'clef-flash', 'kind': 'decision'})),
+            patch.object(worker, 'decide', decide),
+        ):
+            await worker.run_once()
+
+        self.assertNotIn(worker.DECISION_STORY_QUESTION, decide.await_args.kwargs['questions'])
+        self.assertEqual({'action': 'join', 'id': 4}, self.repo.finish.await_args.kwargs['event'])
