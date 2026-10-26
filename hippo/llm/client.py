@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+import httpx
 import openai
 from openai import AsyncOpenAI
 
@@ -136,6 +137,66 @@ async def stream_chat(
                 exc,
             )
             raise ApiError(message, status=status) from exc
+
+
+class DecisionUnavailableError(ApiError):
+    """No provider speaks the decision protocol."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, status=503)
+
+
+async def resolve_decision_provider(storage: PostgresStorage) -> dict[str, Any]:
+    """The enabled provider that speaks /v1/systemone.
+
+    A decision model is not interchangeable with a chat model: it answers with
+    probabilities and cannot hold a conversation. Falling back to a chat provider
+    here would produce values the caller cannot use, so this refuses instead.
+    """
+    for provider in await storage.llm.list_all():
+        if provider['enabled'] and provider.get('kind') == 'decision':
+            full = await storage.llm.get_full(provider['id'])
+            if full:
+                return full
+    raise DecisionUnavailableError('未配置 decision 类型的 provider（如 clef-flash）')
+
+
+async def decide(
+    provider: dict[str, Any],
+    *,
+    state: str,
+    questions: dict[str, Any],
+) -> dict[str, Any]:
+    """One forward pass over ``state``, answering every question at once.
+
+    This is Ollama's ``/v1/systemone`` (the System One API). It is not the OpenAI
+    chat shape: the model scores each option jointly and returns probabilities,
+    producing zero output tokens. Kept apart from ``complete`` on purpose --
+    routing these through the OpenAI SDK would mean pretending a scoring model is
+    a text generator.
+    """
+    url = provider['base_url'].rstrip('/') + '/v1/systemone'
+    payload = {'model': provider['model'], 'state': state, 'questions': questions}
+    headers = {'Content-Type': 'application/json'}
+    if provider.get('api_key'):
+        headers['Authorization'] = f'Bearer {provider["api_key"]}'
+    async with _gate:
+        with span('llm.decide', model=provider.get('model'), provider=provider.get('name')):
+            try:
+                async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+                    response = await client.post(url, json=payload, headers=headers)
+                    response.raise_for_status()
+                    body = response.json()
+            except httpx.HTTPStatusError as exc:
+                logger.warning('LLM decision failed: %s %s', exc.response.status_code, exc.response.text[:200])
+                raise ApiError(f'LLM 返回错误状态 {exc.response.status_code}', status=502) from exc
+            except httpx.HTTPError as exc:
+                logger.warning('LLM decision unreachable: %s', exc)
+                raise ApiError('无法连接 LLM 服务，请检查网络与 base_url', status=502) from exc
+    answers = body.get('answers')
+    if not isinstance(answers, dict):
+        raise ApiError('LLM 返回的 decision 结果无法解析', status=502)
+    return answers
 
 
 async def complete(
