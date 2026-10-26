@@ -114,18 +114,44 @@ class TopicRepository:
         publisher by definition, so it would never be offered, so no second article
         could ever join it, so it would never reach the threshold. The threshold
         decides what a reader may see; it must not decide what the model may join.
+
+        Half the slots are the most recent events and half the most-covered ones,
+        because either ordering alone fails. Ordering only by publisher count let
+        the twenty largest stories fill every slot, so a story one minute old --
+        still at a single publisher -- was never offered and could never be joined
+        by the articles arriving right behind it: twelve publishers covering one
+        earthquake produced twelve separate events. Ordering only by recency is the
+        mirror image: the biggest stories slid to positions 19, 46 and 865 while
+        single-publisher rows took 25 of 30 slots.
+
+        The union is deliberately not capped harder: a candidate the model cannot
+        see is a decision it cannot make, and the measured prompt at 30 titles is
+        still flat.
         """
+        half = max(limit // 2, 1)
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                """SELECT e.id, e.title, COUNT(DISTINCT a.biz) AS sources
-                   FROM article_event e
-                   JOIN article_event_link l ON l.event_id = e.id
-                   JOIN articles a ON a.id = l.article_pk
-                   WHERE e.last_seen_at > clock_timestamp() - make_interval(hours => %s)
-                   GROUP BY e.id, e.title
-                   ORDER BY sources DESC, e.last_seen_at DESC
+                """WITH scored AS (
+                       SELECT e.id, e.title, e.last_seen_at, COUNT(DISTINCT a.biz) AS sources
+                       FROM article_event e
+                       JOIN article_event_link l ON l.event_id = e.id
+                       JOIN articles a ON a.id = l.article_pk
+                       WHERE e.last_seen_at > clock_timestamp() - make_interval(hours => %s)
+                       GROUP BY e.id, e.title, e.last_seen_at
+                   ), recent AS (
+                       SELECT * FROM scored ORDER BY last_seen_at DESC LIMIT %s
+                   ), popular AS (
+                       SELECT * FROM scored
+                       ORDER BY sources DESC, last_seen_at DESC, id LIMIT %s
+                   )
+                   SELECT id, title, sources FROM (
+                       SELECT id, title, sources, last_seen_at FROM recent
+                       UNION
+                       SELECT id, title, sources, last_seen_at FROM popular
+                   ) x
+                   ORDER BY sources DESC, last_seen_at DESC, id
                    LIMIT %s""",
-                (hours, limit),
+                (hours, half, half, limit),
             )
             return list(await cur.fetchall())
 

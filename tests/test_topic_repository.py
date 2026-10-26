@@ -335,6 +335,58 @@ class TopicEventTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([wide, narrow], [item['id'] for item in ranked])
         self.assertEqual(3, ranked[0]['sources'])
 
+    async def _crowded_events(self) -> tuple[int, int]:
+        """Far more events than the candidate limit, split into wide and fresh ones.
+
+        Forty stories with three publishers each outnumber any count-based short
+        list; ten newer single-publisher stories outnumber any recency ranking. A
+        fixture where the wide stories tie cannot show which one survived, so their
+        publisher counts differ.
+        """
+        pk = 1
+        widest = 0
+        # Publisher counts shrink with age's opposite: the first story is the widest
+        # and the later ones narrower, so "the widest" is a single identifiable row.
+        for index in range(1, 41):
+            publishers = 40 - index + 3
+            for offset in range(publishers):
+                self._article(pk, f'wide_{index}_{offset}')
+                if offset == 0:
+                    event_id = await self.repo.create_event(f'大事件 {index}', pk)
+                else:
+                    await self.repo.attach_event(pk, event_id)
+                pk += 1
+            if index == 1:
+                widest = event_id
+        fresh = []
+        for index in range(10):
+            self._article(pk, f'fresh_{index}')
+            fresh.append(await self.repo.create_event(f'新事 {index}', pk))
+            pk += 1
+        return widest, fresh[-1]
+
+    async def test_a_fresh_event_is_offered_alongside_the_widely_covered_ones(self):
+        """A story one minute old must still be offered, or it can never be joined.
+
+        Measured on production: twelve publishers covering one earthquake produced
+        twelve separate events. Every candidate slot went to stories that already
+        had more publishers, and a single-publisher event sorted past position
+        2,646 -- so the second article could never see the first.
+        """
+        _, newest = await self._crowded_events()
+        offered = [item['id'] for item in await self.repo.candidates()]
+        self.assertIn(newest, offered, 'a new event must be offered or nothing can join it')
+
+    async def test_a_widely_covered_event_is_offered_alongside_the_fresh_ones(self):
+        """Half the slots are the largest stories: recency alone drops them.
+
+        On production, ordering only by recency put the 24-publisher story at
+        position 46 and a 10-publisher one at 865.
+        """
+        widest, _ = await self._crowded_events()
+        offered = [item['id'] for item in await self.repo.candidates()]
+        self.assertIn(widest, offered)
+
     async def test_attaching_is_an_upsert_so_a_move_is_not_a_second_link(self):
         self._article(1, 'a')
         self._article(2, 'b')
