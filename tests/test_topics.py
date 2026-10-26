@@ -286,6 +286,35 @@ class DecisionEventTest(unittest.TestCase):
             topics.parse_decision_event(answers, self.CANDIDATES)
         self.assertEqual('topic.invalid_result', ctx.exception.code)
 
+    def test_a_split_vote_still_joins_when_none_is_ruled_out(self):
+        """Ten copies of one story split a confident answer into ten small scores.
+
+        Measured on a real earthquake: the ten existing copies scored 0.44, 0.14,
+        0.05, ... and "none" scored 0.001. The 0.5 threshold alone read the 0.44 as
+        "open a new one", which is how twelve events came from one story.
+        """
+        answers = {'event': {
+            'type': 'choice', 'choice': '3', 'confidence': 0.42,
+            'probabilities': {'3': 0.441, '7': 0.082, 'none': 0.001},
+        }}
+        self.assertEqual({'action': 'join', 'id': 3},
+                         topics.parse_decision_event(answers, self.CANDIDATES))
+
+    def test_a_flat_vote_against_a_plausible_new_story_opens_one(self):
+        """When "none" is competitive the model really is unsure about all of them."""
+        answers = {'event': {
+            'type': 'choice', 'choice': '3', 'confidence': 0.2,
+            'probabilities': {'3': 0.2, '7': 0.25, 'none': 0.45},
+        }, 'story': {'type': 'noul', 'noul': 0.9}}
+        self.assertEqual({'action': 'new', 'title': '某事件'},
+                         topics.parse_decision_event(answers, self.CANDIDATES, title='某事件'))
+
+    def test_without_a_distribution_the_threshold_decides(self):
+        answers = {'event': {'type': 'choice', 'choice': '3', 'confidence': 0.2},
+                   'story': {'type': 'noul', 'noul': 0.9}}
+        self.assertEqual({'action': 'new', 'title': '某事件'},
+                         topics.parse_decision_event(answers, self.CANDIDATES, title='某事件'))
+
     def test_a_missing_event_answer_is_simply_no_event(self):
         self.assertIsNone(topics.parse_decision_event({}, self.CANDIDATES))
 

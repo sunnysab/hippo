@@ -346,6 +346,7 @@ async def classify(
 
 
 __all__ = [
+    'DECISION_NONE_FLOOR',
     'DECISION_STORY_QUESTION',
     'DECISION_STORY_THRESHOLD',
     'DECISION_TOPIC_THRESHOLD',
@@ -446,8 +447,35 @@ def parse_decision_event(
         raise ApiError('模型选择了不存在的候选事件。', status=502, code='topic.invalid_result')
     confidence = payload.get('confidence')
     if isinstance(confidence, (int, float)) and float(confidence) < join_threshold:
-        return _new_event_from_story(answers, title)
+        # A low top score is not a rejection when "none" scores even lower: the
+        # probability mass is shared with every other candidate, so ten near
+        # identical events split one confident answer into ten small numbers. On a
+        # real earthquake, the ten copies scored 0.44, 0.14, 0.05 ... while "none"
+        # scored 0.001 -- the model was sure this was an existing story and the
+        # threshold alone read it as "open a new one", producing a twelfth copy.
+        if _rejected_every_candidate(payload):
+            return _new_event_from_story(answers, title)
+        return {'action': 'join', 'id': int(choice)}
     return {'action': 'join', 'id': int(choice)}
+
+
+#: Probability below which "none of these" is treated as ruled out.
+DECISION_NONE_FLOOR = 0.02
+
+
+def _rejected_every_candidate(payload: dict[str, Any]) -> bool:
+    """Whether the model actually preferred a new story to every candidate.
+
+    When no per-option distribution is returned there is nothing to compare, so
+    the plain threshold stands and the answer is treated as a rejection.
+    """
+    probabilities = payload.get('probabilities')
+    if not isinstance(probabilities, dict):
+        return True
+    none = probabilities.get('none')
+    if not isinstance(none, (int, float)):
+        return True
+    return float(none) >= DECISION_NONE_FLOOR
 
 
 def _new_event_from_story(answers: dict[str, Any], title: str | None) -> dict[str, Any] | None:
