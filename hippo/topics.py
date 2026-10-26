@@ -22,7 +22,11 @@ from .exceptions import ApiError
 
 #: Bumping this invalidates every cached result: the prompt is the classifier.
 #: 2 added the event decision to the same call.
-PROMPT_VERSION = 2
+#: 3 changed how the candidate events are chosen (recent half + popular half),
+#:   which changes the event each article joins even though the questions did not
+#:   change. Without the bump the existing rows keep the clustering the old
+#:   candidate list produced, and the fix would only apply to new articles.
+PROMPT_VERSION = 3
 
 #: Probability at or above which a direction is applied, for decision models.
 #: Measured on 50 real articles: 47 of 50 land their top direction above 0.5, and
