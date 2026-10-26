@@ -90,9 +90,11 @@ class LlmProviderRepository:
         kind: str = 'chat',
     ) -> dict[str, Any]:
         now = utc_now_dt()
-        # The first provider is the default whether or not the caller asked;
-        # otherwise nothing would resolve.
-        if not is_default:
+        # The first chat provider is the default whether or not the caller asked;
+        # otherwise nothing would resolve. A decision provider is never the
+        # default: it cannot hold a conversation, so defaulting to it would point
+        # every chat request at a model that only answers with probabilities.
+        if not is_default and kind == 'chat':
             is_default = await self.count() == 0
         async with self._conn.cursor(row_factory=dict_row) as cur:
             try:
