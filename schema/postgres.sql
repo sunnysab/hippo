@@ -599,6 +599,14 @@ CREATE TABLE IF NOT EXISTS llm_provider (
     updated_at TIMESTAMPTZ NOT NULL
 );
 
+-- Two protocols live behind one table. `chat` is the OpenAI-compatible
+-- completion API every provider speaks; `decision` is the /v1/systemone API
+-- (Ollama's decision models: clef-flash), which answers with probabilities
+-- instead of text. Classification needs the second kind; summarising, outlines
+-- and chat still need the first.
+ALTER TABLE llm_provider ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'chat'
+    CHECK (kind IN ('chat', 'decision'));
+
 -- ============================================================
 -- AI 会话：article_pk 为空即自由聊天，非空即对某篇文章的解读
 -- ============================================================

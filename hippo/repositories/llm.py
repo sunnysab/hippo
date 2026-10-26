@@ -15,7 +15,7 @@ from psycopg.rows import dict_row
 from ..exceptions import ApiError
 from ..utils import utc_now_dt
 
-_COLUMNS = 'id, name, base_url, api_key, model, is_default, enabled'
+_COLUMNS = 'id, name, base_url, api_key, model, is_default, enabled, kind'
 
 #: Characters kept when masking. Four is enough to recognise a key, too few to use.
 _VISIBLE_TAIL = 4
@@ -39,6 +39,7 @@ def _row(row: dict[str, Any]) -> dict[str, Any]:
         'model': row['model'],
         'is_default': bool(row['is_default']),
         'enabled': bool(row['enabled']),
+        'kind': row.get('kind') or 'chat',
     }
 
 
@@ -86,6 +87,7 @@ class LlmProviderRepository:
         model: str,
         is_default: bool = False,
         enabled: bool = True,
+        kind: str = 'chat',
     ) -> dict[str, Any]:
         now = utc_now_dt()
         # The first provider is the default whether or not the caller asked;
@@ -97,11 +99,12 @@ class LlmProviderRepository:
                 await cur.execute(
                     f"""
                     INSERT INTO llm_provider
-                        (name, base_url, api_key, model, is_default, enabled, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, FALSE, %s, %s, %s)
+                        (name, base_url, api_key, model, is_default, enabled, kind,
+                         created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, FALSE, %s, %s, %s, %s)
                     RETURNING {_COLUMNS}
                     """,
-                    (name, base_url, api_key, model, enabled, now, now),
+                    (name, base_url, api_key, model, enabled, kind, now, now),
                 )
             except psycopg.errors.UniqueViolation as exc:
                 raise ApiError('同名 provider 已存在', status=409) from exc
@@ -120,7 +123,7 @@ class LlmProviderRepository:
         """Patch a provider. ``api_key=None`` leaves the stored key untouched."""
         sets: list[str] = []
         params: list[Any] = []
-        for column in ('name', 'base_url', 'model', 'enabled'):
+        for column in ('name', 'base_url', 'model', 'enabled', 'kind'):
             if column in changes:
                 sets.append(f'{column} = %s')
                 params.append(changes[column])
