@@ -179,7 +179,7 @@ async def run_once() -> bool:
                         await storage.topics.release(claim)
                     logger.warning('topic_provider_unavailable')
                     return False
-                candidates = await storage.topics.candidates()
+                candidates = await storage.topics.candidates(title=row['title'])
             topics, event = await _classify(provider, row, vocabulary, candidates)
 
             async with open_storage() as storage, storage.transaction():

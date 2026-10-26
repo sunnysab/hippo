@@ -14,6 +14,11 @@ from uuid import uuid4
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+#: Trigram similarity at which two titles are treated as the same story.
+#: Identical headlines score 1.0 and a shared subject around 0.5; 0.4 admits a
+#: reworded headline while excluding unrelated articles sharing one common word.
+SIMILAR_TITLE_THRESHOLD = 0.4
+
 
 class TopicRepository:
     def __init__(self, conn) -> None:
@@ -102,56 +107,63 @@ class TopicRepository:
             )
             return {int(row['article_pk']): list(row['topics'] or []) for row in await cur.fetchall()}
 
-    async def candidates(self, *, hours: int = 72, limit: int = 30) -> list[dict[str, Any]]:
+    async def candidates(
+        self, *, title: str | None = None, hours: int = 72, limit: int = 30
+    ) -> list[dict[str, Any]]:
         """Recent events the classifier may attach this article to.
 
-        Ranked by how many distinct publishers covered them, not by raw report
-        count: ten publishers reporting once is a story, one publisher posting ten
-        times is a habit. The window and the limit are what keep the prompt flat.
+        Three slices, because each ordering alone fails on real data:
 
-        Crucially this does **not** require two publishers. Visibility does, but a
-        candidate list filtered the same way is a closed loop: a new event has one
-        publisher by definition, so it would never be offered, so no second article
-        could ever join it, so it would never reach the threshold. The threshold
-        decides what a reader may see; it must not decide what the model may join.
+        * **Similar titles.** ``pg_trgm`` against this article's title is the only
+          slice that can reach a story the other two miss. Twelve publishers
+          covered one earthquake within four minutes and produced twelve events;
+          none of them was in the twenty largest stories, and all twelve had aged
+          out of the recent slice by the time the requeue reached them, so a
+          count-plus-recency list could not see a single one and the split could
+          never close. Trigram matching finds them by text, which is the signal
+          that actually identifies "the same story".
+        * **Recent events.** A story one minute old is at one publisher by
+          definition. Without this slice it is never offered, so nothing can join
+          it, so it never becomes visible -- the loop the threshold/candidacy split
+          was meant to prevent.
+        * **Widely covered events.** Ordering only by recency is the mirror image:
+          the 24-publisher story fell to position 46 and a 10-publisher one to 865
+          while single-publisher rows took 25 of the 30 slots, so the stories
+          readers follow would stop receiving coverage.
 
-        Half the slots are the most recent events and half the most-covered ones,
-        because either ordering alone fails. Ordering only by publisher count let
-        the twenty largest stories fill every slot, so a story one minute old --
-        still at a single publisher -- was never offered and could never be joined
-        by the articles arriving right behind it: twelve publishers covering one
-        earthquake produced twelve separate events. Ordering only by recency is the
-        mirror image: the biggest stories slid to positions 19, 46 and 865 while
-        single-publisher rows took 25 of 30 slots.
-
-        The union is deliberately not capped harder: a candidate the model cannot
-        see is a decision it cannot make, and the measured prompt at 30 titles is
-        still flat.
+        ``pg_trgm`` is standard PostgreSQL and already installed here; without a
+        title the similar slice is skipped rather than guessed.
         """
-        half = max(limit // 2, 1)
+        third = max(limit // 3, 1)
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """WITH scored AS (
-                       SELECT e.id, e.title, e.last_seen_at, COUNT(DISTINCT a.biz) AS sources
+                       SELECT e.id, e.title, e.last_seen_at, COUNT(DISTINCT a.biz) AS sources,
+                              CASE WHEN CAST(%s AS text) IS NULL THEN 0
+                                   ELSE similarity(e.title, %s) END AS sim
                        FROM article_event e
                        JOIN article_event_link l ON l.event_id = e.id
                        JOIN articles a ON a.id = l.article_pk
                        WHERE e.last_seen_at > clock_timestamp() - make_interval(hours => %s)
                        GROUP BY e.id, e.title, e.last_seen_at
+                   ), similar AS (
+                       SELECT * FROM scored WHERE sim >= %s ORDER BY sim DESC, sources DESC LIMIT %s
                    ), recent AS (
-                       SELECT * FROM scored ORDER BY last_seen_at DESC LIMIT %s
+                       SELECT * FROM scored ORDER BY last_seen_at DESC, id LIMIT %s
                    ), popular AS (
-                       SELECT * FROM scored
-                       ORDER BY sources DESC, last_seen_at DESC, id LIMIT %s
+                       SELECT * FROM scored ORDER BY sources DESC, last_seen_at DESC, id LIMIT %s
                    )
-                   SELECT id, title, sources FROM (
-                       SELECT id, title, sources, last_seen_at FROM recent
+                   SELECT id, title, sources, sim
+                   FROM (
+                       SELECT id, title, sources, last_seen_at, sim FROM similar
                        UNION
-                       SELECT id, title, sources, last_seen_at FROM popular
+                       SELECT id, title, sources, last_seen_at, sim FROM recent
+                       UNION
+                       SELECT id, title, sources, last_seen_at, sim FROM popular
                    ) x
-                   ORDER BY sources DESC, last_seen_at DESC, id
+                   ORDER BY sim DESC, sources DESC, last_seen_at DESC, id
                    LIMIT %s""",
-                (hours, half, half, limit),
+                (title, title, hours, SIMILAR_TITLE_THRESHOLD, third, third, third, limit),
             )
             return list(await cur.fetchall())
 

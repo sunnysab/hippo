@@ -17,6 +17,19 @@ from psycopg.types.json import Jsonb
 from hippo.repositories.topic import TopicRepository
 
 
+def _trigrams(text: str) -> set[str]:
+    padded = f'  {text} '
+    return {padded[index : index + 3] for index in range(len(padded) - 2)}
+
+
+def _trigram_similarity(left: str, right: str) -> float:
+    """Dice coefficient over trigrams, matching pg_trgm's ``similarity``."""
+    if not left or not right:
+        return 0.0
+    a, b = _trigrams(left), _trigrams(right)
+    return 2 * len(a & b) / (len(a) + len(b))
+
+
 class Cursor:
     def __init__(self, connection, row_factory=None):
         self.connection = connection
@@ -37,6 +50,8 @@ class Cursor:
         sql = sql.replace("clock_timestamp() - INTERVAL '15 minutes'", '(clock_timestamp() - 900)')
         sql = sql.replace('clock_timestamp() - make_interval(hours => ?)', '(clock_timestamp() - (0 + ?) * 3600)')
         sql = sql.replace(' FOR UPDATE SKIP LOCKED', '').replace('RETURNING t.*', 'RETURNING *')
+        # PostgreSQL casts have no SQLite form; the value is a bound parameter.
+        sql = sql.replace('CAST(? AS text) IS NULL', '? IS NULL')
         # The publish_at fallback: SQLite stores created_at the same way, so the
         # COALESCE collapses to the column itself.
         sql = sql.replace(
@@ -76,6 +91,10 @@ class Connection:
         self.db = sqlite3.connect(':memory:')
         self.db.row_factory = sqlite3.Row
         self.db.create_function('clock_timestamp', 0, time.time)
+        # pg_trgm's similarity() is the trigram Dice coefficient; SQLite has no
+        # trigram extension, so the same formula is registered here. The tests
+        # assert on candidate membership, never on a specific score.
+        self.db.create_function('similarity', 2, _trigram_similarity)
         self.queries = []
         schema = (Path(__file__).resolve().parents[1] / 'schema/postgres.sql').read_text()
         table = schema.split('CREATE TABLE IF NOT EXISTS article_topic (', 1)[1].split('\n);', 1)[0]
@@ -376,6 +395,41 @@ class TopicEventTest(unittest.IsolatedAsyncioTestCase):
         _, newest = await self._crowded_events()
         offered = [item['id'] for item in await self.repo.candidates()]
         self.assertIn(newest, offered, 'a new event must be offered or nothing can join it')
+
+    async def test_a_similar_title_reaches_an_event_neither_slice_can_see(self):
+        """The production failure this exists for.
+
+        Twelve publishers covered one earthquake within four minutes, producing
+        twelve events. None was among the largest stories, and all had aged out of
+        the recent slice by the time a full requeue reached them, so a list built
+        from counts and recency offered nothing and the split could never close.
+        Only the text identifies these as one story.
+        """
+        for pk in range(1, 201):
+            self._article(pk, f'biz_{pk}')
+        # A story with one publisher -- the shape a newly opened event has -- and
+        # buried under two hundred newer, wider stories.
+        buried = await self.repo.create_event('习近平对西藏那曲市巴青县7.0级地震作出重要指示', 1)
+        for pk in range(2, 201):
+            event_id = await self.repo.create_event(f'别的新闻 {pk}', pk)
+            for offset in range(1, 4):
+                extra = 1000 + pk * 3 + offset
+                self._article(extra, f'wide_{extra}')
+                await self.repo.attach_event(extra, event_id)
+
+        offered = await self.repo.candidates(title='西藏那曲市巴青县7.0级地震最新消息')
+        self.assertIn(buried, [item['id'] for item in offered])
+
+    async def test_without_a_title_the_similar_slice_is_skipped(self):
+        """A caller with no text gets counts and recency, not a guessed score."""
+        for pk in range(1, 41):
+            self._article(pk, f'biz_{pk}')
+        buried = await self.repo.create_event('西藏那曲地震', 1)
+        for pk in range(2, 41):
+            await self.repo.create_event(f'别的新闻 {pk}', pk)
+
+        offered = await self.repo.candidates()
+        self.assertNotIn(buried, [item['id'] for item in offered])
 
     async def test_a_widely_covered_event_is_offered_alongside_the_fresh_ones(self):
         """Half the slots are the largest stories: recency alone drops them.
