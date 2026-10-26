@@ -2,6 +2,7 @@
 
 import json
 import unittest
+from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
 from hippo import topics
@@ -202,3 +203,88 @@ class EventCandidatePromptTest(unittest.TestCase):
         system = topics.build_messages('T', 'D', topics.default_vocabulary())[0]['content']
         self.assertIn('"none"', system)
         self.assertIn('prefer "none" over inventing one', system)
+
+
+class DecisionProtocolTest(unittest.TestCase):
+    """A decision model answers with one probability per question, not with text."""
+
+    def setUp(self):
+        self.vocabulary = topics.default_vocabulary()
+
+    def _answers(self, **scores):
+        return {slug: {'type': 'noul', 'noul': value} for slug, value in scores.items()}
+
+    def test_every_direction_above_the_threshold_is_kept_best_first(self):
+        answers = self._answers(ai=0.92, news=0.61, business=0.08)
+        picks = topics.parse_decision(answers, self.vocabulary)
+        self.assertEqual(['ai', 'news'], topics.slugs_of(picks))
+        self.assertEqual('人工智能', picks[0]['name'])
+
+    def test_the_cap_still_applies(self):
+        answers = self._answers(ai=0.9, news=0.8, business=0.7)
+        self.assertEqual(topics.MAX_TOPICS, len(topics.parse_decision(answers, self.vocabulary)))
+
+    def test_a_direction_below_the_threshold_is_dropped(self):
+        picks = topics.parse_decision(self._answers(ai=0.51, news=0.49), self.vocabulary)
+        self.assertEqual(['ai'], topics.slugs_of(picks))
+
+    def test_nothing_clearing_the_threshold_still_yields_the_best_one(self):
+        # Measured: advertisements and event notices score their own top direction
+        # around 0.1-0.4. An empty answer would hide the article from the filter.
+        picks = topics.parse_decision(self._answers(life=0.32, news=0.24), self.vocabulary)
+        self.assertEqual(['life'], topics.slugs_of(picks))
+
+    def test_unknown_slugs_and_malformed_payloads_are_ignored(self):
+        answers = {
+            'ai': {'type': 'noul', 'noul': 0.8},
+            'invented': {'type': 'noul', 'noul': 0.99},
+            'broken': {'type': 'noul', 'noul': 'high'},
+            'none_at_all': None,
+        }
+        self.assertEqual(['ai'], topics.slugs_of(topics.parse_decision(answers, self.vocabulary)))
+
+    def test_an_answer_with_no_usable_score_is_a_failure(self):
+        with self.assertRaises(ApiError) as ctx:
+            topics.parse_decision({'invented': {'noul': 0.9}}, self.vocabulary)
+        self.assertEqual('topic.invalid_result', ctx.exception.code)
+
+    def test_one_question_is_asked_per_direction(self):
+        questions = topics.decision_questions(self.vocabulary)
+        self.assertEqual({t['slug'] for t in self.vocabulary['topics']}, set(questions))
+        for payload in questions.values():
+            self.assertEqual('noul', payload['type'])
+
+
+class DecisionEventTest(unittest.TestCase):
+    CANDIDATES: ClassVar[list[dict[str, object]]] = [
+        {'id': 3, 'title': '中国临时实施氦气出口禁令'},
+        {'id': 7, 'title': '美国能源部将氦气列为关键材料'},
+    ]
+
+    def test_none_is_always_offered_and_last(self):
+        question = topics.decision_event_question(self.CANDIDATES)
+        self.assertEqual(['3', '7', 'none'], list(question['criteria']))
+
+    def test_no_candidates_means_no_question(self):
+        self.assertIsNone(topics.decision_event_question([]))
+
+    def test_choosing_an_offered_candidate_becomes_a_join(self):
+        answers = {'event': {'type': 'choice', 'choice': '7', 'confidence': 0.9}}
+        self.assertEqual({'action': 'join', 'id': 7}, topics.parse_decision_event(answers, self.CANDIDATES))
+
+    def test_none_means_no_event(self):
+        answers = {'event': {'type': 'choice', 'choice': 'none', 'confidence': 0.96}}
+        self.assertIsNone(topics.parse_decision_event(answers, self.CANDIDATES))
+
+    def test_a_low_confidence_choice_is_not_a_join(self):
+        answers = {'event': {'type': 'choice', 'choice': '3', 'confidence': 0.4}}
+        self.assertIsNone(topics.parse_decision_event(answers, self.CANDIDATES))
+
+    def test_choosing_something_that_was_not_offered_is_a_failure(self):
+        answers = {'event': {'type': 'choice', 'choice': '99', 'confidence': 0.99}}
+        with self.assertRaises(ApiError) as ctx:
+            topics.parse_decision_event(answers, self.CANDIDATES)
+        self.assertEqual('topic.invalid_result', ctx.exception.code)
+
+    def test_a_missing_event_answer_is_simply_no_event(self):
+        self.assertIsNone(topics.parse_decision_event({}, self.CANDIDATES))

@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_topic_repository import Connection
 
 from hippo import topic_worker as worker
+from hippo.llm.client import DecisionUnavailableError
 from hippo.repositories.topic import TopicRepository
 
 #: The fixture rows must fall inside the worker's 30-day backfill window.
@@ -96,7 +97,12 @@ class WorkerPipelineTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(worker, 'open_storage', self._storage),
             patch.object(worker, '_vocabulary', AsyncMock(return_value=VOCABULARY)),
-            patch.object(worker, 'resolve_provider', AsyncMock(return_value={'model': 'fake'})),
+            patch.object(
+                worker,
+                'resolve_decision_provider',
+                AsyncMock(side_effect=DecisionUnavailableError('none')),
+            ),
+            patch.object(worker, 'resolve_provider', AsyncMock(return_value={'model': 'fake', 'kind': 'chat'})),
             patch.object(worker, 'classify', self.model),
         ):
             runs = await self._drain()
@@ -114,7 +120,12 @@ class WorkerPipelineTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(worker, 'open_storage', self._storage),
             patch.object(worker, '_vocabulary', AsyncMock(return_value=VOCABULARY)),
-            patch.object(worker, 'resolve_provider', AsyncMock(return_value={'model': 'fake'})),
+            patch.object(
+                worker,
+                'resolve_decision_provider',
+                AsyncMock(side_effect=DecisionUnavailableError('none')),
+            ),
+            patch.object(worker, 'resolve_provider', AsyncMock(return_value={'model': 'fake', 'kind': 'chat'})),
             patch.object(worker, 'classify', self.model),
         ):
             await self._drain()
@@ -127,7 +138,12 @@ class WorkerPipelineTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(worker, 'open_storage', self._storage),
             patch.object(worker, '_vocabulary', AsyncMock(return_value=VOCABULARY)),
-            patch.object(worker, 'resolve_provider', AsyncMock(return_value={'model': 'fake'})),
+            patch.object(
+                worker,
+                'resolve_decision_provider',
+                AsyncMock(side_effect=DecisionUnavailableError('none')),
+            ),
+            patch.object(worker, 'resolve_provider', AsyncMock(return_value={'model': 'fake', 'kind': 'chat'})),
             patch.object(worker, 'classify', self.model),
         ):
             await self._drain()

@@ -13,11 +13,26 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .exceptions import ApiError
-from .llm.client import LlmUnavailableError, resolve_provider
+from .llm.client import (
+    DecisionUnavailableError,
+    LlmUnavailableError,
+    decide,
+    resolve_decision_provider,
+    resolve_provider,
+)
 from .logger import get_logger
 from .site_settings import get_site_settings
 from .storage import open_storage
-from .topics import PROMPT_VERSION, classify, fingerprint
+from .topics import (
+    PROMPT_VERSION,
+    classify,
+    decision_event_question,
+    decision_questions,
+    decision_state,
+    fingerprint,
+    parse_decision,
+    parse_decision_event,
+)
 
 logger = get_logger(__name__)
 
@@ -39,6 +54,49 @@ REQUEUE_BATCH = 500
 
 async def _vocabulary(storage) -> dict[str, Any]:
     return (await get_site_settings(storage))['vocabulary']
+
+
+async def _resolve_classifier(storage) -> dict[str, Any]:
+    """The provider that can classify: a decision model if there is one.
+
+    A decision model answers with probabilities in one non-autoregressive pass, so
+    it is both cheaper and steadier than asking a chat model to emit JSON. When
+    none is configured, fall back to whatever chat provider exists so a fresh
+    install still works after adding one provider.
+    """
+    try:
+        return await resolve_decision_provider(storage)
+    except DecisionUnavailableError:
+        return await resolve_provider(storage)
+
+
+async def _classify(
+    provider: dict[str, Any],
+    row: dict[str, Any],
+    vocabulary: dict[str, Any],
+    candidates: list[dict[str, Any]],
+) -> tuple[list[dict[str, str]], dict[str, Any] | None]:
+    """Dispatch on the provider's protocol, not on a global setting."""
+    if provider.get('kind') == 'decision':
+        answers = await decide(
+            provider,
+            state=decision_state(row['title'], row['digest']),
+            questions={
+                **decision_questions(vocabulary),
+                **({'event': question} if (question := decision_event_question(candidates)) else {}),
+            },
+        )
+        return (
+            parse_decision(answers, vocabulary),
+            parse_decision_event(answers, candidates),
+        )
+    return await classify(
+        provider,
+        title=row['title'],
+        digest=row['digest'],
+        vocabulary=vocabulary,
+        candidates=candidates,
+    )
 
 
 async def _backfill(storage, vocabulary: dict[str, Any]) -> None:
@@ -91,8 +149,8 @@ async def run_once() -> bool:
 
             async with open_storage() as storage:
                 try:
-                    provider = await resolve_provider(storage)
-                except LlmUnavailableError:
+                    provider = await _resolve_classifier(storage)
+                except (LlmUnavailableError, DecisionUnavailableError):
                     # No provider is an operator problem, not a verdict about this
                     # article. Publishing a `failed` row here would mark every
                     # article permanent dead: `failed` is not retried, so the whole
@@ -103,13 +161,7 @@ async def run_once() -> bool:
                     logger.warning('topic_provider_unavailable')
                     return False
                 candidates = await storage.topics.candidates()
-            topics, event = await classify(
-                provider,
-                title=row['title'],
-                digest=row['digest'],
-                vocabulary=vocabulary,
-                candidates=candidates,
-            )
+            topics, event = await _classify(provider, row, vocabulary, candidates)
 
             async with open_storage() as storage, storage.transaction():
                 latest = await storage.topics.source(claim['article_pk'])

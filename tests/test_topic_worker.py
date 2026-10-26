@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 from hippo import topic_worker as worker
 from hippo.exceptions import ApiError
+from hippo.llm.client import DecisionUnavailableError, LlmUnavailableError
 from hippo.topics import fingerprint
 
 VOCABULARY = {'version': 1, 'topics': [{'slug': 'ai', 'name': '人工智能'}]}
@@ -54,6 +55,8 @@ class TopicWorkerTest(unittest.IsolatedAsyncioTestCase):
         self.patches = [
             patch.object(worker, 'open_storage', storage),
             patch.object(worker, '_vocabulary', AsyncMock(return_value=VOCABULARY)),
+            # No decision provider by default: these cases cover the chat path.
+            patch.object(worker, 'resolve_decision_provider', AsyncMock(side_effect=DecisionUnavailableError('x'))),
             patch.object(worker, 'resolve_provider', AsyncMock(return_value={'model': 'test'})),
             patch.object(worker, 'classify', self.classify),
         ]
@@ -205,7 +208,10 @@ class NoProviderTest(TopicWorkerTest):
     async def test_a_missing_provider_releases_the_row_instead_of_failing_it(self):
         from hippo.llm.client import LlmUnavailableError
 
-        with patch.object(worker, 'resolve_provider', AsyncMock(side_effect=LlmUnavailableError('没有 provider'))):
+        with (
+            patch.object(worker, 'resolve_decision_provider', AsyncMock(side_effect=DecisionUnavailableError('x'))),
+            patch.object(worker, 'resolve_provider', AsyncMock(side_effect=LlmUnavailableError('没有 provider'))),
+        ):
             worked = await worker.run_once()
 
         # Not worked: the loop sleeps instead of spinning through the backlog.
@@ -219,8 +225,59 @@ class NoProviderTest(TopicWorkerTest):
     async def test_the_row_is_not_consumed_so_it_is_classified_later(self):
         from hippo.llm.client import LlmUnavailableError
 
-        with patch.object(worker, 'resolve_provider', AsyncMock(side_effect=LlmUnavailableError('没有 provider'))):
+        with (
+            patch.object(worker, 'resolve_decision_provider', AsyncMock(side_effect=DecisionUnavailableError('x'))),
+            patch.object(worker, 'resolve_provider', AsyncMock(side_effect=LlmUnavailableError('没有 provider'))),
+        ):
             await worker.run_once()
 
         # Nothing was written about the article itself.
+        self.repo.finish.assert_not_awaited()
+
+
+class DecisionProviderTest(TopicWorkerTest):
+    """When a decision provider exists, the worker takes that path instead of chat."""
+
+    async def test_a_decision_provider_is_preferred_over_a_chat_one(self):
+        decision = {'name': 'clef', 'model': 'clef-flash', 'kind': 'decision'}
+        with (
+            patch.object(worker, 'resolve_decision_provider', AsyncMock(return_value=decision)),
+            patch.object(worker, 'resolve_provider', AsyncMock(side_effect=AssertionError('chat path used'))),
+            patch.object(worker, 'decide', AsyncMock(return_value={
+                'ai': {'type': 'noul', 'noul': 0.93},
+                'news': {'type': 'noul', 'noul': 0.1},
+            })),
+        ):
+            self.assertTrue(await worker.run_once())
+
+        self.classify.assert_not_awaited()
+        kwargs = self.repo.finish.await_args.kwargs
+        self.assertEqual(['ai'], [t['slug'] for t in kwargs['topics']])
+        self.assertEqual('clef-flash', kwargs['model'])
+
+    async def test_the_decision_call_sends_one_question_per_direction_and_one_event_question(self):
+        decision = {'model': 'clef-flash', 'kind': 'decision'}
+        self.repo.candidates.return_value = [{'id': 5, 'title': '已有事件', 'sources': 2}]
+        decide = AsyncMock(return_value={'ai': {'type': 'noul', 'noul': 0.9},
+                                         'event': {'type': 'choice', 'choice': '5', 'confidence': 0.95}})
+        with (
+            patch.object(worker, 'resolve_decision_provider', AsyncMock(return_value=decision)),
+            patch.object(worker, 'decide', decide),
+        ):
+            await worker.run_once()
+
+        questions = decide.await_args.kwargs['questions']
+        self.assertIn('event', questions)
+        self.assertIn('ai', questions)
+        # Topics and the event decision cost one forward pass, not two calls.
+        self.assertEqual(1, decide.await_count)
+        self.assertEqual({'action': 'join', 'id': 5}, self.repo.finish.await_args.kwargs['event'])
+
+    async def test_no_provider_of_either_kind_pauses_the_queue(self):
+        with (
+            patch.object(worker, 'resolve_decision_provider', AsyncMock(side_effect=DecisionUnavailableError('x'))),
+            patch.object(worker, 'resolve_provider', AsyncMock(side_effect=LlmUnavailableError('y'))),
+        ):
+            self.assertFalse(await worker.run_once())
+        self.repo.release.assert_awaited_once_with(self.claim)
         self.repo.finish.assert_not_awaited()
