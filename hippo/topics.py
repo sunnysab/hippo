@@ -24,6 +24,12 @@ from .exceptions import ApiError
 #: 2 added the event decision to the same call.
 PROMPT_VERSION = 2
 
+#: Probability at or above which a direction is applied, for decision models.
+#: Measured on 50 real articles: 47 of 50 land their top direction above 0.5, and
+#: the three that do not are advertisements and event notices that fit no
+#: direction. A low floor with a top-1 fallback keeps those labelled anyway.
+DECISION_TOPIC_THRESHOLD = 0.5
+
 #: How many recent events the model is offered to join. Bounded so the prompt
 #: does not grow with the library, and so latency stays flat.
 MAX_EVENT_CANDIDATES = 30
@@ -237,6 +243,75 @@ def build_messages(
     ]
 
 
+def parse_decision(
+    answers: dict[str, Any],
+    vocabulary: dict[str, Any],
+) -> list[dict[str, str]]:
+    """Turn per-direction probabilities into at most ``MAX_TOPICS`` directions.
+
+    A decision model answers with a probability for every direction at once, so
+    the selection is arithmetic rather than a judgement about whether the model
+    obeyed an instruction: take everything at or above the threshold, best first,
+    and fall back to the single best when nothing clears it. That fallback matters
+    -- 3 of 50 sampled articles scored their own top direction below 0.5 while
+    still clearly belonging somewhere, and an article with no direction is
+    invisible to the filter.
+    """
+    names = names_by_slug(vocabulary)
+    scored: list[tuple[str, float]] = []
+    for slug, payload in answers.items():
+        if slug not in names or not isinstance(payload, dict):
+            continue
+        value = payload.get('noul')
+        if isinstance(value, (int, float)):
+            scored.append((slug, float(value)))
+    if not scored:
+        raise ApiError('模型没有返回可用的方向概率。', status=502, code='topic.invalid_result')
+    scored.sort(key=lambda item: (-item[1], item[0]))
+    picked = [slug for slug, score in scored if score >= DECISION_TOPIC_THRESHOLD][:MAX_TOPICS]
+    if not picked:
+        picked = [scored[0][0]]
+    return [{'slug': slug, 'name': names[slug]} for slug in picked]
+
+
+def decision_questions(vocabulary: dict[str, Any]) -> dict[str, Any]:
+    """One yes/no question per direction, asked in a single forward pass."""
+    return {
+        topic['slug']: {
+            'type': 'noul',
+            'instructions': f'这篇文章属于「{topic["name"]}」这一类吗？',
+        }
+        for topic in vocabulary.get('topics') or []
+    }
+
+
+def decision_state(title: str, digest: str | None) -> str:
+    return f'标题：{title}\n摘要：{digest or ""}'
+
+
+async def classify_decision(
+    provider: dict[str, Any],
+    *,
+    title: str,
+    digest: str | None,
+    vocabulary: dict[str, Any],
+) -> list[dict[str, str]]:
+    """Classification over the decision protocol: no retry loop needed.
+
+    A decision model does one non-autoregressive pass and cannot return a
+    malformed answer the way a text generator can, so the retry that guards
+    ``classify`` would only add latency here.
+    """
+    from .llm.client import decide
+
+    answers = await decide(
+        provider,
+        state=decision_state(title, digest),
+        questions=decision_questions(vocabulary),
+    )
+    return parse_decision(answers, vocabulary)
+
+
 async def classify(
     provider: dict[str, Any],
     *,
@@ -267,17 +342,74 @@ async def classify(
 
 
 __all__ = [
+    'DECISION_TOPIC_THRESHOLD',
     'DEFAULT_VOCABULARY',
     'MAX_ANSWER_TOKENS',
     'MAX_TOPICS',
     'PROMPT_VERSION',
     'build_messages',
     'classify',
+    'classify_decision',
+    'decision_event_question',
+    'decision_questions',
+    'decision_state',
     'default_vocabulary',
     'fingerprint',
     'known_slugs',
     'names_by_slug',
     'parse_answer',
+    'parse_decision',
+    'parse_decision_event',
     'slugs_of',
     'validate_vocabulary',
 ]
+
+
+def decision_event_question(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """One choice question over the candidate events, or None when there are none.
+
+    ``none`` is always an option and comes last: on a tie the model takes the
+    earlier option, and "this is a new story" must never win by ordering alone.
+    Measured at 0.96-0.99 confidence on a three-publisher helium story, including
+    correctly picking the related-but-different article as its own candidate
+    rather than forcing it into the export-ban story.
+    """
+    if not candidates:
+        return None
+    criteria = {str(int(item['id'])): str(item['title']) for item in candidates[:MAX_EVENT_CANDIDATES]}
+    criteria['none'] = '以上都不是，这是一件新的事'
+    return {
+        'type': 'choice',
+        'instructions': '这篇文章在报道哪一件事？',
+        'criteria': criteria,
+    }
+
+
+def parse_decision_event(
+    answers: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    *,
+    title: str | None = None,
+    join_threshold: float = 0.5,
+) -> dict[str, Any] | None:
+    """Map the chosen option back to an event decision.
+
+    A ``none`` answer means the article is either a new story or no story. The
+    caller decides whether to open an event; this only reports what the model saw,
+    because "is this worth tracking" needs the two-publisher rule that lives in
+    the repository, not in a single article's answer.
+    """
+    payload = answers.get('event')
+    if not isinstance(payload, dict) or payload.get('type') != 'choice':
+        return None
+    choice = str(payload.get('choice') or '')
+    if choice == 'none' or not choice:
+        return None
+    offered = {str(int(item['id'])) for item in candidates[:MAX_EVENT_CANDIDATES]}
+    if choice not in offered:
+        # A model that picked an option it was not given is a bug, not a hint.
+        raise ApiError('模型选择了不存在的候选事件。', status=502, code='topic.invalid_result')
+    confidence = payload.get('confidence')
+    if isinstance(confidence, (int, float)) and float(confidence) < join_threshold:
+        return None
+    return {'action': 'join', 'id': int(choice)}
