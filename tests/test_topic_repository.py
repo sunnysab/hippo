@@ -6,10 +6,12 @@ SKIP LOCKED visibility, which still needs an isolated PostgreSQL instance.
 """
 
 import json
+import re
 import sqlite3
 import time
 import unittest
 from pathlib import Path
+from typing import ClassVar
 from uuid import UUID
 
 from psycopg.types.json import Jsonb
@@ -677,3 +679,26 @@ class PublishAtFallbackTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0, await self.repo.backfill(
             since_ts=1792000000, vocabulary_version=1, prompt_version=1
         ))
+
+
+class SqlPortabilityTest(unittest.TestCase):
+    """Guards the SQLite double's blind spots.
+
+    The double translates PostgreSQL spellings rather than running them, so a
+    statement can pass here and still be rejected by PostgreSQL. That is exactly
+    how a reserved word in a CTE name reached production and marked 9,828 rows
+    failed: SQLite accepts ``similar`` as an identifier, PostgreSQL does not.
+    """
+
+    #: PostgreSQL keywords that cannot name a CTE without quoting.
+    RESERVED: ClassVar[set[str]] = {'similar', 'all', 'any', 'both', 'each', 'except', 'from', 'group',
+                'having', 'intersect', 'into', 'limit', 'minus', 'order', 'select',
+                'union', 'where', 'window', 'with'}
+
+    def test_cte_names_avoid_postgresql_reserved_words(self):
+        source = (Path(__file__).resolve().parents[1] / 'hippo/repositories/topic.py').read_text()
+        # Both spellings a CTE can take: `WITH name AS (` and `), name AS (`.
+        names = {match.lower() for match in re.findall(r'(?:WITH|,)\s+(\w+)\s+AS\s+\(', source)}
+        self.assertTrue(names, 'the scan found no CTEs, so it would pass vacuously')
+        offenders = names & self.RESERVED
+        self.assertFalse(offenders, f'reserved CTE names: {offenders}')

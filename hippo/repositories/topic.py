@@ -146,7 +146,7 @@ class TopicRepository:
                        JOIN articles a ON a.id = l.article_pk
                        WHERE e.last_seen_at > clock_timestamp() - make_interval(hours => %s)
                        GROUP BY e.id, e.title, e.last_seen_at
-                   ), similar AS (
+                   ), alike AS (
                        SELECT * FROM scored WHERE sim >= %s ORDER BY sim DESC, sources DESC LIMIT %s
                    ), recent AS (
                        SELECT * FROM scored ORDER BY last_seen_at DESC, id LIMIT %s
@@ -155,7 +155,7 @@ class TopicRepository:
                    )
                    SELECT id, title, sources, sim
                    FROM (
-                       SELECT id, title, sources, last_seen_at, sim FROM similar
+                       SELECT id, title, sources, last_seen_at, sim FROM alike
                        UNION
                        SELECT id, title, sources, last_seen_at, sim FROM recent
                        UNION
