@@ -119,10 +119,20 @@ async def _backfill(storage, vocabulary: dict[str, Any]) -> None:
 async def run_once() -> bool:
     async with open_storage() as storage, storage.transaction():
         vocabulary = await _vocabulary(storage)
-        await _backfill(storage, vocabulary)
         claim = await storage.topics.claim()
+
     if claim is None:
-        return False
+        # Only look for unqueued articles once the queue is dry. Backfilling every
+        # tick was the whole cost of a tick: the query cannot use an index (the
+        # publish-or-created fallback is an expression) and its `LIMIT` cannot stop
+        # early, so it read the entire articles table -- 1.5M rows, ~8s -- to
+        # discover there was nothing to add. Doing it when the queue has drained
+        # costs that scan once per backfill batch instead of once per article.
+        async with open_storage() as storage, storage.transaction():
+            await _backfill(storage, vocabulary)
+            claim = await storage.topics.claim()
+        if claim is None:
+            return False
 
     try:
         async with asyncio.timeout(JOB_TIMEOUT):

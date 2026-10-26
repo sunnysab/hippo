@@ -80,12 +80,28 @@ class TopicWorkerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('test', self.repo.finish.await_args.kwargs['model'])
         self.assertNotIn('error', self.repo.finish.await_args.kwargs)
 
-    async def test_the_backfill_runs_before_the_claim_and_carries_the_vocabulary_version(self):
+    async def test_a_dry_queue_triggers_the_backfill_with_the_vocabulary_version(self):
+        # The claim returns nothing, so this tick is the one that goes looking.
+        self.repo.claim.side_effect = [None, self.claim]
         self.assertTrue(await worker.run_once())
         self.repo.backfill.assert_awaited_once()
         self.assertEqual(1, self.repo.backfill.await_args.kwargs['vocabulary_version'])
         self.assertIsInstance(self.repo.backfill.await_args.kwargs['since_ts'], int)
         self.assertEqual(1, self.repo.requeue_stale.await_args.kwargs['vocabulary_version'])
+        # And the article it found is then classified in the same tick.
+        self.classify.assert_awaited_once()
+
+    async def test_a_busy_queue_never_scans_for_more_articles(self):
+        # The backfill is a full scan of the articles table; running it per tick
+        # while work is already queued made every article cost ~8s of PostgreSQL.
+        self.assertTrue(await worker.run_once())
+        self.repo.backfill.assert_not_awaited()
+
+    async def test_an_exhausted_queue_stops_instead_of_classifying_nothing(self):
+        self.repo.claim.side_effect = [None, None]
+        self.assertFalse(await worker.run_once())
+        self.repo.backfill.assert_awaited_once()
+        self.classify.assert_not_awaited()
 
     async def test_a_failed_requeue_does_not_stop_normal_classification(self):
         self.repo.requeue_stale.side_effect = RuntimeError('locked')
@@ -194,6 +210,7 @@ class PromptVersionTest(TopicWorkerTest):
     """The worker passes the current prompt version everywhere the row records it."""
 
     async def test_the_backfill_and_requeue_carry_the_prompt_version(self):
+        self.repo.claim.side_effect = [None, self.claim]
         await worker.run_once()
         self.assertEqual(worker.PROMPT_VERSION, self.repo.backfill.await_args.kwargs['prompt_version'])
         self.assertEqual(worker.PROMPT_VERSION, self.repo.requeue_stale.await_args.kwargs['prompt_version'])
