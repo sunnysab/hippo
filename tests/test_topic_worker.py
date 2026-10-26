@@ -320,11 +320,15 @@ class DecisionEventCreationTest(DecisionProviderTest):
         self.assertNotIn('event', questions)
         self.assertEqual('new', self.repo.finish.await_args.kwargs['event']['action'])
 
-    async def test_candidates_suppress_the_story_question(self):
+    async def test_the_story_question_rides_along_with_the_candidates(self):
+        # Asking it only when no candidate exists deadlocked the feature: the first
+        # event opened stayed a candidate forever, so every later article answered
+        # "none" with no story score to fall back on, and no second event opened.
         self.repo.candidates.return_value = [{'id': 4, 'title': '已有事件', 'sources': 2}]
         decide = AsyncMock(return_value={
             'ai': {'type': 'noul', 'noul': 0.9},
             'event': {'type': 'choice', 'choice': '4', 'confidence': 0.9},
+            'story': {'type': 'noul', 'noul': 0.6},
         })
         with (
             patch.object(worker, 'resolve_decision_provider', AsyncMock(return_value={'model': 'clef-flash', 'kind': 'decision'})),
@@ -332,5 +336,22 @@ class DecisionEventCreationTest(DecisionProviderTest):
         ):
             await worker.run_once()
 
-        self.assertNotIn(worker.DECISION_STORY_QUESTION, decide.await_args.kwargs['questions'])
+        self.assertIn(worker.DECISION_STORY_QUESTION, decide.await_args.kwargs['questions'])
         self.assertEqual({'action': 'join', 'id': 4}, self.repo.finish.await_args.kwargs['event'])
+
+    async def test_a_none_choice_can_still_open_a_new_event(self):
+        # The exact deadlock: candidates exist, the model rejects all of them, and
+        # the article is a story of its own.
+        self.repo.candidates.return_value = [{'id': 4, 'title': '不相关事件', 'sources': 2}]
+        decide = AsyncMock(return_value={
+            'ai': {'type': 'noul', 'noul': 0.9},
+            'event': {'type': 'choice', 'choice': 'none', 'confidence': 0.97},
+            'story': {'type': 'noul', 'noul': 0.88},
+        })
+        with (
+            patch.object(worker, 'resolve_decision_provider', AsyncMock(return_value={'model': 'clef-flash', 'kind': 'decision'})),
+            patch.object(worker, 'decide', decide),
+        ):
+            await worker.run_once()
+
+        self.assertEqual('new', self.repo.finish.await_args.kwargs['event']['action'])

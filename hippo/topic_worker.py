@@ -86,10 +86,13 @@ async def _classify(
             state=decision_state(row['title'], row['digest']),
             questions={
                 **decision_questions(vocabulary),
-                # With candidates the model picks one; without any, the story
-                # question is what stops the event feature from going silent.
+                # The story question rides along even when there are candidates.
+                # Asking it only in the empty case deadlocked the feature: the
+                # first event opened became a permanent candidate, so every later
+                # article saw a choice, answered "none", and had no story score to
+                # fall back on -- one event, forever.
                 **({'event': question} if question else {}),
-                **({} if question else {DECISION_STORY_QUESTION: decision_story_question()}),
+                DECISION_STORY_QUESTION: decision_story_question(),
             },
         )
         return (
