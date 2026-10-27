@@ -199,6 +199,17 @@ async def run_once() -> bool:
         async with open_storage() as storage, storage.transaction():
             await storage.topics.release(claim)
         raise
+    except TimeoutError:
+        # A timeout reports that the model did not answer in time, not that this
+        # article cannot be classified. Chat shares the LLM gate (MAX_CONCURRENT),
+        # so a busy minute is enough to exceed JOB_TIMEOUT while the model itself is
+        # healthy. Publishing `failed` would retire the article permanently,
+        # because `failed` is never retried; handing the lease back costs one repeat
+        # call and keeps the article in play.
+        logger.warning('topic_classification_timeout', article_id=claim['article_pk'])
+        async with open_storage() as storage, storage.transaction():
+            await storage.topics.release(claim)
+        return False
     except Exception as exc:
         code = exc.code if isinstance(exc, ApiError) and exc.code.startswith('topic.') else 'topic.generation_failed'
         logger.warning('topic_classification_failed', article_id=claim['article_pk'], code=code)

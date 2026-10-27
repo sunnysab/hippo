@@ -158,14 +158,23 @@ class TopicWorkerTest(unittest.IsolatedAsyncioTestCase):
         self.repo.release.assert_awaited_once_with(self.claim)
         self.repo.finish.assert_not_awaited()
 
-    async def test_total_timeout_is_a_safe_failure(self):
+    async def test_a_timeout_hands_the_lease_back_instead_of_retiring_the_article(self):
+        """A slow minute is not a verdict about the article.
+
+        Chat shares the LLM gate, so JOB_TIMEOUT can be exceeded while the model is
+        perfectly healthy. Publishing `failed` there retired 22 articles for good,
+        because that state is never retried.
+        """
+
         async def slow(*args, **kwargs):
             await asyncio.sleep(10)
 
         self.classify.side_effect = slow
         with patch.object(worker, 'JOB_TIMEOUT', 0.01):
-            await worker.run_once()
-        self.assertEqual('topic.generation_failed', self.repo.finish.await_args.kwargs['error'])
+            self.assertFalse(await worker.run_once())
+
+        self.repo.release.assert_awaited_once_with(self.claim)
+        self.repo.finish.assert_not_awaited()
 
 
 if __name__ == '__main__':
