@@ -26,11 +26,14 @@ from .exceptions import ApiError
 #:   which changes the event each article joins even though the questions did not
 #:   change. Without the bump the existing rows keep the clustering the old
 #:   candidate list produced, and the fix would only apply to new articles.
-#: 4 requeues everything once more so the whole table comes from one version: the
-#:   rows classified between 3 and 4 were split across an interim deploy that had
-#:   the recent/popular split but not the title-similarity slice, and that mixture
-#:   is what left identical headlines as several separate events.
-PROMPT_VERSION = 4
+#: Deliberately not bumped for the title-similarity slice (2acc2bc). It changes
+#: which event an article joins, but a requeue costs a full pass over the table --
+#: measured at 4-6s per article, so 14-20 hours for 12.5k rows -- and it does not
+#: repair the damage anyway: events are merged by an explicit pass, and a container
+#: event keeps attracting unrelated articles no matter how often they are redone.
+#: A requeue also starves new articles, because the queue only refills from
+#: `backfill` once it drains.
+PROMPT_VERSION = 3
 
 #: Probability at or above which a direction is applied, for decision models.
 #: Measured on 50 real articles: 47 of 50 land their top direction above 0.5, and
