@@ -26,7 +26,11 @@ from .exceptions import ApiError
 #:   which changes the event each article joins even though the questions did not
 #:   change. Without the bump the existing rows keep the clustering the old
 #:   candidate list produced, and the fix would only apply to new articles.
-PROMPT_VERSION = 3
+#: 4 requeues everything once more so the whole table comes from one version: the
+#:   rows classified between 3 and 4 were split across an interim deploy that had
+#:   the recent/popular split but not the title-similarity slice, and that mixture
+#:   is what left identical headlines as several separate events.
+PROMPT_VERSION = 4
 
 #: Probability at or above which a direction is applied, for decision models.
 #: Measured on 50 real articles: 47 of 50 land their top direction above 0.5, and
