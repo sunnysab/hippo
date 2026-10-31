@@ -11,6 +11,7 @@ try:
 except Exception:  # pragma: no cover - optional fallback
     jieba = None
 
+from .corrections import project_blocks
 from .exceptions import ApiError
 from .image_hashes import IMAGE_HASH_ALGO, compute_image_content_hash, ensure_image_hash, fetch_image_bytes
 from .logger import get_logger
@@ -870,6 +871,20 @@ async def _list_articles(
     }
 
 
+async def _project_transcript(storage: PostgresStorage, user_id: int, biz: str | None, blocks: Any) -> Any:
+    if not isinstance(blocks, list) or not any(
+        isinstance(block, dict)
+        and block.get('type') == 'paragraph'
+        and block.get('transcript_source') == 'asr'
+        and isinstance(block.get('text'), str)
+        for block in blocks
+    ):
+        return blocks
+    repo = getattr(storage, 'corrections', None)
+    rules = await repo.list_for_user(user_id) if repo else []
+    return project_blocks(blocks, rules, biz)
+
+
 async def _get_article(storage: PostgresStorage, user_id: int, article_id: int) -> dict[str, Any]:
     article = await fetchone_row(
         storage,
@@ -989,6 +1004,7 @@ async def _get_article(storage: PostgresStorage, user_id: int, article_id: int) 
             [article['biz'], article['article_id']],
             normalize=_normalize_record,
         )
+    content_json = await _project_transcript(storage, user_id, article.get('biz'), content_json)
     return {
         'article': article,
         'content': content_json,

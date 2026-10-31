@@ -98,6 +98,12 @@ function SettingsPageContent({ initialFormState, formResetKey }: SettingsPageCon
       title: t('settings.navFilter', 'Filter'),
       summary: t('settings.navFilterSummary', 'Manage article filters and reading preferences.'),
     },
+    {
+      key: 'correction',
+      path: '/settings/correction',
+      title: t('correction.title', 'Text corrections'),
+      summary: t('correction.subtitle', 'Personal corrections for ASR transcripts.'),
+    },
     ...(isAdmin
       ? [
           {

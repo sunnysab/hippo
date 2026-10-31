@@ -61,6 +61,7 @@ _TAG_BY_SEGMENT: dict[str, str] = {
     'article': 'article',
     'auth': 'auth',
     'chat': 'chat',
+    'correction': 'settings',
     'document': 'knowledge',
     'feed': 'feed',
     'group': 'group',

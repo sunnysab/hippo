@@ -17,6 +17,7 @@ from .article import (
 )
 from .audit import AuditRepository
 from .chat import ChatRepository
+from .correction import CorrectionRepository
 from .image import ArticleImageTarget, ImageRepository
 from .knowledge import KnowledgeRepository
 from .llm import LlmProviderRepository, mask_key
@@ -48,6 +49,7 @@ __all__ = [
     'ArticleStarRepository',
     'AuditRepository',
     'ChatRepository',
+    'CorrectionRepository',
     'DownloadAttemptRepository',
     'GroupRepository',
     'ImageRepository',

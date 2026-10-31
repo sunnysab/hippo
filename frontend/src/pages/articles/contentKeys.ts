@@ -14,7 +14,7 @@ const buildContentBlockSignature = (block: ArticleContentBlock): string => {
       return `audio:${block.url || ''}`;
     case 'paragraph':
     default:
-      return `paragraph:${String(block.t ?? '')}:${block.text || ''}`;
+      return `paragraph:${String(block.t ?? '')}:${block.original_text ?? block.text ?? ''}`;
   }
 };
 

@@ -853,6 +853,18 @@ CREATE INDEX IF NOT EXISTS idx_article_event_link_event
 ON article_event_link (event_id);
 
 
+-- Personal ASR correction rules do not modify the shared article body.
+CREATE TABLE IF NOT EXISTS correction_rule (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source_text TEXT NOT NULL,
+    replacement_text TEXT NOT NULL,
+    account_biz TEXT[] NOT NULL DEFAULT '{}',
+    enabled BOOLEAN NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_correction_rule_user ON correction_rule (user_id, id);
+
+
 -- ============================================================
 -- Private knowledge base: knowledge base / document / chunk
 -- ============================================================

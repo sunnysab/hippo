@@ -19,6 +19,7 @@ import { SettingsFilterRoute } from './pages/settings/SettingsFilterRoute';
 import { AccountPanel } from './pages/settings/AccountPanel';
 import { ApiKeysPanel } from './pages/settings/ApiKeysPanel';
 import { SourcesPanel } from './pages/settings/SourcesPanel';
+import { CorrectionsPanel } from './pages/settings/CorrectionsPanel';
 import { AdminPage } from './pages/admin/AdminPage';
 import { AdminLayout } from './pages/admin/AdminLayout';
 import { AdminLlmPage } from './pages/admin/AdminLlmPage';
@@ -90,6 +91,7 @@ function AppRoutes() {
                     <Route path="apikey" element={<ApiKeysPanel />} />
                     <Route path="source" element={<SourcesPanel />} />
                     <Route path="filter" element={<SettingsFilterRoute />} />
+                    <Route path="correction" element={<CorrectionsPanel />} />
                     <Route path="email" element={<SettingsEmailRoute />} />
                   </Route>
                   <Route

@@ -984,6 +984,27 @@ POST /api/article/{article_id}/transcribe[?force_asr=true]
 `transcribe` 把该文章已有的转写任务重新入队（`202`）；`force_asr=true` 让解析器**跳过现成字幕**
 （CC 字幕、播客转录稿）改用 ASR 重转，用于字幕质量不如模型的情况。
 
+### 个人 ASR 纠错
+
+`GET /api/correction` 返回 `{"items": [rule]}`；`POST /api/correction` 创建（201），
+`PUT /api/correction/{rule_id}` 全量替换，`DELETE /api/correction/{rule_id}` 删除（204）。
+规则为 `{id, source_text, replacement_text, account_biz, enabled}`，写入时除 `id` 外全部必填。
+`account_biz` 是已订阅账号的 biz 数组，空数组为通用；同原词的专属规则优先于通用规则。
+原词与替换词长度为 1–200 字符，不可全空白或相同；作用域最多 100 个账号，个人最多 1000 条。
+同原词的通用规则不能重复，专属规则作用域不能重叠，冲突返回 409；不存在或不属于自己返回 404。
+
+`POST /api/correction/preview` 请求是上述四个可写字段加 `article_id`，编辑时可加 `editing_rule_id`。
+不写数据库；返回 `{status, match_count, contexts, existing_rule_id}`，`contexts` 最多三条，
+每条为 `{before, after}` 的局部上下文。`status` 为 `ok`、`no_asr`、`not_applicable` 或
+`conflict`；精确同原词同作用域已有规则时为 `conflict` 并返回其 `existing_rule_id`，其他重叠冲突为 409。
+不可见文章或非本人编辑规则为 404，非法作用域为 400。计数只包括草稿实际生效的匹配。
+
+详情与 md/txt/srt 导出只投影显式标记 `transcript_source: "asr"` 的段落，字幕、简介及无标记历史正文不变。
+详情中此类段落增加 `original_text` 和 `correction_spans`；每个 span 的 `original_start`、
+`original_end` 对应原文，`start`、`end` 对应投影文本，均为 UTF-16 代码单元的半开区间。
+前端可累加 spans 数量，切回原文时使用 `original_text`。共享原文和 `content_updated_at` 不变；
+后续文章对话使用投影，已有 AI 输出与搜索索引不重算。
+
 ### 管理台设置
 
 ```
@@ -1217,6 +1238,11 @@ Content-Type: application/pdf
 | POST | `/api/chat/session/{session_id}/message` | 登录 |
 | GET | `/api/chat/session/{session_id}/preset/{preset}` | 登录 |
 | POST | `/api/chat/session/{session_id}/rename` | 登录 |
+| GET | `/api/correction` | 登录 |
+| POST | `/api/correction` | 登录 |
+| POST | `/api/correction/preview` | 登录 |
+| PUT | `/api/correction/{rule_id}` | 登录 |
+| DELETE | `/api/correction/{rule_id}` | 登录 |
 | GET | `/api/feed/mixed` | 登录或 `token` |
 | GET | `/api/group` | 登录 |
 | POST | `/api/group` | 登录 |

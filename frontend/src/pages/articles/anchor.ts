@@ -177,15 +177,17 @@ export function applyHighlights(
   map: TextMap,
   located: { anchor: Anchor; located: LocatedAnchor; id: number; stale?: boolean }[],
 ): number {
+  // Avoid rebuilding for the common empty case.
+  if (!map.slices.length) return 0;
   let applied = 0;
   // Right to left: splitting a node changes nothing before the split point.
   for (const item of [...located].sort((a, b) => b.located.start - a.located.start)) {
-    const range = rangeFor(map, item.located);
-    if (!range) continue;
-    const mark = document.createElement('mark');
-    mark.className = 'hippo-highlight';
-    mark.dataset.annotationId = String(item.id);
     try {
+      const range = rangeFor(buildTextMap(root), item.located);
+      if (!range) continue;
+      const mark = document.createElement('mark');
+      mark.className = 'hippo-highlight';
+      mark.dataset.annotationId = String(item.id);
       // extractContents handles a range that starts and ends mid-node and one
       // that spans several nodes; surroundContents rejects the latter.
       mark.appendChild(range.extractContents());

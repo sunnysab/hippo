@@ -27,6 +27,7 @@ from ...article_queries import (
     _normalize_starred_filter,
     _normalize_topic_filter,
     _parse_date,
+    _project_transcript,
     _split_article_exclude_keywords,
 )
 from ...article_references import article_references
@@ -338,7 +339,8 @@ async def export_transcript(
     await _assert_article_visible(storage, user.id, article_id)
     row = await fetchone_row(
         storage,
-        'SELECT content_json FROM article_content WHERE article_pk = %s',
+        'SELECT c.content_json, a.biz FROM article_content c JOIN articles a ON a.id = c.article_pk'
+        ' WHERE c.article_pk = %s',
         [article_id],
     )
     blocks: Any = row.get('content_json') if row else None
@@ -350,6 +352,7 @@ async def export_transcript(
     if not blocks:
         raise ApiError('这篇还没有正文', status=404)
 
+    blocks = await _project_transcript(storage, user.id, row.get('biz'), blocks)
     if format == 'srt':
         body = to_srt(blocks)
         media_type = 'application/x-subrip; charset=utf-8'

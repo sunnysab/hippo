@@ -9,7 +9,8 @@ import {
   useState,
 } from 'react';
 import { useI18n } from '../../i18n';
-import { normalizeSafeUrl, renderInlineNodes, type InlineLinkRenderer } from '../../utils/markdown';
+import { inlineVisibleText, normalizeSafeUrl, renderInlineNodes, type InlineLinkRenderer } from '../../utils/markdown';
+import { visibleCorrectionSpans } from './corrections';
 import { ArticleReferenceLink } from './ArticleReferenceLink';
 import { useArticleReferences } from './useArticleReferences';
 import { EmptyState } from '../../components/EmptyState';
@@ -497,9 +498,12 @@ const ContentBlock = memo(function ContentBlock({
   if (['paragraph', 'text', 'link'].includes(block.type)) {
     const label = anchorLabel(block.t);
     const href = block.type === 'link' ? normalizeSafeUrl(block.href || '') : null;
-    const text = href
-      ? renderLink(href, renderInlineNodes(block.text || href, (_href, label) => label), `block-${index}`)
-      : renderInlineNodes(block.text || '', renderLink);
+    const asr = block.type === 'paragraph' && block.transcript_source === 'asr' && typeof block.original_text === 'string';
+    const text = asr
+      ? <span data-asr-original={inlineVisibleText(block.original_text!)} data-asr-spans={JSON.stringify(visibleCorrectionSpans(block.original_text!, block.text || '', block.correction_spans || []))} data-asr-index={index}>{renderInlineNodes(block.text || '', renderLink)}</span>
+      : href
+        ? renderLink(href, renderInlineNodes(block.text || href, (_href, label) => label), `block-${index}`)
+        : renderInlineNodes(block.text || '', renderLink);
     const className = isPlayingBlock ? 'is-playing' : undefined;
     const playingProps = isPlayingBlock ? { ref: playingRef } : {};
     if (!label) return <p {...anchor} {...playingProps} className={className}>{text}</p>;
@@ -740,12 +744,10 @@ function RenderedContent({
   // The mini player is dismissed by hand or by scrolling back, per article.
   const [pipDismissed, setPipDismissed] = useState(false);
   const [pipPos, setPipPos] = useState<{ right: number; bottom: number } | null>(null);
-  // Another article (or a refetched body) replaces every block, so the previous
-  // index points at text that is no longer there. Adjusted during render, which is
-  // where React wants state derived from a prop to be reset.
-  const [renderedContent, setRenderedContent] = useState(content);
-  if (renderedContent !== content) {
-    setRenderedContent(content);
+  // A new article resets playback; a personal projection refresh does not.
+  const [renderedArticleId, setRenderedArticleId] = useState(articleId);
+  if (renderedArticleId !== articleId) {
+    setRenderedArticleId(articleId);
     setActiveIndex(-1);
     setAudioOnly(false);
     setFetchedAudio(null);

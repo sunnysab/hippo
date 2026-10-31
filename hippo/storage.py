@@ -32,6 +32,7 @@ from .repositories import (
     ArticleStarRepository,
     AuditRepository,
     ChatRepository,
+    CorrectionRepository,
     DownloadAttemptRepository,
     GroupRepository,
     ImageRepository,
@@ -49,7 +50,7 @@ from .repositories import (
 )
 from .sync_jobs import SyncJobRepository
 
-SCHEMA_VERSION = '34'
+SCHEMA_VERSION = '35'
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'schema' / 'postgres.sql'
 
@@ -237,6 +238,7 @@ class PostgresStorage(AbstractAsyncContextManager):
         self.audit = AuditRepository(self.conn)
         self.llm = LlmProviderRepository(self.conn)
         self.annotations = AnnotationRepository(self.conn)
+        self.corrections = CorrectionRepository(self.conn)
         self.reads = ArticleReadRepository(self.conn)
         self.stars = ArticleStarRepository(self.conn)
         self.chat = ChatRepository(self.conn)

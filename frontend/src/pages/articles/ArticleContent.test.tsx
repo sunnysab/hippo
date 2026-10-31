@@ -60,6 +60,28 @@ const renderContent = (
 let playMock: ReturnType<typeof vi.fn>;
 
 describe('ArticleContent media blocks', () => {
+  it('renders ASR inline markup while mapping correction offsets to visible text', () => {
+    const original = '😀 **wrong** [link](https://example.com) `code`';
+    const corrected = original.replace('wrong', 'right');
+    const start = original.indexOf('wrong');
+    const { container } = renderContent([{ type: 'paragraph', transcript_source: 'asr', original_text: original, text: corrected, correction_spans: [{ original_start: start, original_end: start + 5, start, end: start + 5 }] }]);
+    const span = container.querySelector<HTMLElement>('[data-asr-original]')!;
+    expect(span.querySelector('strong')?.textContent).toBe('right');
+    expect(span.querySelector('a')?.textContent).toBe('link');
+    expect(span.querySelector('code')?.textContent).toBe('code');
+    expect(span.dataset.asrOriginal).toBe('😀 wrong link code');
+    expect(JSON.parse(span.dataset.asrSpans!)).toEqual([{ original_start: 3, original_end: 8, start: 3, end: 8 }]);
+  });
+  it('keeps the player when the personal transcript projection changes', () => {
+    const video = { type: 'video' as const, provider: 'bilibili', url: '/api/media/7/video' };
+    const paragraph = { type: 'paragraph' as const, transcript_source: 'asr', original_text: 'wrong', text: 'correct', correction_spans: [{ original_start: 0, original_end: 5, start: 0, end: 7 }] };
+    const props = { hideSmall: false, followPlayback: false, miniPlayer: true, onImageContextMenu: vi.fn() };
+    const { container, rerender } = render(<ArticleContent {...props} payload={payload([video, paragraph])} />);
+    const player = container.querySelector('video');
+    rerender(<ArticleContent {...props} payload={payload([video, { ...paragraph, text: 'wrong', correction_spans: [] }])} />);
+    expect(container.querySelector('video')).toBe(player);
+    expect(container.querySelector('[data-asr-original]')?.textContent).toBe('wrong');
+  });
   beforeEach(() => {
     // jsdom 没实现媒体播放；这里只关心我们把它当成可 seek 的播放器。
     playMock = vi.fn().mockResolvedValue(undefined);

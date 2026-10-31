@@ -46,6 +46,9 @@ export interface ArticleEvent {
 export interface ArticleContentBlock {
   type: 'paragraph' | 'heading' | 'image' | 'code' | 'video' | 'audio' | 'link' | 'text';
   text?: string;
+  transcript_source?: string;
+  original_text?: string;
+  correction_spans?: { original_start: number; original_end: number; start: number; end: number }[];
   level?: number;
   image_id?: number;
   alt?: string;
@@ -111,6 +114,8 @@ interface ArticlesState {
   isArticleLoading: boolean;
   selectedArticleId: number | null;
   currentArticlePayload: ArticlePayload | null;
+  projectedPayload: ArticlePayload | null;
+  originalView: boolean;
   filtersCollapsed: boolean;
   mobileReading: boolean;
   typeFacetsExpanded: boolean;
@@ -122,6 +127,8 @@ export type ArticlesAction =
   | { type: 'SET_PAGE'; page: number; hasMore: boolean }
   | { type: 'SET_LOADING'; loading: boolean }
   | { type: 'SELECT_ARTICLE'; id: number | null; payload: ArticlePayload | null }
+  | { type: 'REFRESH_ARTICLE'; id: number; payload: ArticlePayload }
+  | { type: 'TOGGLE_ARTICLE_ORIGINAL' }
   | { type: 'SET_FILTERS_COLLAPSED'; collapsed: boolean }
   | { type: 'SET_MOBILE_READING'; reading: boolean }
   | { type: 'SET_TYPE_FACETS_EXPANDED'; expanded: boolean }
@@ -137,11 +144,20 @@ const initialState: ArticlesState = {
   isArticleLoading: false,
   selectedArticleId: null,
   currentArticlePayload: null,
+  projectedPayload: null,
+  originalView: false,
   filtersCollapsed: true,
   mobileReading: false,
   typeFacetsExpanded: false,
   lastFacetPayload: null,
 };
+
+function displayPayload(payload: ArticlePayload | null, original: boolean): ArticlePayload | null {
+  if (!payload || !original || !payload.content) return payload;
+  return { ...payload, content: payload.content.map((block) =>
+    block.type === 'paragraph' && block.transcript_source === 'asr' && typeof block.original_text === 'string'
+      ? { ...block, text: block.original_text, correction_spans: [] } : block) };
+}
 
 function reducer(state: ArticlesState, action: ArticlesAction): ArticlesState {
   switch (action.type) {
@@ -159,7 +175,14 @@ function reducer(state: ArticlesState, action: ArticlesAction): ArticlesState {
         ...state,
         selectedArticleId: action.id,
         currentArticlePayload: action.payload,
+        projectedPayload: action.payload,
+        originalView: false,
       };
+    case 'REFRESH_ARTICLE':
+      if (state.selectedArticleId !== action.id) return state;
+      return { ...state, projectedPayload: action.payload, currentArticlePayload: displayPayload(action.payload, state.originalView) };
+    case 'TOGGLE_ARTICLE_ORIGINAL':
+      return { ...state, originalView: !state.originalView, currentArticlePayload: displayPayload(state.projectedPayload, !state.originalView) };
     case 'SET_FILTERS_COLLAPSED':
       return { ...state, filtersCollapsed: action.collapsed };
     case 'SET_MOBILE_READING':
@@ -173,6 +196,9 @@ function reducer(state: ArticlesState, action: ArticlesAction): ArticlesState {
         articles: state.articles.map((article) => (
           article.id === action.id ? { ...article, read_at: action.readAt } : article
         )),
+        projectedPayload: state.projectedPayload?.article.id === action.id
+          ? { ...state.projectedPayload, article: { ...state.projectedPayload.article, read_at: action.readAt } }
+          : state.projectedPayload,
         currentArticlePayload: state.currentArticlePayload?.article.id === action.id
           ? {
             ...state.currentArticlePayload,
@@ -186,6 +212,9 @@ function reducer(state: ArticlesState, action: ArticlesAction): ArticlesState {
         articles: state.articles.map((article) => (
           article.id === action.id ? { ...article, starred_at: action.starredAt } : article
         )),
+        projectedPayload: state.projectedPayload?.article.id === action.id
+          ? { ...state.projectedPayload, article: { ...state.projectedPayload.article, starred_at: action.starredAt } }
+          : state.projectedPayload,
         currentArticlePayload: state.currentArticlePayload?.article.id === action.id
           ? {
             ...state.currentArticlePayload,

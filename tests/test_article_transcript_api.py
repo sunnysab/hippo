@@ -81,6 +81,49 @@ class TranscriptExportTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual('一句', response.body.decode())
 
+    async def test_personal_projection_in_all_formats_without_mutation(self) -> None:
+        blocks = [
+            {'type': 'paragraph', 'text': 'wrong', 't': 0, 'transcript_source': 'asr'},
+            {'type': 'paragraph', 'text': 'wrong', 't': 2, 'transcript_source': 'subtitle'},
+            {'type': 'paragraph', 'text': 'wrong', 't': 4},
+        ]
+        storage = _storage()
+        rule = {'source_text': 'wrong', 'replacement_text': 'right', 'account_biz': [], 'enabled': True}
+        storage.corrections = SimpleNamespace(list_for_user=AsyncMock(return_value=[rule]))
+        with (
+            patch('hippo.api.routers.article._assert_article_visible', new=AsyncMock()),
+            patch(
+                'hippo.api.routers.article.fetchone_row',
+                new=AsyncMock(return_value={'content_json': blocks, 'biz': 'one'}),
+            ),
+        ):
+            for fmt in ('md', 'txt', 'srt'):
+                response = await article_api.export_transcript(7, fmt, storage, _user())
+                self.assertEqual(1, response.body.decode().count('right'))
+                self.assertEqual(2, response.body.decode().count('wrong'))
+        self.assertEqual('wrong', blocks[0]['text'])
+        storage.corrections.list_for_user.assert_awaited_with(1)
+
+    async def test_nested_links_and_chinese_url_boundaries_in_all_formats(self) -> None:
+        text = '[说明 [错词]](https://example.com) https://example.com，错词'
+        blocks = [{'type': 'paragraph', 'text': text, 't': 0, 'transcript_source': 'asr'}]
+        storage = _storage()
+        rule = {'source_text': '错词', 'replacement_text': '正词', 'account_biz': [], 'enabled': True}
+        storage.corrections = SimpleNamespace(list_for_user=AsyncMock(return_value=[rule]))
+        with (
+            patch('hippo.api.routers.article._assert_article_visible', new=AsyncMock()),
+            patch(
+                'hippo.api.routers.article.fetchone_row',
+                new=AsyncMock(return_value={'content_json': blocks, 'biz': 'one'}),
+            ),
+        ):
+            for fmt in ('md', 'txt', 'srt'):
+                response = await article_api.export_transcript(7, fmt, storage, _user())
+                exported = response.body.decode()
+                self.assertIn('[说明 [错词]](https://example.com)', exported)
+                self.assertIn('https://example.com，正词', exported)
+        self.assertEqual(text, blocks[0]['text'])
+
     async def test_an_article_without_content_is_a_404(self) -> None:
         storage = _storage()
         with (

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiGet, apiSend } from '../../api';
 import { applyHighlights, buildTextMap, locate, type Anchor, type LocatedAnchor } from './anchor';
+import { correctionMap, locateRaw } from './corrections';
 
 export interface Annotation {
   id: number;
@@ -57,25 +58,29 @@ export function useHighlights({ articleId, containerRef, contentKey }: UseHighli
     const container = containerRef.current;
     if (!container) return;
     if (annotations.length === 0) {
+      container.querySelectorAll('mark.hippo-highlight').forEach((mark) => mark.replaceWith(...Array.from(mark.childNodes)));
       void Promise.resolve().then(() => setStale([]));
       return;
     }
 
+    let cancelled = false;
     void Promise.resolve().then(() => {
+      if (cancelled) return;
       // Rebuild from the source text, otherwise previously inserted <mark>
       // elements would be counted as article text.
       const clean = container.cloneNode(true) as HTMLElement;
       clean.querySelectorAll('mark.hippo-highlight').forEach((mark) => {
         mark.replaceWith(...Array.from(mark.childNodes));
       });
-      const map = buildTextMap(clean);
+      const projection = correctionMap(clean);
+      const map = projection.raw;
 
       const located: { anchor: Anchor; located: LocatedAnchor; id: number }[] = [];
       const missing: StaleAnnotation[] = [];
       for (const annotation of annotations) {
-        const found = locate(map, annotation);
-        if (found) {
-          located.push({ anchor: annotation, located: found, id: annotation.id });
+        const found = clean.querySelector('[data-asr-original]') ? locateRaw(map, annotation) : locate(map, annotation);
+        if (found && projection.canMap(found.start, found.end, false)) {
+          located.push({ anchor: annotation, located: { ...found, start: projection.toLive(found.start, false), end: projection.toLive(found.end, true) }, id: annotation.id });
         } else {
           missing.push({ ...annotation, reason: 'stale' });
         }
@@ -90,6 +95,7 @@ export function useHighlights({ articleId, containerRef, contentKey }: UseHighli
       applyHighlights(container, liveMap, located);
       setStale(missing);
     });
+    return () => { cancelled = true; };
   }, [annotations, containerRef, contentKey]);
 
   const create = useCallback(

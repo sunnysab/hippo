@@ -1,3 +1,13 @@
+.correction-filters { gap: 12px; align-items: end; }
+.correction-filters label, .correction-dialog form > label { display: grid; gap: 4px; }
+.correction-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.correction-dialog { max-height: 90vh; overflow-y: auto; }
+.correction-dialog form { display: grid; gap: 12px; }
+.correction-dialog fieldset { display: grid; gap: 8px; border: 1px solid var(--border); }
+.correction-accounts { display: grid; gap: 6px; max-height: 180px; overflow-y: auto; }
+.correction-accounts label { display: flex; align-items: center; gap: 6px; }
+.correction-accounts img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
+
 .settings-panel-grid {
   display: grid;
   gap: 12px;

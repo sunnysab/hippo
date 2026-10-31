@@ -602,7 +602,9 @@ async def _save(
 
 def _paragraph_blocks(paragraphs: Iterable[tuple[float, str]]) -> list[dict[str, Any]]:
     return [
-        {'type': 'paragraph', 'text': paragraph, 't': round(start, 1)} for start, paragraph in paragraphs if paragraph
+        {'type': 'paragraph', 'text': paragraph, 't': round(start, 1), 'transcript_source': 'asr'}
+        for start, paragraph in paragraphs
+        if paragraph
     ]
 
 

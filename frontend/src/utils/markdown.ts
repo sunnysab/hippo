@@ -1,4 +1,4 @@
-import { createElement, Fragment, type ReactNode } from 'react';
+import { createElement, Fragment, isValidElement, type ReactNode } from 'react';
 
 const parseWechatUrl = (urlStr: string) => {
   try {
@@ -187,5 +187,30 @@ export const renderInlineNodes = (
 
   return nodes;
 };
+
+/** Text nodes produced by the same inline renderer, excluding br and spacer elements. */
+export function inlineVisibleText(text: string): string {
+  const flatten = (node: ReactNode): string => {
+    if (typeof node === 'string' || typeof node === 'number') return String(node);
+    if (Array.isArray(node)) return node.map(flatten).join('');
+    if (isValidElement<{ children?: ReactNode }>(node)) return flatten(node.props.children);
+    return '';
+  };
+  return flatten(renderInlineNodes(text, (_href, label) => label));
+}
+
+/** Find a source boundary in rendered text without parsing an incomplete prefix. */
+export function inlineVisibleBoundary(text: string, offset: number): number | null {
+  let marker = '\uE000';
+  while (text.includes(marker)) marker += '\uE000';
+  const marked = inlineVisibleText(text.slice(0, offset) + marker + text.slice(offset));
+  const position = marked.indexOf(marker);
+  if (position < 0 || marked.slice(0, position) + marked.slice(position + marker.length) !== inlineVisibleText(text)) return null;
+  return position;
+}
+
+export function inlineVisibleOffset(text: string, offset: number): number {
+  return inlineVisibleBoundary(text, offset) ?? inlineVisibleText(text.slice(0, offset)).length;
+}
 
 export { normalizeSafeUrl, parseWechatUrl };

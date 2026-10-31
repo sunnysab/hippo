@@ -1,12 +1,20 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { parseWechatUrl, renderInlineNodes, type InlineLinkRenderer } from './markdown';
+import { inlineVisibleOffset, inlineVisibleText, parseWechatUrl, renderInlineNodes, type InlineLinkRenderer } from './markdown';
 
 function Probe({ text }: { text: string }) {
   return <div>{renderInlineNodes(text)}</div>;
 }
 
 describe('renderInlineNodes', () => {
+  it('maps UTF-16 boundaries through visible markup and line breaks', () => {
+    const text = '😀 **wrong** [label](https://example.com) `code`\nend';
+    expect(inlineVisibleText(text)).toBe('😀 wrong label codeend');
+    const start = text.indexOf('wrong');
+    expect(inlineVisibleOffset(text, start)).toBe(3);
+    expect(inlineVisibleOffset(text, start + 5)).toBe(8);
+    expect(inlineVisibleOffset(text, text.indexOf('end'))).toBe('😀 wrong label code'.length);
+  });
   it('does not render unsafe javascript links as anchors', () => {
     render(<Probe text={'Click [me](javascript:alert(1))'} />);
 

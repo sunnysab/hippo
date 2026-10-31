@@ -1,5 +1,7 @@
 import { lazy, Suspense, useState, useRef, useEffect, type RefObject } from 'react';
 import { ContextMenu } from '../../components/ContextMenu';
+import { CorrectionDialog } from '../../components/CorrectionDialog';
+import { CORRECTIONS_UPDATED_EVENT } from '../../api/corrections';
 import { useArticlesState } from '../../store/articles';
 import { useI18n } from '../../i18n';
 import { useReaderSettings } from '../../hooks/useReaderSettings';
@@ -9,6 +11,7 @@ import { HighlightToolbar } from './HighlightToolbar';
 import { ReadingSidebar } from './ReadingSidebar';
 import { buildOutline } from './outline';
 import { useHighlights } from './useHighlights';
+import { eligibleSelection, rawSelection } from './corrections';
 import { EmptyState } from '../../components/EmptyState';
 import { useToast } from '../../hooks/useToast';
 import { apiGet, apiSend, isAuthError } from '../../api';
@@ -36,6 +39,26 @@ export function ArticlePreview({ previewRef, sidePanel, onSidePanelToggle, onOpe
   } | null>(null);
   const [isBlockingImage, setIsBlockingImage] = useState(false);
   const readerRef = useRef<HTMLDivElement>(null);
+  const [correction, setCorrection] = useState<{ articleId: number; source: string } | null>(null);
+  const [dialogArticleId, setDialogArticleId] = useState(state.selectedArticleId);
+  if (dialogArticleId !== state.selectedArticleId) {
+    setDialogArticleId(state.selectedArticleId);
+    setCorrection(null);
+  }
+  const correctionButtonRef = useRef<HTMLButtonElement>(null);
+  const pendingSource = useRef<string | null>(null);
+  const selectedRef = useRef(state.selectedArticleId);
+  useEffect(() => { selectedRef.current = state.selectedArticleId; }, [state.selectedArticleId]);
+  const selectedSource = () => {
+    const selection = window.getSelection();
+    const root = readerRef.current;
+    if (!root || !selection || selection.isCollapsed || !selection.rangeCount) return '';
+    const range = selection.getRangeAt(0);
+    return root.contains(range.commonAncestorContainer) && eligibleSelection(range) ? rawSelection(root, range)?.quote ?? '' : '';
+  };
+  const openCorrection = (source: string) => {
+    if (state.selectedArticleId) setCorrection({ articleId: state.selectedArticleId, source });
+  };
 
   const [overlayPanel, setOverlayPanel] = useState(false);
   useEffect(() => {
@@ -50,9 +73,25 @@ export function ArticlePreview({ previewRef, sidePanel, onSidePanelToggle, onOpe
 
   const payload = state.currentArticlePayload;
   const outline = buildOutline(payload?.content);
-  // The content key changes whenever the loaded article does, which is when the
-  // rendered nodes are replaced and the marks must be rebuilt.
-  const contentKey = String(state.selectedArticleId ?? '');
+  const eligible = payload?.content?.some((block) => block.type === 'paragraph' && block.transcript_source === 'asr' && typeof block.original_text === 'string') ?? false;
+  const contentKey = `${state.selectedArticleId ?? ''}:${payload?.content_updated_at ?? ''}:${JSON.stringify(payload?.content)}`;
+  useEffect(() => {
+    const id = state.selectedArticleId;
+    if (!id) return;
+    let active = true;
+    let sequence = 0;
+    const refresh = () => {
+      const current = ++sequence;
+      const scrollTop = previewRef.current?.scrollTop ?? 0;
+      void apiGet(`/api/article/${id}`).then((result) => {
+        if (!active || current !== sequence || selectedRef.current !== id) return;
+        dispatch({ type: 'REFRESH_ARTICLE', id, payload: result as unknown as NonNullable<typeof payload> });
+        requestAnimationFrame(() => { if (active && selectedRef.current === id && previewRef.current) previewRef.current.scrollTop = scrollTop; });
+      }).catch((error) => { if (active && !isAuthError(error)) showToast((error as Error).message || t('articles.correctionRefreshFailed', 'Failed to refresh article.')); });
+    };
+    window.addEventListener(CORRECTIONS_UPDATED_EVENT, refresh);
+    return () => { active = false; window.removeEventListener(CORRECTIONS_UPDATED_EVENT, refresh); };
+  }, [state.selectedArticleId, dispatch, previewRef, showToast, t]);
   const { stale, create } = useHighlights({
     articleId: state.selectedArticleId ?? null,
     containerRef: readerRef,
@@ -97,6 +136,11 @@ export function ArticlePreview({ previewRef, sidePanel, onSidePanelToggle, onOpe
           <EmptyState message={t('articles.empty', 'Select an article to preview.')} />
         </div>
       ) : (
+        <>
+          {eligible ? <div className="toolbar article-correction-actions">
+            <button ref={correctionButtonRef} type="button" className="btn ghost" onPointerDown={(event) => { pendingSource.current = selectedSource(); event.preventDefault(); }} onPointerCancel={() => { pendingSource.current = null; }} onMouseDown={(event) => event.preventDefault()} onClick={() => { openCorrection(pendingSource.current ?? selectedSource()); pendingSource.current = null; }}>{t('articles.addCorrection', 'Add correction')}</button>
+            <button type="button" className="btn ghost" aria-pressed={state.originalView} onClick={() => dispatch({ type: 'TOGGLE_ARTICLE_ORIGINAL' })}>{state.originalView ? t('articles.showCorrected', 'Show corrected') : t('articles.showRaw', 'Show original')}</button>
+          </div> : null}
         <div className="reader" ref={readerRef}>
           <ArticleHeader article={payload.article} onOpenEvent={onOpenEvent} />
           <ArticleContent
@@ -121,10 +165,12 @@ export function ArticlePreview({ previewRef, sidePanel, onSidePanelToggle, onOpe
             </section>
           ) : null}
         </div>
+        </>
       )}
       {payload ? (
         <>
-          <HighlightToolbar containerRef={readerRef} onCreate={create} />
+          <HighlightToolbar containerRef={readerRef} onCreate={create} onCorrect={openCorrection} contentKey={contentKey} />
+          <CorrectionDialog isOpen={correction?.articleId === state.selectedArticleId} onClose={() => setCorrection(null)} onSaved={() => {}} initialSource={correction?.source ?? ''} currentBiz={payload.article.biz} articleId={payload.article.id} returnFocusRef={correctionButtonRef} />
           {sidePanel === 'toc' ? (
             <Suspense fallback={<aside className='reader-toc' role='status'>{t('articles.outline.loading', 'Loading outline…')}</aside>}>
               <TableOfContents

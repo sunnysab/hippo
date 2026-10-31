@@ -272,7 +272,11 @@ class TranscribeJobTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('Episode notes.', blocks[1]['text'])
         self.assertEqual('Guest: someone', blocks[2]['text'])
         self.assertNotIn('t', blocks[1])
+        self.assertNotIn('transcript_source', blocks[0])
+        self.assertNotIn('transcript_source', blocks[1])
+        self.assertNotIn('transcript_source', blocks[2])
         self.assertIn('t', blocks[3])
+        self.assertTrue(all(block['transcript_source'] == 'asr' for block in blocks[3:]))
         # Markdown is what search and export read: notes first, transcript after.
         self.assertIn('Episode notes.', saved['content_markdown'])
         self.assertIn('Guest: someone', saved['content_markdown'])
@@ -351,6 +355,8 @@ class TranscribeJobTest(unittest.IsolatedAsyncioTestCase):
         blocks = self.storage.saved[0]['content_blocks']
         self.assertEqual(digest, blocks[0]['text'])
         self.assertEqual('字幕', blocks[1]['text'])
+        self.assertNotIn('transcript_source', blocks[0])
+        self.assertNotIn('transcript_source', blocks[1])
         self.assertEqual(f'{digest}\n\n字幕', self.storage.saved[0]['content_markdown'])
 
     async def test_a_ready_made_subtitle_skips_the_asr(self) -> None:

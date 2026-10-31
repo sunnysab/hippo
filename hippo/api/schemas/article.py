@@ -178,6 +178,13 @@ class FeedOut(BaseModel):
     articles: list[FeedArticleOut]
 
 
+class CorrectionSpanOut(BaseModel):
+    original_start: int
+    original_end: int
+    start: int
+    end: int
+
+
 class ContentBlockOut(RowPayload):
     """One block of an article body.
 
@@ -194,6 +201,9 @@ class ContentBlockOut(RowPayload):
 
     type: str = Field(description='paragraph / heading / image / code / link / video / audio.')
     text: str | None = None
+    transcript_source: str | None = None
+    original_text: str | None = None
+    correction_spans: list[CorrectionSpanOut] | None = None
     level: int | None = Field(default=None, description='Heading level, for a heading block.')
     image_id: int | None = None
     alt: str | None = None
