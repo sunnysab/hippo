@@ -20,6 +20,21 @@ const filters = (overrides: Partial<ArticleFiltersState> = {}): ArticleFiltersSt
   ...overrides,
 });
 
+describe('Watch Later route', () => {
+  it('keeps only the queue and selected article in the URL', () => {
+    const params = buildArticleSearchParams(filters({ watchLater: true, source: 'youtube', read: 'unread', search: 'hidden' }), { articleId: '42' });
+    expect(params.toString()).toBe('view=watch-later&article=42');
+  });
+
+  it('ignores stale feed filters even when entered through a direct URL', () => {
+    const state = buildArticleRouteStateFromSearchParams(new URLSearchParams('view=watch-later&article=42&source=youtube&group=7&q=hidden&read=unread'));
+    expect(state.filters).toEqual(filters({ watchLater: true }));
+    expect(state.articleId).toBe('42');
+    expect(areArticleFiltersEqual(filters(), state.filters)).toBe(false);
+    expect(areArticleFiltersEqual(filters(), filters({ watchLater: false }))).toBe(true);
+  });
+});
+
 describe('source filter', () => {
   it('round-trips through the URL so a rail click is shareable', () => {
     const params = buildArticleSearchParams(filters({ source: 'bilibili' }));

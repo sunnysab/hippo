@@ -1,3 +1,6 @@
+import { useEffect, useState } from 'react';
+import '../../styles/watch-later.css';
+import { useWatchLater } from '../../hooks/useWatchLater';
 import { useArticlesState } from '../../store/articles';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
@@ -33,10 +36,10 @@ export function ArticlesPage() {
     updateFilters,
     resetFilters,
     selectArticle,
+    cancelArticleLoad,
     loadArticles,
+    listError,
   } = useArticleFilters();
-  // Keep the source selector available whenever the wide navigation is hidden.
-  const showViewRail = useMediaQuery('(min-width: 1600px)');
   const {
     config,
     updateConfig,
@@ -49,6 +52,48 @@ export function ArticlesPage() {
     mobileReading,
     getSelectedArticleLink,
   } = useArticleReader();
+  const readingActive = !isNarrowViewport || mobileReading;
+  const [autoPlayId, setAutoPlayId] = useState<number | null>(null);
+  const [endedArticleId, setEndedArticleId] = useState<number | null>(null);
+  if (endedArticleId !== null && (!filters.watchLater || !readingActive || state.selectedArticleId !== endedArticleId)) {
+    setEndedArticleId(null);
+  }
+  if (autoPlayId !== null && (!filters.watchLater || !readingActive || state.selectedArticleId !== autoPlayId)) {
+    setAutoPlayId(null);
+  }
+  const watchLater = useWatchLater(async () => {
+    if (filters.watchLater) await loadArticles(filters, true);
+  });
+  const queueIndex = filters.watchLater ? state.articles.findIndex((article) => article.id === state.selectedArticleId) : -1;
+  const openQueueItem = async (index: number) => {
+    const article = state.articles[index];
+    if (!article || watchLater.busy || state.isArticleLoading) return;
+    setAutoPlayId(null);
+    setEndedArticleId(null);
+    await selectArticle(article.id);
+  };
+  useEffect(() => {
+    if (endedArticleId === null || !filters.watchLater || !readingActive || state.selectedArticleId !== endedArticleId
+      || watchLater.busy || state.isArticleLoading) return;
+    let cancelled = false;
+    // Wait for the latest saved order; cleanup cancels work after navigation.
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setEndedArticleId(null);
+      const index = state.articles.findIndex((article) => article.id === endedArticleId);
+      if (listError || index < 0) {
+        setAutoPlayId(null);
+        showToast(t('articles.watchLaterPlaybackFailed', 'Playback could not continue. Press play or choose another item.'));
+        return;
+      }
+      const next = state.articles[index + 1];
+      setAutoPlayId(next?.id ?? null);
+      if (next) void selectArticle(next.id);
+    });
+    return () => { cancelled = true; };
+  }, [endedArticleId, filters.watchLater, readingActive, state.selectedArticleId, watchLater.busy, state.isArticleLoading, state.articles, listError, selectArticle, showToast, t]);
+  // Keep the source selector available whenever the wide navigation is hidden.
+  const showViewRail = useMediaQuery('(min-width: 1600px)');
   const { sources, error: sourcesFailed, reload: reloadSources } = useArticleSources();
   const railVisible = showViewRail && !listCollapsed;
   const listVisible = isNarrowViewport ? !mobileReading : !listCollapsed;
@@ -57,6 +102,9 @@ export function ArticlesPage() {
     : listCollapsed ? t('articles.expandList', 'Show list') : t('articles.collapseList', 'Hide list');
   const filterCount = [filters.groupId, filters.accountBiz, filters.itemShowType, filters.search.trim(), filters.read, filters.starred].filter(Boolean).length;
   const revealList = () => {
+    setEndedArticleId(null);
+    setAutoPlayId(null);
+    cancelArticleLoad();
     setListCollapsed(false);
     dispatch({ type: 'SET_MOBILE_READING', reading: false });
   };
@@ -91,7 +139,7 @@ export function ArticlesPage() {
             <span>{listLabel}</span>
           </button>
         ) : null}
-        {!railVisible || sourcesFailed || sources.length === 0 ? (
+        {!filters.watchLater && (!railVisible || sourcesFailed || sources.length === 0) ? (
           <div className="article-source-control">
             <select id="article-source-filter" aria-label={t('articles.railSources', 'Source')} value={filters.source}
               onChange={(event) => { updateFilters({ source: event.target.value }); revealList(); }}>
@@ -106,14 +154,14 @@ export function ArticlesPage() {
             </button> : null}
           </div>
         ) : null}
-        <button className={`btn ghost article-filter-toggle${state.filtersCollapsed ? '' : ' is-active'}`}
+        {!filters.watchLater ? <button className={`btn ghost article-filter-toggle${state.filtersCollapsed ? '' : ' is-active'}`}
           id="btn-article-filter-toggle" type="button" aria-expanded={listVisible && !state.filtersCollapsed}
           aria-controls="article-filter-drawer" onClick={() => {
             revealList();
             dispatch({ type: 'SET_FILTERS_COLLAPSED', collapsed: listVisible ? !state.filtersCollapsed : false });
           }}>
           {t('articles.toggleFilters', 'Filters')}{filterCount ? ` · ${filterCount}` : ''}
-        </button>
+        </button> : null}
       </div>
       <div
         className={`article-layout${listCollapsed ? ' is-collapsed' : ''}${mobileReading ? ' is-mobile-reading' : ''}${
@@ -126,15 +174,15 @@ export function ArticlesPage() {
         <div className="panel article-list" id="article-list-panel">
           <div className="panel-header article-sidebar-header">
             <div>
-              <h2>{t('articles.title', 'Articles')}</h2>
-              <ArticleFilterSummary
+              <h2>{filters.watchLater ? t('articles.watchLater', 'Watch Later') : t('articles.title', 'Articles')}</h2>
+              {filters.watchLater ? <span className="meta-note">{state.articles.length} {t('articles.watchLaterItems', 'items')}</span> : <ArticleFilterSummary
                 filters={filters}
                 groupOptions={groupOptions}
                 accountOptions={accountOptions}
                 total={Number(state.lastFacetPayload?.total || 0)}
-              />
+              />}
             </div>
-            <div className="toolbar article-sidebar-actions">
+            {!filters.watchLater ? <div className="toolbar article-sidebar-actions">
               {/* The scope is whatever the list is filtered to: one source, one
                   group, one account, or every subscription the reader has. All
                   of them go out together and the backend intersects them. */}
@@ -159,7 +207,7 @@ export function ArticlesPage() {
                   {getSyncRunLabel(syncTask.status, t)}
                 </span>
               ) : null}
-            </div>
+            </div> : null}
           </div>
           <ArticleFilters
             filters={filters}
@@ -169,11 +217,20 @@ export function ArticlesPage() {
             onReset={() => { void resetFilters(); }}
           />
           <LoadingIndicator isLoading={state.isArticleLoading} id="article-search-loading" />
-          <ArticleList
-            onSelect={selectArticle}
+          {listError ? <div className="watch-later-error" role="alert">
+            <p>{listError}</p>
+            <button type="button" className="btn ghost" onClick={() => { void loadArticles(filters, true); }}>
+              {t('common.retry', 'Retry')}
+            </button>
+          </div> : state.isArticleLoading && state.articles.length === 0 ? null : <ArticleList
+            onSelect={async (id) => { setAutoPlayId(null); setEndedArticleId(null); await selectArticle(id); }}
+            watchLater={filters.watchLater}
+            watchLaterBusy={watchLater.busy}
+            onToggleWatchLater={(article) => { void watchLater.toggle(article); }}
+            onMoveWatchLater={(article, direction) => { void watchLater.move(article, direction); }}
             onLoadMore={() => loadArticles({ ...filters, search: deferredSearch }, false)}
             onFilterByAccount={(biz) => updateFilters({ accountBiz: biz })}
-          />
+          />}
         </div>
 
         <ArticleResizer />
@@ -181,6 +238,18 @@ export function ArticlesPage() {
         <div className="panel article-preview">
           <div className="panel-header article-preview-topbar">
             <div className="toolbar article-preview-toolbar">
+              {filters.watchLater ? <div className="watch-later-navigation" role="group" aria-label={t('articles.watchLater', 'Watch Later')}>
+                <button type="button" className="btn ghost" disabled={queueIndex <= 0 || watchLater.busy || state.isArticleLoading || !state.currentArticlePayload}
+                  onClick={() => { void openQueueItem(queueIndex - 1); }}>{t('articles.watchLaterPrevious', 'Previous item')}</button>
+                <span className="meta-note" aria-live="polite">{queueIndex < 0 ? '—' : queueIndex + 1} / {state.articles.length}</span>
+                <button type="button" className="btn ghost" disabled={queueIndex < 0 || queueIndex >= state.articles.length - 1 || watchLater.busy || state.isArticleLoading || !state.currentArticlePayload}
+                  onClick={() => { void openQueueItem(queueIndex + 1); }}>{t('articles.watchLaterNext', 'Next item')}</button>
+              </div> : null}
+              <button type="button" className="btn ghost article-toolbar-btn" disabled={!state.currentArticlePayload || watchLater.busy}
+                aria-pressed={Boolean(state.currentArticlePayload?.article.watch_later_at)}
+                onClick={() => { if (state.currentArticlePayload) void watchLater.toggle(state.currentArticlePayload.article); }}>
+                {state.currentArticlePayload?.article.watch_later_at ? t('articles.removeWatchLater', 'Remove from Watch Later') : t('articles.addWatchLater', 'Add to Watch Later')}
+              </button>
               <button
                 className="btn ghost article-toolbar-btn"
                 id="btn-article-open-original"
@@ -297,6 +366,17 @@ export function ArticlesPage() {
             </div>
           </div>
           <ArticlePreview
+            autoPlay={Boolean(filters.watchLater && readingActive && isMediaArticle && autoPlayId === state.selectedArticleId)}
+            onMediaEnded={(id) => {
+              if (!filters.watchLater || !readingActive || !isMediaArticle || id !== state.selectedArticleId) return;
+              setEndedArticleId(id);
+            }}
+            onMediaError={(id) => {
+              if (!readingActive || id !== state.selectedArticleId) return;
+              setEndedArticleId(null);
+              setAutoPlayId(null);
+              showToast(t('articles.watchLaterPlaybackFailed', 'Playback could not continue. Press play or choose another item.'));
+            }}
             previewRef={previewRef}
             sidePanel={sidePanel}
             onSidePanelToggle={(panel) => setSidePanel((current) => (current === panel ? '' : panel))}

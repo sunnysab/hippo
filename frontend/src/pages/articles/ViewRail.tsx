@@ -26,11 +26,12 @@ export function ViewRail({ filters, sources, groupOptions, onChange }: ViewRailP
     t('articles.railSubscriptions', '{count} subscriptions').replace('{count}', String(count))
   );
 
-  const view = filters.starred ? 'starred' : filters.read === 'unread' ? 'unread' : 'all';
+  const view = filters.watchLater ? 'watch-later' : filters.starred ? 'starred' : filters.read === 'unread' ? 'unread' : 'all';
   const views = [
     { key: 'all', label: t('articles.viewAll', '全部'), patch: { read: '', starred: '' } },
     { key: 'unread', label: t('articles.viewUnread', '未读'), patch: { read: 'unread', starred: '' } },
     { key: 'starred', label: t('articles.viewStarred', '收藏'), patch: { read: '', starred: 'true' } },
+    { key: 'watch-later', label: t('articles.watchLater', 'Watch Later'), patch: { watchLater: true } },
   ];
 
   return (
@@ -50,7 +51,7 @@ export function ViewRail({ filters, sources, groupOptions, onChange }: ViewRailP
         ))}
       </div>
 
-      {sources.length > 0 ? (
+      {!filters.watchLater && sources.length > 0 ? (
         <div className="view-rail-section">
           <h3 className="view-rail-title">{t('articles.railSources', '来源')}</h3>
           <button
@@ -79,7 +80,7 @@ export function ViewRail({ filters, sources, groupOptions, onChange }: ViewRailP
         </div>
       ) : null}
 
-      {groupOptions.length > 0 ? (
+      {!filters.watchLater && groupOptions.length > 0 ? (
         <div className="view-rail-section">
           <h3 className="view-rail-title">{t('articles.railGroups', '分组')}</h3>
           <button

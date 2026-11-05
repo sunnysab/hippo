@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -98,6 +99,12 @@ const AUDIO_POLL_ATTEMPTS = 20;
 const isArchivedVideoUrl = (url: string | undefined): url is string =>
   typeof url === 'string' && ARCHIVED_VIDEO_PATH.test(url);
 
+/** The only entries a queue can play by itself; everything else is text. */
+const isMediaKind = (kind: string | null | undefined): boolean => {
+  const value = String(kind || '').trim().toLowerCase();
+  return value === 'audio' || value === 'video';
+};
+
 /**
  * The nearest ancestor that scrolls, which is what "still on screen" has to be
  * measured against: the reader scrolls inside its own pane, not the document, so
@@ -121,6 +128,16 @@ interface ArticleContentProps {
   /** Float the video over the page once it is scrolled out of sight. */
   miniPlayer: boolean;
   onImageContextMenu: (detail: { imageId: number; x: number; y: number }) => void;
+  /**
+   * Start this article by itself. Honoured once per article, as soon as the player
+   * can play: a payload refresh and a switch between the video and the audio must
+   * not start it a second time.
+   */
+  autoPlay?: boolean;
+  /** The mounted player reached its end. A pause never reports here. */
+  onMediaEnded?: (articleId: number) => void;
+  /** The player could not start or could not go on. The queue shows why and decides. */
+  onMediaError?: (articleId: number) => void;
 }
 
 interface ContentBlockProps {
@@ -227,6 +244,10 @@ interface PlayerRefProps {
   onReady: (event: React.SyntheticEvent<HTMLMediaElement>) => void;
   /** Reports a play, a pause and an end alike, so the dock knows if sound is running. */
   onPlayback: (playing: boolean, player: HTMLMediaElement) => void;
+  /** The player actually reached its end, which is the queue's cue to move on. */
+  onEnded: (event: React.SyntheticEvent<HTMLMediaElement>) => void;
+  /** The element could not load or play its source. */
+  onFailed: (event: React.SyntheticEvent<HTMLMediaElement>) => void;
 }
 
 /**
@@ -265,12 +286,16 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({
   onTimeUpdate,
   onReady,
   onPlayback,
+  onEnded,
+  onFailed,
 }: {
   block: ArticleContentBlock;
   videoRef: React.RefObject<HTMLVideoElement | null>;
   onTimeUpdate: PlayerRefProps['onTimeUpdate'];
   onReady: PlayerRefProps['onReady'];
   onPlayback: PlayerRefProps['onPlayback'];
+  onEnded: PlayerRefProps['onEnded'];
+  onFailed: PlayerRefProps['onFailed'];
 }) {
   const { t } = useI18n();
   const {
@@ -306,7 +331,11 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({
               onPlayback(true, event.currentTarget);
             }}
             onPause={(event) => onPlayback(false, event.currentTarget)}
-            onEnded={(event) => onPlayback(false, event.currentTarget)}
+            onEnded={(event) => {
+              onPlayback(false, event.currentTarget);
+              onEnded(event);
+            }}
+            onError={onFailed}
             onTimeUpdate={onTimeUpdate}
             onLoadedMetadata={onReady}
             data-testid='reader-video-file'
@@ -390,12 +419,16 @@ const ArticleAudioBlock = memo(function ArticleAudioBlock({
   onTimeUpdate,
   onReady,
   onPlayback,
+  onEnded,
+  onFailed,
 }: {
   block: ArticleContentBlock;
   audioRef: React.RefObject<HTMLAudioElement | null>;
   onTimeUpdate: PlayerRefProps['onTimeUpdate'];
   onReady: PlayerRefProps['onReady'];
   onPlayback: PlayerRefProps['onPlayback'];
+  onEnded: PlayerRefProps['onEnded'];
+  onFailed: PlayerRefProps['onFailed'];
 }) {
   const { pauseOther, showModeButton } = useContext(PlayerContext);
   if (!block.url) return null;
@@ -414,7 +447,11 @@ const ArticleAudioBlock = memo(function ArticleAudioBlock({
           onPlayback(true, event.currentTarget);
         }}
         onPause={(event) => onPlayback(false, event.currentTarget)}
-        onEnded={(event) => onPlayback(false, event.currentTarget)}
+        onEnded={(event) => {
+          onPlayback(false, event.currentTarget);
+          onEnded(event);
+        }}
+        onError={onFailed}
         onTimeUpdate={onTimeUpdate}
         onLoadedMetadata={onReady}
       />
@@ -478,6 +515,8 @@ const ContentBlock = memo(function ContentBlock({
   onTimeUpdate,
   onReady,
   onPlayback,
+  onEnded,
+  onFailed,
   isPlayingBlock,
   outlineIndex,
   playingRef,
@@ -557,6 +596,8 @@ const ContentBlock = memo(function ContentBlock({
           onTimeUpdate={onTimeUpdate}
           onReady={onReady}
           onPlayback={onPlayback}
+          onEnded={onEnded}
+          onFailed={onFailed}
         />
       );
     }
@@ -567,6 +608,8 @@ const ContentBlock = memo(function ContentBlock({
         onTimeUpdate={onTimeUpdate}
         onReady={onReady}
         onPlayback={onPlayback}
+        onEnded={onEnded}
+        onFailed={onFailed}
       />
     );
   }
@@ -580,6 +623,8 @@ const ContentBlock = memo(function ContentBlock({
         onTimeUpdate={onTimeUpdate}
         onReady={onReady}
         onPlayback={onPlayback}
+        onEnded={onEnded}
+        onFailed={onFailed}
       />
     );
   }
@@ -628,11 +673,28 @@ export function ArticleContent({
   followPlayback,
   miniPlayer,
   onImageContextMenu,
+  autoPlay,
+  onMediaEnded,
+  onMediaError,
 }: ArticleContentProps) {
   const { t } = useI18n();
 
   const content = payload.content;
   const status = String(payload.content_status || '').trim().toLowerCase();
+  // Nothing in this payload can play at all: the body is missing, still being
+  // transcribed, or empty. A queue that asked for it has to hear about it here,
+  // because the player below is never even mounted. The message is the page's
+  // business, not the reader's.
+  const articleId = payload.article?.id;
+  const missing = !Array.isArray(content) || content.length === 0;
+  const unavailableReportedRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!autoPlay || !missing || typeof articleId !== 'number') return;
+    if (!isMediaKind(payload.article?.content_kind)) return;
+    if (unavailableReportedRef.current === articleId) return;
+    unavailableReportedRef.current = articleId;
+    onMediaError?.(articleId);
+  }, [articleId, autoPlay, missing, onMediaError, payload.article?.content_kind]);
 
   if (!Array.isArray(content)) {
     return (
@@ -664,6 +726,9 @@ export function ArticleContent({
       followPlayback={followPlayback}
       miniPlayer={miniPlayer}
       onImageContextMenu={onImageContextMenu}
+      autoPlay={autoPlay}
+      onMediaEnded={onMediaEnded}
+      onMediaError={onMediaError}
     />
   );
 }
@@ -685,6 +750,9 @@ function RenderedContent({
   followPlayback,
   miniPlayer,
   onImageContextMenu,
+  autoPlay,
+  onMediaEnded,
+  onMediaError,
 }: RenderedContentProps) {
   const { references, failed: referenceFailed, retry: retryReference } = useArticleReferences(payload);
   const renderLink = useCallback<InlineLinkRenderer>((href, label, key) => {
@@ -719,6 +787,29 @@ function RenderedContent({
   // it: a fresh element always starts at 1x, and losing a 2x listen is losing the
   // reader's choice.
   const handoverRef = useRef<{ time: number; playing: boolean; rate: number } | null>(null);
+  // The queue's request is honoured once per article, and one playback reports one
+  // end: a replay clears the end record, and an error is reported only once because
+  // the queue already has to decide what comes next.
+  const autoPlayedRef = useRef<number | null>(null);
+  const endedReportRef = useRef<{ articleId: number; player: HTMLMediaElement } | null>(null);
+  const errorReportedRef = useRef<number | null>(null);
+  // Asynchronous work started for one entry finishes after the reader may already be
+  // on the next one. These three say whether a result is still about what is on
+  // screen: the live component, the entry it shows now, and the element on screen
+  // together with the entry whose media it is actually serving.
+  const aliveRef = useRef(true);
+  const articleIdRef = useRef<number | null>(articleId);
+  const mediaOwnerRef = useRef<{ articleId: number; player: HTMLMediaElement } | null>(null);
+  // Updated at commit time, never while rendering: a late rejection from the entry
+  // before this one then compares against what the DOM actually shows.
+  useLayoutEffect(() => { articleIdRef.current = articleId; }, [articleId]);
+  useLayoutEffect(() => {
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; };
+  }, []);
+  // What this article would actually play if asked: the video unless the reader
+  // chose the audio track, and the audio when there is no picture at all.
+  const hasPlayable = (hasVideo && !audioOnly) || Boolean(audioUrl);
 
   // A paragraph is on screen from its own `t` until the next one starts, so the
   // timeline only needs the sorted start times. Every paragraph carries one for a
@@ -984,18 +1075,98 @@ function RenderedContent({
     // A player the reader switched away from must not report a pause over the one
     // that replaced it, which is already running.
     if (!running && player !== mounted()) return;
-    if (running) setStarted(true);
+    if (running) {
+      setStarted(true);
+      // A new run is a new end; without this a replay of the same element would be
+      // swallowed by the guard in `onEnded`.
+      endedReportRef.current = null;
+      // A player that runs is serving this entry: only such a player may end it.
+      mediaOwnerRef.current = articleId === null ? null : { articleId, player };
+    }
     setPlaying(running);
-  }, [mounted]);
+  }, [articleId, mounted]);
+
+  // The page owns the wording: this only says which entry could not play, once.
+  const reportMediaError = useCallback((id: number) => {
+    if (errorReportedRef.current === id) return;
+    errorReportedRef.current = id;
+    onMediaError?.(id);
+  }, [onMediaError]);
+
+  // The queue owns what comes next; this only starts the article it asked for, once,
+  // and only when the player can actually start.
+  const tryAutoPlay = useCallback((player: HTMLMediaElement | null) => {
+    if (!autoPlay || articleId === null || !isMediaKind(payload.article?.content_kind)) return;
+    if (autoPlayedRef.current === articleId) return;
+    if (!player || !player.isConnected || player.readyState < 1) return;
+    autoPlayedRef.current = articleId;
+    // The reader may have started it already, and play() would only interrupt that.
+    if (!player.paused) return;
+    void player.play().catch(() => {
+      // The refusal can land after the reader moved on, so a stale one must not stop
+      // the entry that is on screen now: it is dropped unless the same entry, the
+      // same element and a live component are all still there.
+      if (!aliveRef.current) return;
+      if (articleIdRef.current !== articleId || mounted() !== player) return;
+      reportMediaError(articleId);
+    });
+  }, [articleId, autoPlay, mounted, payload.article?.content_kind, reportMediaError]);
 
   const onReady = useCallback((event: React.SyntheticEvent<HTMLMediaElement>) => {
+    const player = event.currentTarget;
+    // The source the element is now serving; an end that arrives before this has
+    // happened again still belongs to whatever the element held before.
+    mediaOwnerRef.current = articleId === null ? null : { articleId, player };
     const handover = handoverRef.current;
-    if (!handover) return;
-    handoverRef.current = null;
-    event.currentTarget.currentTime = handover.time;
-    event.currentTarget.playbackRate = handover.rate;
-    if (handover.playing) void event.currentTarget.play().catch(() => {});
-  }, []);
+    if (handover) {
+      handoverRef.current = null;
+      player.currentTime = handover.time;
+      player.playbackRate = handover.rate;
+      if (handover.playing) void player.play().catch(() => {});
+      // Taking the position over is not a second automatic start: the article has
+      // already been started, or paused, by the reader.
+      return;
+    }
+    tryAutoPlay(player);
+  }, [articleId, tryAutoPlay]);
+
+  const onEnded = useCallback((event: React.SyntheticEvent<HTMLMediaElement>) => {
+    const player = event.currentTarget;
+    // A player that was replaced (audio-only mode, another article) must not move
+    // the queue, and a second `ended` for the same run must not move it twice.
+    if (!aliveRef.current || player !== mounted() || articleId === null) return;
+    // An element whose source the parent has swapped keeps its DOM node: an end that
+    // belongs to the previous source must not be reported under the new entry.
+    const owner = mediaOwnerRef.current;
+    if (!owner || owner.player !== player || owner.articleId !== articleId) return;
+    const reported = endedReportRef.current;
+    if (reported && reported.articleId === articleId && reported.player === player) return;
+    endedReportRef.current = { articleId, player };
+    onMediaEnded?.(articleId);
+  }, [articleId, mounted, onMediaEnded]);
+
+  const onFailed = useCallback((event: React.SyntheticEvent<HTMLMediaElement>) => {
+    if (event.currentTarget !== mounted() || articleId === null) return;
+    reportMediaError(articleId);
+  }, [articleId, mounted, reportMediaError]);
+
+  // A player whose metadata is already there never fires `loadedmetadata` again, so
+  // the request is honoured here as well instead of waiting for a second event.
+  useEffect(() => {
+    if (!autoPlay || articleId === null) return;
+    const player = mounted();
+    if (!player || player.readyState < 1) return;
+    tryAutoPlay(player);
+  }, [articleId, audioOnly, autoPlay, mounted, tryAutoPlay]);
+
+  // The queue asked for an entry that has nothing to play (never archived, an
+  // extraction still pending): report it once rather than stall on a silent no-op.
+  // An ordinary text article simply stops, without a callback.
+  useEffect(() => {
+    if (!autoPlay || articleId === null || hasPlayable) return;
+    if (!isMediaKind(payload.article?.content_kind)) return;
+    reportMediaError(articleId);
+  }, [articleId, autoPlay, hasPlayable, payload.article?.content_kind, reportMediaError]);
 
   const controls = useMemo<PlayerControls>(() => {
     const pauseOther = (active: HTMLMediaElement) => {
@@ -1082,6 +1253,8 @@ function RenderedContent({
           onTimeUpdate={onTimeUpdate}
           onReady={onReady}
           onPlayback={onPlayback}
+          onEnded={onEnded}
+          onFailed={onFailed}
           isPlayingBlock={index === activeIndex}
           playingRef={playingRef}
           hasAudioBlock={Boolean(archivedAudio)}

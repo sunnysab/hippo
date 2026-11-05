@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from starlette.concurrency import iterate_in_threadpool
 
@@ -20,6 +20,8 @@ from ...article_queries import (
     _get_article,
     _list_article_images,
     _list_articles,
+    _list_watch_later,
+    _move_watch_later,
     _normalize_article_sort,
     _normalize_item_show_type,
     _normalize_read_filter,
@@ -58,6 +60,10 @@ from ..schemas.article import (
     StarStateOut,
     StarUpdateRequest,
     TranscribeQueuedOut,
+    WatchLaterListOut,
+    WatchLaterMoveOut,
+    WatchLaterMoveRequest,
+    WatchLaterStateOut,
 )
 
 logger = get_logger(__name__)
@@ -222,6 +228,88 @@ async def set_article_star(
     async with storage.transaction():
         starred_at = await storage.stars.set_starred(user_id=user.id, article_pk=article_id, starred=body.starred)
     return {'article_id': article_id, 'starred_at': starred_at}
+
+
+@router.get('/watch-later', response_model=WatchLaterListOut, response_model_exclude_unset=True)
+async def list_watch_later(
+    storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
+) -> dict[str, Any]:
+    """
+    列出我的「稍后再看」，按我自己排好的顺序。
+
+    只返回我现在还能读的文章：退订、停用或直接引用失效后，条目仍留在列表里，
+    重新订阅就回到原位，但不会再出现在这个响应中。这里不套用信息流的分组、
+    来源筛选和排除词——这是一份手工建的清单。
+
+    Returns:
+        dict: 文章列表（结构与文章列表的单条一致）与总数。
+    """
+    return await _list_watch_later(storage, user.id)
+
+
+@router.put('/watch-later/{article_id}', response_model=WatchLaterStateOut)
+async def add_to_watch_later(
+    article_id: int = Path(gt=0, description='文章 ID。'),
+    storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
+) -> dict[str, Any]:
+    """
+    把一篇文章放进稍后再看。
+
+    幂等：重复调用保留第一次加入的时间与位置，不会把它顶到最前面。
+    不可见的文章返回 `404`。
+
+    Returns:
+        dict: 文章 ID 与首次加入时间。
+    """
+    await _assert_article_visible(storage, user.id, article_id)
+    async with storage.transaction():
+        watch_later_at = await storage.watch_later.add(user_id=user.id, article_pk=article_id)
+    return {'article_id': article_id, 'watch_later_at': watch_later_at}
+
+
+@router.delete('/watch-later/{article_id}', response_model=WatchLaterStateOut)
+async def remove_from_watch_later(
+    article_id: int = Path(gt=0, description='文章 ID。'),
+    storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
+) -> dict[str, Any]:
+    """
+    把一篇文章移出稍后再看。
+
+    幂等，并且不要求文章仍然可见：退订之后也要能清掉自己留下的条目。
+
+    Returns:
+        dict: 文章 ID 与恒为 null 的加入时间。
+    """
+    async with storage.transaction():
+        await storage.watch_later.remove(user_id=user.id, article_pk=article_id)
+    return {'article_id': article_id, 'watch_later_at': None}
+
+
+@router.patch('/watch-later/{article_id}', response_model=WatchLaterMoveOut)
+async def move_in_watch_later(
+    body: WatchLaterMoveRequest,
+    article_id: int = Path(gt=0, description='文章 ID。'),
+    storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
+) -> dict[str, Any]:
+    """
+    调整一篇稍后再看文章的位置。
+
+    只在我看得见的条目之间移动：看不见的条目不会拦住 `up`/`down`，也不会被挪动。
+    已经在最前/最后时是空操作，不报错；文章不在我的可见列表里返回 `404`。
+
+    Args:
+        body (WatchLaterMoveRequest): `{"direction": "up" | "down" | "top"}`。
+
+    Returns:
+        dict: 文章 ID。
+    """
+    async with storage.transaction():
+        await _move_watch_later(storage, user.id, article_id, body.direction)
+    return {'article_id': article_id}
 
 
 @router.get('/article/{article_id}/image', response_model=ArticleImageListOut)

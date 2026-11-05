@@ -49,6 +49,9 @@ class ReferencePostgresTest(unittest.IsolatedAsyncioTestCase):
             'article_content',
             'article_queue',
             'users',
+            # ``_get_article`` reads the caller's Watch Later badge, so the side
+            # table has to exist before the detail route is exercised.
+            'article_watch_later',
             'subscription',
             'article_images',
             'blocked_image_hashes',
@@ -98,6 +101,12 @@ class ReferencePostgresTest(unittest.IsolatedAsyncioTestCase):
         self.storage = PostgresStorage(DSN)
         self.storage.conn = self.conn
         self.storage._bind_repositories()
+        # Topic classification and event clustering are unrelated enrichment this
+        # fixture never creates tables for. ``_attach_topics`` and the event
+        # lookup both guard on the repository, so leaving it out keeps the fixture
+        # on the reference tables under test instead of failing with
+        # UndefinedTable partway through the detail route.
+        self.storage.topics = None
 
     async def cleanup(self):
         await self.conn.rollback()

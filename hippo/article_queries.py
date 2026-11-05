@@ -613,6 +613,24 @@ async def _attach_topics(storage: PostgresStorage, rows: list[dict[str, Any]]) -
         row['topics'] = by_pk.get(row['id'], [])
 
 
+async def _attach_watch_later(storage: PostgresStorage, user_id: int, rows: list[dict[str, Any]]) -> None:
+    """Set each row's ``watch_later_at`` in one query, not one per row.
+
+    A page of 20 would otherwise mean 20 round trips for a badge. Rows that are
+    not on the caller's list get ``None``. A storage double without the
+    repository is left untouched: the badge is an enrichment, never a reason for
+    a list request to fail or to change shape.
+    """
+    if not rows:
+        return
+    watch_later_repo = getattr(storage, 'watch_later', None)
+    if watch_later_repo is None:
+        return
+    by_pk = await watch_later_repo.added_at_for(user_id=user_id, article_pks=[row['id'] for row in rows])
+    for row in rows:
+        row['watch_later_at'] = by_pk.get(row['id'])
+
+
 async def _count_classified_articles(
     *,
     storage: PostgresStorage,
@@ -806,6 +824,7 @@ async def _list_articles(
         row['content_kind'] = content_kind(row.get('source'), row.get('item_show_type'))
         row['account_avatar_url'] = f'/api/account/{row["biz"]}/avatar'
     await _attach_topics(storage, rows)
+    await _attach_watch_later(storage, user_id, rows)
     vocabulary = vocabulary or {}
     topic_facets, classified_total = await _article_topic_facets(
         storage=storage,
@@ -912,6 +931,7 @@ async def _get_article(storage: PostgresStorage, user_id: int, article_id: int) 
     article['content_kind'] = content_kind(article.get('source'), article.get('item_show_type'))
     article['account_avatar_url'] = f'/api/account/{article["biz"]}/avatar'
     await _attach_topics(storage, [article])
+    await _attach_watch_later(storage, user_id, [article])
     # The event is only reported once it is visible *to this reader*, so the counts
     # match what clicking through will actually list. The lookup is skipped when the
     # caller's storage has no topic repository: the event is an enrichment, never a
@@ -1321,4 +1341,106 @@ async def _list_feed(
         offset=0,
         event_id=event_id,
     )
+    # No watch-later badge here: the mixed feed is a reading surface and an RSS
+    # document, and one extra query per request would buy it nothing.
     return await fetchall_rows(storage, query_sql, params, normalize=_normalize_record)
+
+
+# ============================================================
+# Watch Later
+# ============================================================
+
+
+async def _visible_article_pks(storage: PostgresStorage, user_id: int, article_pks: list[int]) -> set[int]:
+    """Which of these articles the caller may still read, in one query.
+
+    Same gate as ``_assert_article_visible``: a subscription or a current direct
+    reference. A watch-later entry whose source went away stops being listed
+    without its row being deleted, so resubscribing brings it back in place.
+    """
+    if not article_pks:
+        return set()
+    rows = await fetchall_rows(
+        storage,
+        f'SELECT a.id FROM articles a{ARTICLE_ACCESS_JOIN} WHERE a.id = ANY(%s)',
+        [user_id, article_pks],
+    )
+    return {int(row['id']) for row in rows}
+
+
+async def _list_watch_later(storage: PostgresStorage, user_id: int) -> dict[str, Any]:
+    """The caller's Watch Later, in the order they arranged it.
+
+    No feed filter and no personal exclude keywords apply: this is a list the
+    reader built by hand. The subscription/direct-reference gate does apply, so
+    the response only holds articles that can actually be opened. One query for
+    the rows plus one for their topics; the list is not paginated because it is
+    one reader's own collection.
+    """
+    rows = await fetchall_rows(
+        storage,
+        (
+            'SELECT a.id, a.biz, a.article_id, a.title, a.item_show_type, a.author, a.digest, a.cover, a.link,'
+            ' a.source_url, a.publish_at, a.duration_seconds, a.created_at, ar.read_at, st.starred_at,'
+            ' acc.source, acc.nickname AS account_nickname, acc.alias AS account_alias,'
+            ' acc.round_head_img AS account_avatar,'
+            ' sub.group_id, g.name AS group_name,'
+            ' wl.added_at AS watch_later_at, img.id AS image_id'
+            ' FROM article_watch_later wl'
+            ' JOIN articles a ON a.id = wl.article_pk'
+            f'{ACCOUNTS_JOIN}'
+            f'{ARTICLE_ACCESS_JOIN}'
+            f'{READ_STATE_JOIN}'
+            f'{STAR_JOIN}'
+            ' LEFT JOIN account_groups g ON g.id = sub.group_id'
+            f' {ARTICLE_THUMB_IMAGE_SQL}'
+            ' WHERE wl.user_id = %s'
+            ' ORDER BY wl.position ASC, wl.added_at ASC, a.id ASC'
+        ),
+        [user_id, user_id, user_id, user_id],
+        normalize=_normalize_record,
+    )
+    for row in rows:
+        row['item_show_type'] = _coalesce_item_show_type(row.get('item_show_type'))
+        row['content_kind'] = content_kind(row.get('source'), row.get('item_show_type'))
+        row['account_avatar_url'] = f'/api/account/{row["biz"]}/avatar'
+    await _attach_topics(storage, rows)
+    return {'articles': rows, 'total': len(rows)}
+
+
+async def _move_watch_later(storage: PostgresStorage, user_id: int, article_id: int, direction: str) -> None:
+    """Reorder one entry inside the caller's own visible list.
+
+    ``up``/``down`` swap with the neighbouring *visible* entry, ``top`` sends it
+    to the front, so an entry the caller can no longer see never swallows a move
+    and never shifts anything they can see. The move re-assigns the positions the
+    visible entries already occupy, in their new order: nothing outside that set
+    of slots changes, and a position never has to be invented or renumbered.
+
+    The reader's row is locked *before* the entries are read. The new order is
+    computed from that snapshot, so a concurrent move or append that read the
+    list first would otherwise write back an order that is already stale.
+    """
+    await storage.watch_later.lock(user_id=user_id)
+    entries = await storage.watch_later.entries(user_id=user_id)
+    stored_order = [int(entry['article_pk']) for entry in entries]
+    visible = await _visible_article_pks(storage, user_id, stored_order)
+    visible_order = [article_pk for article_pk in stored_order if article_pk in visible]
+    if article_id not in visible_order:
+        raise ApiError('Article not found', status=404)
+
+    index = visible_order.index(article_id)
+    reordered = list(visible_order)
+    if direction == 'top':
+        reordered.insert(0, reordered.pop(index))
+    elif direction == 'up' and index > 0:
+        reordered[index - 1], reordered[index] = reordered[index], reordered[index - 1]
+    elif direction == 'down' and index < len(reordered) - 1:
+        reordered[index], reordered[index + 1] = reordered[index + 1], reordered[index]
+    if reordered == visible_order:
+        # Already first/last: the request is a no-op, not an error.
+        return
+
+    slots = sorted(int(entry['position']) for entry in entries if int(entry['article_pk']) in visible)
+    assignments = [(article_pk, slots[position]) for position, article_pk in enumerate(reordered)]
+    await storage.watch_later.set_positions(user_id=user_id, assignments=assignments)

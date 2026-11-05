@@ -47,10 +47,11 @@ from .repositories import (
     UserRepository,
     UserSessionRepository,
     UserTokenRepository,
+    WatchLaterRepository,
 )
 from .sync_jobs import SyncJobRepository
 
-SCHEMA_VERSION = '35'
+SCHEMA_VERSION = '36'
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'schema' / 'postgres.sql'
 
@@ -241,6 +242,7 @@ class PostgresStorage(AbstractAsyncContextManager):
         self.corrections = CorrectionRepository(self.conn)
         self.reads = ArticleReadRepository(self.conn)
         self.stars = ArticleStarRepository(self.conn)
+        self.watch_later = WatchLaterRepository(self.conn)
         self.chat = ChatRepository(self.conn)
         self.outlines = OutlineRepository(self.conn)
         self.topics = TopicRepository(self.conn)

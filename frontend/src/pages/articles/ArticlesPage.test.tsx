@@ -86,6 +86,7 @@ const clickUpdate = async () => {
 describe('ArticlesPage update entry', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    apiSendMock.mockReset().mockResolvedValue({});
     viewportWidth = 1440;
     mediaListeners.clear();
     vi.stubGlobal('IntersectionObserver', StubIntersectionObserver);
@@ -277,6 +278,255 @@ describe('ArticlesPage update entry', () => {
     expect(preview.classList.contains('is-overlay-panel')).toBe(false);
     unmount();
     expect(disconnect).toHaveBeenCalled();
+  });
+
+  it('opens Watch Later independently of the previous source and search', async () => {
+    const original = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string) => path === '/api/watch-later'
+      ? Promise.resolve({ articles: [{ ...articlePayload.article, title: 'Queued article', watch_later_at: '2026-05-01' }], total: 1 }) : original(path));
+    renderPage('/articles?source=youtube&q=hidden&read=unread');
+    fireEvent.click(screen.getByRole('button', { name: zhCN['articles.watchLater'] }));
+    await screen.findByText('Queued article');
+    expect(apiGetMock).toHaveBeenCalledWith('/api/watch-later');
+    expect(screen.queryByRole('searchbox')).toBeNull();
+    expect(screen.queryByRole('combobox', { name: '来源' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: zhCN['articles.viewAll'] }));
+    await waitFor(() => expect(screen.queryByText('Queued article')).toBeNull());
+    expect(screen.getByRole('searchbox')).toHaveProperty('value', '');
+  });
+
+  it('shows a retry rather than an empty queue when loading fails', async () => {
+    const original = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string) => path === '/api/watch-later'
+      ? Promise.reject(new Error('queue offline')) : original(path));
+    renderPage('/articles?view=watch-later');
+    await screen.findByRole('alert');
+    expect(screen.queryByText(zhCN['articles.watchLaterEmpty'])).toBeNull();
+    apiGetMock.mockImplementation((path: string) => path === '/api/watch-later'
+      ? Promise.resolve({ articles: [], total: 0 }) : original(path));
+    fireEvent.click(screen.getByRole('button', { name: zhCN['common.retry'] }));
+    await screen.findByText(zhCN['articles.watchLaterEmpty']);
+  });
+
+  it('persists queue order changes and refreshes the saved list', async () => {
+    const first = { ...articlePayload.article, title: 'First queued', watch_later_at: '2026-05-01' };
+    const second = { ...first, id: 2, title: 'Second queued' };
+    let articles = [first, second];
+    const original = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string) => path === '/api/watch-later'
+      ? Promise.resolve({ articles, total: articles.length }) : original(path));
+    apiSendMock.mockImplementation(async (_path: string, method: string) => {
+      if (method === 'PATCH') articles = [second, first];
+      return {};
+    });
+    const { container } = renderPage('/articles?view=watch-later');
+    await screen.findByText('Second queued');
+    const up = screen.getAllByRole('button', { name: zhCN['articles.watchLaterUp'] });
+    expect(up[0]).toHaveProperty('disabled', true);
+    fireEvent.click(up[1]);
+    await waitFor(() => expect(apiSendMock).toHaveBeenCalledWith('/api/watch-later/2', 'PATCH', { direction: 'up' }));
+    await waitFor(() => expect(container.querySelector('.article-title')?.textContent).toContain('Second queued'));
+  });
+
+  it('updates queue badges only after success and prevents duplicate writes', async () => {
+    const original = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string) => path.startsWith('/api/article?')
+      ? Promise.resolve({ articles: [{ ...articlePayload.article, title: 'Save this' }], total: 1 }) : original(path));
+    let finish!: (result: { watch_later_at: string }) => void;
+    apiSendMock.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    renderPage();
+    await screen.findByText('Save this');
+    const button = screen.getAllByRole('button', { name: zhCN['articles.addWatchLater'] }).find((element) => !element.hasAttribute('disabled'))!;
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(apiSendMock).toHaveBeenCalledTimes(1);
+    expect(button.getAttribute('aria-pressed')).toBe('false');
+    await act(async () => finish({ watch_later_at: '2026-05-01' }));
+    expect(screen.getAllByRole('button', { name: zhCN['articles.removeWatchLater'] }).every((element) => element.getAttribute('aria-pressed') === 'true')).toBe(true);
+  });
+
+  it('keeps a failed add unselected', async () => {
+    const original = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string) => path.startsWith('/api/article?')
+      ? Promise.resolve({ articles: [{ ...articlePayload.article, title: 'Save this' }], total: 1 }) : original(path));
+    apiSendMock.mockRejectedValue(new Error('write failed'));
+    renderPage();
+    await screen.findByText('Save this');
+    fireEvent.click(screen.getAllByRole('button', { name: zhCN['articles.addWatchLater'] }).find((element) => !element.hasAttribute('disabled'))!);
+    await screen.findByText('write failed');
+    expect(screen.queryByRole('button', { name: zhCN['articles.removeWatchLater'] })).toBeNull();
+  });
+
+  const mockMediaQueue = (embeddedAudio = false) => {
+    const rows = [101, 102, 103].map((id) => ({ ...articlePayload.article, id, title: `Queue ${id}`,
+      content_kind: id === 103 ? 'article' : 'video', watch_later_at: '2026-05-01' }));
+    const original = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === '/api/watch-later' || path.startsWith('/api/article?')) return Promise.resolve({ articles: rows, total: rows.length });
+      const row = rows.find((item) => path === `/api/article/${item.id}`);
+      if (row) return Promise.resolve({ ...articlePayload, article: row, content: row.content_kind === 'video'
+        ? [{ type: 'video', url: `/api/media/${row.id}/video` }] : [{ type: 'paragraph', text: 'Read this before continuing.' },
+          ...(embeddedAudio ? [{ type: 'audio', url: `/api/media/${row.id}/audio` }] : [])] });
+      return original(path);
+    });
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+    return { play, rows };
+  };
+
+  it('continues media in saved order, then stops on a text article', async () => {
+    const { play } = mockMediaQueue();
+    const { container } = renderPage('/articles?view=watch-later&article=101');
+    await waitFor(() => expect(container.querySelector('video')?.getAttribute('src')).toBe('/api/media/101/video'));
+    expect(play).not.toHaveBeenCalled();
+    const old = container.querySelector('video')!;
+    fireEvent.loadedMetadata(old);
+    fireEvent.play(old);
+    fireEvent.ended(old);
+    await waitFor(() => expect(container.querySelector('video')?.getAttribute('src')).toBe('/api/media/102/video'));
+    const second = container.querySelector('video')!;
+    Object.defineProperty(second, 'readyState', { configurable: true, value: 1 });
+    fireEvent.loadedMetadata(second);
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+    fireEvent.ended(old);
+    expect(container.querySelector('video')).toBe(second);
+    fireEvent.ended(second);
+    await screen.findByText('Read this before continuing.');
+    expect(container.querySelector('video')).toBeNull();
+    expect(play).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: zhCN['articles.watchLaterNext'] })).toHaveProperty('disabled', true);
+    expect(apiSendMock.mock.calls.some(([, method]) => method === 'DELETE')).toBe(false);
+    play.mockRestore();
+  });
+
+  it('never advances after media ends outside Watch Later', async () => {
+    const { play } = mockMediaQueue();
+    const { container } = renderPage('/articles?article=101');
+    await waitFor(() => expect(container.querySelector('video')).not.toBeNull());
+    fireEvent.loadedMetadata(container.querySelector('video')!);
+    fireEvent.play(container.querySelector('video')!);
+    fireEvent.ended(container.querySelector('video')!);
+    expect(apiGetMock.mock.calls.some(([path]) => path === '/api/article/102')).toBe(false);
+    expect(play).not.toHaveBeenCalled();
+    play.mockRestore();
+  });
+
+  it('defers an ended item until a pending reorder has saved, then uses the new order', async () => {
+    const { play, rows } = mockMediaQueue();
+    let finish!: () => void;
+    apiSendMock.mockImplementation(async (_path: string, method: string) => {
+      if (method === 'PATCH') await new Promise<void>((resolve) => { finish = () => {
+        rows.splice(1, 2, rows[2], rows[1]);
+        resolve();
+      }; });
+      return {};
+    });
+    const { container } = renderPage('/articles?view=watch-later&article=101');
+    await waitFor(() => expect(container.querySelector('video')).not.toBeNull());
+    await screen.findByText('Queue 103');
+    const first = container.querySelector('video')!;
+    fireEvent.loadedMetadata(first);
+    fireEvent.play(first);
+    fireEvent.click(screen.getAllByRole('button', { name: zhCN['articles.watchLaterUp'] })[2]);
+    fireEvent.ended(first);
+    expect(apiGetMock.mock.calls.some(([path]) => path === '/api/article/102')).toBe(false);
+    await act(async () => finish());
+    await screen.findByText('Read this before continuing.');
+    expect(apiGetMock.mock.calls.some(([path]) => path === '/api/article/103')).toBe(true);
+    expect(apiGetMock.mock.calls.some(([path]) => path === '/api/article/102')).toBe(false);
+    play.mockRestore();
+  });
+
+  it('retains an ended event while the initial queue is still loading', async () => {
+    const { play, rows } = mockMediaQueue();
+    const original = apiGetMock.getMockImplementation()!;
+    let finish!: (result: unknown) => void;
+    apiGetMock.mockImplementation((path: string) => path === '/api/watch-later'
+      ? new Promise((resolve) => { finish = resolve; }) : original(path));
+    const { container } = renderPage('/articles?view=watch-later&article=101');
+    await waitFor(() => expect(container.querySelector('video')).not.toBeNull());
+    fireEvent.loadedMetadata(container.querySelector('video')!);
+    fireEvent.play(container.querySelector('video')!);
+    fireEvent.ended(container.querySelector('video')!);
+    await act(async () => finish({ articles: rows, total: rows.length }));
+    await waitFor(() => expect(container.querySelector('video')?.getAttribute('src')).toBe('/api/media/102/video'));
+    play.mockRestore();
+  });
+
+  it('cancels a deferred end when a phone reader returns to the list', async () => {
+    viewportWidth = 390;
+    const { play, rows } = mockMediaQueue();
+    const original = apiGetMock.getMockImplementation()!;
+    let finish!: (result: unknown) => void;
+    apiGetMock.mockImplementation((path: string) => path === '/api/watch-later'
+      ? new Promise((resolve) => { finish = resolve; }) : original(path));
+    const { container } = renderPage('/articles?view=watch-later&article=101');
+    await waitFor(() => expect(container.querySelector('video')).not.toBeNull());
+    fireEvent.loadedMetadata(container.querySelector('video')!);
+    fireEvent.play(container.querySelector('video')!);
+    fireEvent.ended(container.querySelector('video')!);
+    fireEvent.click(screen.getByRole('button', { name: zhCN['articles.backToList'] }));
+    await act(async () => finish({ articles: rows, total: rows.length }));
+    expect(apiGetMock.mock.calls.some(([path]) => path === '/api/article/102')).toBe(false);
+    expect(container.querySelector('.article-layout')?.classList.contains('is-mobile-reading')).toBe(false);
+    expect(play).not.toHaveBeenCalled();
+    play.mockRestore();
+  });
+
+  it('ignores media ending while a phone reader is showing the list', async () => {
+    viewportWidth = 390;
+    const { play } = mockMediaQueue();
+    const { container } = renderPage('/articles?view=watch-later&article=101');
+    await waitFor(() => expect(container.querySelector('video')).not.toBeNull());
+    const player = container.querySelector('video')!;
+    fireEvent.loadedMetadata(player);
+    fireEvent.play(player);
+    fireEvent.click(screen.getByRole('button', { name: zhCN['articles.backToList'] }));
+    fireEvent.ended(player);
+    await act(async () => {});
+    expect(apiGetMock.mock.calls.some(([path]) => path === '/api/article/102')).toBe(false);
+    expect(container.querySelector('.article-layout')?.classList.contains('is-mobile-reading')).toBe(false);
+    play.mockRestore();
+  });
+
+  it('does not reopen the phone reader when an automatic next-item request finishes after returning', async () => {
+    viewportWidth = 390;
+    const { play } = mockMediaQueue();
+    const original = apiGetMock.getMockImplementation()!;
+    let finish!: () => Promise<void>;
+    apiGetMock.mockImplementation((path: string) => path === '/api/article/102'
+      ? new Promise((resolve) => { finish = async () => resolve(await original(path)); }) : original(path));
+    const { container } = renderPage('/articles?view=watch-later&article=101');
+    await waitFor(() => expect(container.querySelector('video')).not.toBeNull());
+    fireEvent.loadedMetadata(container.querySelector('video')!);
+    fireEvent.play(container.querySelector('video')!);
+    fireEvent.ended(container.querySelector('video')!);
+    await waitFor(() => expect(apiGetMock.mock.calls.some(([path]) => path === '/api/article/102')).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: zhCN['articles.backToList'] }));
+    await act(async () => finish());
+    expect(container.querySelector('.article-layout')?.classList.contains('is-mobile-reading')).toBe(false);
+    expect(play).not.toHaveBeenCalled();
+    play.mockRestore();
+  });
+
+  it('stops on an ordinary article even if it embeds playable audio', async () => {
+    const { play, rows } = mockMediaQueue(true);
+    rows[1].content_kind = 'article';
+    rows[2].content_kind = 'video';
+    const { container } = renderPage('/articles?view=watch-later&article=101');
+    await waitFor(() => expect(container.querySelector('video')).not.toBeNull());
+    fireEvent.loadedMetadata(container.querySelector('video')!);
+    fireEvent.play(container.querySelector('video')!);
+    fireEvent.ended(container.querySelector('video')!);
+    await screen.findByText('Read this before continuing.');
+    const audio = container.querySelector('audio')!;
+    Object.defineProperty(audio, 'readyState', { configurable: true, value: 1 });
+    fireEvent.loadedMetadata(audio);
+    fireEvent.play(audio);
+    fireEvent.ended(audio);
+    expect(play).not.toHaveBeenCalled();
+    expect(apiGetMock.mock.calls.some(([path]) => path === '/api/article/103')).toBe(false);
+    play.mockRestore();
   });
 
 });

@@ -12,6 +12,8 @@ interface ArticleCardProps {
   onContextMenu: (e: React.MouseEvent) => void;
   onToggleRead?: (article: Article) => void;
   onToggleStar?: (article: Article) => void;
+  onToggleWatchLater?: (article: Article) => void;
+  watchLaterBusy?: boolean;
   onAccountClick?: (biz: string) => void;
 }
 
@@ -22,6 +24,8 @@ export const ArticleCard = memo(function ArticleCard({
   onContextMenu,
   onToggleRead,
   onToggleStar,
+  onToggleWatchLater,
+  watchLaterBusy,
   onAccountClick,
 }: ArticleCardProps) {
   const { t } = useI18n();
@@ -31,11 +35,12 @@ export const ArticleCard = memo(function ArticleCard({
   const digest = article.digest || '';
   const isRead = Boolean(article.read_at);
   const isStarred = Boolean(article.starred_at);
+  const isQueued = Boolean(article.watch_later_at);
   const duration = formatDuration(article.duration_seconds);
 
   return (
     <div
-      className={`article-card${isActive ? ' is-active' : ''}${isRead ? ' is-read' : ''}${isStarred ? ' is-starred' : ''}`}
+      className={`article-card${isActive ? ' is-active' : ''}${isRead ? ' is-read' : ''}${isStarred ? ' is-starred' : ''}${isQueued ? ' is-watch-later' : ''}${onToggleWatchLater ? ' has-watch-later-action' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onClick}
@@ -77,8 +82,23 @@ export const ArticleCard = memo(function ArticleCard({
         </div>
         <div className="article-digest" title={digest}>{digest}</div>
       </div>
-      {onToggleStar || onToggleRead ? (
+      {onToggleStar || onToggleRead || onToggleWatchLater ? (
         <div className="article-card-actions">
+          {onToggleWatchLater ? (
+            <button
+              className={`article-card-action watch-later-action${isQueued ? ' is-on' : ''}`}
+              type="button"
+              disabled={watchLaterBusy}
+              title={isQueued ? t('articles.removeWatchLater', 'Remove from Watch Later') : t('articles.addWatchLater', 'Add to Watch Later')}
+              aria-label={isQueued ? t('articles.removeWatchLater', 'Remove from Watch Later') : t('articles.addWatchLater', 'Add to Watch Later')}
+              aria-pressed={isQueued}
+              onClick={(event) => { event.stopPropagation(); onToggleWatchLater(article); }}
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" /><path d="M12 6v6l4 2" />
+              </svg>
+            </button>
+          ) : null}
           {onToggleStar ? (
             <button
               className={`article-card-action${isStarred ? ' is-on' : ''}`}

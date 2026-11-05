@@ -565,6 +565,40 @@ CREATE TABLE IF NOT EXISTS article_star (
 );
 
 -- ============================================================
+-- Watch Later: one ordered list per reader
+-- ============================================================
+
+-- Read state and stars are unordered flags; this list has an order the reader
+-- arranges, so a row keeps both when it was added and where it sits. Position is
+-- a plain bigint without a unique constraint: a move rewrites the positions the
+-- visible entries already occupy, and two rows sharing a position mid-statement
+-- is a normal intermediate state of that rewrite.
+--
+-- Unlike article_read / article_star this table keeps a foreign key to articles.
+-- Those two skip it because adding one validates every child row and takes a
+-- SHARE ROW EXCLUSIVE lock on the 1.5M-row parent while the sync workers write.
+-- Here the child starts empty, so the same statement only takes that parent lock
+-- (no scan), and each insert then takes a key-share lock on its one article row.
+-- The cascade lookup never uses user_id, so article_pk is indexed on its own.
+CREATE TABLE IF NOT EXISTS article_watch_later (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    article_pk INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+    added_at TIMESTAMPTZ NOT NULL,
+    position BIGINT NOT NULL,
+    PRIMARY KEY (user_id, article_pk)
+);
+
+-- The list is always read per reader in position order; article_pk keeps that
+-- order deterministic when two rows share a position.
+CREATE INDEX IF NOT EXISTS idx_article_watch_later_user_position
+ON article_watch_later (user_id, position, article_pk);
+
+-- Deleting an article cascades through this index; the primary key starts with
+-- user_id and cannot serve that lookup.
+CREATE INDEX IF NOT EXISTS idx_article_watch_later_article
+ON article_watch_later (article_pk);
+
+-- ============================================================
 -- 划线（quote + prefix/suffix 锚定，不用 offset）
 -- ============================================================
 

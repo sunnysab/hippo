@@ -350,7 +350,8 @@ GET /api/article
       "image_id": 4488748,
       "source": "weixin",
       "read_at": null,
-      "starred_at": null
+      "starred_at": null,
+      "watch_later_at": null
     }
   ],
   "page": 1,
@@ -369,6 +370,8 @@ GET /api/article
 - `account_avatar` 是原始腾讯 CDN 地址，仅作信息保留；前端应使用 `account_avatar_url` 代理路径。
 - `read_at` / `starred_at` 是**当前用户**的已读 / 收藏时间（ISO 8601），未读或未收藏为 `null`。
   两者都按用户隔离，不影响他人。
+- `watch_later_at` 是**当前用户**把这篇放进稍后再看的时间（ISO 8601），不在清单里为 `null`。
+  列表与详情都带它，只用来画角标；清单本身见下面的「稍后再看」。
 - `source` 是数据来源标识（`accounts.source`），目前只有 `weixin`；新来源接入后列表与详情都会带上它。
   来源取值是开放集合，不是枚举：服务端只做长度与 ASCII 校验，不做白名单。
 - `item_show_type_facets` 是按当前筛选条件统计的版式分布（不受 `item_show_type` 自身影响）。
@@ -527,6 +530,38 @@ POST /api/image/43/block    → 200 { "image_id": 43, "hash_algo": "sha256", "co
 ```
 
 `block` 之后，任何文章里的同一张图（哈希相同）都会从正文块与图片列表中消失。回源失败返回 `502`。
+
+### 稍后再看 `/api/watch-later`
+
+一份**有序的单人清单**，图文、视频、音频都能放进去；顺序由读者自己排，与信息流的分组、来源、
+排除词都无关。
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/api/watch-later` | 我的稍后再看，按我排的顺序 |
+| PUT | `/api/watch-later/{article_id}` | 放进稍后再看（幂等，追加到末尾） |
+| DELETE | `/api/watch-later/{article_id}` | 移出稍后再看（幂等） |
+| PATCH | `/api/watch-later/{article_id}` | 调整顺序 |
+
+```
+GET   /api/watch-later
+→ { "articles": [ … 与文章列表单条结构一致，另有 watch_later_at … ], "total": 3 }
+
+PUT    /api/watch-later/42                          → { "article_id": 42, "watch_later_at": "2026-05-02T11:00:00+00:00" }
+DELETE /api/watch-later/42                          → { "article_id": 42, "watch_later_at": null }
+PATCH  /api/watch-later/42 { "direction": "top" }   → { "article_id": 42 }
+```
+
+- 列表只包含**当前仍可读**的文章（订阅仍然有效，或直接引用仍然成立）。退订后条目不会消失，
+  重新订阅就回到原位；但在此之前它不出现在响应里，`total` 也只数可见条目。
+- `PUT` 幂等：重复调用保留第一次的 `watch_later_at` 与位置，不会把它顶到最前。文章不可见时 `404`。
+- `DELETE` 幂等，且**不检查可见性**：退订之后也要能清掉自己留下的条目。
+  成功时 `watch_later_at` 恒为 `null`——它回答的是「现在不在清单里」。
+- `PATCH` 的 `direction` 只能是 `up`、`down`、`top`。`up`/`down` 与**相邻的可见条目**交换位置，
+  所以看不见的条目不会吞掉一次移动；`top` 移到最前。已经在最前/最后是空操作（`200`，不改任何行）。
+  文章不在我的可见列表里返回 `404`。
+- `article_id` 必须是正整数，`direction` 必须是上面三个值之一，否则 `422`（`request.invalid`）。
+- 列表不分页：这是一个人自己的清单，`total` 就是条目数。
 
 ## 6. 标注
 
@@ -1297,6 +1332,10 @@ Content-Type: application/pdf
 | PUT | `/api/source/credential/{source}` | 登录 |
 | POST | `/api/source/credential/{source}/test` | 登录 |
 | GET | `/api/source/preview` | 登录 |
+| GET | `/api/watch-later` | 登录 |
+| PUT | `/api/watch-later/{article_id}` | 登录 |
+| DELETE | `/api/watch-later/{article_id}` | 登录 |
+| PATCH | `/api/watch-later/{article_id}` | 登录 |
 | GET | `/api/whoami` | 登录 / API Key |
 
 ## 附录 B：状态码

@@ -17,6 +17,8 @@ export interface ArticleFiltersState {
   read: string;
   /** 'true' keeps only starred articles. */
   starred: string;
+  /** The personal ordered queue, independent of feed filters. */
+  watchLater?: boolean;
   search: string;
   sort: string;
 }
@@ -46,6 +48,7 @@ export const areArticleFiltersEqual = (
   left.source === right.source &&
   left.read === right.read &&
   left.starred === right.starred &&
+  Boolean(left.watchLater) === Boolean(right.watchLater) &&
   left.search === right.search &&
   left.sort === right.sort
 );
@@ -57,6 +60,9 @@ export const getDefaultArticleSort = (search: string): string => (
 export const buildArticleRouteStateFromSearchParams = (
   searchParams: URLSearchParams,
 ): ArticleRouteState => {
+  if (searchParams.get('view') === 'watch-later') {
+    searchParams = new URLSearchParams({ view: 'watch-later', article: searchParams.get('article') || '' });
+  }
   const search = searchParams.get('q') || '';
   return {
     filters: {
@@ -68,6 +74,7 @@ export const buildArticleRouteStateFromSearchParams = (
       source: searchParams.get('source') || '',
       read: searchParams.get('read') || '',
       starred: searchParams.get('starred') || '',
+      ...(searchParams.get('view') === 'watch-later' ? { watchLater: true } : {}),
       search,
       sort: searchParams.get('sort') || getDefaultArticleSort(search),
     },
@@ -80,6 +87,11 @@ export const buildArticleSearchParams = (
   filters: ArticleFiltersState,
   routeTarget?: { articleId?: string; itemId?: string },
 ): URLSearchParams => {
+  if (filters.watchLater) {
+    const params = new URLSearchParams({ view: 'watch-later' });
+    if (routeTarget?.articleId) params.set('article', routeTarget.articleId);
+    return params;
+  }
   const params = new URLSearchParams();
   if (filters.groupId) params.set('group', filters.groupId);
   if (filters.accountBiz) params.set('account', filters.accountBiz);

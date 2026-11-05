@@ -7,15 +7,20 @@ import { EmptyState } from '../../components/EmptyState';
 import { useToast } from '../../hooks/useToast';
 import { copyToClipboard } from '../../utils/clipboard';
 import { apiGet, apiSend, isAuthError } from '../../api';
+import type { WatchLaterMove } from '../../hooks/useWatchLater';
 import type { Article } from '../../store/articles';
 
 interface ArticleListProps {
   onSelect: (id: number) => Promise<void>;
   onLoadMore: () => Promise<void>;
   onFilterByAccount?: (biz: string) => void;
+  watchLater?: boolean;
+  watchLaterBusy?: boolean;
+  onToggleWatchLater?: (article: Article) => void;
+  onMoveWatchLater?: (article: Article, direction: WatchLaterMove) => void;
 }
 
-export function ArticleList({ onSelect, onLoadMore, onFilterByAccount }: ArticleListProps) {
+export function ArticleList({ onSelect, onLoadMore, onFilterByAccount, watchLater, watchLaterBusy, onToggleWatchLater, onMoveWatchLater }: ArticleListProps) {
   const { state, dispatch } = useArticlesState();
   const { t } = useI18n();
   const { showToast } = useToast();
@@ -153,7 +158,9 @@ export function ArticleList({ onSelect, onLoadMore, onFilterByAccount }: Article
   if (!state.articles.length) {
     return (
       <div className="article-list-scroll" id="article-list">
-        <EmptyState message={t('articles.emptyList', 'No articles found.')} />
+        <EmptyState message={watchLater
+          ? t('articles.watchLaterEmpty', 'Your Watch Later list is empty. Use the clock button on an article to add it.')
+          : t('articles.emptyList', 'No articles found.')} />
       </div>
     );
   }
@@ -161,20 +168,34 @@ export function ArticleList({ onSelect, onLoadMore, onFilterByAccount }: Article
   return (
     <>
       <div className="article-list-scroll" id="article-list">
-        {state.articles.map((article) => (
+        {state.articles.map((article, index) => (
+          <div key={article.id} className={watchLater ? 'watch-later-entry' : undefined}>
           <ArticleCard
-            key={article.id}
             article={article}
             isActive={state.selectedArticleId === article.id}
             onClick={() => { void onSelect(article.id); }}
             onToggleRead={(target) => { void handleToggleRead(target); }}
             onToggleStar={(target) => { void handleToggleStar(target); }}
+            onToggleWatchLater={onToggleWatchLater}
+            watchLaterBusy={watchLaterBusy}
             onContextMenu={(e) => {
               e.preventDefault();
               setContextMenu({ article, x: e.clientX, y: e.clientY });
             }}
-            onAccountClick={onFilterByAccount}
+            onAccountClick={watchLater ? undefined : onFilterByAccount}
           />
+          {watchLater && onMoveWatchLater ? (
+            <div className="watch-later-order" role="group" aria-label={article.title}>
+              <span className="meta-note">{index + 1}</span>
+              <button type="button" className="btn ghost" disabled={watchLaterBusy || index === 0}
+                onClick={() => onMoveWatchLater(article, 'up')}>{t('articles.watchLaterUp', 'Move up')}</button>
+              <button type="button" className="btn ghost" disabled={watchLaterBusy || index === state.articles.length - 1}
+                onClick={() => onMoveWatchLater(article, 'down')}>{t('articles.watchLaterDown', 'Move down')}</button>
+              <button type="button" className="btn ghost" disabled={watchLaterBusy || index === 0}
+                onClick={() => onMoveWatchLater(article, 'top')}>{t('articles.watchLaterTop', 'Move to top')}</button>
+            </div>
+          ) : null}
+          </div>
         ))}
         {state.hasMoreArticles ? (
           <button
@@ -196,6 +217,12 @@ export function ArticleList({ onSelect, onLoadMore, onFilterByAccount }: Article
         y={contextMenu?.y || 0}
         onClose={() => setContextMenu(null)}
       >
+        {contextMenu && onToggleWatchLater ? (
+          <button className="context-item" type="button" disabled={watchLaterBusy}
+            onClick={() => { onToggleWatchLater(contextMenu.article); setContextMenu(null); }}>
+            {contextMenu.article.watch_later_at ? t('articles.removeWatchLater', 'Remove from Watch Later') : t('articles.addWatchLater', 'Add to Watch Later')}
+          </button>
+        ) : null}
         {contextMenu ? (
           <button
             className="context-item"

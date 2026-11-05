@@ -28,7 +28,7 @@ export function ArticleFilters({
 }: ArticleFiltersProps) {
   const { state, dispatch } = useArticlesState();
   const { t } = useI18n();
-  const view = filters.starred ? 'starred' : filters.read === 'unread' ? 'unread' : 'all';
+  const view = filters.watchLater ? 'watch-later' : filters.starred ? 'starred' : filters.read === 'unread' ? 'unread' : 'all';
 
   return (
     <div className="article-filter-shell" id="article-filter-shell">
@@ -62,8 +62,17 @@ export function ArticleFilters({
             >
               {t('articles.viewStarred', '收藏')}
             </button>
+            <button
+              className={`article-view-option${view === 'watch-later' ? ' is-active' : ''}`}
+              id="btn-article-view-watch-later"
+              type="button"
+              aria-pressed={view === 'watch-later'}
+              onClick={() => onChange({ watchLater: true })}
+            >
+              {t('articles.watchLater', 'Watch Later')}
+            </button>
           </div>
-          <div className="input article-search-input">
+          {!filters.watchLater ? <div className="input article-search-input">
             <input
               type='search'
               id='article-search'
@@ -74,9 +83,9 @@ export function ArticleFilters({
             <span className="icon">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6 6 0 1 0 14 15.5l.27.28v.79L20 21.5 21.5 20l-6-6zm-5.5 0a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>
             </span>
-          </div>
+          </div> : null}
         </div>
-        <div
+        {!filters.watchLater ? <div
           className={`article-filter-drawer${state.filtersCollapsed ? '' : ' is-open'}`}
           id="article-filter-drawer"
         >
@@ -129,7 +138,7 @@ export function ArticleFilters({
           >
             {t('articles.resetFilters', 'Reset Filters')}
           </button>
-        </div>
+        </div> : null}
       </div>
     </div>
   );

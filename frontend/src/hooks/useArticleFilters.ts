@@ -30,6 +30,7 @@ export function useArticleFilters() {
     source: routeSource,
     read: routeRead,
     starred: routeStarred,
+    watchLater: routeWatchLater,
     search: routeSearch,
     sort: routeSort,
   } = routeState.filters;
@@ -39,6 +40,7 @@ export function useArticleFilters() {
   const [itemIdParam, setItemIdParam] = useState(routeState.itemId);
   const [groupOptions, setGroupOptions] = useState<ArticleSelectOption[]>([]);
   const [accountOptions, setAccountOptions] = useState<ArticleSelectOption[]>([]);
+  const [listError, setListError] = useState('');
 
   const deferredSearch = useDeferredValue(filters.search.trim());
 
@@ -122,6 +124,7 @@ export function useArticleFilters() {
     }
     listFiltersRef.current = nextFilters;
     dispatch({ type: 'SET_LOADING', loading: true });
+    setListError('');
     isArticleLoadingRef.current = true;
     const sort = nextFilters.sort || ARTICLE_SORT_PUBLISH_AT_DESC;
     const page = reset ? 1 : articlePageRef.current;
@@ -143,10 +146,10 @@ export function useArticleFilters() {
       url.searchParams.set('page', String(page));
       url.searchParams.set('page_size', String(pageSize));
 
-      const payload = await apiGet(url.pathname + url.search);
+      const payload = await apiGet(nextFilters.watchLater ? '/api/watch-later' : url.pathname + url.search);
       if (requestId !== listRequestRef.current) return;
       const newArticles = (payload.articles || []) as Article[];
-      const hasMore = newArticles.length >= pageSize;
+      const hasMore = !nextFilters.watchLater && newArticles.length >= pageSize;
       const mergedArticles = reset ? newArticles : [...previousArticles, ...newArticles];
 
       articlesRef.current = mergedArticles;
@@ -172,7 +175,9 @@ export function useArticleFilters() {
       });
     } catch (error) {
       if (requestId === listRequestRef.current && !isAuthError(error)) {
-        showToast(error instanceof Error ? error.message : t('articles.loadMoreFailed', 'Failed to load articles.'));
+        const message = error instanceof Error ? error.message : t('articles.loadMoreFailed', 'Failed to load articles.');
+        setListError(message);
+        showToast(message);
       }
     } finally {
       if (requestId === listRequestRef.current) {
@@ -207,6 +212,11 @@ export function useArticleFilters() {
       return {
         ...prev,
         ...patch,
+        watchLater: patch.watchLater === true,
+        ...(patch.watchLater ? {
+          groupId: '', accountBiz: '', itemShowType: '', topic: '', eventId: '',
+          source: '', read: '', starred: '', search: '', sort: ARTICLE_SORT_PUBLISH_AT_DESC,
+        } : null),
         ...(groupChanged || sourceChanged ? { accountBiz: '' } : null),
       };
     });
@@ -275,6 +285,11 @@ export function useArticleFilters() {
     dispatch({ type: 'SELECT_ARTICLE', id, payload: null });
     await loadArticleDetail(id, ++articleTargetRequestRef.current);
   }, [dispatch, loadArticleDetail]);
+
+  const cancelArticleLoad = useCallback(() => {
+    // Returning to the list must not let a late detail reopen the phone reader.
+    articleTargetRequestRef.current += 1;
+  }, []);
 
   const resetFilters = useCallback(async () => {
     setFilters({
@@ -364,6 +379,7 @@ export function useArticleFilters() {
         source: routeSource,
         read: routeRead,
         starred: routeStarred,
+        watchLater: routeWatchLater,
         search: routeSearch,
         sort: routeSort,
       };
@@ -392,6 +408,7 @@ export function useArticleFilters() {
     routeSource,
     routeRead,
     routeStarred,
+    routeWatchLater,
     routeSearch,
     routeSort,
     routeState.itemId,
@@ -424,6 +441,7 @@ export function useArticleFilters() {
       source: filters.source,
       read: filters.read,
       starred: filters.starred,
+      watchLater: filters.watchLater,
       search: deferredSearch,
       sort: filters.sort,
     };
@@ -438,6 +456,7 @@ export function useArticleFilters() {
     filters.source,
     filters.read,
     filters.starred,
+    filters.watchLater,
     filters.sort,
     loadArticles,
   ]);
@@ -468,6 +487,8 @@ export function useArticleFilters() {
     updateFilters,
     resetFilters,
     selectArticle,
+    cancelArticleLoad,
     loadArticles,
+    listError,
   };
 }

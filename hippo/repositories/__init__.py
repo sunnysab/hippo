@@ -33,6 +33,7 @@ from .subscription import SubscriptionRepository
 from .token import UserTokenRepository
 from .topic import TopicRepository
 from .user import UserRepository
+from .watch_later import WatchLaterRepository
 
 __all__ = [
     'ARTICLE_CONTENT_PRESENT_SQL',
@@ -64,5 +65,6 @@ __all__ = [
     'UserRepository',
     'UserSessionRepository',
     'UserTokenRepository',
+    'WatchLaterRepository',
     'mask_key',
 ]

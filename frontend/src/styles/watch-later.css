@@ -1,0 +1,46 @@
+.watch-later-entry {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+
+.watch-later-order,
+.watch-later-navigation {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.watch-later-order {
+  justify-content: flex-end;
+  padding: 0 9px;
+}
+
+.watch-later-order .meta-note {
+  margin-right: auto;
+}
+
+/* Keep actions in their own row instead of covering titles on hover. */
+.article-card.has-watch-later-action .article-card-actions {
+  position: static;
+  grid-column: 2;
+  justify-self: end;
+  opacity: 1;
+}
+
+.article-card.has-watch-later-action {
+  row-gap: 4px;
+}
+
+.article-card-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.watch-later-error {
+  padding: 12px;
+}
+
+.article-view-switch {
+  flex-wrap: wrap;
+}

@@ -73,6 +73,7 @@ _TAG_BY_SEGMENT: dict[str, str] = {
     'report': 'report',
     'settings': 'settings',
     'source': 'source',
+    'watch-later': 'article',
     'whoami': 'api-key',
 }
 

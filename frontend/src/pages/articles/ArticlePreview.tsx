@@ -25,9 +25,12 @@ interface ArticlePreviewProps {
   onSidePanelToggle: (panel: Exclude<ReadingPanel, ''>) => void;
   /** Filter the list down to one story; omitted when the caller cannot filter. */
   onOpenEvent?: (eventId: number) => void;
+  autoPlay?: boolean;
+  onMediaEnded?: (articleId: number) => void;
+  onMediaError?: (articleId: number) => void;
 }
 
-export function ArticlePreview({ previewRef, sidePanel, onSidePanelToggle, onOpenEvent }: ArticlePreviewProps) {
+export function ArticlePreview({ previewRef, sidePanel, onSidePanelToggle, onOpenEvent, autoPlay, onMediaEnded, onMediaError }: ArticlePreviewProps) {
   const { state, dispatch } = useArticlesState();
   const { t } = useI18n();
   const { showToast } = useToast();
@@ -144,6 +147,9 @@ export function ArticlePreview({ previewRef, sidePanel, onSidePanelToggle, onOpe
         <div className="reader" ref={readerRef}>
           <ArticleHeader article={payload.article} onOpenEvent={onOpenEvent} />
           <ArticleContent
+            autoPlay={autoPlay}
+            onMediaEnded={onMediaEnded}
+            onMediaError={onMediaError}
             payload={payload}
             hideSmall={config.hideSmall}
             followPlayback={config.followPlayback}

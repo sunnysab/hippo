@@ -30,6 +30,17 @@ class StarUpdateRequest(BaseModel):
     starred: bool = Field(default=True, description='True stars, false unstars.', strict=True)
 
 
+class WatchLaterMoveRequest(BaseModel):
+    """``PATCH /api/watch-later/{article_id}``.
+
+    ``up``/``down`` step past the neighbouring entry the caller can still see;
+    ``top`` sends the article to the front. Moving the first entry up or the last
+    one down is a no-op.
+    """
+
+    direction: Literal['up', 'down', 'top'] = Field(description='Where to move the entry.')
+
+
 class AnnotationCreateRequest(BaseModel):
     """``POST /api/article/{article_id}/annotation``.
 
@@ -52,6 +63,19 @@ class ReadStateOut(BaseModel):
 class StarStateOut(BaseModel):
     article_id: int
     starred_at: str | None = Field(description='When it was starred; null when not starred.')
+
+
+class WatchLaterStateOut(BaseModel):
+    """``PUT``/``DELETE /api/watch-later/{article_id}``."""
+
+    article_id: int
+    watch_later_at: str | None = Field(description='When it was first added; null once it is not on the list.')
+
+
+class WatchLaterMoveOut(BaseModel):
+    """``PATCH /api/watch-later/{article_id}``: where it is now is the list itself."""
+
+    article_id: int
 
 
 class AnnotationOut(BaseModel):
@@ -109,6 +133,10 @@ class ArticleOut(BaseModel):
     created_at: str | None = None
     read_at: str | None = Field(default=None, description='Read state of the caller.')
     starred_at: str | None = Field(default=None, description='Star state of the caller.')
+    watch_later_at: str | None = Field(
+        default=None,
+        description='When the caller put it in Watch Later; null when it is not there.',
+    )
     source: str | None = Field(default=None, description='Where the article came from.')
     content_kind: str = Field(description='article / video / audio / gallery / text / short.')
     account_nickname: str | None = None
@@ -136,6 +164,13 @@ class FeedArticleOut(ArticleOut):
 
     content_kind: str | None = None
     account_avatar_url: str = ''
+
+
+class WatchLaterListOut(BaseModel):
+    """``GET /api/watch-later``: one reader's ordered list, articles they can read."""
+
+    articles: list[ArticleOut]
+    total: int
 
 
 class ItemShowTypeFacetOut(BaseModel):

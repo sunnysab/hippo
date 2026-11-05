@@ -30,6 +30,8 @@ export interface Article {
   read_at: string | null;
   /** When this user starred it; null means not starred. */
   starred_at: string | null;
+  /** When this user added it to Watch Later. */
+  watch_later_at?: string | null;
   /** Directions, empty until the article has been classified. */
   topics?: ArticleTopic[];
   /** The story behind this article, set only on the detail response. */
@@ -134,6 +136,7 @@ export type ArticlesAction =
   | { type: 'SET_TYPE_FACETS_EXPANDED'; expanded: boolean }
   | { type: 'SET_ARTICLE_READ'; id: number; readAt: string | null }
   | { type: 'SET_ARTICLE_STAR'; id: number; starredAt: string | null }
+  | { type: 'SET_ARTICLE_WATCH_LATER'; id: number; addedAt: string | null }
   | { type: 'SET_FACET_PAYLOAD'; payload: FacetPayload | null };
 
 const initialState: ArticlesState = {
@@ -220,6 +223,18 @@ function reducer(state: ArticlesState, action: ArticlesAction): ArticlesState {
             ...state.currentArticlePayload,
             article: { ...state.currentArticlePayload.article, starred_at: action.starredAt },
           }
+          : state.currentArticlePayload,
+      };
+    case 'SET_ARTICLE_WATCH_LATER':
+      return {
+        ...state,
+        articles: state.articles.map((article) => article.id === action.id
+          ? { ...article, watch_later_at: action.addedAt } : article),
+        projectedPayload: state.projectedPayload?.article.id === action.id
+          ? { ...state.projectedPayload, article: { ...state.projectedPayload.article, watch_later_at: action.addedAt } }
+          : state.projectedPayload,
+        currentArticlePayload: state.currentArticlePayload?.article.id === action.id
+          ? { ...state.currentArticlePayload, article: { ...state.currentArticlePayload.article, watch_later_at: action.addedAt } }
           : state.currentArticlePayload,
       };
     case 'SET_FACET_PAYLOAD':
