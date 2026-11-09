@@ -1,5 +1,5 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AdminSyncSection } from './AdminSyncSection';
 import zhCN from '../../i18n/zh-CN.json';
 
@@ -9,6 +9,7 @@ vi.mock('../../hooks/useSyncRun', () => ({ useSyncRun: () => ({ runSync: vi.fn()
 vi.mock('../../i18n', () => ({ useI18n: () => ({ t: (key: string, fallback?: string) => zhCN[key as keyof typeof zhCN] || fallback || key }) }));
 
 describe('source task visibility', () => {
+  afterEach(() => { vi.useRealTimers(); get.mockClear(); });
   it('queries active jobs independently of recent history and labels enqueued counts', async () => {
     get.mockImplementation(async (url: string) => ({ tasks: url.includes('active=true') ? [{
       task_id: 'active', status: 'running', trigger_type: 'backfill', created_at: '2026-11-09T00:00:00Z',
@@ -50,6 +51,36 @@ describe('source task visibility', () => {
     view.rerender(<AdminSyncSection />);
     expect(await screen.findByText(zhCN['sync.historyEmpty'])).toBeTruthy();
     expect(screen.queryByText(/Previous source/)).toBeNull();
+  });
+
+  it('polls active tasks frequently and refreshes history when a task ends', async () => {
+    vi.useFakeTimers();
+    let running = true;
+    get.mockImplementation(async (url: string) => ({ tasks: url.includes('active=true') && running ? [{
+      task_id: 'live', status: 'running', trigger_type: 'scheduled', created_at: '', accounts_total: 1,
+    }] : [] }));
+    render(<AdminSyncSection source="weixin" />);
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    const histories = () => get.mock.calls.filter(([url]) => String(url).includes('active=false')).length;
+    expect(histories()).toBe(1);
+    await act(() => vi.advanceTimersByTimeAsync(15000));
+    expect(histories()).toBe(1);
+    running = false;
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(histories()).toBe(2);
+  });
+  it('keeps history visible after a failed refresh and supports retry', async () => {
+    get.mockResolvedValueOnce({ tasks: [{ task_id: 'old', status: 'success', trigger_type: 'scheduled',
+      created_at: '', accounts_total: 0 }] });
+    render(<AdminSyncSection />);
+    expect(await screen.findByText(/定时/)).toBeTruthy();
+    get.mockRejectedValueOnce(new Error('Request timed out'));
+    await act(async () => window.dispatchEvent(new Event('hippo:refresh')));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.getByText(/定时/)).toBeTruthy();
+    get.mockResolvedValueOnce({ tasks: [] });
+    fireEvent.click(screen.getByRole('button', { name: zhCN['common.retry'] }));
+    expect(await screen.findByText(zhCN['sync.historyEmpty'])).toBeTruthy();
   });
 
 });

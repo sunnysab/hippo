@@ -20,12 +20,12 @@ export function TaskDetails({ taskId, active }: { taskId: string; active: boolea
       if (!signal.aborted) setError((err as Error).message);
     }
   }, [taskId]);
-  usePolling(load, open ? active ? 5000 : 60000 : null);
+  const refresh = usePolling(load, open ? active ? 5000 : 60000 : null);
 
   return <details onToggle={(event) => setOpen(event.currentTarget.open)}>
     <summary>{t('sync.taskDetails', '账号明细')}</summary>
     {open && <>
-      {error && <p role="alert">{error}</p>}
+      {error && <p role="alert">{error} <button type="button" className="btn ghost" onClick={refresh}>{t('common.retry', '重试')}</button></p>}
       {!task && !error && <p className="muted">{t('admin.loading', '加载中…')}</p>}
       {task?.accounts?.map((account) => <div className="sync-progress-item" key={account.biz}>
         <div className="sync-progress-copy">

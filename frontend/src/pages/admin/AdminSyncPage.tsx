@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSettingsState } from '../../store/settings';
 import { useAuth } from '../../hooks/useAuth';
 import { apiGet } from '../../api';
 import type { SyncSettings, SyncStatus, SyncTaskSummary } from '../../store/settings';
 import { buildSyncSettingsFormState, type SyncSettingsFormState } from '../settings/form';
-import { onRefresh } from '../../utils/events';
+import { emitRefresh, onRefresh } from '../../utils/events';
 import { usePolling } from '../../hooks/usePolling';
 import { LoginPanel } from './LoginPanel';
 import { SyncHealthPanel } from './SyncHealthPanel';
@@ -19,6 +19,7 @@ import { SourceSyncOverview } from './SourceSyncOverview';
 export function AdminSyncPage() {
   const { state, dispatch } = useSettingsState();
   const { isAdmin } = useAuth();
+  const previousActive = useRef<Set<string>>(new Set());
   const [error, setError] = useState('');
   const [settingsError, setSettingsError] = useState('');
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -31,14 +32,19 @@ export function AdminSyncPage() {
       ]);
       if (signal.aborted) return;
       dispatch({ type: 'SET_SYNC_STATUS', payload: status as unknown as SyncStatus });
-      dispatch({ type: 'SET_SYNC_TASKS', tasks: (jobs.tasks || []) as SyncTaskSummary[] });
+      const tasks = (jobs.tasks || []) as SyncTaskSummary[];
+      dispatch({ type: 'SET_SYNC_TASKS', tasks });
+      const ids = new Set(tasks.map((task) => task.task_id));
+      const ended = [...previousActive.current].some((id) => !ids.has(id));
+      previousActive.current = ids;
+      if (ended) emitRefresh();
       setError('');
     } catch (err) {
       if (!signal.aborted) setError((err as Error).message);
     }
   }, [dispatch, isAdmin]);
   const active = state.syncTasks.some((task) => ['running', 'queued', 'pending', 'cancelling'].includes(task.status));
-  usePolling(loadProgress, active ? 1000 : 10000);
+  const refreshProgress = usePolling(loadProgress, active ? 5000 : 10000);
 
   const loadSyncSettings = useCallback(async () => {
     if (!isAdmin) return;
@@ -61,9 +67,9 @@ export function AdminSyncPage() {
   }, [loadSyncSettings]);
 
   useEffect(() => onRefresh(() => {
-    void loadProgress(new AbortController().signal);
+    refreshProgress();
     void loadSyncSettings();
-  }), [loadProgress, loadSyncSettings]);
+  }), [refreshProgress, loadSyncSettings]);
 
   const initialFormState = useMemo(
     () => buildSyncSettingsFormState(state.syncSettings),

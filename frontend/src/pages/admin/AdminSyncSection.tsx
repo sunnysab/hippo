@@ -1,9 +1,10 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiGet } from '../../api';
 import { useI18n } from '../../i18n';
 import { useSyncRun } from '../../hooks/useSyncRun';
 import { formatRelativeTime } from '../../utils/format';
 import { getSyncTaskKind, getSyncRunLabel, getSyncTone } from '../../utils/sync';
+import { onRefresh } from '../../utils/events';
 import { usePolling } from '../../hooks/usePolling';
 import { TaskDetails } from './TaskDetails';
 import type { SyncTaskSummary } from '../../store/settings';
@@ -26,41 +27,57 @@ function SourceTaskHistory({ source }: { source?: string }) {
   const { runSync } = useSyncRun();
   const [historyTasks, setHistoryTasks] = useState<SyncTaskSummary[]>([]);
   const [activeTasks, setActiveTasks] = useState<SyncTaskSummary[]>([]);
-  const tasks = [...activeTasks, ...historyTasks];
-  const [loading, setLoading] = useState(true);
+  const tasks = [...activeTasks, ...historyTasks.filter((task) => !activeTasks.some((active) => active.task_id === task.task_id))];
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [activeLoaded, setActiveLoaded] = useState(!source);
   const [busy, setBusy] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [activeError, setActiveError] = useState('');
+  const previousActive = useRef<Set<string>>(new Set());
 
-  const [error, setError] = useState('');
-
-  const load = useCallback(async (signal: AbortSignal) => {
-    setError('');
-    const fetchTasks = async (active: boolean) => {
-      const query = new URLSearchParams({ limit: String(active ? 100 : TASK_LIMIT), detail: 'false', active: String(active) });
-      if (source) query.set('source', source);
-      try {
-        const payload = await apiGet(`/api/settings/tasks?${query.toString()}`, { signal });
-        if (signal.aborted) return;
-        const next = (payload.tasks || []) as SyncTaskSummary[];
-        if (active) setActiveTasks(next);
-        else setHistoryTasks(next);
-        setLoading(false);
-      } catch (err) {
-        if (!signal.aborted) {
-          setError((err as Error).message);
-          setLoading(false);
-        }
-      }
-    };
-    await Promise.all([fetchTasks(false), ...(source ? [fetchTasks(true)] : [])]);
+  const loadHistory = useCallback(async (signal: AbortSignal) => {
+    const query = new URLSearchParams({ limit: String(TASK_LIMIT), detail: 'false', active: 'false' });
+    if (source) query.set('source', source);
+    try {
+      const payload = await apiGet(`/api/settings/tasks?${query}`, { signal });
+      if (signal.aborted) return;
+      setHistoryTasks((payload.tasks || []) as SyncTaskSummary[]);
+      setHistoryLoaded(true);
+      setHistoryError('');
+    } catch (err) {
+      if (!signal.aborted) { setHistoryError((err as Error).message); setHistoryLoaded(true); }
+    }
   }, [source]);
-  usePolling(load, 5000);
+  const refreshHistory = usePolling(loadHistory, 60000);
+  const loadActive = useCallback(async (signal: AbortSignal) => {
+    if (!source) return;
+    try {
+      const query = new URLSearchParams({ limit: '100', detail: 'false', active: 'true', source });
+      const payload = await apiGet(`/api/settings/tasks?${query}`, { signal });
+      if (signal.aborted) return;
+      const next = (payload.tasks || []) as SyncTaskSummary[];
+      const ids = new Set(next.map((task) => task.task_id));
+      if ([...previousActive.current].some((id) => !ids.has(id))) refreshHistory();
+      previousActive.current = ids;
+      setActiveTasks(next);
+      setActiveLoaded(true);
+      setActiveError('');
+    } catch (err) {
+      if (!signal.aborted) { setActiveError((err as Error).message); setActiveLoaded(true); }
+    }
+  }, [source, refreshHistory]);
+  const refreshActive = usePolling(loadActive, source ? 5000 : null);
+  const refresh = useCallback(() => { refreshHistory(); refreshActive(); }, [refreshHistory, refreshActive]);
+  useEffect(() => onRefresh(refresh), [refresh]);
+  const loading = source ? !historyLoaded && !activeLoaded : !historyLoaded;
+  const error = historyError || activeError;
 
   const run = async () => {
     setBusy(true);
     try {
       // The console runs the instance's own catalogue; the hook reports the job.
       await runSync({ source, siteWide: true });
-      await load(new AbortController().signal);
+      refresh();
     } finally {
       setBusy(false);
     }
@@ -80,7 +97,7 @@ function SourceTaskHistory({ source }: { source?: string }) {
         </div>
       </div>
 
-      {error && <p role="alert">{error}</p>}
+      {error && <p role="alert">{error} <button className="btn ghost" type="button" onClick={refresh}>{t('common.retry', '重试')}</button></p>}
       <div className="list">
         {loading ? (
           <div className="empty-state">{t('admin.loading', '加载中…')}</div>

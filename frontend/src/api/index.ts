@@ -39,21 +39,29 @@ const authError = (payload: { error?: string }, status: number, silent?: boolean
 
 export const apiGet = async (
   path: string,
-  options: { silent?: boolean; signal?: AbortSignal } = {},
+  options: { silent?: boolean; signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<Record<string, unknown>> => {
-  const res = await fetch(path, {
-    headers: { 'Accept': 'application/json' },
-    signal: options.signal,
-  });
-  if (!res.ok) {
-    const payload = await res.json().catch(() => ({})) as { error?: string; code?: string };
-    if (res.status === 401) throw authError(payload, res.status, options.silent);
-    throw createApiError(payload.error || `Request failed: ${res.status}`, {
-      code: payload.code,
-      status: res.status,
-    });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 15000);
+  const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+  try {
+    const res = await fetch(path, { headers: { 'Accept': 'application/json' }, signal });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({})) as { error?: string; code?: string };
+      if (res.status === 401) throw authError(payload, res.status, options.silent);
+      throw createApiError(payload.error || `Request failed: ${res.status}`, {
+        code: payload.code, status: res.status,
+      });
+    }
+    return await res.json() as Record<string, unknown>;
+  } catch (err) {
+    if (controller.signal.aborted && !options.signal?.aborted) {
+      throw createApiError('Request timed out', { code: 'TIMEOUT' });
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-  return res.json() as Promise<Record<string, unknown>>;
 };
 
 export const apiSend = async (

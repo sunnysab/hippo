@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { usePolling } from './usePolling';
 
 describe('serial polling', () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
   it('does not overlap requests or reschedule after unmount', async () => {
     vi.useFakeTimers();
     let resolve!: () => void;
@@ -25,4 +25,34 @@ describe('serial polling', () => {
     expect(load).toHaveBeenCalledTimes(2);
     unmount();
   });
+  it('pauses when hidden and refreshes immediately when visible', async () => {
+    vi.useFakeTimers();
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+    const load = vi.fn().mockResolvedValue(undefined);
+    const { unmount } = renderHook(() => usePolling(load, 1000));
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(load).not.toHaveBeenCalled();
+    hidden.mockReturnValue(false);
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+    expect(load).toHaveBeenCalledTimes(1);
+    hidden.mockReturnValue(true);
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(load).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+  it('coalesces manual refreshes behind a pending request', async () => {
+    vi.useFakeTimers();
+    let resolve!: () => void;
+    const load = vi.fn().mockImplementationOnce(() => new Promise<void>((done) => { resolve = done; }))
+      .mockResolvedValue(undefined);
+    const { result, unmount } = renderHook(() => usePolling(load, 1000));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    act(() => { result.current(); result.current(); });
+    expect(load).toHaveBeenCalledTimes(1);
+    await act(async () => { resolve(); await vi.advanceTimersByTimeAsync(0); });
+    expect(load).toHaveBeenCalledTimes(2);
+    unmount();
+  });
+
 });

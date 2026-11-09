@@ -30,19 +30,14 @@ export function AccountCardGrid({ query }: AccountCardGridProps) {
     }
   }, [state.selectedGroupId, loadAccounts]);
 
-  useEffect(() => {
-    const handler = () => {
-      void loadAccounts();
-    };
-    return onRefresh(handler);
-  }, [loadAccounts]);
 
   const hasActiveBackfill = state.accounts.some((account) => account.sync ? hasAccountWork(account.sync) : account.backfill_running || account.backfill_pending);
 
   const refreshAccounts = useCallback(async (signal: AbortSignal) => {
     await loadAccounts(true, signal);
   }, [loadAccounts]);
-  usePolling(refreshAccounts, hasActiveBackfill ? 5000 : 30000, false);
+  const refresh = usePolling(refreshAccounts, hasActiveBackfill ? 5000 : 30000, false);
+  useEffect(() => onRefresh(refresh), [refresh]);
 
   if (!accounts.length) {
     return (

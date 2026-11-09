@@ -29,6 +29,23 @@ describe('api auth handling', () => {
     vi.useRealTimers();
   });
 
+
+  it('times out GET requests without aborting the caller', async () => {
+    vi.useFakeTimers();
+    stubHangingFetch();
+    const caller = new AbortController();
+    const result = apiGet('/api/settings/tasks', { signal: caller.signal, timeoutMs: 100 }).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await result).toMatchObject({ code: 'TIMEOUT' });
+    expect(caller.signal.aborted).toBe(false);
+  });
+  it('keeps caller cancellation distinct from GET timeout', async () => {
+    stubHangingFetch();
+    const caller = new AbortController();
+    const result = apiGet('/api/settings/tasks', { signal: caller.signal }).catch((error: unknown) => error);
+    caller.abort();
+    expect(await result).toMatchObject({ name: 'AbortError' });
+  });
   it('throws an auth-tagged error for apiGet 401 responses', async () => {
     stubFetch(() => jsonResponse({ error: 'Session expired' }, 401));
 
@@ -75,7 +92,7 @@ describe('api auth handling', () => {
     const fetchMock = stubFetch(() => jsonResponse({ ok: true }));
 
     await apiGet('/api/group', { signal: controller.signal });
-    expect(fetchMock.mock.calls[0][1]).toMatchObject({ signal: controller.signal });
+    expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(false);
   });
 
   it('surfaces the caller abort as an AbortError even with a timeout configured', async () => {
