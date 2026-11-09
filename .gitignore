@@ -18,6 +18,8 @@ dist/
 .idea/
 .vscode/
 # Agent scratch directories (plans, notes) never belong in the repo
+.agents/
+.pi/
 .opencode/
 .codex/
 .omo/
