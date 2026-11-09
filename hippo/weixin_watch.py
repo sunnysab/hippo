@@ -122,6 +122,10 @@ async def watch_article_push(*, reconnect_seconds: float = RECONNECT_SECONDS) ->
             async with bot:
                 await publish('listening')
                 await bot.start()
+                # The SDK catches CancelledError and returns from start().
+                # Preserve shutdown instead of entering our reconnect loop.
+                if asyncio.current_task().cancelling():
+                    raise asyncio.CancelledError
         except asyncio.CancelledError:
             await publish('stopped')
             raise

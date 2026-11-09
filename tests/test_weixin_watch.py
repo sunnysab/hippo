@@ -7,8 +7,9 @@ to pick the same crop the other two paths pick.
 
 import asyncio
 import unittest
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from hippo.weixin_watch import enqueue_pushed_article
 
@@ -68,9 +69,7 @@ def _push(**overrides) -> SimpleNamespace:
 class PushedCoverTest(unittest.TestCase):
     def test_the_wide_crop_of_the_event_wins(self) -> None:
         storage = _Storage()
-        push = _push(
-            raw_data={'cover_urls': [{'ratio': 'main', 'url': MAIN}, {'ratio': '16:9', 'url': WIDE}]}
-        )
+        push = _push(raw_data={'cover_urls': [{'ratio': 'main', 'url': MAIN}, {'ratio': '16:9', 'url': WIDE}]})
 
         added = asyncio.run(enqueue_pushed_article(storage, push))
 
@@ -118,6 +117,63 @@ class PushedCoverTest(unittest.TestCase):
 
         self.assertFalse(added)
         self.assertEqual([], storage.queued)
+
+
+class PushShutdownTest(unittest.IsolatedAsyncioTestCase):
+    async def test_sdk_swallowing_cancel_does_not_restart_the_listener(self):
+        from hippo import weixin_watch
+
+        started = asyncio.Event()
+        statuses = []
+
+        class Bot:
+            closed = False
+
+            def on_article(self, handler):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                self.closed = True
+
+            async def start(self):
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    return
+
+        @asynccontextmanager
+        async def transaction():
+            yield
+
+        @asynccontextmanager
+        async def storage():
+            yield SimpleNamespace(transaction=transaction)
+
+        async def publish(storage, key, value):
+            statuses.append(value['status'])
+
+        bot = Bot()
+        with (
+            patch.object(weixin_watch, 'load_bot_class', return_value=lambda **kwargs: bot),
+            patch.object(
+                weixin_watch,
+                'get_settings',
+                return_value=SimpleNamespace(weixin=SimpleNamespace(daemon_host='localhost', daemon_port=9099)),
+            ),
+            patch.object(weixin_watch, 'open_storage', storage),
+            patch.object(weixin_watch, 'save_meta_json', publish),
+        ):
+            task = asyncio.create_task(weixin_watch.watch_article_push())
+            await asyncio.wait_for(started.wait(), 1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 1)
+        self.assertTrue(bot.closed)
+        self.assertEqual(['listening', 'stopped'], statuses)
 
 
 if __name__ == '__main__':
