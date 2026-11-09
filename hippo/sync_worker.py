@@ -14,7 +14,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from .config import WORKER_SERVICE
+from .config import WORKER_SERVICE, get_settings
 from .container import build_sync_container
 from .logger import get_logger, setup_logger
 from .media_settings import get_media_settings
@@ -491,7 +491,9 @@ async def backfill_account_history(
     )
 
 
-async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
+async def run_worker_once(
+    *, storage: PostgresStorage, worker_id: str, source_slots: asyncio.Semaphore | None = None
+) -> bool:
     async with storage.transaction():
         job = await storage.sync_jobs.claim_next_job(worker_id=worker_id)
         if not job:
@@ -521,6 +523,7 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
                     # the policy.
                     force=job.trigger_type in FORCING_TRIGGER_TYPES,
                     scope_sources=job.scope_sources,
+                    source_slots=source_slots,
                     observer_factory=lambda account, _: _WorkerObserver(tracker=tracker, account=account),
                     observer=tracker,
                 )
@@ -711,6 +714,9 @@ async def run_sync_worker(
     drain_interval: float = DRAIN_POLL_SECONDS,
     configure_process: bool = True,
 ) -> None:
+    pool_max = get_settings().database.pool_max
+    if pool_max < 6:
+        raise ValueError('Sync worker requires database.pool_max >= 6')
     resolved_worker_id = worker_id or f'{socket.gethostname()}-{os.getpid()}'
     telemetry = init_telemetry(SERVICE_NAME) if configure_process else None
     # 进程启动后重建日志管线，指向本进程自己的日志文件
@@ -725,10 +731,14 @@ async def run_sync_worker(
     # 实时通道：daemon 推 article_push 时立刻入队（列表轮询仍然是兜底）
     watch_task = asyncio.create_task(watch_article_push())
     jobs: set[asyncio.Task[bool]] = set()
+    # Each active job keeps a tracker handle; leave room for source connections
+    # and body/image/media consumers plus control queries. No new configuration knob.
+    job_limit = min(6, max(1, (pool_max - 4) // 2))
+    source_slots = asyncio.Semaphore(max(1, pool_max - job_limit - 4))
 
     async def execute() -> bool:
         async with open_storage() as job_storage:
-            return await run_worker_once(storage=job_storage, worker_id=resolved_worker_id)
+            return await run_worker_once(storage=job_storage, worker_id=resolved_worker_id, source_slots=source_slots)
 
     try:
         while True:
@@ -748,7 +758,7 @@ async def run_sync_worker(
                     await maybe_enqueue_scheduled_job(storage)
             # At most one additional claimant per tick; the database excludes
             # overlapping sources, while disjoint sources use separate connections.
-            if len(jobs) < 6:
+            if len(jobs) < job_limit:
                 jobs.add(asyncio.create_task(execute()))
             await asyncio.sleep(max(float(poll_interval), 0.2))
     finally:

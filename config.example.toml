@@ -13,6 +13,7 @@
 # Required. PostgreSQL connection string.
 dsn = "postgresql://postgres@127.0.0.1:5432/hippo"
 # Connection pool bounds; pool_max is never lowered below pool_min.
+# The sync worker requires pool_max >= 6; the default leaves room for parallel sources.
 pool_min = 1
 pool_max = 8
 # Feed the tokenizer a query at startup so the first search is not slow.

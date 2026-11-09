@@ -17,16 +17,18 @@ class ParallelSyncTest(unittest.IsolatedAsyncioTestCase):
         entered = set()
         ready = asyncio.Event()
         handles = []
+        pool = asyncio.Semaphore(2)
         fail_source = None
 
         @asynccontextmanager
         async def storage():
-            handle = SimpleNamespace(
-                accounts=SimpleNamespace(list_syncable_accounts=AsyncMock(return_value=accounts)),
-                rollback=AsyncMock(),
-            )
-            handles.append(handle)
-            yield handle
+            async with pool:
+                handle = SimpleNamespace(
+                    accounts=SimpleNamespace(list_syncable_accounts=AsyncMock(return_value=accounts)),
+                    rollback=AsyncMock(),
+                )
+                handles.append(handle)
+                yield handle
 
         @asynccontextmanager
         async def container(**kwargs):
@@ -62,7 +64,7 @@ class ParallelSyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result.error)
         self.assertEqual(2, result.report.total_saved)
         self.assertEqual(2, result.report.accounts_done)
-        self.assertEqual(7, len({id(handle) for handle in handles}))
+        self.assertEqual(10, len({id(handle) for handle in handles}))
 
     async def test_cancelling_one_job_does_not_cancel_another(self):
         ready = asyncio.Event()
@@ -85,3 +87,16 @@ class ParallelSyncTest(unittest.IsolatedAsyncioTestCase):
         clear, stopped = await asyncio.gather(independent(), second())
         self.assertFalse(clear)
         self.assertTrue(stopped)
+
+    async def test_worker_rejects_an_undersized_pool_before_starting_consumers(self):
+        from hippo import sync_worker
+
+        with (
+            patch.object(
+                sync_worker, 'get_settings', return_value=SimpleNamespace(database=SimpleNamespace(pool_max=5))
+            ),
+            patch.object(sync_worker, '_body_drain_loop', AsyncMock()) as drain,
+        ):
+            with self.assertRaisesRegex(ValueError, 'pool_max >= 6'):
+                await sync_worker.run_sync_worker(configure_process=False)
+            drain.assert_not_called()

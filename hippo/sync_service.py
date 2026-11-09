@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -19,7 +18,6 @@ from .sync_core import _get_cancel_event
 from .sync_settings import (
     _persist_sync_outcome,
     get_sync_settings,
-    get_sync_status,
     set_sync_state,
 )
 from .sync_types import (
@@ -362,6 +360,7 @@ async def run_sync_job(
     observer: SyncJobObserver | None = None,
     lock: asyncio.Lock | None = None,
     scope_sources: tuple[str, ...] | None = None,
+    source_slots: asyncio.Semaphore | None = None,
 ) -> SyncJobResult:
     job_observer = observer or NullSyncJobObserver()
     if lock:
@@ -376,112 +375,99 @@ async def run_sync_job(
                 observer=job_observer,
                 lock=None,
                 scope_sources=scope_sources,
+                source_slots=source_slots,
             )
     job_observer.on_lock_acquired()
     started_at = utc_now_iso()
     empty_report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
-    async with open_storage() as storage:
-        settings = await get_sync_settings(storage)
-        await set_sync_state(storage, status='running', error='', started_at=started_at)
-
-        error: str | None = None
-        report = empty_report
-        accounts: list[AccountCredential] = []
-        try:
-            # 抓取由订阅驱动：账号只要还有人关注就继续拉，没人订阅就停抓、保留数据。
+    error: str | None = None
+    report = empty_report
+    try:
+        # Release configuration reads before source tasks wait for connections.
+        async with open_storage() as storage:
+            settings = await get_sync_settings(storage)
+            await set_sync_state(storage, status='running', error='', started_at=started_at)
             media_settings = await get_media_settings(storage)
             accounts = await storage.accounts.list_syncable_accounts(
                 group_ids=[group_id] if group_id is not None else None,
                 biz_list=biz_list,
                 source=source,
             )
-            if scope_sources is not None:
-                accounts = [account for account in accounts if (account.source or 'weixin') in scope_sources]
-            job_observer.on_accounts_loaded(accounts)
+        if scope_sources is not None:
+            accounts = [account for account in accounts if (account.source or 'weixin') in scope_sources]
+        job_observer.on_accounts_loaded(accounts)
+        source_groups: dict[str, list[AccountCredential]] = {}
+        for account in accounts:
+            source_groups.setdefault(account.source or 'weixin', []).append(account)
 
-            source_groups: dict[str, list[AccountCredential]] = {}
-            for account in accounts:
-                source_groups.setdefault(account.source or 'weixin', []).append(account)
-
-            async def sync_source(selected: list[AccountCredential]) -> tuple[SyncReport, str | None]:
-                try:
-                    async with open_storage() as source_storage:
-                        container = build_sync_container(
-                            storage=source_storage,
-                            enable_download=False,
-                            enable_images=bool(settings.get('download_images')),
-                            media_settings=media_settings,
-                            sources={selected[0].source or 'weixin'},
+        async def sync_source(selected: list[AccountCredential]) -> tuple[SyncReport, str | None]:
+            try:
+                async with open_storage() as source_storage:
+                    container = build_sync_container(
+                        storage=source_storage,
+                        enable_download=False,
+                        enable_images=bool(settings.get('download_images')),
+                        media_settings=media_settings,
+                        sources={selected[0].source or 'weixin'},
+                    )
+                    async with container as app:
+                        service = ArticleSyncService(storage=source_storage, adapters=app.adapters)
+                        source_report = await service.sync_accounts(
+                            accounts=selected,
+                            config=_build_sync_config(settings, force=force),
+                            bulk=True,
+                            observer_factory=observer_factory,
+                            observer=job_observer,
                         )
-                        async with container as app:
-                            service = ArticleSyncService(storage=source_storage, adapters=app.adapters)
-                            source_report = await service.sync_accounts(
-                                accounts=selected,
-                                config=_build_sync_config(settings, force=force),
-                                bulk=True,
-                                observer_factory=observer_factory,
-                                observer=job_observer,
-                            )
-                            return source_report, None
-                except SyncRunError as exc:
-                    return exc.report or empty_report, str(exc)
-                except Exception as exc:
-                    logger.exception('Source listing failed')
-                    return empty_report, str(exc)
+                        return source_report, None
+            except SyncRunError as exc:
+                return exc.report or empty_report, str(exc)
+            except Exception as exc:
+                logger.exception('Source listing failed')
+                return empty_report, str(exc)
 
-            async with asyncio.TaskGroup() as group:
-                tasks = [group.create_task(sync_source(selected)) for selected in source_groups.values()]
-            outcomes = [task.result() for task in tasks]
-            reports = [item[0] for item in outcomes]
-            error = '; '.join(item[1] for item in outcomes if item[1]) or None
-            report = SyncReport(
-                total_saved=sum(item.total_saved for item in reports),
-                summary=[row for item in reports for row in item.summary],
-                details=[row for item in reports for row in item.details],
-                downloaded=sum(item.downloaded for item in reports),
-                failed_accounts=sum(item.failed_accounts for item in reports),
-                accounts_total=len(accounts),
-                accounts_done=sum(item.accounts_done for item in reports),
-            )
-            if _get_cancel_event().is_set():
-                error = 'Cancelled by user'
-        except Exception as exc:
-            logger.exception('Sync job failed unexpectedly')
-            error = str(exc)
-            report = empty_report
+        async def limited_source(selected: list[AccountCredential]) -> tuple[SyncReport, str | None]:
+            if source_slots is None:
+                return await sync_source(selected)
+            async with source_slots:
+                return await sync_source(selected)
 
+        async with asyncio.TaskGroup() as group:
+            tasks = [group.create_task(limited_source(selected)) for selected in source_groups.values()]
+        outcomes = [task.result() for task in tasks]
+        reports = [item[0] for item in outcomes]
+        error = '; '.join(item[1] for item in outcomes if item[1]) or None
+        report = SyncReport(
+            total_saved=sum(item.total_saved for item in reports),
+            summary=[row for item in reports for row in item.summary],
+            details=[row for item in reports for row in item.details],
+            downloaded=sum(item.downloaded for item in reports),
+            failed_accounts=sum(item.failed_accounts for item in reports),
+            accounts_total=len(accounts),
+            accounts_done=sum(item.accounts_done for item in reports),
+        )
+        if _get_cancel_event().is_set():
+            error = 'Cancelled by user'
+    except Exception as exc:
+        logger.exception('Sync job failed unexpectedly')
+        error = str(exc)
+        report = empty_report
+
+    finished_at = utc_now_iso()
+    for attempt in range(2):
         try:
-            await storage.rollback()
-        except Exception as exc:
-            logger.warning('Failed to rollback storage connection: %s', exc)
-
-        finished_at = utc_now_iso()
-        try:
-            status = await _persist_sync_outcome(
-                storage,
-                started_at=started_at,
-                finished_at=finished_at,
-                error=error,
-                report=report,
-            )
+            async with open_storage() as storage:
+                status = await _persist_sync_outcome(
+                    storage,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    error=error,
+                    report=report,
+                )
             return SyncJobResult(status=status, report=report, error=error)
         except Exception:
-            logger.exception('Failed to persist sync outcome; retrying with a fresh connection.')
-            try:
-                async with open_storage() as retry_storage:
-                    with contextlib.suppress(Exception):
-                        await retry_storage.rollback()
-                    status = await _persist_sync_outcome(
-                        retry_storage,
-                        started_at=started_at,
-                        finished_at=finished_at,
-                        error=error or 'failed_to_persist_sync_outcome',
-                        report=report,
-                    )
-                return SyncJobResult(status=status, report=report, error=error)
-            except Exception:
-                logger.exception('Failed to persist sync outcome with a fresh connection.')
-                return SyncJobResult(status=await get_sync_status(storage), report=report, error=error or 'failed')
+            logger.exception('Failed to persist sync outcome (attempt %d)', attempt + 1)
+    return SyncJobResult(status={'status': 'failed'}, report=report, error=error or 'failed_to_persist_sync_outcome')
 
 
 __all__ = [
