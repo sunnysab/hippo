@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -79,6 +79,7 @@ class ArticleSyncService:
         config: SyncConfig,
         bulk: bool,
         observer: SyncObserver,
+        before_request: Callable[[], Awaitable[None]] | None = None,
     ) -> tuple[SyncAccountResult, SyncSummary | None]:
         if account.is_disabled:
             observer.on_skip('disabled')
@@ -150,6 +151,10 @@ class ArticleSyncService:
 
         try:
             adapter = adapter_for(self._adapters, account.source or 'weixin')
+            if before_request is not None:
+                await before_request()
+            if _get_cancel_event().is_set():
+                raise SyncInterrupted('Sync cancelled')
             stats = await adapter.sync_account(
                 biz=account.biz,
                 source_key=source_key,
@@ -244,7 +249,8 @@ class ArticleSyncService:
 
         consecutive_failures: dict[str, int] = {}
         blocked_sources: set[str] = set()
-        for i, account in enumerate(accounts):
+        last_request_at: dict[str, float] = {}
+        for account in accounts:
             if _get_cancel_event().is_set():
                 break
             account_source = account.source or 'weixin'
@@ -265,9 +271,16 @@ class ArticleSyncService:
                 details.append(blocked_result)
                 job_observer.on_account_done(blocked_result, None)
                 continue
-            if i > 0:
-                job_observer.on_log(f'列表请求间隔，等待 {config.sleep_seconds:g} 秒')
-                await asyncio.sleep(config.sleep_seconds)
+
+            async def before_request(source: str = account_source) -> None:
+                loop = asyncio.get_running_loop()
+                previous = last_request_at.get(source)
+                wait = max(0.0, config.sleep_seconds - (loop.time() - previous)) if previous is not None else 0.0
+                if wait:
+                    job_observer.on_log(f'列表请求间隔，等待 {wait:g} 秒')
+                    await asyncio.sleep(wait)
+                last_request_at[source] = loop.time()
+
             job_observer.on_account_start(account)
             job_observer.on_account_stage(account, 'listing')
             page_observer = observer_factory(account, bulk) if observer_factory else NullSyncObserver()
@@ -277,6 +290,7 @@ class ArticleSyncService:
                     config=config,
                     bulk=bulk,
                     observer=page_observer,
+                    before_request=before_request,
                 )
             except SyncRunError as exc:
                 raise SyncRunError(str(exc), report=await _build_report(current_account=account)) from exc

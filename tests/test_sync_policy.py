@@ -159,9 +159,7 @@ class PerSourceFailureIsolationTest(unittest.TestCase):
         config = SyncConfig(sleep_seconds=0, force=True, skip_minutes=None)
         observer = _RecordingJobObserver()
 
-        report = asyncio.run(
-            service.sync_accounts(accounts=accounts, config=config, bulk=True, observer=observer)
-        )
+        report = asyncio.run(service.sync_accounts(accounts=accounts, config=config, bulk=True, observer=observer))
 
         self.assertEqual(ok.calls, ['yt1'])
         completed = [detail.biz for detail in report.details if detail.completed]
@@ -178,3 +176,43 @@ class PerSourceFailureIsolationTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RequestSpacingTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        reset_sync_cancel()
+
+    async def test_skips_do_not_sleep_and_spacing_is_per_source(self):
+        from unittest.mock import AsyncMock, patch
+
+        adapter = _RecordingAdapter(SyncStats(listed=1))
+        service = ArticleSyncService(storage=_Storage(), adapters={'weixin': adapter, 'youtube': adapter})
+        accounts = [
+            _account('skip', last_synced_at=datetime.now(UTC)),
+            _account('wx1'),
+            _account('yt1', source='youtube'),
+            _account('wx2'),
+        ]
+        with patch('hippo.sync_service.asyncio.sleep', new_callable=AsyncMock) as sleep:
+            report = await service.sync_accounts(
+                accounts=accounts, config=SyncConfig(sleep_seconds=16, force=True, skip_minutes=10), bulk=True
+            )
+        self.assertEqual(['wx1', 'yt1', 'wx2'], adapter.calls)
+        self.assertEqual(4, report.accounts_done)
+        sleep.assert_awaited_once()
+        self.assertGreater(sleep.await_args.args[0], 15)
+        self.assertLessEqual(sleep.await_args.args[0], 16)
+
+    async def test_all_skipped_accounts_finish_without_waiting(self):
+        from unittest.mock import AsyncMock, patch
+
+        adapter = _RecordingAdapter(SyncStats())
+        service = ArticleSyncService(storage=_Storage(), adapters={'weixin': adapter})
+        accounts = [_account(str(n), last_synced_at=datetime.now(UTC)) for n in range(10)]
+        with patch('hippo.sync_service.asyncio.sleep', new_callable=AsyncMock) as sleep:
+            report = await service.sync_accounts(
+                accounts=accounts, config=SyncConfig(sleep_seconds=16, force=True, skip_minutes=10), bulk=True
+            )
+        sleep.assert_not_awaited()
+        self.assertEqual([], adapter.calls)
+        self.assertEqual(10, report.accounts_done)
