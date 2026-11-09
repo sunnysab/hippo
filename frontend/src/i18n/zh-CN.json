@@ -117,6 +117,7 @@
   "groups.currentIdEmpty": "ID",
   "groups.accounts": "个订阅",
   "groups.subscriptionSummary": "{total} 个订阅，其中 {paused} 个暂停同步。",
+  "groups.subscriptionCount": "{total} 个订阅",
   "groups.accountsPreview": "分组内订阅",
   "groups.rename": "重命名",
   "groups.delete": "删除",

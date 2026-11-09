@@ -34,7 +34,9 @@ export function GroupList({ onSync, onSelect }: GroupListProps) {
             <div>
               <div className="account-name">{group.name}</div>
               <div className="account-sub">
-                {t('groups.subscriptionSummary', '{total} 个订阅，其中 {paused} 个暂停同步。')
+                {((group.disabled_count ?? 0) > 0
+                  ? t('groups.subscriptionSummary', '{total} 个订阅，其中 {paused} 个暂停同步。')
+                  : t('groups.subscriptionCount', '{total} 个订阅'))
                   .replace('{total}', String(group.subscription_count ?? group.account_count ?? 0))
                   .replace('{paused}', String(group.disabled_count ?? 0))}
               </div>
