@@ -56,6 +56,7 @@ class AccountPublicationTest(unittest.IsolatedAsyncioTestCase):
 
         query, params = cursor.execute.await_args_list[0].args
         self.assertIn(LATEST_PUBLICATION_QUERY, ' '.join(query.split()))
+        self.assertEqual(2, query.count('ORDER BY a.nickname ASC, a.biz ASC'))
         self.assertEqual([7, [1], 'youtube', 20, 0], params)
         self.assertLess(query.index('LIMIT %s OFFSET %s'), query.index(LATEST_PUBLICATION_QUERY[:20]))
         self.assertEqual(published, result['accounts'][0]['latest_publish_at'])

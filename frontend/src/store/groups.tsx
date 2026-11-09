@@ -145,9 +145,16 @@ export function useGroupsActions() {
     const url = new URL('/api/account', window.location.origin);
     if (groupId) url.searchParams.set('group_id', String(groupId));
     url.searchParams.set('page_size', '100');
-    const payload = await apiGet(url.pathname + url.search, { signal });
-    if (signal?.aborted || requestId !== accountsRequestIdRef.current || groupId !== selectedGroupIdRef.current) return;
-    const accounts = (payload.accounts || []) as Account[];
+    // shortcut: the full group is held in memory, add server-side search and pagination if rendering becomes slow.
+    const accounts: Account[] = [];
+    for (let page = 1; ; page++) {
+      url.searchParams.set('page', String(page));
+      const payload = await apiGet(url.pathname + url.search, { signal });
+      if (signal?.aborted || requestId !== accountsRequestIdRef.current || groupId !== selectedGroupIdRef.current) return;
+      const next = (payload.accounts || []) as Account[];
+      accounts.push(...next);
+      if (!next.length || accounts.length >= Number(payload.total ?? accounts.length)) break;
+    }
     dispatch({ type: 'SET_ACCOUNTS', accounts, preserveSelection });
   }, [dispatch, state.selectedGroupId]);
 

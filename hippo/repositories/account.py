@@ -380,7 +380,7 @@ class AccountRepository:
             ' FROM accounts a'
             ' JOIN subscription s ON s.biz = a.biz AND s.user_id = %s'
             f' {where_sql}'
-            ' ORDER BY a.nickname ASC'
+            ' ORDER BY a.nickname ASC, a.biz ASC'
             ' LIMIT %s OFFSET %s'
             ')'
             ' SELECT a.biz, a.nickname, a.source, a.alias, a.round_head_img, a.group_id,'
@@ -400,7 +400,7 @@ class AccountRepository:
             ' FROM filtered_accounts a'
             ' LEFT JOIN account_groups g ON g.id = a.group_id'
             ' LEFT JOIN avatar_images ai ON ai.biz = a.biz'
-            ' ORDER BY a.nickname ASC'
+            ' ORDER BY a.nickname ASC, a.biz ASC'
         )
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(query_sql, [user_id, *params, page_size, offset])
