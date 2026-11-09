@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useGroupsState } from '../../store/groups';
 import { useI18n } from '../../i18n';
-import { apiSend, isAuthError } from '../../api';
+import { apiSend, handleAuthError, isAuthError } from '../../api';
 import { useToast } from '../../hooks/useToast';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useSyncRun } from '../../hooks/useSyncRun';
@@ -17,6 +17,9 @@ export function BatchActions() {
   const [targetGroupId, setTargetGroupId] = useState('');
   const [syncBatchInterval, setSyncBatchInterval] = useState<number | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'markdown' | 'json'>('markdown');
+  const [exporting, setExporting] = useState(false);
   const isNarrow = useMediaQuery('(max-width: 720px)');
 
   const count = state.selectedAccounts.length;
@@ -101,6 +104,36 @@ export function BatchActions() {
     emitRefresh();
   };
 
+  const handleExport = async () => {
+    if (!count || exporting) return;
+    if (count > 100) {
+      showToast(t('accounts.exportLimit', '一次最多导出 100 个账号，请减少选择数量。'));
+      return;
+    }
+    setExporting(true);
+    try {
+      const params = new URLSearchParams({ format: exportFormat });
+      state.selectedAccounts.forEach((biz) => params.append('biz', biz));
+      const response = await fetch(`/api/article/export?${params.toString()}`);
+      if (response.status === 401) {
+        handleAuthError();
+        return;
+      }
+      if (!response.ok) throw new Error(t('accounts.exportFailed', '导出失败，请稍后重试。'));
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'hippo-articles.zip';
+      link.click();
+      URL.revokeObjectURL(url);
+      setShowExportModal(false);
+    } catch (err) {
+      showToast((err as Error).message || t('accounts.exportFailed', '导出失败，请稍后重试。'));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const allChecked = state.accounts.length > 0 && count === state.accounts.length;
   const indeterminate = count > 0 && count < state.accounts.length;
 
@@ -169,6 +202,10 @@ export function BatchActions() {
           {t('accounts.groupSync', 'Sync')}
         </button>
         <div className="batch-divider"></div>
+        <button className="btn ghost" id="btn-batch-export" type="button" onClick={() => setShowExportModal(true)}>
+          {t('accounts.export', '导出')}
+        </button>
+        <div className="batch-divider"></div>
         <button className="btn ghost" id="btn-batch-delete" type="button" onClick={() => setShowDeleteModal(true)}>
           {t('accounts.delete', 'Delete')}
         </button>
@@ -192,6 +229,26 @@ export function BatchActions() {
       onClose={() => setShowDeleteModal(false)}
       onConfirm={handleDelete}
     />
+    {showExportModal && (
+      <div className="modal-overlay" onClick={(event) => { if (event.target === event.currentTarget && !exporting) setShowExportModal(false); }}>
+        <div className="modal export-modal" role="dialog" aria-modal="true" aria-labelledby="export-modal-title">
+          <div className="modal-title" id="export-modal-title">{t('accounts.exportTitle', '导出文章')}</div>
+          <p className="muted">{t('accounts.exportDescription', '下载 ZIP 包，每篇文章单独成文，并附带可获取的媒体文件。')}</p>
+          <label className="export-format-option">
+            <input type="radio" name="export-format" value="markdown" checked={exportFormat === 'markdown'} onChange={() => setExportFormat('markdown')} />
+            <span>Markdown</span>
+          </label>
+          <label className="export-format-option">
+            <input type="radio" name="export-format" value="json" checked={exportFormat === 'json'} onChange={() => setExportFormat('json')} />
+            <span>JSON</span>
+          </label>
+          <div className="toolbar confirm-modal-actions">
+            <button className="btn ghost" type="button" disabled={exporting} onClick={() => setShowExportModal(false)}>{t('common.cancel', '取消')}</button>
+            <button className="btn" type="button" disabled={exporting} onClick={() => void handleExport()}>{exporting ? t('common.loading', '正在导出…') : t('accounts.export', '导出')}</button>
+          </div>
+        </div>
+      </div>
+    )}
     </>
   );
 }

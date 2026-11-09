@@ -290,6 +290,7 @@ GET /api/account/search?q=中投&page=1&page_size=10
 | 方法 | 路径 | 权限 | 用途 |
 |---|---|---|---|
 | GET | `/api/article` | 登录 | 文章列表（筛选 + 全文检索 + 分面，含 `topic` 方向筛选） |
+| GET | `/api/article/export` | 登录 | 导出所选账号的已收录文章（Markdown / JSON） |
 | GET | `/api/article/{id}` | 登录 | 文章详情（含正文块与图片） |
 | PUT | `/api/article/{id}/read` | 登录 | 标记单篇文章已读 / 未读 |
 | PUT | `/api/article/{id}/star` | 登录 | 收藏 / 取消收藏单篇文章 |
@@ -403,6 +404,10 @@ GET /api/article?event_id=12&page=1
 `event_id` 取详情响应里的 `event.id`，用来读「同一件事的其它报道」。事件未达「至少 2 个不同
 来源」的门槛时返回 `404`，与 `/api/feed/mixed` 一致。详情页的「看这件事的其它报道」按钮就是
 走这条路径。
+
+### 文章导出
+
+`GET /api/article/export?biz=Mz...&biz=Mz...&format=markdown` 下载 ZIP；`format` 可选 `markdown` 或 `json`，默认 `markdown`。账号必须属于当前用户的订阅，单次最多 100 个。每篇文章单独存为一个 Markdown 或 JSON 文件，ZIP 采用 DEFLATE 9 级压缩，并包含已归档且可读取的图片、音频和视频。Markdown 中已打包图片和媒体使用相对路径；图片尚未归档或读取失败时保留文章中的公众号原始资源 URL，不输出对象存储路径。JSON 包含文章信息、Markdown 正文、正文块和附件相对路径。
 
 ### 文章详情
 
@@ -1248,6 +1253,7 @@ Content-Type: application/pdf
 | POST | `/api/apikey` | 登录 |
 | DELETE | `/api/apikey/{key_id}` | 登录 |
 | GET | `/api/article` | 登录 |
+| GET | `/api/article/export` | 登录 |
 | GET | `/api/article/refetch/{task_id}` | 登录 |
 | GET | `/api/article/{article_id}` | 登录 |
 | GET | `/api/article/{article_id}/annotation` | 登录 |

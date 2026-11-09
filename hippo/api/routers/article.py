@@ -2,22 +2,30 @@
 
 import asyncio
 import json
+import re
+import shutil
+import tempfile
 import threading
 import time as time_module
 import uuid
+import zipfile
 from collections.abc import AsyncIterator
+from pathlib import Path as FilePath
 from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
+from starlette.background import BackgroundTask
 from starlette.concurrency import iterate_in_threadpool
 
 from ...article_queries import (
     _assert_article_visible,
     _block_image,
     _fetch_image,
+    _filter_blocked_content_blocks,
     _get_article,
+    _get_visible_article_images,
     _list_article_images,
     _list_articles,
     _list_watch_later,
@@ -35,14 +43,16 @@ from ...article_queries import (
 from ...article_references import article_references
 from ...container import build_downloader_container
 from ...exceptions import ApiError
+from ...image_hashes import fetch_image_bytes
 from ...logger import get_logger
 from ...media import archive as archive_module
 from ...media import audio_export
 from ...media.subtitle import to_markdown, to_srt, to_text
 from ...media_settings import get_media_settings, resolve_proxy
 from ...models import User
+from ...s3 import guess_extension
 from ...site_settings import get_site_settings
-from ...storage import PostgresStorage, fetchone_row, open_storage
+from ...storage import PostgresStorage, fetchall_rows, fetchone_row, open_storage
 from ..deps import current_user, get_storage, parse_group_ids
 from ..responses import binary_response
 from ..schemas.article import (
@@ -154,6 +164,187 @@ async def list_articles(
         vocabulary=vocabulary,
         event_id=event_id,
     )
+
+
+def _export_path_component(value: Any) -> str:
+    return re.sub(r'[\x00-\x1f\\/:*?"<>|]+', '_', str(value)).strip(' .')[:80] or 'untitled'
+
+
+async def _export_thread_call(function: Any, *args: Any, **kwargs: Any) -> Any:
+    task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await asyncio.gather(task, return_exceptions=True)
+        raise
+
+
+@router.get('/article/export')
+async def export_articles(
+    biz: list[str] = Query(min_length=1, max_length=100),
+    format: str = 'markdown',
+    storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
+) -> Response:
+    """Export every collected article for one or more of the caller's accounts."""
+    accounts = list(dict.fromkeys(value.strip() for value in biz if value.strip()))
+    if not accounts or format not in {'markdown', 'json'}:
+        raise ApiError('Invalid export request', status=400)
+    subscribed = await fetchall_rows(
+        storage,
+        'SELECT biz FROM subscription WHERE user_id = %s AND biz = ANY(%s)',
+        [user.id, accounts],
+    )
+    if {row['biz'] for row in subscribed} != set(accounts):
+        raise ApiError('Account not found', status=404)
+    work_dir = FilePath(tempfile.mkdtemp(prefix='hippo-export-'))
+    zip_path = work_dir / 'hippo-articles.zip'
+    archive: zipfile.ZipFile | None = None
+    last_id = 0
+    try:
+        archive = zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9)
+        while True:
+            rows = await fetchall_rows(
+                storage,
+                """
+                SELECT a.id, a.biz, acc.nickname AS account_nickname, a.title, a.author,
+                       a.digest, a.link, a.source_url, a.publish_at,
+                       COALESCE(c.content_markdown, '') AS content_markdown,
+                       c.content_json
+                  FROM articles a
+                  JOIN subscription s ON s.biz = a.biz AND s.user_id = %s
+                  JOIN accounts acc ON acc.biz = a.biz
+                  LEFT JOIN article_content c ON c.article_pk = a.id
+                 WHERE a.biz = ANY(%s) AND a.id > %s
+                 ORDER BY a.id
+                 LIMIT 100
+                """,
+                [user.id, accounts, last_id],
+            )
+            if not rows:
+                break
+            last_id = int(rows[-1]['id'])
+            for row in rows:
+                content = row.get('content_json')
+                if isinstance(content, str):
+                    try:
+                        content = json.loads(content)
+                    except json.JSONDecodeError:
+                        content = None
+                account_dir = (
+                    f"accounts/{_export_path_component(row['account_nickname'])}-"
+                    f"{_export_path_component(row['biz'])}"
+                )
+                article_dir = f"{account_dir}/{row['id']}-{_export_path_component(row['title'])}"
+                attachments: list[str] = []
+                replacements: list[tuple[str, str]] = []
+                blocked_urls: list[str] = []
+                image_rows = await fetchall_rows(
+                    storage,
+                    'SELECT id, orig_url FROM article_images WHERE article_pk = %s ORDER BY position',
+                    [row['id']],
+                )
+                visible_images, blocked_image_ids = await _get_visible_article_images(storage, int(row['id']))
+                visible_image_ids = {int(image['id']) for image in visible_images}
+                if isinstance(content, list):
+                    content = _filter_blocked_content_blocks(content, blocked_image_ids)
+                for image in image_rows:
+                    image_id = int(image['id'])
+                    if image_id not in visible_image_ids:
+                        if image.get('orig_url'):
+                            blocked_urls.append(str(image['orig_url']))
+                        continue
+                    try:
+                        image_bytes, content_type = await fetch_image_bytes(storage, image_id, allow_origin_fetch=False)
+                    except (LookupError, RuntimeError):
+                        continue
+                    relative_path = f"attachments/images/{image_id}.{guess_extension(content_type)}"
+                    await _export_thread_call(
+                        archive.writestr,
+                        f"{article_dir}/{relative_path}",
+                        image_bytes,
+                        compress_type=zipfile.ZIP_DEFLATED,
+                        compresslevel=9,
+                    )
+                    attachments.append(relative_path)
+                    if image.get('orig_url'):
+                        replacements.append((str(image['orig_url']), relative_path))
+                media_rows = await fetchall_rows(
+                    storage,
+                    "SELECT kind, content_type, s3_key FROM article_media WHERE article_pk = %s AND state = 'stored' AND s3_key IS NOT NULL",
+                    [row['id']],
+                )
+                for media in media_rows:
+                    kind = re.sub(r'[^a-z0-9_-]', '_', str(media['kind']).lower())
+                    content_type = str(media.get('content_type') or '').split(';', 1)[0].strip().lower()
+                    extension = 'mp4' if content_type == 'video/mp4' else guess_extension(content_type)
+                    relative_path = f"attachments/media/{kind}.{extension}"
+                    staged_path = work_dir / f"media-{row['id']}-{kind}"
+                    try:
+                        await _export_thread_call(archive_module.fetch_object, str(media['s3_key']), staged_path)
+                    except archive_module.ArchiveError:
+                        continue
+                    await _export_thread_call(
+                        archive.write,
+                        staged_path,
+                        arcname=f"{article_dir}/{relative_path}",
+                        compress_type=zipfile.ZIP_DEFLATED,
+                        compresslevel=9,
+                    )
+                    staged_path.unlink(missing_ok=True)
+                    attachments.append(relative_path)
+                markdown = str(row['content_markdown'] or '')
+                for source_url, relative_path in replacements:
+                    markdown = markdown.replace(f']({source_url})', f']({relative_path})')
+                for source_url in blocked_urls:
+                    markdown = re.sub(r'!\[[^\]]*\]\(' + re.escape(source_url) + r'\)', '', markdown)
+                article = {
+                    'id': row['id'], 'account': row['account_nickname'], 'biz': row['biz'],
+                    'title': row['title'], 'author': row['author'], 'digest': row['digest'],
+                    'link': row['link'], 'source_url': row['source_url'], 'publish_at': row['publish_at'],
+                    'content_markdown': markdown, 'content': content,
+                    'attachments': attachments,
+                }
+                if format == 'json':
+                    payload = json.dumps(article, ensure_ascii=False, indent=2)
+                else:
+                    media_links = [
+                        f"- [{FilePath(path).name}]({path})"
+                        for path in attachments
+                        if path.startswith('attachments/media/')
+                    ]
+                    if media_links:
+                        markdown = f"{markdown}\n\n## 媒体附件\n\n" + '\n'.join(media_links)
+                    payload = (
+                        f"# {article['title'] or 'Untitled'}\n\n公众号：{article['account']}\n\n"
+                        f"发布时间：{article['publish_at'] or '未知'}\n\n"
+                        f"原文：{article['link'] or article['source_url'] or ''}\n\n{markdown}"
+                    )
+                article_filename = 'article.json' if format == 'json' else 'article.md'
+                await _export_thread_call(
+                    archive.writestr,
+                    f'{article_dir}/{article_filename}',
+                    payload,
+                    compress_type=zipfile.ZIP_DEFLATED,
+                    compresslevel=9,
+                )
+        await _export_thread_call(archive.close)
+        return FileResponse(
+            zip_path,
+            filename='hippo-articles.zip',
+            media_type='application/zip',
+            headers={'Cache-Control': 'private, no-store'},
+            background=BackgroundTask(shutil.rmtree, work_dir, ignore_errors=True),
+        )
+    except BaseException:
+        try:
+            if archive:
+                await _export_thread_call(archive.close)
+        except BaseException:
+            logger.warning('Failed to close incomplete article export', exc_info=True)
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
+        raise
 
 
 @router.get(

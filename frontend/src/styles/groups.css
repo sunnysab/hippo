@@ -369,6 +369,17 @@
   line-height: 1.25;
 }
 
+.export-format-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 0;
+}
+
+.export-format-option input {
+  accent-color: var(--accent);
+}
+
 .account-tag {
   display: inline-flex;
   align-items: center;
