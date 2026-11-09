@@ -4,8 +4,9 @@ import { useSettingsState } from '../../store/settings';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
 import { apiSend, isAuthError } from '../../api';
-import { escapeHtml, formatRelativeTime } from '../../utils/format';
+import { escapeHtml } from '../../utils/format';
 import { getSyncRunLabel, getSyncTaskKind, getSyncTone } from '../../utils/sync';
+import { TaskDetails } from './TaskDetails';
 import { emitRefresh } from '../../utils/events';
 
 export function ActiveTaskPanel() {
@@ -72,7 +73,7 @@ export function ActiveTaskPanel() {
         ) : null}
       </div>
       {state.syncTasks.filter((task) => task.task_id !== activeTask?.task_id && ['queued', 'pending', 'running', 'cancelling'].includes(task.status)).map((task) => (
-        <div className="account-sub" key={task.task_id}>{getSourceLabel(task.source, t)} · {getSyncTaskKind(task.trigger_type, t)} · {getSyncRunLabel(task.status, t)} · {task.current_account?.nickname || task.biz_list?.slice(0, 3).join(', ')}</div>
+        <div className="account-sub" key={task.task_id}>{getSourceLabel(task.source, t)} · {getSyncTaskKind(task.trigger_type, t)} · {getSyncRunLabel(task.status, t)} · {task.current_account?.nickname}</div>
       ))}
       <div className="sync-active-body" id="sync-active-task">
         {!activeTask ? (
@@ -118,30 +119,7 @@ export function ActiveTaskPanel() {
                 <span style={{ width: `${Math.max(4, Math.round(((activeTask.accounts_done || 0) / activeTask.accounts_total) * 100))}%` }}></span>
               </div>
             )}
-            <div className="sync-progress-list">
-              {[...(activeTask.accounts || [])].sort((a, b) => {
-                const ta = a.updated_at ? new Date(a.updated_at).getTime() : 0;
-                const tb = b.updated_at ? new Date(b.updated_at).getTime() : 0;
-                return tb - ta;
-              }).slice(0, 8).map((account) => {
-                const toneClass = `sync-tone-${getSyncTone(account.status)}`;
-                return (
-                  <div key={account.biz} className={`sync-progress-item ${account.status === 'running' ? 'is-running' : ''} ${toneClass}`}>
-                    <div className="sync-progress-copy">
-                      <div className="sync-progress-title-row">
-                        <div className="account-name">{escapeHtml(account.nickname || account.biz || '-')}</div>
-                        <span className={`sync-progress-status sync-status-badge ${toneClass}`}>
-                          {t(`sync.status.${account.status}`, account.status || '')}
-                        </span>
-                      </div>
-                      <div className="account-sub">
-                        {[phaseLabel(account.phase), t('sync.enqueuedCount', '新入队 {n} 篇').replace('{n}', String(account.saved)), `${account.page_count} 页`, formatRelativeTime(account.updated_at, t)].filter(Boolean).join(' · ')}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <TaskDetails key={activeTask.task_id} taskId={activeTask.task_id} active={['running', 'queued', 'cancelling'].includes(activeTask.status)} />
           </div>
         )}
       </div>

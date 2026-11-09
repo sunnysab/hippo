@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSettingsState } from '../../store/settings';
 import { useAuth } from '../../hooks/useAuth';
 import { apiGet } from '../../api';
-import type { SyncSettings, SyncStatus, SyncTask } from '../../store/settings';
+import type { SyncSettings, SyncStatus, SyncTaskSummary } from '../../store/settings';
 import { buildSyncSettingsFormState, type SyncSettingsFormState } from '../settings/form';
 import { onRefresh } from '../../utils/events';
 import { usePolling } from '../../hooks/usePolling';
@@ -27,11 +27,11 @@ export function AdminSyncPage() {
     try {
       const [status, jobs] = await Promise.all([
         apiGet('/api/settings/status', { signal }),
-        apiGet('/api/settings/tasks?active=true&limit=100&detail=true', { signal }),
+        apiGet('/api/settings/tasks?active=true&limit=100&detail=false', { signal }),
       ]);
       if (signal.aborted) return;
       dispatch({ type: 'SET_SYNC_STATUS', payload: status as unknown as SyncStatus });
-      dispatch({ type: 'SET_SYNC_TASKS', tasks: (jobs.tasks || []) as SyncTask[] });
+      dispatch({ type: 'SET_SYNC_TASKS', tasks: (jobs.tasks || []) as SyncTaskSummary[] });
       setError('');
     } catch (err) {
       if (!signal.aborted) setError((err as Error).message);

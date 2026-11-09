@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
@@ -134,18 +134,22 @@ class SyncTaskState:
     report: dict[str, Any] | None = None
     accounts: dict[str, AccountProgress] = field(default_factory=dict)
 
+    @property
+    def total_saved(self) -> int:
+        reported = (self.report or {}).get('total_saved')
+        return int(reported) if reported is not None else sum(item.saved for item in self.accounts.values())
+
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d.pop('scope_sources', None)
         d['accounts'] = [p.__dict__.copy() for p in self.accounts.values()]
+        d['total_saved'] = self.total_saved
         return d
 
     def to_summary_dict(self) -> dict[str, Any]:
-        d = self.to_dict()
-        d.pop('accounts', None)
-        d.pop('biz_list', None)
-        d.pop('trigger_type', None)
-        d.pop('report', None)
+        excluded = {'scope_sources', 'accounts', 'biz_list', 'report'}
+        d = {item.name: getattr(self, item.name) for item in fields(self) if item.name not in excluded}
+        d['total_saved'] = self.total_saved
         return d
 
 

@@ -717,12 +717,15 @@ GET /api/settings/status?limit=5
 
 ```
 GET /api/settings/tasks?limit=5&detail=false   → { "tasks": [ … ] }
-GET /api/settings/tasks?active=true&detail=true # 活跃任务独立查询，不受最近历史条数限制
+GET /api/settings/tasks?active=true&detail=false # 活跃任务摘要，不受最近历史条数限制
 GET /api/settings/tasks?active=false          # 已结束的列表任务
 GET /api/settings/tasks?source=bilibili        # 只看某个来源的任务
 GET /api/settings/tasks/{task_id}             → 任务完整状态（不存在或不是你的任务都是 404）
 POST /api/settings/tasks/{task_id}/cancel     → 可取消状态返回更新后的任务，否则 404
 ```
+
+任务列表默认返回摘要，包含 `trigger_type`、`total_saved`、状态、时间与当前进度，不包含 `accounts`、`biz_list` 和完整 `report`。`total_saved` 优先读取任务报告，旧任务没有报告时汇总账号进度。展开账号明细时使用单任务接口；`detail=true` 仍返回完整列表，通常无需使用。
+
 
 任务列表只给当前用户自己的任务（管理员看全部）；`detail=false` 返回精简摘要，`detail=true` 才带逐账号进度。
 任务状态字段：`task_id`、`status`、`trigger_type`（`manual`/`scheduled`/`backfill`）、`phase`、

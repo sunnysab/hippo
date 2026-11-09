@@ -294,6 +294,8 @@ class SyncJobQueueTest(unittest.TestCase):
             state.to_summary_dict(),
             {
                 'task_id': 'job-3',
+                'trigger_type': 'manual',
+                'total_saved': 0,
                 'status': 'running',
                 'created_at': '2026-03-20T04:00:00+00:00',
                 'started_at': '2026-03-20T04:00:03+00:00',

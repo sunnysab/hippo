@@ -75,6 +75,7 @@ class _Jobs:
         limit: int = 5,
         source: str | None = None,
         requester_user_id: int | None = None,
+        detail: bool = True,
     ) -> list[SyncTaskState]:
         rows = [
             state

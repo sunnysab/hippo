@@ -69,7 +69,8 @@ export interface SyncTaskAccount {
   error?: string;
 }
 
-export interface SyncTask {
+export interface SyncTaskSummary {
+  total_saved?: number;
   source?: string | null;
   task_id: string;
   status: string;
@@ -78,14 +79,17 @@ export interface SyncTask {
   finished_at: string | null;
   error: string | null;
   trigger_type: string;
-  biz_list?: string[] | null;
-  report?: { total_saved?: number } | null;
   phase?: string;
   last_log: string | null;
   accounts_total: number;
   accounts_done: number;
   current_account?: { biz: string; nickname?: string };
   current_article?: { article_id?: string; title?: string };
+}
+
+export interface SyncTask extends SyncTaskSummary {
+  biz_list?: string[] | null;
+  report?: { total_saved?: number } | null;
   accounts: SyncTaskAccount[];
 }
 
@@ -103,14 +107,14 @@ export interface LoginStatus {
 interface SettingsState {
   syncStatus: SyncStatus | null;
   syncSettings: SyncSettings | null;
-  syncTasks: SyncTask[];
+  syncTasks: SyncTaskSummary[];
   loginStatus: LoginStatus | null;
 }
 
 type SettingsAction =
   | { type: 'SET_SYNC_STATUS'; payload: SyncStatus }
   | { type: 'SET_SYNC_SETTINGS'; payload: SyncSettings }
-  | { type: 'SET_SYNC_TASKS'; tasks: SyncTask[] }
+  | { type: 'SET_SYNC_TASKS'; tasks: SyncTaskSummary[] }
   | { type: 'SET_LOGIN_STATUS'; payload: LoginStatus };
 
 const initialState: SettingsState = {

@@ -885,5 +885,6 @@
   "admin.source.searchSubscriptions": "搜索订阅",
   "admin.source.noMatches": "没有匹配的订阅。",
   "accounts.articleCountLabel": "已收录文章",
-  "admin.source.credentialInstanceHint": "个人凭证优先，实例凭证备用。"
+  "admin.source.credentialInstanceHint": "个人凭证优先，实例凭证备用。",
+  "sync.taskDetails": "账号明细"
 }

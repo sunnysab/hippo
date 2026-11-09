@@ -163,8 +163,22 @@ class SyncJobRepository:
         source: str | None = None,
         requester_user_id: int | None = None,
         active: bool | None = None,
+        detail: bool = True,
     ) -> list[SyncTaskState]:
         """Recent jobs, optionally narrowed to one source and/or requester."""
+        columns = (
+            '*'
+            if detail
+            else """
+            id, status, trigger_type, group_id, source, requester_user_id,
+            created_at, started_at, finished_at, error, phase, accounts_total,
+            accounts_done, current_account, current_article, last_log,
+            jsonb_build_object('total_saved', COALESCE(
+                (report->>'total_saved')::bigint,
+                (SELECT SUM((item->>'saved')::bigint) FROM jsonb_array_elements(accounts) item),
+                0)) AS report
+        """
+        )
         params: list[Any] = []
         where: list[str] = []
         if requester_user_id is not None:
@@ -191,15 +205,15 @@ class SyncJobRepository:
                            WHERE item->>'source' = %s)
             )"""
             query = (
-                f'(SELECT * FROM sync_jobs WHERE source = %s{filters} ORDER BY created_at DESC LIMIT %s) '
+                f'(SELECT {columns} FROM sync_jobs WHERE source = %s{filters} ORDER BY created_at DESC LIMIT %s) '
                 'UNION ALL '
-                f'(SELECT * FROM sync_jobs WHERE source IS NULL{filters} AND {legacy} '
+                f'(SELECT {columns} FROM sync_jobs WHERE source IS NULL{filters} AND {legacy} '
                 'ORDER BY created_at DESC LIMIT %s) '
                 'ORDER BY created_at DESC LIMIT %s'
             )
             params = [source, *params, limit, *params, source, source, source, limit, limit]
         else:
-            query = 'SELECT * FROM sync_jobs'
+            query = f'SELECT {columns} FROM sync_jobs'
             if where:
                 query += ' WHERE ' + ' AND '.join(where)
             query += ' ORDER BY created_at DESC LIMIT %s'

@@ -5,7 +5,8 @@ import { useSyncRun } from '../../hooks/useSyncRun';
 import { formatRelativeTime } from '../../utils/format';
 import { getSyncTaskKind, getSyncRunLabel, getSyncTone } from '../../utils/sync';
 import { usePolling } from '../../hooks/usePolling';
-import type { SyncTask } from '../../store/settings';
+import { TaskDetails } from './TaskDetails';
+import type { SyncTaskSummary } from '../../store/settings';
 
 const TASK_LIMIT = 8;
 
@@ -23,8 +24,8 @@ export function AdminSyncSection({ source }: { source?: string }) {
 function SourceTaskHistory({ source }: { source?: string }) {
   const { t } = useI18n();
   const { runSync } = useSyncRun();
-  const [historyTasks, setHistoryTasks] = useState<SyncTask[]>([]);
-  const [activeTasks, setActiveTasks] = useState<SyncTask[]>([]);
+  const [historyTasks, setHistoryTasks] = useState<SyncTaskSummary[]>([]);
+  const [activeTasks, setActiveTasks] = useState<SyncTaskSummary[]>([]);
   const tasks = [...activeTasks, ...historyTasks];
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -34,12 +35,12 @@ function SourceTaskHistory({ source }: { source?: string }) {
   const load = useCallback(async (signal: AbortSignal) => {
     setError('');
     const fetchTasks = async (active: boolean) => {
-      const query = new URLSearchParams({ limit: String(active ? 100 : TASK_LIMIT), detail: 'true', active: String(active) });
+      const query = new URLSearchParams({ limit: String(active ? 100 : TASK_LIMIT), detail: 'false', active: String(active) });
       if (source) query.set('source', source);
       try {
         const payload = await apiGet(`/api/settings/tasks?${query.toString()}`, { signal });
         if (signal.aborted) return;
-        const next = (payload.tasks || []) as SyncTask[];
+        const next = (payload.tasks || []) as SyncTaskSummary[];
         if (active) setActiveTasks(next);
         else setHistoryTasks(next);
         setLoading(false);
@@ -90,7 +91,7 @@ function SourceTaskHistory({ source }: { source?: string }) {
             const toneClass = `sync-tone-${getSyncTone(task.status)}`;
             const started = task.started_at || task.created_at;
             const rel = formatRelativeTime(started, t);
-            const saved = Number(task.report?.total_saved ?? task.accounts?.reduce((sum, account) => sum + (account.saved || 0), 0) ?? 0);
+            const saved = Number(task.total_saved || 0);
             return (
               <div key={task.task_id} className={`list-item sync-history-item ${toneClass}`}>
                 <div className="sync-history-copy">
@@ -112,6 +113,7 @@ function SourceTaskHistory({ source }: { source?: string }) {
                     {task.last_log ? ` · ${task.last_log}` : ''}
                     {task.error ? ` · ${task.error}` : ''}
                   </div>
+                  <TaskDetails taskId={task.task_id} active={['running', 'queued', 'cancelling'].includes(task.status)} />
                 </div>
               </div>
             );

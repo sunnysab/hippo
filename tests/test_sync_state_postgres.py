@@ -122,6 +122,22 @@ class SyncStatePostgresTest(unittest.IsolatedAsyncioTestCase):
         jobs = await self.jobs.list_jobs(source='weixin', active=False, requester_user_id=7, limit=3)
         self.assertEqual(['explicit', 'legacy', 'snapshot'], [job.task_id for job in jobs])
 
+    async def test_summary_avoids_full_payload_and_preserves_enqueued_count(self):
+        await self.conn.execute("""
+            INSERT INTO sync_jobs (id, status, trigger_type, source, report, accounts, created_at)
+            VALUES ('reported', 'success', 'scheduled', 'weixin', '{"total_saved":12,"details":[1,2]}',
+                    '[{"biz":"one","saved":3}]', '2026-01-02'),
+                   ('legacy-count', 'success', 'manual', 'weixin', NULL,
+                    '[{"biz":"one","saved":3},{"biz":"two","saved":4}]', '2026-01-01');
+        """)
+        jobs = await self.jobs.list_jobs(source='weixin', detail=False)
+        self.assertEqual([12, 7], [job.to_summary_dict()['total_saved'] for job in jobs])
+        self.assertTrue(all(not job.accounts for job in jobs))
+        self.assertTrue(all(set(job.report) == {'total_saved'} for job in jobs))
+        detail = await self.jobs.get_job('reported')
+        self.assertEqual(3, detail.accounts['one'].saved)
+        self.assertEqual([1, 2], detail.report['details'])
+
     async def test_source_history_handles_large_legacy_backlog(self):
         # Most production history predates source tracking and references accounts
         # no longer present. A per-job scan of every source account is quadratic.

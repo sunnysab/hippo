@@ -61,7 +61,9 @@ class _SyncJobs:
         self.created: list[dict[str, Any]] = []
         self.states: dict[str, SyncTaskState] = {}
 
-    async def list_jobs(self, *, limit: int, source: str | None, requester_user_id: int | None) -> list[SyncTaskState]:
+    async def list_jobs(
+        self, *, limit: int, source: str | None, requester_user_id: int | None, detail: bool = True
+    ) -> list[SyncTaskState]:
         return [
             state
             for state in self.states.values()

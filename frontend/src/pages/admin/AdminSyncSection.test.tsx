@@ -12,7 +12,7 @@ describe('source task visibility', () => {
   it('queries active jobs independently of recent history and labels enqueued counts', async () => {
     get.mockImplementation(async (url: string) => ({ tasks: url.includes('active=true') ? [{
       task_id: 'active', status: 'running', trigger_type: 'backfill', created_at: '2026-11-09T00:00:00Z',
-      accounts: [], accounts_total: 1, accounts_done: 0, report: { total_saved: 1187 },
+      accounts: [], accounts_total: 1, accounts_done: 0, total_saved: 1187,
       current_account: { nickname: '郭延娇的公众号' }, last_log: '第 59 页',
     }] : [] }));
     render(<AdminSyncSection source="weixin" />);

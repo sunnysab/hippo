@@ -82,6 +82,8 @@ class SyncTaskSummary(BaseModel):
 
     task_id: str
     status: str
+    trigger_type: str | None = None
+    total_saved: int = 0
     created_at: str
     started_at: str | None = None
     finished_at: str | None = None
@@ -101,7 +103,6 @@ class SyncTaskDetail(SyncTaskSummary):
     """A task with the full progress/result payload (``detail=true``)."""
 
     biz_list: list[str] | None = None
-    trigger_type: str | None = None
     report: dict[str, Any] | None = None
     accounts: list[SyncAccountProgress] | None = None
 

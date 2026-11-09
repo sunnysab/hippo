@@ -121,9 +121,10 @@ async def list_sync_tasks(
     """
     filters = {'active': active} if active is not None else {}
     tasks = await storage.sync_jobs.list_jobs(
-        limit=max(int(limit), 1),
+        limit=min(max(int(limit), 1), 100),
         source=source or None,
         requester_user_id=None if is_admin_session(request, user) else user.id,
+        detail=detail,
         **filters,
     )
     formatter = (lambda task: task.to_dict()) if detail else (lambda task: task.to_summary_dict())
