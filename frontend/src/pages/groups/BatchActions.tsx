@@ -23,6 +23,9 @@ export function BatchActions() {
   const isNarrow = useMediaQuery('(max-width: 720px)');
 
   const count = state.selectedAccounts.length;
+  const pollingAccounts = state.accounts
+    .filter((account) => state.selectedAccounts.includes(account.biz) && (account.source || 'weixin') !== 'weixin')
+    .map((account) => account.biz);
   const showActions = isNarrow ? count > 0 && expanded : count > 0;
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -57,13 +60,13 @@ export function BatchActions() {
   };
 
   const handleBatchSyncSettings = async () => {
-    if (!count) {
+    if (!pollingAccounts.length) {
       showToast(t('accounts.syncSelectAccounts', 'Select accounts to sync.'));
       return;
     }
     try {
       await apiSend('/api/account/batch', 'POST', {
-        biz_list: state.selectedAccounts,
+        biz_list: pollingAccounts,
         sync_interval_days: syncBatchInterval,
       });
       showToast(t('accounts.syncSaved', 'Sync strategy updated.'));
@@ -178,8 +181,9 @@ export function BatchActions() {
         <button className="btn ghost" id="btn-batch-move" type="button" onClick={handleMove}>
           {t('accounts.move', 'Move')}
         </button>
-        <div className="batch-divider"></div>
-        <select
+        {pollingAccounts.length > 0 && <>
+          <div className="batch-divider"></div>
+          <select
           id="batch-sync-interval"
           value={syncBatchInterval === null ? '' : String(syncBatchInterval)}
           onChange={(event) => {
@@ -187,8 +191,8 @@ export function BatchActions() {
             setSyncBatchInterval(val === '' ? null : Number(val));
           }}
         >
-          <option value="">{t('accounts.syncIntervalAuto', 'Auto (detect)')}</option>
-          <option value="1">{t('accounts.syncInterval1', 'Every run')}</option>
+          <option value="">{t('accounts.syncIntervalAuto', '跟随来源设置')}</option>
+          <option value="1">{t('accounts.syncInterval1', '每天一次')}</option>
           <option value="3">{t('accounts.syncInterval3', 'Every 3 days')}</option>
           <option value="7">{t('accounts.syncInterval7', 'Weekly')}</option>
           <option value="14">{t('accounts.syncInterval14', 'Biweekly')}</option>
@@ -197,6 +201,7 @@ export function BatchActions() {
         <button className="btn ghost" id="btn-batch-sync" type="button" onClick={handleBatchSyncSettings}>
           {t('accounts.batchSyncApply', 'Apply')}
         </button>
+        </>}
         <div className="batch-divider"></div>
         <button className="btn ghost" id="btn-batch-group-sync" type="button" onClick={handleBatchGroupSync}>
           {t('accounts.groupSync', 'Sync')}

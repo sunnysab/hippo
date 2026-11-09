@@ -9,8 +9,6 @@ import {
 } from './form';
 
 const baseForm = (patch: Partial<SyncSettingsFormState> = {}): SyncSettingsFormState => ({
-  enabled: true,
-  intervalMinutes: '60',
   sleepSeconds: '15',
   skipMinutes: '30',
   downloadContent: true,
@@ -32,8 +30,7 @@ const baseForm = (patch: Partial<SyncSettingsFormState> = {}): SyncSettingsFormS
 describe('buildSyncSettingsFormState', () => {
   it('never copies the server mask into the password field', () => {
     const settings: SyncSettings = {
-      enabled: true,
-      interval_minutes: 60,
+      source_intervals_days: { feed: 1, youtube: 1, bilibili: 1, podcast: 1 },
       sleep_seconds: 15,
       skip_minutes: 30,
       download_content: true,

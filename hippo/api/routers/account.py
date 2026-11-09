@@ -443,13 +443,48 @@ async def subscribe_weixin_account(
     round_head_img: str | None = None,
     group_id: int | None = None,
 ) -> dict[str, Any]:
-    """Put a WeChat account in the catalogue and follow it in one transaction.
+    """Confirm the bot follows the publisher, then save the local subscription.
 
     Both ways in end here: the search dialog already has the ``gh_`` and needs a
     fakeid resolved, while an article link hands over the fakeid and the ``gh_``
     together. Writing them the same way is what keeps one account from becoming
     two rows depending on how it was added.
     """
+    gh_id = (gh_id or '').strip() or None
+    if gh_id is None:
+        try:
+            existing = await storage.accounts.get_account(biz=biz, fallback_to_default=False)
+        except LookupError:
+            existing = None
+        if existing is not None:
+            gh_id = (existing.gh_id or '').strip() or None
+            alias = alias or existing.alias
+    # The caller may have read the publisher; do not hold that transaction during RPC.
+    await storage.rollback()
+    if gh_id is None and not (alias or '').strip():
+        raise ApiError(
+            'WeChat account gh_id is required; add via search or an article URL',
+            status=422,
+            code='account.missing_gh_id',
+        )
+    try:
+        async with WeixinSource() as source:
+            if gh_id is None:
+                listed = await source.list_articles(source_key=(alias or '').strip(), biz=biz, pages=1)
+                gh_id = (listed.gh_id or '').strip() or None
+                if gh_id is None:
+                    raise ApiError(
+                        'WeChat account gh_id is required; add via search or an article URL',
+                        status=422,
+                        code='account.missing_gh_id',
+                    )
+            await source.follow_account(gh_id)
+    except ApiError:
+        raise
+    except Exception as exc:
+        raise ApiError(
+            'Failed to follow WeChat account; retry subscription', status=502, code='daemon.follow_failed'
+        ) from exc
     if group_id is None:
         default_group = await ensure_default_group(storage, user_id, name=DEFAULT_GROUP_NAME)
         group_id = default_group.id
@@ -469,6 +504,10 @@ async def subscribe_weixin_account(
         # 目录里已有的号（backfill_state 早就置 done）不会被重复回填。
         if account.backfill_state == 'pending':
             await storage.sync_jobs.create_job(trigger_type='backfill', biz_list=[account.biz], source='weixin')
+        else:
+            await storage.sync_jobs.create_job(
+                trigger_type='subscription', biz_list=[account.biz], source='weixin', requester_user_id=user_id
+            )
     return _normalize_account_payload(
         {
             'biz': account.biz,

@@ -27,7 +27,6 @@ export interface SyncStatus {
   queue?: QueueStats;
   worker_heartbeat_at?: string | null;
   push?: { status?: string; updated_at?: string; last_received_at?: string | null };
-  schedule?: { enabled: boolean; next_eligible_at: string | null };
 }
 
 export interface EmailSettings {
@@ -43,8 +42,7 @@ export interface EmailSettings {
 }
 
 export interface SyncSettings {
-  enabled: boolean;
-  interval_minutes: number;
+  source_intervals_days: Record<string, number>;
   sleep_seconds: number;
   skip_minutes: number;
   download_content: boolean;

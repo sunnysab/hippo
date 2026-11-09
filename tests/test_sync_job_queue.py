@@ -587,7 +587,7 @@ class SyncJobQueueTest(unittest.TestCase):
             report=SyncReport(total_saved=0, summary=[], details=[]),
             error=None,
         )
-        for trigger_type, expected in (('manual', True), ('scheduled', False), ('subscription', False)):
+        for trigger_type, expected in (('manual', True), ('scheduled', False), ('subscription', True)):
             queued_state = SyncTaskState(
                 task_id=f'job-{trigger_type}',
                 status='queued',
@@ -600,3 +600,5 @@ class SyncJobQueueTest(unittest.TestCase):
                 asyncio.run(run_worker_once(storage=storage, worker_id='worker-1'))
 
             self.assertEqual(mocked.call_args.kwargs['force'], expected)
+            if trigger_type == 'scheduled':
+                self.assertNotIn('weixin', mocked.call_args.kwargs['scope_sources'])

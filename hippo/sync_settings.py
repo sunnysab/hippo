@@ -33,11 +33,12 @@ _ARTICLE_EXCLUDE_KEYWORD_LIMIT = 20
 
 _logger = get_logger(__name__)
 
+POLLING_SOURCES = ('bilibili', 'youtube', 'podcast', 'feed')
+
 
 def default_sync_settings() -> dict[str, Any]:
     return {
-        'enabled': False,
-        'interval_minutes': 60,
+        'source_intervals_days': {source: 1 for source in POLLING_SOURCES},
         'sleep_seconds': DEFAULT_SYNC_REQUEST_INTERVAL,
         'download_content': True,
         'download_images': True,
@@ -74,8 +75,15 @@ def _normalize_article_exclude_keywords(value: Any) -> str:
 async def get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
     settings = await load_meta_json(storage, SYNC_SETTINGS_KEY, default_sync_settings())
     defaults = default_sync_settings()
-    # 只认默认值里有的键：老配置里留下的 window_start_hour / window_end_hour 会被丢掉
+    # Retired global scheduling keys do not affect per-source updates.
     merged = {**defaults, **{key: value for key, value in (settings or {}).items() if key in defaults}}
+    intervals = merged.get('source_intervals_days')
+    intervals = intervals if isinstance(intervals, dict) else {}
+    merged['source_intervals_days'] = dict(defaults['source_intervals_days'])
+    for source in POLLING_SOURCES:
+        value = intervals.get(source)
+        if type(value) is int and value >= 1:
+            merged['source_intervals_days'][source] = value
     merged['article_exclude_keywords'] = _normalize_article_exclude_keywords(
         merged.get('article_exclude_keywords'),
     )
@@ -84,7 +92,11 @@ async def get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
 
 async def set_sync_settings(storage: PostgresStorage, updates: dict[str, Any]) -> dict[str, Any]:
     current = await get_sync_settings(storage)
-    current.update(updates)
+    intervals = dict(current['source_intervals_days'])
+    current.update({key: value for key, value in updates.items() if key in current})
+    if isinstance(updates.get('source_intervals_days'), dict):
+        intervals.update({key: value for key, value in updates['source_intervals_days'].items() if key in intervals})
+    current['source_intervals_days'] = intervals
     if 'article_exclude_keywords' in current:
         current['article_exclude_keywords'] = _normalize_article_exclude_keywords(
             current.get('article_exclude_keywords'),
@@ -255,6 +267,7 @@ def _today_str() -> str:
 
 __all__ = [
     'ALERT_SENT_KEY',
+    'POLLING_SOURCES',
     'QUEUE_STATS_KEY',
     'SYNC_ERROR_KEY',
     'SYNC_FINISHED_KEY',

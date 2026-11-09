@@ -27,6 +27,7 @@ class SyncConfig:
     force: bool
     skip_minutes: int | None
     max_pages: int | None = None
+    source_intervals_days: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

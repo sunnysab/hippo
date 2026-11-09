@@ -2,9 +2,10 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BatchActions } from './BatchActions';
 import zhCN from '../../i18n/zh-CN.json';
+import { apiSend } from '../../api';
 
 const mocks = vi.hoisted(() => ({
-  state: { accounts: [], groups: [], selectedAccounts: ['one', 'two'] },
+  state: { accounts: [] as Array<{ biz: string; source: string }>, groups: [], selectedAccounts: ['one', 'two'] },
   toast: vi.fn(),
   auth: vi.fn(),
 }));
@@ -28,6 +29,7 @@ describe('account exports', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
+    mocks.state.accounts = [];
     vi.stubGlobal('fetch', vi.fn());
     URL.createObjectURL = vi.fn(() => 'blob:export');
     URL.revokeObjectURL = vi.fn();
@@ -61,5 +63,30 @@ describe('account exports', () => {
 
     await waitFor(() => expect(mocks.auth).toHaveBeenCalledOnce());
     expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+});
+
+describe('batch update intervals', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.state.selectedAccounts = ['one', 'two'];
+    mocks.state.accounts = [{ biz: 'one', source: 'weixin' }, { biz: 'two', source: 'feed' }];
+  });
+
+  it('applies an interval only to selected polling subscriptions', async () => {
+    render(<BatchActions />);
+    fireEvent.change(document.querySelector('#batch-sync-interval')!, { target: { value: '3' } });
+    fireEvent.click(document.querySelector('#btn-batch-sync')!);
+    await waitFor(() => expect(apiSend).toHaveBeenCalledWith('/api/account/batch', 'POST', {
+      biz_list: ['two'], sync_interval_days: 3,
+    }));
+  });
+
+  it('hides interval controls when only WeChat subscriptions are selected', () => {
+    mocks.state.selectedAccounts = ['one'];
+    render(<BatchActions />);
+    expect(document.querySelector('#batch-sync-interval')).toBeNull();
+    expect(document.querySelector('#btn-batch-sync')).toBeNull();
+    expect(document.querySelector('#btn-batch-group-sync')).toBeTruthy();
   });
 });

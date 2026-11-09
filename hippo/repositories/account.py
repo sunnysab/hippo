@@ -159,6 +159,7 @@ class AccountRepository:
         group_ids: list[int] | None = None,
         biz_list: list[str] | None = None,
         source: str | None = None,
+        source_intervals_days: dict[str, int] | None = None,
     ) -> list[AccountCredential]:
         """Accounts that at least one user still follows.
 
@@ -171,11 +172,12 @@ class AccountRepository:
         ``group_ids`` matches any subscriber's grouping.
         """
         query = """
-            SELECT a.*, g.name AS group_name, agg.sync_interval_days
+            SELECT a.*, g.name AS group_name, agg.sync_interval_days, agg.uses_source_interval
             FROM accounts a
             JOIN (
                 SELECT s.biz,
                        MIN(s.sync_interval_days) AS sync_interval_days,
+                       BOOL_OR(s.sync_interval_days IS NULL) AS uses_source_interval,
                        array_agg(DISTINCT s.group_id) AS group_ids
                 FROM subscription s
                 WHERE NOT s.is_disabled
@@ -199,6 +201,10 @@ class AccountRepository:
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(query, params)
             rows = await cur.fetchall()
+        for row in rows:
+            if row.pop('uses_source_interval'):
+                default_interval = (source_intervals_days or {}).get(row['source'], 1)
+                row['sync_interval_days'] = min(row['sync_interval_days'] or default_interval, default_interval)
         return [_row_to_account(row) for row in rows]
 
     async def set_gh_id(self, biz: str, gh_id: str) -> int:

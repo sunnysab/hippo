@@ -5,6 +5,7 @@ import { LoginPanel } from './LoginPanel';
 import { SourceCredentialPanel } from './SourceCredentialPanel';
 import { SourceProxyPanel } from './SourceProxyPanel';
 import { SourceSubscriptionPanel } from './SourceSubscriptionPanel';
+import { SourceSchedulePanel } from './SourceSchedulePanel';
 import { AdminSyncSection } from './AdminSyncSection';
 
 /**
@@ -37,6 +38,12 @@ export function SourceDetailPage() {
       )}
 
       <SourceProxyPanel source={source} />
+
+      {source === 'weixin' ? (
+        <p className="muted">{t('sync.weixinPushHint', '微信公众号通过实时推送更新，可手动检查近期文章。')}</p>
+      ) : (
+        <SourceSchedulePanel key={source} source={source} />
+      )}
 
       <SourceSubscriptionPanel source={source} />
 

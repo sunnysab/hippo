@@ -24,6 +24,7 @@ vi.mock('react-router-dom', () => ({
 
 const baseAccount: Account = {
   biz: 'Mz1',
+  source: 'weixin',
   nickname: '中投数研',
   alias: null,
   round_head_img: '',
@@ -43,6 +44,19 @@ describe('AccountCard history backfill state', () => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
     groupsStateMock.mockReturnValue({ state: { selectedAccounts: [] }, dispatch: vi.fn() });
+  });
+
+  it('hides the update interval for WeChat subscriptions', () => {
+    render(<AccountCard account={baseAccount} />);
+    expect(document.querySelector('.account-sync-interval')).toBeNull();
+  });
+
+  it('keeps source defaults and daily intervals available for polling sources', () => {
+    render(<AccountCard account={{ ...baseAccount, source: 'feed' }} />);
+    const interval = document.querySelector('.account-sync-interval') as HTMLSelectElement;
+    expect(interval.value).toBe('');
+    expect(interval.options[0].textContent).toBe('跟随来源设置');
+    expect(interval.options[1].textContent).toBe('每天一次');
   });
 
   it('shows the latest publication separately from the last sync', () => {

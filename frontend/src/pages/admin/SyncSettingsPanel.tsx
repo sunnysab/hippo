@@ -53,31 +53,6 @@ export function SyncSettingsPanel({
       </div>
       <div className="sync-form-sections">
         <section className="sync-form-section">
-          <div className="sync-section-title">{t('sync.sectionSchedule', 'Schedule')}</div>
-          <p className="muted">{t('sync.scheduleHint', '定时检查近期列表用于补漏。关闭后仍接收推送，历史补全和已入队下载继续执行。')}</p>
-          <div className="form-grid">
-            <label className="switch">
-              <span>{t('sync.enabled', 'Enable automatic sync')}</span>
-              <input
-                type="checkbox"
-                id="sync-enabled"
-                checked={formState.enabled}
-                onChange={(event) => setFormState((prev) => ({ ...prev, enabled: event.target.checked }))}
-              />
-            </label>
-            <label>
-              <span>{t('sync.interval', 'Interval (minutes)')}</span>
-              <input
-                type="number"
-                id="sync-interval"
-                min="1"
-                value={formState.intervalMinutes}
-                onChange={(event) => setFormState((prev) => ({ ...prev, intervalMinutes: event.target.value }))}
-              />
-            </label>
-          </div>
-        </section>
-        <section className="sync-form-section">
           <div className="sync-section-title">{t('sync.sectionFetch', 'Fetch')}</div>
 
           <div className="form-grid">

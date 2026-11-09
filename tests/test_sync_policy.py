@@ -11,7 +11,7 @@ from hippo.sources.weixin import WeixinSourceAdapter
 from hippo.sync_core import reset_sync_cancel
 from hippo.sync_service import ArticleSyncService
 from hippo.sync_types import NullSyncJobObserver, NullSyncObserver, SyncConfig, SyncStats
-from hippo.utils import resolve_sync_interval
+from hippo.utils import resolve_sync_interval, should_skip_by_interval
 
 
 class _Accounts:
@@ -81,19 +81,24 @@ class ResolveSyncIntervalTest(unittest.TestCase):
         for source in ('weixin', 'youtube', 'podcast'):
             account = _account(source=source, sync_interval_days=7)
 
-            self.assertEqual(asyncio.run(resolve_sync_interval(_Storage(), account)), 7)
+            self.assertEqual(resolve_sync_interval(account, {'youtube': 3}), 7)
 
-    def test_other_sources_default_to_every_scheduled_check(self) -> None:
+    def test_an_account_follows_its_source_interval(self) -> None:
         account = _account(source='youtube')
 
-        # The publish-history lookup is never consulted for a non-WeChat source.
-        self.assertEqual(asyncio.run(resolve_sync_interval(_Storage(), account)), 1)
+        self.assertEqual(resolve_sync_interval(account, {'youtube': 3}), 3)
 
-    def test_weixin_keeps_the_publish_history_interval(self) -> None:
-        account = _account(source='weixin')
-        old_publish = datetime.now(UTC) - timedelta(days=200)
+    def test_one_day_requires_a_full_24_hours(self) -> None:
+        self.assertTrue(should_skip_by_interval(datetime.now(UTC) - timedelta(hours=23), 1))
+        self.assertFalse(should_skip_by_interval(datetime.now(UTC) - timedelta(hours=24), 1))
 
-        self.assertGreater(asyncio.run(resolve_sync_interval(_Storage(old_publish), account)), 1)
+    def test_long_intervals_require_the_full_elapsed_time(self) -> None:
+        self.assertTrue(should_skip_by_interval(datetime.now(UTC) - timedelta(days=6, hours=23), 7))
+        self.assertFalse(should_skip_by_interval(datetime.now(UTC) - timedelta(days=7), 7))
+
+    def test_naive_timestamps_are_utc_and_new_accounts_are_due(self) -> None:
+        self.assertTrue(should_skip_by_interval(datetime.now(UTC).replace(tzinfo=None), 1))
+        self.assertFalse(should_skip_by_interval(None, 1))
 
 
 class ManualRunPolicyTest(unittest.TestCase):

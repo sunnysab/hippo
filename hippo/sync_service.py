@@ -97,8 +97,8 @@ class ArticleSyncService:
             )
 
         if not config.force:
-            effective_interval = await resolve_sync_interval(self._storage, account)
-            if should_skip_by_interval(account.last_synced_at, effective_interval, account.biz):
+            effective_interval = resolve_sync_interval(account, config.source_intervals_days)
+            if should_skip_by_interval(account.last_synced_at, effective_interval):
                 observer.on_skip('sync_interval')
                 return (
                     SyncAccountResult(
@@ -361,6 +361,7 @@ def _build_sync_config(settings: dict[str, Any], *, force: bool = False) -> Sync
         # ``skip_minutes`` cooldown is applied separately and still holds.
         force=force,
         skip_minutes=settings.get('skip_minutes'),
+        source_intervals_days=settings.get('source_intervals_days', {}),
     )
 
 
@@ -406,6 +407,7 @@ async def run_sync_job(
                 group_ids=[group_id] if group_id is not None else None,
                 biz_list=biz_list,
                 source=source,
+                source_intervals_days=settings.get('source_intervals_days', {}),
             )
         if scope_sources is not None:
             accounts = [account for account in accounts if (account.source or 'weixin') in scope_sources]

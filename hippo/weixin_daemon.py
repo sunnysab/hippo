@@ -272,6 +272,15 @@ class WeixinSource:
         """daemon 的登录/运行状态（不触发登录）。"""
         return await self._bot.get_status()
 
+    async def follow_account(self, gh_id: str) -> None:
+        """Confirm the bot follows a publisher before relying on article pushes."""
+        gh_id = gh_id.strip()
+        if not gh_id:
+            raise ValueError('WeChat account gh_id is required')
+        result = await self._bot.call('follow_biz', {'gh_id': gh_id}, timeout=LIST_TIMEOUT_SECONDS)
+        if not isinstance(result, dict) or result.get('followed') is not True:
+            raise WeixinUnavailableError('WeChat account follow was not confirmed')
+
     async def login_auto_now(self) -> dict[str, Any]:
         """用本地 auto_auth_key 免扫重登（daemon 侧执行）。"""
         return await self._bot.login_auto()

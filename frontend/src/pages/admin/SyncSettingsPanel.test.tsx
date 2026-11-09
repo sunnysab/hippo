@@ -70,8 +70,6 @@ describe('SyncSettingsPanel', () => {
     render(
       <SyncSettingsPanel
         formState={{
-          enabled: true,
-          intervalMinutes: '60',
           sleepSeconds: '0.05',
           skipMinutes: '30',
           downloadContent: true,
@@ -95,6 +93,9 @@ describe('SyncSettingsPanel', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '运行' }));
     });
+
+    expect(document.querySelector('#sync-enabled')).toBeNull();
+    expect(document.querySelector('#sync-interval')).toBeNull();
 
     expect(showToastMock).toHaveBeenCalledWith('同步任务已进入队列');
     // 运行按钮走管理台自己的入口，不再占用读者的那份。

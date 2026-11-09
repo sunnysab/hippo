@@ -229,12 +229,15 @@ class SyncJobRepository:
             row = await cur.fetchone()
         return _row_to_state(dict(row)) if row else None  # type: ignore[arg-type]
 
-    async def has_active_job(self, *, trigger_type: str | None = None) -> bool:
+    async def has_active_job(self, *, trigger_type: str | None = None, source: str | None = None) -> bool:
         query = "SELECT 1 FROM sync_jobs WHERE status IN ('queued', 'running', 'cancelling')"
         params: list[Any] = []
         if trigger_type:
             query += ' AND trigger_type = %s'
             params.append(trigger_type)
+        if source:
+            query += ' AND source = %s'
+            params.append(source)
         query += ' LIMIT 1'
         async with self._conn.cursor() as cur:
             await cur.execute(query, params)

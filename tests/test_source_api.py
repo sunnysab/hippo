@@ -81,6 +81,7 @@ def _storage(
 
     return SimpleNamespace(
         transaction=transaction,
+        rollback=AsyncMock(),
         accounts=accounts,
         articles=articles,
         groups=AsyncMock(),
@@ -402,14 +403,26 @@ def _publisher(biz: str = 'MzU2MDI3MDk5NQ==', gh_id: str = 'gh_3eb1a1b60c4c') ->
 
 
 class WeixinArticleTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        follow = AsyncMock()
+        follow.__aenter__.return_value = follow
+        patcher = patch('hippo.api.routers.account.WeixinSource', return_value=follow)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     """Pasting an article subscribes to whoever wrote it."""
 
     async def test_an_archived_article_names_its_account_without_asking_the_daemon(self) -> None:
         storage = _storage()
         storage.articles.find_biz_by_link = AsyncMock(return_value='MzU2MDI3MDk5NQ==')
-        storage.accounts.get_account = AsyncMock(return_value=SimpleNamespace(
-            biz='MzU2MDI3MDk5NQ==', nickname='TopView', gh_id='gh_3eb1a1b60c4c', alias='TopView_Skyfall',
-        ))
+        storage.accounts.get_account = AsyncMock(
+            return_value=SimpleNamespace(
+                biz='MzU2MDI3MDk5NQ==',
+                nickname='TopView',
+                gh_id='gh_3eb1a1b60c4c',
+                alias='TopView_Skyfall',
+            )
+        )
         with patch('hippo.api.routers.source.WeixinDaemon') as daemon:
             result = await source_api.preview_source(url=_ARTICLE_URL, user=_user(), storage=storage)
 
@@ -417,14 +430,17 @@ class WeixinArticleTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('TopView', result['nickname'])
         self.assertEqual('/api/account/MzU2MDI3MDk5NQ==/avatar', result['avatar_url'])
         storage.articles.find_biz_by_link.assert_awaited_once_with(
-            _ARTICLE_URL, slug='RpLLRPedSrdgBZHWXQxJbQ',
+            _ARTICLE_URL,
+            slug='RpLLRPedSrdgBZHWXQxJbQ',
         )
         daemon.assert_not_called()
 
     async def test_an_unknown_article_is_resolved_through_the_daemon(self) -> None:
         storage = _storage()
-        body = SimpleNamespace(raw_json='{"bizuin": "MzU2MDI3MDk5NQ==", "user_name": "gh_3eb1a1b60c4c",'
-                                        ' "nick_name": "TopView", "round_head_img": "http://img/x"}')
+        body = SimpleNamespace(
+            raw_json='{"bizuin": "MzU2MDI3MDk5NQ==", "user_name": "gh_3eb1a1b60c4c",'
+            ' "nick_name": "TopView", "round_head_img": "http://img/x"}'
+        )
         body.nick_name = 'TopView'
         source = AsyncMock()
         source.resolve_article = AsyncMock(return_value=body)
@@ -461,9 +477,14 @@ class WeixinArticleTest(unittest.IsolatedAsyncioTestCase):
         transactions: list[int] = []
         storage = _storage(transactions=transactions)
         storage.articles.find_biz_by_link = AsyncMock(return_value='MzU2MDI3MDk5NQ==')
-        storage.accounts.get_account = AsyncMock(return_value=SimpleNamespace(
-            biz='MzU2MDI3MDk5NQ==', nickname='TopView', gh_id='gh_3eb1a1b60c4c', alias='TopView_Skyfall',
-        ))
+        storage.accounts.get_account = AsyncMock(
+            return_value=SimpleNamespace(
+                biz='MzU2MDI3MDk5NQ==',
+                nickname='TopView',
+                gh_id='gh_3eb1a1b60c4c',
+                alias='TopView_Skyfall',
+            )
+        )
         with patch(
             'hippo.api.routers.source.ensure_default_group',
             new=AsyncMock(return_value=SimpleNamespace(id=1)),
@@ -490,9 +511,14 @@ class WeixinArticleTest(unittest.IsolatedAsyncioTestCase):
         """Turning transcription off must not make article links unsubscribable."""
         storage = _storage()
         storage.articles.find_biz_by_link = AsyncMock(return_value='MzU2MDI3MDk5NQ==')
-        storage.accounts.get_account = AsyncMock(return_value=SimpleNamespace(
-            biz='MzU2MDI3MDk5NQ==', nickname='TopView', gh_id='gh_3eb1a1b60c4c', alias=None,
-        ))
+        storage.accounts.get_account = AsyncMock(
+            return_value=SimpleNamespace(
+                biz='MzU2MDI3MDk5NQ==',
+                nickname='TopView',
+                gh_id='gh_3eb1a1b60c4c',
+                alias=None,
+            )
+        )
         with (
             patch('hippo.api.routers.source._media_sources', new=AsyncMock()) as media_sources,
             patch(

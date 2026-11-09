@@ -44,7 +44,7 @@ export const getSyncRunLabel = (
 
 /** Discovery jobs enqueue bodies; their counts are not stored-article counts. */
 export const getSyncTaskKind = (kind: string | undefined, t: (key: string, fallback?: string) => string): string => {
-  const labels: Record<string, string> = { backfill: '历史列表补全', scheduled: '定时检查近期文章', manual: '手动检查近期文章' };
+  const labels: Record<string, string> = { backfill: '历史列表补全', scheduled: '定时检查近期文章', manual: '手动检查近期文章', subscription: '首次检查近期文章' };
   return t(`sync.kind.${kind}`, labels[kind || ''] || '检查近期文章');
 };
 

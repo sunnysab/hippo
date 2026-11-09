@@ -52,7 +52,7 @@ class AccountUpdateRequest(BaseModel):
     group_id: int | None = Field(default=None, description='Move the subscription into this group.')
     is_disabled: bool | None = Field(default=None, description='Stop syncing this account for this user.')
     sync_interval_days: int | None = Field(
-        default=None, description='Days between syncs; 1 or more, or null for the group default.'
+        default=None, description='Polling sources only: days between checks, or null for the source default.'
     )
 
 

@@ -35,8 +35,7 @@ vi.mock('../../hooks/useReaderSettings', () => ({
 const PREFERENCES = { timezone: 'Asia/Shanghai', article_exclude_keywords: 'seed' };
 
 const settingsPayload = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
-  enabled: true,
-  interval_minutes: 60,
+  source_intervals_days: { feed: 1, youtube: 1, bilibili: 1, podcast: 1 },
   sleep_seconds: 15,
   skip_minutes: 30,
   download_content: true,
@@ -107,7 +106,7 @@ describe('SettingsPage', () => {
 
     fireEvent.change(filterField(), { target: { value: 'draft' } });
 
-    settingsOverrides = { interval_minutes: 120 };
+    settingsOverrides = { source_intervals_days: { feed: 3, youtube: 1, bilibili: 1, podcast: 1 } };
     act(() => { emitRefresh(); });
     await waitFor(() => expect(settingsCalls()).toBe(2));
 

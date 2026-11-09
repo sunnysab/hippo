@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 import html
 import re
 import unicodedata
+from collections.abc import Mapping
 from datetime import UTC, date, datetime, time, timedelta, timezone
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from .storage import PostgresStorage
+from typing import Any
 
 _slug_pattern = re.compile(r'[^a-z0-9-]+')
 #: 真正的标签开头（``<a`` / ``</p`` / ``<!--``），不是标题里的字面 ``1+1<1``、``<一>``。
@@ -180,88 +177,24 @@ def should_skip_by_time(last_synced_at: datetime | None, skip_minutes: int | Non
     return synced_at >= threshold
 
 
-def _account_spread_hash(biz: str) -> int:
-    """Stable hash for deterministic day-of-cycle assignment."""
-    return int(hashlib.sha256(biz.encode()).hexdigest()[:8], 16)
-
-
 def should_skip_by_interval(
     last_synced_at: datetime | None,
     sync_interval_days: int | None,
-    biz: str,
 ) -> bool:
-    """Return True if account should be skipped based on its sync interval.
-
-    - NULL or <= 1: never skip (sync every run)
-    - Otherwise: allow sync on assigned day ±1 within the interval cycle.
-      Accounts past their interval always sync (catch-up).
-    """
-    if not sync_interval_days or sync_interval_days <= 1:
-        return False
+    """Wait the full interval after the last successful list check."""
     if not last_synced_at:
         return False
-
-    synced_at = last_synced_at.replace(tzinfo=UTC) if last_synced_at.tzinfo is None else last_synced_at.astimezone(UTC)
-    now = datetime.now(UTC)
-    days_since_last_sync = (now - synced_at).days
-
-    # Already past the interval — sync immediately (catch-up)
-    if days_since_last_sync >= sync_interval_days:
-        return False
-
-    # Spread accounts across the interval cycle using a stable hash.
-    # Allow a ±1 day window around the assigned slot for graceful catch-up.
-    epoch_days = (now.date() - date(2020, 1, 1)).days
-    assigned_slot = _account_spread_hash(biz) % sync_interval_days
-    today_slot = epoch_days % sync_interval_days
-
-    return all(today_slot != (assigned_slot + offset) % sync_interval_days for offset in (0, 1, -1))
+    return (datetime.now(UTC) - to_utc_dt(last_synced_at)).total_seconds() < (sync_interval_days or 1) * 86400
 
 
-def resolve_auto_interval(days_since_last_publish: int | None) -> int:
-    """Map days since last publish to a sync interval in days."""
-    if days_since_last_publish is None or days_since_last_publish <= 2:
-        return 1
-    if days_since_last_publish <= 7:
-        return 3
-    if days_since_last_publish <= 30:
-        return 7
-    if days_since_last_publish <= 90:
-        return 14
-    return 30
-
-
-async def resolve_sync_interval(
-    storage: PostgresStorage,
+def resolve_sync_interval(
     account: Any,
+    source_intervals_days: Mapping[str, int],
 ) -> int:
-    """Resolve the effective sync interval (in days) for one account.
-
-    An explicit per-subscription override (``sync_interval_days``) always wins,
-    whatever the source. Without one, only the WeChat source falls back to the
-    publish-history policy: its list API is a rate-limited bottleneck, so a quiet
-    account is checked less often. Every other source is listed again on each
-    scheduled check, because their endpoints tolerate the traffic.
-    """
+    """A subscription override wins over its source's default interval."""
     if account.sync_interval_days is not None:
         return account.sync_interval_days
-
-    if (account.source or 'weixin') != 'weixin':
-        return 1
-
-    try:
-        latest_publish_at = await storage.accounts.get_latest_publish_at(account.biz)
-    except Exception:
-        return 1
-
-    if latest_publish_at is None:
-        return 1
-
-    latest = (
-        latest_publish_at.replace(tzinfo=UTC) if latest_publish_at.tzinfo is None else latest_publish_at.astimezone(UTC)
-    )
-    days_since = (datetime.now(UTC) - latest).days
-    return resolve_auto_interval(days_since)
+    return source_intervals_days.get(account.source, 1)
 
 
 def utc_now_iso() -> str:
@@ -275,7 +208,6 @@ __all__ = [
     'normalize_value',
     'parse_iso_date_to_timestamp',
     'parse_iso_datetime_to_timestamp',
-    'resolve_auto_interval',
     'resolve_sync_interval',
     'sanitize_image_url',
     'should_skip_by_interval',

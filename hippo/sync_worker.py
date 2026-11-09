@@ -33,8 +33,8 @@ from .sync_service import (
     run_sync_job,
 )
 from .sync_settings import (
+    POLLING_SOURCES,
     QUEUE_STATS_KEY,
-    SYNC_STARTED_KEY,
     WORKER_HEARTBEAT_KEY,
     get_sync_settings,
     mark_content_ingested,
@@ -48,7 +48,7 @@ from .sync_types import (
     SyncSummary,
     article_snapshot,
 )
-from .utils import utc_now_iso
+from .utils import resolve_sync_interval, should_skip_by_interval, should_skip_by_time, utc_now_iso
 from .weixin_daemon import SessionExpiredError, WeixinSource
 from .weixin_ingest import WeixinArticleSync
 from .weixin_watch import watch_article_push
@@ -83,10 +83,10 @@ IMAGE_POLL_SECONDS = 120.0
 _WORKER_STATE_MIN_INTERVAL = 30.0
 _last_worker_state_at = 0.0
 
-#: Trigger types that force past the per-account daily interval. A manual click
-#: does; a scheduled sweep and a subscription's first look keep the policy (the
-#: short ``skip_minutes`` cooldown still applies to the manual one).
-FORCING_TRIGGER_TYPES = frozenset({'manual'})
+# First subscription checks run immediately; manual checks keep the short cooldown.
+FORCING_TRIGGER_TYPES = frozenset({'manual', 'subscription'})
+SCHEDULE_CHECK_SECONDS = 60.0
+SCHEDULE_RETRY_SECONDS = 15 * 60
 
 
 async def publish_worker_state(storage: PostgresStorage) -> None:
@@ -359,23 +359,31 @@ async def recover_stale_running_jobs(
 
 async def maybe_enqueue_scheduled_job(storage: PostgresStorage) -> bool:
     settings = await get_sync_settings(storage)
-    if not settings.get('enabled'):
-        return False
-    if await storage.sync_jobs.has_active_job(trigger_type='scheduled'):
-        return False
-    interval_seconds = max(int(settings.get('interval_minutes') or 1), 1) * 60
-    last_started = _parse_meta_datetime(await storage.meta.get(SYNC_STARTED_KEY))
-    if last_started is not None:
-        elapsed = (datetime.now(UTC) - last_started).total_seconds()
-        if elapsed < interval_seconds:
-            return False
-    async with storage.transaction():
-        accounts = await storage.accounts.list_syncable_accounts()
-        for source in sorted({account.source or WEIXIN_SOURCE for account in accounts}):
-            await storage.sync_jobs.create_job(trigger_type='scheduled', source=source)
-        if accounts:
-            await storage.meta.set(SYNC_STARTED_KEY, utc_now_iso())
-    return True
+    enqueued = False
+    for source in POLLING_SOURCES:
+        retry_key = f'sync:scheduled_at:{source}'
+        last_attempt = _parse_meta_datetime(await storage.meta.get(retry_key))
+        if last_attempt and (datetime.now(UTC) - last_attempt).total_seconds() < SCHEDULE_RETRY_SECONDS:
+            continue
+        if await storage.sync_jobs.has_active_job(trigger_type='scheduled', source=source):
+            continue
+        accounts = await storage.accounts.list_syncable_accounts(
+            source=source, source_intervals_days=settings['source_intervals_days']
+        )
+        due = [
+            account.biz
+            for account in accounts
+            if not should_skip_by_interval(
+                account.last_synced_at, resolve_sync_interval(account, settings['source_intervals_days'])
+            )
+            and not should_skip_by_time(account.last_synced_at, settings.get('skip_minutes'))
+        ]
+        if due:
+            async with storage.transaction():
+                await storage.sync_jobs.create_job(trigger_type='scheduled', source=source, biz_list=due)
+                await storage.meta.set(retry_key, utc_now_iso())
+            enqueued = True
+    return enqueued
 
 
 async def maybe_enqueue_backfill_job(storage: PostgresStorage) -> bool:
@@ -545,11 +553,13 @@ async def run_worker_once(
                     group_id=job.group_id,
                     biz_list=list(job.biz_list) if job.biz_list else None,
                     source=job.source,
-                    # A manual job forces past the daily interval; ``skip_minutes``
-                    # still throttles it. Scheduled/backfill/subscription jobs keep
-                    # the policy.
+                    # Scheduled checks obey the interval; explicit and first checks run now.
                     force=job.trigger_type in FORCING_TRIGGER_TYPES,
-                    scope_sources=job.scope_sources,
+                    scope_sources=(
+                        tuple(source for source in (job.scope_sources or POLLING_SOURCES) if source in POLLING_SOURCES)
+                        if job.trigger_type == 'scheduled'
+                        else job.scope_sources
+                    ),
                     source_slots=source_slots,
                     observer_factory=lambda account, _: _WorkerObserver(tracker=tracker, account=account),
                     observer=tracker,
@@ -751,7 +761,7 @@ async def run_sync_worker(
     drain_task = asyncio.create_task(_body_drain_loop(drain_interval))
     image_task = asyncio.create_task(_image_backfill_loop())
     media_task = asyncio.create_task(_media_job_loop())
-    # 实时通道：daemon 推 article_push 时立刻入队（列表轮询仍然是兜底）
+    # 公众号只接收实时推送，手动检查与历史补全仍通过任务队列执行。
     watch_task = asyncio.create_task(watch_article_push())
     stats_task = asyncio.create_task(_queue_stats_loop())
     jobs: set[asyncio.Task[bool]] = set()
@@ -759,6 +769,7 @@ async def run_sync_worker(
     # and body/image/media consumers plus control queries. No new configuration knob.
     job_limit = min(6, max(1, (pool_max - 4) // 2))
     source_slots = asyncio.Semaphore(max(1, pool_max - job_limit - 4))
+    next_schedule_check = 0.0
 
     async def execute() -> bool:
         async with open_storage() as job_storage:
@@ -779,7 +790,9 @@ async def run_sync_worker(
                     await storage.sync_jobs.heartbeat_jobs(worker_id=resolved_worker_id)
                     await recover_stale_running_jobs(storage)
                     await maybe_enqueue_backfill_job(storage)
-                    await maybe_enqueue_scheduled_job(storage)
+                    if time.monotonic() >= next_schedule_check:
+                        await maybe_enqueue_scheduled_job(storage)
+                        next_schedule_check = time.monotonic() + SCHEDULE_CHECK_SECONDS
             # At most one additional claimant per tick; the database excludes
             # overlapping sources, while disjoint sources use separate connections.
             if len(jobs) < job_limit:

@@ -9,9 +9,14 @@ can display the form without ever holding the secret.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+SourceIntervalsDays = dict[
+    Literal['bilibili', 'youtube', 'podcast', 'feed'],
+    Annotated[int, Field(strict=True, ge=1)],
+]
 
 
 class EmailSettingsOut(BaseModel):
@@ -38,8 +43,7 @@ class SyncSettingsOut(BaseModel):
 
     model_config = ConfigDict(extra='ignore')
 
-    enabled: bool
-    interval_minutes: int
+    source_intervals_days: SourceIntervalsDays
     sleep_seconds: float
     skip_minutes: int
     download_content: bool
@@ -77,8 +81,7 @@ class SyncSettingsUpdateRequest(BaseModel):
 
     model_config = ConfigDict(extra='forbid')
 
-    enabled: bool | None = None
-    interval_minutes: int | None = Field(default=None, ge=1, description='Minutes between scheduled runs.')
+    source_intervals_days: SourceIntervalsDays | None = None
     sleep_seconds: float | None = Field(default=None, ge=0, description='Pause between account requests.')
     skip_minutes: int | None = Field(default=None, ge=0, description='Skip an account synced this recently.')
     download_content: bool | None = None
@@ -212,7 +215,6 @@ class SyncStatusOut(BaseModel):
     queue: QueueStatsOut = Field(default_factory=QueueStatsOut)
     worker_heartbeat_at: str | None = None
     push: dict[str, Any] = Field(default_factory=dict)
-    schedule: dict[str, Any] = Field(default_factory=dict)
 
 
 __all__ = [

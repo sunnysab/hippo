@@ -17,6 +17,7 @@ export interface AccountSync {
 
 export interface Account {
   biz: string;
+  source: string;
   nickname: string;
   alias: string | null;
   round_head_img: string;

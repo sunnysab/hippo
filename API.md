@@ -248,11 +248,12 @@ POST /api/account
 `biz` 与 `nickname` 必填。传 `gh_…` 形状的 `biz` 时，服务端会先解析成 fakeid（`Mz…==`）：
 优先读该号任意一篇文章长链上的 `__biz`，一页都拿不到（服务号、刚注册、订阅号列表为空）时
 退回 H5 搜索，用结果的 `bizuin` 做 base64——两者恒等。仍解析不到才返回 `502`。
-添加成功后：写入共享目录 + 订阅你的分组，并在 `backfill_state = pending` 时
-投递一条历史回填任务（worker 接手，已回填过的号不会重复）。
+添加时先通过 daemon 的 `follow_biz` 确认机器人微信已关注公众号，再写入共享目录及你的订阅，
+并在 `backfill_state = pending` 时投递历史回填任务；已有历史则只投递近期检查任务。关注失败返回 `502 daemon.follow_failed`，
+不会保存本地订阅，可重试添加。直接传 fakeid 时需有可解析的 `alias` 或已保存的公众号身份，
+否则返回 `422 account.missing_gh_id`，请改用搜索结果或文章链接添加。
 
-注意：**添加不等于关注**。公众号关注走 daemon 的 `verifyuser`，只影响 push 推送能否覆盖到该号；
-文章列表走 `bizprofilev2h5`，未关注的号一样能拉到历史文章。
+微信公众号后续通过实时推送更新，不参与定时列表检查；保留手动检查和历史补全。
 
 ### 更新与批量
 
@@ -632,7 +633,8 @@ JSON 形态返回 `{"articles": [...]}`；`format=rss` 时返回 `application/rs
 
 ```
 GET /api/settings
-→ { "enabled": true, "interval_minutes": 30, "sleep_seconds": 3, "skip_minutes": 0,
+→ { "source_intervals_days": { "feed": 1, "youtube": 1, "bilibili": 1, "podcast": 1 },
+    "sleep_seconds": 15, "skip_minutes": 30,
     "download_content": true, "download_images": true, "article_exclude_keywords": "",
     "alert_enabled": false, "alert_email": "",
     "email": { "smtp_host": "smtp.example.com", "smtp_port": 587, "smtp_user": "alerts",
@@ -645,11 +647,17 @@ GET /api/settings
 写回时，若 `smtp_password` 里还带着掩码（前端把回显值原样提交），服务端会**丢弃该字段**，不会把已存密码
 覆盖成一串圆点；传空串才是“清除密码”，传新值才是“替换”。
 
-`PATCH /api/settings` 只更新传入的字段（`enabled`、`interval_minutes`、`sleep_seconds`、`skip_minutes`、
+`PATCH /api/settings` 只更新传入的字段（`source_intervals_days`、`sleep_seconds`、`skip_minutes`、
 `download_content`、`download_images`、`article_exclude_keywords`、`alert_enabled`、`alert_email`）；`email` 传对象时
 按其子字段更新 SMTP。
-请求体是封闭的：**未知字段、类型不对、`smtp_port < 1`、`interval_minutes < 1`、`skip_minutes < 0` 都返回
-`422`（`request.invalid`）**，不会静默忽略或夹紧成最小值。打开 `enabled` 会立即唤醒调度器。
+`source_intervals_days` 只允许 `feed`、`youtube`、`bilibili`、`podcast`，值为至少 1 的整数天数，默认每天一次。
+只传部分来源会保留其他来源的设置，例如 `{"source_intervals_days":{"feed":3}}` 只调整 RSS。
+账号的 `sync_interval_days = null` 跟随来源设置，有明确值则覆盖；多人订阅同一账号时取实际最短间隔。
+周期从上次成功检查起算，1 天代表完整 24 小时；后台每分钟检查到期账号，排队会影响实际执行时间。
+失败任务最早在上次入队 15 分钟后重新调度，重启不会清除此限制。新订阅立即检查，手动检查跳过天数周期但保留短冷却。
+
+请求体是封闭的：**未知字段、类型不对、未知来源、更新天数小于 1、`smtp_port < 1`、`skip_minutes < 0`
+都返回 `422`（`request.invalid`）**。旧 `enabled`、`interval_minutes` 不再接受；数据库里残留的旧值不影响新调度。
 
 ### 阅读偏好
 

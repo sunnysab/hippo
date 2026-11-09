@@ -28,8 +28,7 @@ from hippo.api.schemas.settings import (
 )
 
 SYNC_DEFAULTS: dict[str, object] = {
-    'enabled': False,
-    'interval_minutes': 60,
+    'source_intervals_days': {'feed': 1, 'youtube': 1, 'bilibili': 1, 'podcast': 1},
     'sleep_seconds': 15.0,
     'skip_minutes': 30,
     'download_content': True,
@@ -82,8 +81,10 @@ class SettingsRequestContractTest(unittest.TestCase):
 
     def test_only_the_keys_sent_are_written(self) -> None:
         self.assertEqual(set(), SyncSettingsUpdateRequest().model_fields_set)
-        body = SyncSettingsUpdateRequest.model_validate({'enabled': True, 'email': {'smtp_host': 'h'}})
-        self.assertEqual({'enabled', 'email'}, body.model_fields_set)
+        body = SyncSettingsUpdateRequest.model_validate(
+            {'source_intervals_days': {'feed': 1}, 'email': {'smtp_host': 'h'}}
+        )
+        self.assertEqual({'source_intervals_days', 'email'}, body.model_fields_set)
         assert body.email is not None
         self.assertEqual({'smtp_host'}, body.email.model_fields_set)
 
@@ -164,11 +165,11 @@ class SettingsHttpContractTest(unittest.TestCase):
         ):
             response = client.patch(
                 '/api/settings',
-                json={'enabled': True, 'interval_minutes': 5, 'email': {'smtp_host': 'smtp.new'}},
+                json={'source_intervals_days': {'feed': 3}, 'email': {'smtp_host': 'smtp.new'}},
             )
 
         self.assertEqual(200, response.status_code)
-        self.assertEqual({'enabled': True, 'interval_minutes': 5}, save.await_args.args[1])
+        self.assertEqual({'source_intervals_days': {'feed': 3}}, save.await_args.args[1])
         self.assertEqual({'smtp_host': 'smtp.new'}, set_email.await_args.args[1])
 
     def test_an_invalid_test_email_port_is_a_422(self) -> None:

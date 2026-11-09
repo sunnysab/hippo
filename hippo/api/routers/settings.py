@@ -1,9 +1,8 @@
 """Sync, filter and mail settings endpoints."""
 
 import asyncio
-import contextlib
 import time as time_module
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Body, Depends, Request, status
@@ -92,15 +91,6 @@ async def sync_status(
     payload['worker_heartbeat_at'] = await storage.meta.get(WORKER_HEARTBEAT_KEY)
     payload['push'] = await load_meta_json(storage, PUSH_STATE_KEY, {}) or {}
     payload['push']['last_received_at'] = await storage.meta.get(PUSH_RECEIVED_KEY)
-    settings = await load_sync_settings(storage)
-    next_check_at = None
-    if settings.get('enabled') and payload.get('last_started_at'):
-        with contextlib.suppress(ValueError):
-            next_check_at = (
-                datetime.fromisoformat(payload['last_started_at'])
-                + timedelta(minutes=max(int(settings.get('interval_minutes') or 1), 1))
-            ).isoformat()
-    payload['schedule'] = {'enabled': bool(settings.get('enabled')), 'next_eligible_at': next_check_at}
     return payload
 
 
@@ -184,7 +174,7 @@ async def get_sync_settings(
     获取当前的同步配置设置。
 
     Returns:
-        dict: 同步设置，包括启用状态、间隔、邮件配置等。
+        dict: 同步设置，包括各来源更新间隔、邮件配置等。
     """
     payload = await load_sync_settings(storage)
     payload['email'] = _public_email_settings(await get_email_settings(storage))
@@ -205,17 +195,15 @@ async def update_sync_settings(
     的掩码会被丢弃，不会把已存密码覆盖成一串圆点。
 
     Args:
-        body (SyncSettingsUpdateRequest): 需要更新的设置（`enabled`、`interval_minutes`、`email` 等）。
+        body (SyncSettingsUpdateRequest): 需要更新的设置（`source_intervals_days`、`email` 等）。
 
     Returns:
         dict: 更新后的设置。
     """
     sent = body.model_fields_set
     updates: dict[str, Any] = {}
-    if 'enabled' in sent and body.enabled is not None:
-        updates['enabled'] = body.enabled
-    if 'interval_minutes' in sent and body.interval_minutes is not None:
-        updates['interval_minutes'] = body.interval_minutes
+    if 'source_intervals_days' in sent and body.source_intervals_days is not None:
+        updates['source_intervals_days'] = body.source_intervals_days
     if 'sleep_seconds' in sent and body.sleep_seconds is not None:
         updates['sleep_seconds'] = body.sleep_seconds
     if 'download_content' in sent and body.download_content is not None:

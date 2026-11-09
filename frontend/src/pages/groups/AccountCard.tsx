@@ -148,7 +148,7 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
                 ? t('accounts.syncing', 'Fetching article history')
                 : t('accounts.syncQueued', 'Article history queued')}</div>
             )}
-            <div className="account-sync-row">
+            {(account.source || 'weixin') !== 'weixin' && <div className="account-sync-row">
               <span className="account-sync-label">{t('accounts.syncInterval', 'Sync interval')}</span>
               <select
                 className="account-sync-interval"
@@ -161,14 +161,14 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
                   void saveSyncInterval(nextInterval);
                 }}
               >
-                <option value="">{t('accounts.syncIntervalAuto', 'Auto (detect)')}</option>
-                <option value="1">{t('accounts.syncInterval1', 'Every run')}</option>
+                <option value="">{t('accounts.syncIntervalAuto', '跟随来源设置')}</option>
+                <option value="1">{t('accounts.syncInterval1', '每天一次')}</option>
                 <option value="3">{t('accounts.syncInterval3', 'Every 3 days')}</option>
                 <option value="7">{t('accounts.syncInterval7', 'Weekly')}</option>
                 <option value="14">{t('accounts.syncInterval14', 'Biweekly')}</option>
                 <option value="30">{t('accounts.syncInterval30', 'Monthly')}</option>
               </select>
-            </div>
+            </div>}
           </details>
         </div>
       </div>
