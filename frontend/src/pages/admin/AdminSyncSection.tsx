@@ -17,34 +17,40 @@ const TASK_LIMIT = 8;
  * runs" is a query and not a guess.
  */
 export function AdminSyncSection({ source }: { source?: string }) {
+  return <SourceTaskHistory key={source || 'all'} source={source} />;
+}
+
+function SourceTaskHistory({ source }: { source?: string }) {
   const { t } = useI18n();
   const { runSync } = useSyncRun();
-  const [tasks, setTasks] = useState<SyncTask[]>([]);
+  const [historyTasks, setHistoryTasks] = useState<SyncTask[]>([]);
+  const [activeTasks, setActiveTasks] = useState<SyncTask[]>([]);
+  const tasks = [...activeTasks, ...historyTasks];
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
   const [error, setError] = useState('');
 
   const load = useCallback(async (signal: AbortSignal) => {
-    try {
-      const query = new URLSearchParams({ limit: String(TASK_LIMIT), detail: 'true', active: 'false' });
+    setError('');
+    const fetchTasks = async (active: boolean) => {
+      const query = new URLSearchParams({ limit: String(active ? 100 : TASK_LIMIT), detail: 'true', active: String(active) });
       if (source) query.set('source', source);
-      const history = await apiGet(`/api/settings/tasks?${query.toString()}`, { signal });
-      let active: SyncTask[] = [];
-      if (source) {
-        query.set('active', 'true');
-        query.set('limit', '100');
+      try {
         const payload = await apiGet(`/api/settings/tasks?${query.toString()}`, { signal });
-        active = (payload.tasks || []) as SyncTask[];
+        if (signal.aborted) return;
+        const next = (payload.tasks || []) as SyncTask[];
+        if (active) setActiveTasks(next);
+        else setHistoryTasks(next);
+        setLoading(false);
+      } catch (err) {
+        if (!signal.aborted) {
+          setError((err as Error).message);
+          setLoading(false);
+        }
       }
-      if (signal.aborted) return;
-      setTasks([...active, ...((history.tasks || []) as SyncTask[])]);
-      setError('');
-    } catch (err) {
-      if (!signal.aborted) setError((err as Error).message);
-    } finally {
-      if (!signal.aborted) setLoading(false);
-    }
+    };
+    await Promise.all([fetchTasks(false), ...(source ? [fetchTasks(true)] : [])]);
   }, [source]);
   usePolling(load, 5000);
 

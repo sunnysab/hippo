@@ -107,6 +107,35 @@ class SyncStatePostgresTest(unittest.IsolatedAsyncioTestCase):
         ids = {job.task_id for job in await self.jobs.list_jobs(source='weixin', active=True)}
         self.assertNotIn(narrowed.task_id, ids)
 
+    async def test_source_history_merges_explicit_and_legacy_jobs_before_limit(self):
+        await self.conn.execute("""
+            INSERT INTO sync_jobs (id, status, trigger_type, source, requester_user_id, biz_list, accounts, created_at)
+            VALUES
+              ('explicit', 'success', 'scheduled', 'weixin', 7, NULL, '[]', '2026-01-03'),
+              ('legacy', 'success', 'manual', NULL, 7, '["one"]', '[]', '2026-01-02'),
+              ('snapshot', 'success', 'manual', NULL, 7, '["deleted"]',
+               '[{"biz":"deleted","source":"weixin"}]', '2026-01-01'),
+              ('foreign', 'success', 'manual', 'weixin', NULL, NULL, '[]', '2026-01-04');
+        """)
+        jobs = await self.jobs.list_jobs(source='weixin', active=False, requester_user_id=7, limit=2)
+        self.assertEqual(['explicit', 'legacy'], [job.task_id for job in jobs])
+        jobs = await self.jobs.list_jobs(source='weixin', active=False, requester_user_id=7, limit=3)
+        self.assertEqual(['explicit', 'legacy', 'snapshot'], [job.task_id for job in jobs])
+
+    async def test_source_history_handles_large_legacy_backlog(self):
+        # Most production history predates source tracking and references accounts
+        # no longer present. A per-job scan of every source account is quadratic.
+        await self.conn.execute("""
+            INSERT INTO accounts (biz, nickname, source, created_at, updated_at)
+            SELECT 'account-' || n, 'Account', 'weixin', NOW(), NOW() FROM generate_series(1, 300) n;
+            INSERT INTO sync_jobs (id, status, trigger_type, biz_list, accounts, created_at)
+            SELECT 'old-' || n, 'success', 'backfill', '["deleted"]', '[]', NOW()
+            FROM generate_series(1, 10000) n;
+        """)
+        async with self.conn.transaction():
+            await self.conn.execute("SET LOCAL statement_timeout = '2s'")
+            self.assertEqual([], await self.jobs.list_jobs(source='weixin', active=False))
+
     async def test_concurrent_backfill_requests_share_one_job(self):
         async def enqueue():
             async with await psycopg.AsyncConnection.connect(DSN, autocommit=True) as conn:

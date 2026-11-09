@@ -165,32 +165,45 @@ class SyncJobRepository:
         active: bool | None = None,
     ) -> list[SyncTaskState]:
         """Recent jobs, optionally narrowed to one source and/or requester."""
-        query = 'SELECT * FROM sync_jobs'
         params: list[Any] = []
         where: list[str] = []
-        if source:
-            where.append("""(source = %s OR (source IS NULL AND (
-                EXISTS (SELECT 1 FROM accounts a
-                        WHERE a.source = %s AND sync_jobs.biz_list @> jsonb_build_array(a.biz))
-                OR (biz_list IS NULL AND group_id IS NULL)
-                OR EXISTS (SELECT 1 FROM subscription s JOIN accounts a ON a.biz = s.biz
-                           WHERE s.group_id = sync_jobs.group_id AND a.source = %s
-                             AND (sync_jobs.biz_list IS NULL
-                                  OR sync_jobs.biz_list @> jsonb_build_array(a.biz)))
-                OR EXISTS (SELECT 1 FROM jsonb_array_elements(sync_jobs.accounts) item
-                           WHERE item->>'source' = %s)
-            )))""")
-            params.extend([source, source, source, source])
         if requester_user_id is not None:
             where.append('requester_user_id = %s')
             params.append(requester_user_id)
         if active is not None:
             operator = 'IN' if active else 'NOT IN'
             where.append(f"status {operator} ('queued', 'running', 'cancelling')")
-        if where:
-            query += ' WHERE ' + ' AND '.join(where)
-        query += ' ORDER BY created_at DESC LIMIT %s'
-        params.append(max(int(limit), 1))
+        filters = (' AND ' + ' AND '.join(where)) if where else ''
+        limit = max(int(limit), 1)
+        if source:
+            # Separate indexed source ranges before merging their newest rows.
+            # An OR across explicit and legacy sources sorts/evaluates all old
+            # jobs (including their correlated account lookups) before LIMIT.
+            legacy = """(
+                EXISTS (SELECT 1 FROM jsonb_array_elements_text(biz_list) b
+                        WHERE b.value IN (SELECT a.biz FROM accounts a WHERE a.source = %s))
+                OR (biz_list IS NULL AND group_id IS NULL)
+                OR (group_id IS NOT NULL AND EXISTS (SELECT 1 FROM subscription s JOIN accounts a ON a.biz = s.biz
+                           WHERE s.group_id = sync_jobs.group_id AND a.source = %s
+                             AND (sync_jobs.biz_list IS NULL
+                                  OR sync_jobs.biz_list @> jsonb_build_array(a.biz))))
+                OR EXISTS (SELECT 1 FROM jsonb_array_elements(sync_jobs.accounts) item
+                           WHERE item->>'source' = %s)
+            )"""
+            query = (
+                f'(SELECT * FROM sync_jobs WHERE source = %s{filters} ORDER BY created_at DESC LIMIT %s) '
+                'UNION ALL '
+                f'(SELECT * FROM sync_jobs WHERE source IS NULL{filters} AND {legacy} '
+                'ORDER BY created_at DESC LIMIT %s) '
+                'ORDER BY created_at DESC LIMIT %s'
+            )
+            params = [source, *params, limit, *params, source, source, source, limit, limit]
+        else:
+            query = 'SELECT * FROM sync_jobs'
+            if where:
+                query += ' WHERE ' + ' AND '.join(where)
+            query += ' ORDER BY created_at DESC LIMIT %s'
+            params.append(limit)
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(query, params)
             rows = await cur.fetchall()
