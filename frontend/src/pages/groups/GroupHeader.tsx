@@ -107,9 +107,9 @@ export function GroupHeader({
         <button className="btn ghost" id="btn-group-rename" type="button" onClick={() => onOpenRename(group.id, group.name)}>
           {t('groups.rename', 'Rename')}
         </button>
-        <button className="btn ghost" id="btn-group-delete" type="button" onClick={() => onOpenDelete(group.id)}>
+        {group.id !== state.defaultGroupId && <button className="btn ghost" id="btn-group-delete" type="button" onClick={() => onOpenDelete(group.id)}>
           {t('groups.delete', 'Delete')}
-        </button>
+        </button>}
         <button className="btn ghost" id="btn-group-articles" type="button" onClick={handleOpenArticles}>
           {t('groups.viewArticles', 'View group articles')}
         </button>
