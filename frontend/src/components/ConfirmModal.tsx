@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { useI18n } from '../i18n';
 
 interface ConfirmModalProps {
@@ -20,11 +20,17 @@ export function ConfirmModal({
 }: ConfirmModalProps) {
   const { t } = useI18n();
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const titleId = useId();
+  const messageId = useId();
 
   useEffect(() => {
     if (!isOpen) return;
     const handleEsc = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !submitting) onClose();
+      if (event.key === 'Escape' && !submitting) {
+        setError('');
+        onClose();
+      }
     };
     document.addEventListener('keydown', handleEsc);
     return () => document.removeEventListener('keydown', handleEsc);
@@ -35,9 +41,12 @@ export function ConfirmModal({
   const handleConfirm = async () => {
     if (submitting) return;
     setSubmitting(true);
+    setError('');
     try {
       await onConfirm();
       onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('common.operationFailed', '操作失败，请重试。'));
     } finally {
       setSubmitting(false);
     }
@@ -47,14 +56,18 @@ export function ConfirmModal({
     <div
       className="modal-overlay"
       onClick={(event) => {
-        if (event.target === event.currentTarget && !submitting) onClose();
+        if (event.target === event.currentTarget && !submitting) {
+          setError('');
+          onClose();
+        }
       }}
     >
-      <div className="modal confirm-modal">
-        <div className="modal-title">{title}</div>
-        <p className="muted confirm-modal-copy">{message}</p>
+      <div className="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={messageId}>
+        <div className="modal-title" id={titleId}>{title}</div>
+        <p className="muted confirm-modal-copy" id={messageId}>{message}</p>
+        {error && <p role="alert">{error}</p>}
         <div className="toolbar confirm-modal-actions">
-          <button className="btn ghost" type="button" disabled={submitting} onClick={onClose}>
+          <button className="btn ghost" type="button" disabled={submitting} onClick={() => { setError(''); onClose(); }}>
             {t('common.cancel', '取消')}
           </button>
           <button className="btn" type="button" disabled={submitting} onClick={() => { void handleConfirm(); }}>
