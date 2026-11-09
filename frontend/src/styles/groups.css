@@ -102,8 +102,8 @@
 }
 
 .group-list-item .group-sync-btn:hover {
-  transform: translateY(var(--lift-hover));
   background: var(--surface-item-hover);
+  border-color: var(--border-strong);
 }
 
 .group-list-item .group-sync-btn svg {
@@ -303,7 +303,7 @@
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   background: none;
-  transition: background 0.18s ease-out, transform 0.18s ease-out, opacity 0.18s ease-out;
+  transition: background 0.18s ease-out, border-color 0.18s ease-out;
 }
 
 .card:hover {
@@ -312,27 +312,103 @@
 }
 
 .card.is-disabled {
-  opacity: 0.74;
   border-color: var(--border);
   background: var(--surface-soft);
 }
 
-.card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+.account-card {
+  display: grid;
+  grid-template-columns: 18px 40px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  height: 132px;
+  padding: 16px;
 }
 
 .account-check {
   width: 18px;
   height: 18px;
+  margin: 10px 0 0;
+  cursor: pointer;
+  accent-color: var(--accent);
 }
 
-.account-meta {
+.account-card-content {
+  min-width: 0;
+}
+
+.account-name-link {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  min-height: 2.7em;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.account-name-link:hover {
+  color: var(--accent);
+}
+
+.account-identity {
+  margin-top: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.account-summary {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 6px;
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+.account-summary-state {
+  display: inline-flex;
+  align-items: center;
+}
+
+.account-summary-state::before {
+  content: '·';
+  margin-right: 6px;
+  color: var(--muted);
+}
+
+.account-summary-state.is-warning {
+  color: var(--danger);
+}
+
+.account-details-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 0 0 4px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.account-details-trigger:hover {
+  color: var(--accent);
+}
+
+.account-details-trigger svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
 }
 
 .account-avatar {
@@ -358,32 +434,6 @@
   overflow-wrap: anywhere;
 }
 
-.account-stats {
-  margin-top: 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.account-stat {
-  line-height: 1.25;
-}
-
-.account-details {
-  margin-top: 6px;
-  font-size: 12px;
-}
-
-.account-details summary {
-  width: fit-content;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.account-details[open] > :not(summary) {
-  margin-top: 5px;
-}
-
 .export-format-option {
   display: flex;
   align-items: center;
@@ -393,27 +443,6 @@
 
 .export-format-option input {
   accent-color: var(--accent);
-}
-
-.account-tag {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  min-height: 24px;
-  padding: 0 8px;
-  border-radius: var(--radius);
-  background: var(--danger-soft);
-  color: var(--danger);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-/* 回填是过程态，用中性色，别跟「已停用」那种警吉色抢眼 */
-.account-tag-live,
-.account-tag-quiet {
-  background: var(--surface-item-active);
-  color: var(--muted);
-  font-weight: 600;
 }
 
 .sync-dot {
@@ -431,34 +460,234 @@
   }
 }
 
-.account-toggle {
-  border: none;
-  background: var(--surface-panel-strong);
-  border-radius: var(--radius-tight);
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.account-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-width: none;
+  max-height: calc(100dvh - 40px);
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel);
   color: var(--text);
-  cursor: pointer;
-  opacity: 0.72;
-  transition: opacity 0.18s ease-out, background 0.18s ease-out, transform 0.18s ease-out;
 }
 
-.card:hover .account-toggle,
-.card:focus-within .account-toggle {
-  opacity: 1;
+.account-dialog[open] {
+  display: flex;
+  flex-direction: column;
 }
 
-.account-toggle:hover {
-  transform: translateY(var(--lift-hover));
-  background: var(--surface-item-hover);
+.account-dialog::backdrop {
+  background: rgb(17 21 29 / 38%);
 }
 
-.account-toggle svg {
-  width: 16px;
-  height: 16px;
+.account-dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 24px 20px;
+  flex: none;
+}
+
+.account-dialog-heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.account-dialog-heading h2 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.account-dialog-heading p {
+  margin: 4px 0 0;
+}
+
+.account-dialog-close {
+  flex: none;
+  align-self: flex-start;
+}
+
+.account-dialog-close svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+}
+
+.account-dialog-body {
+  min-height: 0;
+  padding: 0 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.account-dialog-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 0 0 24px;
+  padding: 16px;
+  border-radius: var(--radius-control);
+  background: var(--surface-soft);
+}
+
+.account-dialog-stats dt,
+.account-dialog-rows dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.account-dialog-stats dd {
+  margin: 6px 0 0;
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.account-dialog-stats small {
+  margin-left: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.account-dialog-stats time {
+  font-size: 16px;
+}
+
+.account-dialog .account-dialog-date {
+  display: block;
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.account-dialog-section {
+  padding-bottom: 20px;
+}
+
+.account-dialog-section h3 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.account-dialog-rows {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.account-dialog-rows > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.account-dialog-rows dd {
+  margin: 0;
+  font-size: 13px;
+}
+
+.account-dialog-status .account-sync-status {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.account-dialog-status p,
+.account-dialog-hint {
+  margin: 12px 0 0;
+  line-height: 1.6;
+}
+
+.account-dialog-interval {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.account-dialog-interval select {
+  min-height: 36px;
+  max-width: 65%;
+  color: var(--text);
+}
+
+.account-dialog-identifier {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.account-dialog-identifier > div {
+  min-width: 0;
+}
+
+.account-dialog-identifier code {
+  display: block;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+
+.account-dialog-identifier button {
+  flex: none;
+  font-size: 12px;
+}
+
+.account-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-panel);
+  flex: none;
+}
+
+@media (max-width: 480px) {
+  .account-dialog {
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+  }
+
+  .account-dialog-header {
+    padding: 20px 18px;
+  }
+
+  .account-dialog-body {
+    padding: 0 18px;
+  }
+
+  .account-dialog-footer {
+    padding: 14px 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-card {
+    transition: none;
+  }
+
+  .account-card .sync-dot {
+    animation: none;
+  }
 }
 
 .account-sync {
