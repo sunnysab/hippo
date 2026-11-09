@@ -79,6 +79,15 @@ describe('LoginPanel', () => {
     expect(screen.getByText('tester · 2 clients connected')).toBeTruthy();
   });
 
+  it('loads status on opening instead of assuming a missing status means logged out', async () => {
+    settingsStateMock.mockReturnValue({ state: { loginStatus: null }, dispatch: dispatchMock });
+    render(<LoginPanel />);
+    expect(screen.queryByText('daemon is not signed in; scan or use auto re-login.')).toBeNull();
+    await screen.findByRole('button', { name: 'Scan QR' });
+    await vi.waitFor(() => expect(dispatchMock).toHaveBeenCalledWith({ type: 'SET_LOGIN_STATUS', payload: loggedIn }));
+    expect(apiGetMock).toHaveBeenCalledWith('/api/login', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
   it('fetches a QR code via /api/login/qr and renders it', async () => {
     apiSendMock.mockResolvedValue({ png_base64: 'AAAA', url: 'https://weixin.qq.com/x' });
     render(<LoginPanel />);

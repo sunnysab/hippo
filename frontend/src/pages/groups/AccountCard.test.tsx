@@ -69,15 +69,15 @@ describe('AccountCard history backfill state', () => {
   it('marks the card while the history is being fetched', () => {
     render(<AccountCard account={{ ...baseAccount, backfill_pending: true, backfill_running: true }} />);
 
-    expect(screen.getByText('同步中')).toBeTruthy();
+    expect(screen.getByText(zhCN['accounts.syncing'])).toBeTruthy();
     expect(screen.queryByText(zhCN['accounts.lastSyncedEmpty'])).toBeNull();
-    expect(screen.queryByText('排队中')).toBeNull();
+    expect(screen.queryByText(zhCN['accounts.syncQueued'])).toBeNull();
   });
 
   it('marks it as queued before the fetch starts', () => {
     render(<AccountCard account={{ ...baseAccount, backfill_pending: true }} />);
 
-    expect(screen.getByText('排队中')).toBeTruthy();
+    expect(screen.getByText(zhCN['accounts.syncQueued'])).toBeTruthy();
     expect(screen.queryByText(zhCN['accounts.lastSyncedEmpty'])).toBeNull();
   });
 
@@ -95,7 +95,7 @@ describe('AccountCard history backfill state', () => {
     render(<AccountCard account={baseAccount} />);
 
     expect(screen.getByText(zhCN['accounts.lastSyncedEmpty'])).toBeTruthy();
-    expect(screen.queryByText('同步中')).toBeNull();
-    expect(screen.queryByText('排队中')).toBeNull();
+    expect(screen.queryByText(zhCN['accounts.syncing'])).toBeNull();
+    expect(screen.queryByText(zhCN['accounts.syncQueued'])).toBeNull();
   });
 });

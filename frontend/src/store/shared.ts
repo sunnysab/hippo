@@ -5,6 +5,13 @@ export interface Group {
   article_count?: number;
 }
 
+export interface AccountSync {
+  history: { status: string; task_id: string | null; error: string | null };
+  articles: { pending: number; processing: number; failed: number };
+  listing: { task_id: string; status: string; kind: string } | null;
+  last_checked_at: string | null;
+}
+
 export interface Account {
   biz: string;
   nickname: string;
@@ -20,4 +27,5 @@ export interface Account {
   article_count: number;
   backfill_pending: boolean;
   backfill_running: boolean;
+  sync?: AccountSync | null;
 }

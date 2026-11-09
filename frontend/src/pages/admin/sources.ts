@@ -32,8 +32,8 @@ export interface SourceOverviewPayload {
  * The source list comes from the backend, not a constant here: which sources
  * exist and which accept a credential are things the server decides.
  */
-export const loadSourceOverview = async (): Promise<SourceOverviewPayload> => {
-  const payload = await apiGet('/api/admin/source');
+export const loadSourceOverview = async (signal?: AbortSignal): Promise<SourceOverviewPayload> => {
+  const payload = await apiGet('/api/admin/source', { signal });
   return {
     sources: (payload.sources as SourceOverview[]) || [],
     media_enabled: Boolean(payload.media_enabled),

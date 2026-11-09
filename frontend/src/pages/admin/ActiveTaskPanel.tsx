@@ -4,7 +4,7 @@ import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
 import { apiSend, isAuthError } from '../../api';
 import { escapeHtml, formatRelativeTime } from '../../utils/format';
-import { getSyncTone } from '../../utils/sync';
+import { getSyncRunLabel, getSyncTaskKind, getSyncTone } from '../../utils/sync';
 import { emitRefresh } from '../../utils/events';
 
 export function ActiveTaskPanel() {
@@ -24,7 +24,7 @@ export function ActiveTaskPanel() {
 
   const getActiveTask = () => {
     const tasks = state.syncTasks || [];
-    return tasks.find((t) => t.status === 'running') || tasks.find((t) => t.status === 'pending') || null;
+    return tasks.find((t) => t.status === 'running' || t.status === 'cancelling') || tasks.find((t) => t.status === 'queued' || t.status === 'pending') || null;
   };
 
   const activeTask = getActiveTask();
@@ -35,7 +35,7 @@ export function ActiveTaskPanel() {
     setCancellingTaskId(activeTask.task_id);
     try {
       await apiSend(`/api/settings/tasks/${activeTask.task_id}/cancel`, 'POST', {});
-      showToast(t('sync.cancelled', '同步已取消'));
+      showToast(t('sync.cancelRequested', '已请求取消，等待当前请求结束。'));
       emitRefresh();
     } catch (err) {
       if (isAuthError(err)) return;
@@ -45,8 +45,8 @@ export function ActiveTaskPanel() {
     }
   };
 
-  const isCancelling = cancelling && activeTask?.task_id === cancellingTaskId;
-  const canCancel = !isCancelling && activeTask && (activeTask.status === 'running' || activeTask.status === 'pending');
+  const isCancelling = activeTask?.status === 'cancelling' || (cancelling && activeTask?.task_id === cancellingTaskId);
+  const canCancel = !isCancelling && activeTask && (activeTask.status === 'running' || activeTask.status === 'pending' || activeTask.status === 'queued');
 
   const phaseLabel = (phase: string | undefined | null): string => {
     if (phase === 'listing') return t('sync.phase.listing', '抓列表');
@@ -64,11 +64,15 @@ export function ActiveTaskPanel() {
         {canCancel ? (
           <div className="toolbar">
             <button className="btn ghost" type="button" onClick={handleCancel} disabled={isCancelling}>
-              {isCancelling ? t('sync.cancelling', '取消中…') : t('sync.cancel', '取消')}
+              {isCancelling ? t('sync.cancelling', '取消中…')
+                : activeTask?.trigger_type === 'backfill' ? t('sync.pauseHistory', '暂停历史补全') : t('sync.cancel', '取消')}
             </button>
           </div>
         ) : null}
       </div>
+      {state.syncTasks.filter((task) => task.task_id !== activeTask?.task_id && ['queued', 'pending', 'running', 'cancelling'].includes(task.status)).map((task) => (
+        <div className="account-sub" key={task.task_id}>{getSyncTaskKind(task.trigger_type, t)} · {getSyncRunLabel(task.status, t)} · {task.current_account?.nickname || task.biz_list?.join(', ')}</div>
+      ))}
       <div className="sync-active-body" id="sync-active-task">
         {!activeTask ? (
           <div className="empty-state">{t('sync.activeEmpty', 'No active sync task.')}</div>
@@ -79,19 +83,21 @@ export function ActiveTaskPanel() {
                 <div className="sync-summary-top">
                   <div className="account-name">
                     {escapeHtml(
-                      (activeTask.status === 'pending'
+                      ((activeTask.status === 'pending' || activeTask.status === 'queued')
                         ? t('sync.pendingTitle', '排队中 {name}')
                         : t('sync.runningTitle', '正在同步 {name}')
                       ).replace('{name}', activeTask.current_account?.nickname || activeTask.current_account?.biz || t('sync.runningProgress', '处理中'))
                     )}
                   </div>
                   <span className={`sync-status-badge sync-tone-${getSyncTone(activeTask.status)}`}>
-                    {t(`sync.status.${activeTask.status || 'running'}`, '同步中')}
+                    {getSyncRunLabel(activeTask.status, t)}
                   </span>
                   {activeTask.phase && (
                     <span className="sync-phase-badge">{phaseLabel(activeTask.phase)}</span>
                   )}
                 </div>
+                <div className="account-sub">{getSyncTaskKind(activeTask.trigger_type, t)}</div>
+                {activeTask.last_log && <div className="account-sub">{activeTask.last_log}</div>}
                 <div className="account-sub">
                   {activeTask.started_at || activeTask.created_at
                     ? t('sync.runningSince', 'Started {n} minutes ago').replace(
@@ -112,7 +118,7 @@ export function ActiveTaskPanel() {
               </div>
             )}
             <div className="sync-progress-list">
-              {(activeTask.accounts || []).sort((a, b) => {
+              {[...(activeTask.accounts || [])].sort((a, b) => {
                 const ta = a.updated_at ? new Date(a.updated_at).getTime() : 0;
                 const tb = b.updated_at ? new Date(b.updated_at).getTime() : 0;
                 return tb - ta;
@@ -128,7 +134,7 @@ export function ActiveTaskPanel() {
                         </span>
                       </div>
                       <div className="account-sub">
-                        {[phaseLabel(account.phase), formatRelativeTime(account.updated_at, t)].filter(Boolean).join(' · ')}
+                        {[phaseLabel(account.phase), t('sync.enqueuedCount', '新入队 {n} 篇').replace('{n}', String(account.saved)), `${account.page_count} 页`, formatRelativeTime(account.updated_at, t)].filter(Boolean).join(' · ')}
                       </div>
                     </div>
                   </div>

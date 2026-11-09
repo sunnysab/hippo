@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { usePolling } from '../../hooks/usePolling';
 import { Link } from 'react-router-dom';
 import { useI18n } from '../../i18n';
 import { formatRelativeTime } from '../../utils/format';
@@ -15,19 +16,20 @@ export function SourceSyncOverview() {
   const { t } = useI18n();
   const [sources, setSources] = useState<SourceOverview[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal: AbortSignal) => {
     try {
-      const payload = await loadSourceOverview();
-      setSources(payload.sources);
+      const payload = await loadSourceOverview(signal);
+      if (!signal.aborted) { setSources(payload.sources); setError(''); }
+    } catch (err) {
+      if (!signal.aborted) setError((err as Error).message);
     } finally {
-      setLoading(false);
+      if (!signal.aborted) setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  usePolling(load, 10000);
 
   return (
     <div className="panel">
@@ -41,6 +43,7 @@ export function SourceSyncOverview() {
         </Link>
       </div>
 
+      {error && <p role="alert">{error}</p>}
       {loading ? (
         <div className="muted admin-empty">{t('admin.loading', '加载中…')}</div>
       ) : (

@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { apiGet } from '../../api';
 import { useI18n } from '../../i18n';
+import type { AccountSync } from '../../store/shared';
+import { AccountSyncStatus } from '../../components/AccountSyncStatus';
+import { usePolling } from '../../hooks/usePolling';
 import { formatRelativeTime } from '../../utils/format';
 
 interface Account {
@@ -12,6 +15,7 @@ interface Account {
   last_synced_at: string | null;
   latest_publish_at: string | null;
   article_count: number;
+  sync?: AccountSync | null;
 }
 
 const PAGE_SIZE = 50;
@@ -68,6 +72,25 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
     });
   }, [loadPage]);
 
+  const refreshVisible = useCallback(async (signal: AbortSignal) => {
+    if (!accounts.length || loadingMore) return;
+    const requestId = ++requestIdRef.current;
+    try {
+      const pages = Math.ceil(accounts.length / PAGE_SIZE);
+      const payloads = await Promise.all(Array.from({ length: pages }, (_, index) => apiGet(
+        `/api/account?${new URLSearchParams({ source, page: String(index + 1), page_size: String(PAGE_SIZE) })}`,
+        { signal },
+      )));
+      if (signal.aborted || requestId !== requestIdRef.current) return;
+      setAccounts(payloads.flatMap((payload) => (payload.accounts || []) as Account[]));
+      setTotal(Number(payloads[0]?.total || 0));
+      setError('');
+    } catch (err) {
+      if (!signal.aborted && requestId === requestIdRef.current) setError((err as Error).message);
+    }
+  }, [accounts.length, loadingMore, source]);
+  usePolling(refreshVisible, 10000, false);
+
   const hasMore = accounts.length < total;
 
   return (
@@ -106,6 +129,7 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
                 <th>{t('accounts.articleCount', '文章')}</th>
                 <th>{t('accounts.lastUpdatedLabel', 'Latest publication')}</th>
                 <th>{t('accounts.lastSyncedLabel', 'Last sync')}</th>
+                <th>{t('sync.accountStatus', '采集状态')}</th>
                 <th />
               </tr>
             </thead>
@@ -119,6 +143,7 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
                   <td>{account.article_count}</td>
                   <td className="muted">{formatRelativeTime(account.latest_publish_at, t) || '—'}</td>
                   <td className="muted">{formatRelativeTime(account.last_synced_at, t) || '—'}</td>
+                  <td>{account.sync && <AccountSyncStatus sync={account.sync} biz={account.biz} disabled={account.is_disabled} />}</td>
                   <td>
                     <Link className="btn ghost" to={`/articles?account=${encodeURIComponent(account.biz)}`}>
                       {t('groups.viewArticles', '查看文章')}

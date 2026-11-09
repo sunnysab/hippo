@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useSettingsState, type LoginStatus } from '../../store/settings';
 import { useI18n } from '../../i18n';
 import { apiGet, apiSend, isAuthError } from '../../api';
 import { emitRefresh } from '../../utils/events';
+import { usePolling } from '../../hooks/usePolling';
 import { getSyncTone } from '../../utils/sync';
 
 interface QrState {
@@ -36,6 +37,20 @@ export function LoginPanel() {
     const payload = (await apiGet('/api/login')) as unknown as LoginStatus;
     dispatch({ type: 'SET_LOGIN_STATUS', payload });
   };
+  const pollStatus = useCallback(async (signal: AbortSignal) => {
+    try {
+      const payload = await apiGet('/api/login', { signal }) as unknown as LoginStatus;
+      if (!signal.aborted) dispatch({ type: 'SET_LOGIN_STATUS', payload });
+    } catch (err) {
+      if (signal.aborted || isAuthError(err)) return;
+      dispatch({ type: 'SET_LOGIN_STATUS', payload: {
+        logged_in: false, status: 'unreachable', need_relogin: false,
+        wxid: null, nickname: null, head_url: null, clients_connected: null,
+        error: (err as Error).message,
+      } });
+    }
+  }, [dispatch]);
+  usePolling(pollStatus, 10000);
 
   const run = async (task: () => Promise<void>) => {
     setBusy(true);
@@ -78,7 +93,7 @@ export function LoginPanel() {
     if (status === 'logged_out') return t('login.status.loggedOut', 'daemon is not signed in');
     if (status === 'expired') return t('login.status.expired', 'daemon session expired');
     if (status === 'unreachable') return t('login.status.unreachable', 'daemon is unreachable');
-    return t('login.status.unknown', status);
+    return t('login.loading', '正在读取 daemon 状态…');
   };
 
   const metaText = loggedIn
@@ -90,7 +105,9 @@ export function LoginPanel() {
       ]
         .filter(Boolean)
         .join(' · ')
-    : t('login.missing', 'daemon is not signed in; scan or use auto re-login.');
+    : !loginStatus ? t('login.loading', '正在读取 daemon 状态…')
+      : status === 'unreachable' ? t('login.unreachableHint', '无法连接 daemon，请检查服务与连接配置。')
+      : t('login.missing', 'daemon is not signed in; scan or use auto re-login.');
 
   return (
     <div className="panel sync-login">

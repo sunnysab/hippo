@@ -5,6 +5,7 @@ import { useI18n } from '../../i18n';
 import { apiSend, isAuthError } from '../../api';
 import { useToast } from '../../hooks/useToast';
 import { formatRelativeTime } from '../../utils/format';
+import { AccountSyncStatus } from '../../components/AccountSyncStatus';
 import type { Account } from '../../store/shared';
 
 interface AccountCardProps {
@@ -111,20 +112,21 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
           <div className="account-sub account-stats">
             <span className="account-stat">{lastUpdatedText}</span>
             <span className="account-stat">{articleCountText}</span>
-            {account.backfill_running && (
+            {!account.sync && account.backfill_running && (
               <span className="account-tag account-tag-live">
                 <span className="sync-dot" aria-hidden="true" />
                 {t('accounts.syncing', '同步中')}
               </span>
             )}
-            {!account.backfill_running && account.backfill_pending && (
+            {!account.sync && !account.backfill_running && account.backfill_pending && (
               <span className="account-tag account-tag-quiet">{t('accounts.syncQueued', '排队中')}</span>
             )}
             {account.is_disabled && (
               <span className="account-tag">{t('accounts.syncDisabled', 'Sync disabled')}</span>
             )}
           </div>
-          {(lastSynced || (!account.backfill_running && !account.backfill_pending)) && (
+          {account.sync && <AccountSyncStatus sync={account.sync} biz={account.biz} disabled={account.is_disabled} />}
+          {(lastSynced || (!account.sync && !account.backfill_running && !account.backfill_pending)) && (
             <div className="account-sub">{lastSyncedText}</div>
           )}
         </div>

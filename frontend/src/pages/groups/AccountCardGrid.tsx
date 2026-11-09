@@ -3,6 +3,7 @@ import { useGroupsState, useGroupsActions } from '../../store/groups';
 import { AccountCard } from './AccountCard';
 import { useI18n } from '../../i18n';
 import { EmptyState } from '../../components/EmptyState';
+import { hasAccountWork } from '../../utils/sync';
 import { onRefresh } from '../../utils/events';
 
 interface AccountCardGridProps {
@@ -35,10 +36,9 @@ export function AccountCardGrid({ query }: AccountCardGridProps) {
     return onRefresh(handler);
   }, [loadAccounts]);
 
-  const hasActiveBackfill = state.accounts.some((account) => account.backfill_running || account.backfill_pending);
+  const hasActiveBackfill = state.accounts.some((account) => account.sync ? hasAccountWork(account.sync) : account.backfill_running || account.backfill_pending);
 
   useEffect(() => {
-    if (!hasActiveBackfill) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     const refresh = async () => {
@@ -47,10 +47,10 @@ export function AccountCardGrid({ query }: AccountCardGridProps) {
       } catch {
         // Keep the last known state and retry on a transient request failure.
       } finally {
-        if (!stopped) timer = setTimeout(() => void refresh(), 5000);
+        if (!stopped) timer = setTimeout(() => void refresh(), hasActiveBackfill ? 5000 : 30000);
       }
     };
-    timer = setTimeout(() => void refresh(), 5000);
+    timer = setTimeout(() => void refresh(), hasActiveBackfill ? 5000 : 30000);
     return () => {
       stopped = true;
       clearTimeout(timer);

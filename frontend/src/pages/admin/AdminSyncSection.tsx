@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { apiGet } from '../../api';
 import { useI18n } from '../../i18n';
 import { useSyncRun } from '../../hooks/useSyncRun';
 import { formatRelativeTime } from '../../utils/format';
-import { getSyncTone } from '../../utils/sync';
-import { createLatestOnly } from '../../utils/latest';
+import { getSyncTaskKind, getSyncRunLabel, getSyncTone } from '../../utils/sync';
+import { usePolling } from '../../hooks/usePolling';
 import type { SyncTask } from '../../store/settings';
 
 const TASK_LIMIT = 8;
@@ -23,32 +23,37 @@ export function AdminSyncSection({ source }: { source?: string }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
-  // Switching source races the previous read: only the newest answer applies.
-  const applyLatest = useMemo(() => createLatestOnly<SyncTask[]>(setTasks), []);
+  const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal: AbortSignal) => {
     try {
-      const query = new URLSearchParams({ limit: String(TASK_LIMIT), detail: 'true' });
+      const query = new URLSearchParams({ limit: String(TASK_LIMIT), detail: 'true', active: 'false' });
       if (source) query.set('source', source);
-      await applyLatest(async () => {
-        const payload = await apiGet(`/api/settings/tasks?${query.toString()}`);
-        return (payload.tasks as SyncTask[]) || [];
-      });
+      const history = await apiGet(`/api/settings/tasks?${query.toString()}`, { signal });
+      let active: SyncTask[] = [];
+      if (source) {
+        query.set('active', 'true');
+        query.set('limit', '100');
+        const payload = await apiGet(`/api/settings/tasks?${query.toString()}`, { signal });
+        active = (payload.tasks || []) as SyncTask[];
+      }
+      if (signal.aborted) return;
+      setTasks([...active, ...((history.tasks || []) as SyncTask[])]);
+      setError('');
+    } catch (err) {
+      if (!signal.aborted) setError((err as Error).message);
     } finally {
-      setLoading(false);
+      if (!signal.aborted) setLoading(false);
     }
-  }, [applyLatest, source]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  }, [source]);
+  usePolling(load, 5000);
 
   const run = async () => {
     setBusy(true);
     try {
       // The console runs the instance's own catalogue; the hook reports the job.
       await runSync({ source, siteWide: true });
-      await load();
+      await load(new AbortController().signal);
     } finally {
       setBusy(false);
     }
@@ -72,6 +77,7 @@ export function AdminSyncSection({ source }: { source?: string }) {
         </div>
       </div>
 
+      {error && <p role="alert">{error}</p>}
       <div className="list">
         {loading ? (
           <div className="empty-state">{t('admin.loading', '加载中…')}</div>
@@ -82,18 +88,17 @@ export function AdminSyncSection({ source }: { source?: string }) {
             const toneClass = `sync-tone-${getSyncTone(task.status)}`;
             const started = task.started_at || task.created_at;
             const rel = formatRelativeTime(started, t);
-            const saved = Number(task.accounts?.reduce((sum, account) => sum + (account.saved || 0), 0) ?? 0);
+            const saved = Number(task.report?.total_saved ?? task.accounts?.reduce((sum, account) => sum + (account.saved || 0), 0) ?? 0);
             return (
               <div key={task.task_id} className={`list-item sync-history-item ${toneClass}`}>
                 <div className="sync-history-copy">
                   <div className="sync-history-top">
                     <div className="account-name">
-                      {saved > 0
-                        ? t('admin.sync.savedCount', '+{n} 篇').replace('{n}', String(saved))
-                        : t(`sync.status.${task.status}`, task.status)}
+                      {getSyncTaskKind(task.trigger_type, t)}
+                      {saved > 0 && ` · ${t('sync.enqueuedCount', '新入队 {n} 篇').replace('{n}', String(saved))}`}
                     </div>
                     <span className={`sync-status-badge ${toneClass}`}>
-                      {t(`sync.status.${task.status}`, task.status)}
+                      {getSyncRunLabel(task.status, t)}
                     </span>
                   </div>
                   <div className="account-sub">
@@ -101,6 +106,8 @@ export function AdminSyncSection({ source }: { source?: string }) {
                       ? `${task.accounts_done || 0}/${task.accounts_total} · `
                       : ''}
                     {rel}
+                    {task.current_account?.nickname ? ` · ${task.current_account.nickname}` : ''}
+                    {task.last_log ? ` · ${task.last_log}` : ''}
                     {task.error ? ` · ${task.error}` : ''}
                   </div>
                 </div>

@@ -25,6 +25,8 @@ export interface SyncStatus {
   history: Array<Record<string, unknown>>;
   queue?: QueueStats;
   worker_heartbeat_at?: string | null;
+  push?: { status?: string; updated_at?: string; last_received_at?: string | null };
+  schedule?: { enabled: boolean; next_eligible_at: string | null };
 }
 
 export interface EmailSettings {
@@ -75,6 +77,8 @@ export interface SyncTask {
   finished_at: string | null;
   error: string | null;
   trigger_type: string;
+  biz_list?: string[] | null;
+  report?: { total_saved?: number } | null;
   phase?: string;
   last_log: string | null;
   accounts_total: number;

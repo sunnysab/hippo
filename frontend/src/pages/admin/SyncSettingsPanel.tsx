@@ -54,6 +54,7 @@ export function SyncSettingsPanel({
       <div className="sync-form-sections">
         <section className="sync-form-section">
           <div className="sync-section-title">{t('sync.sectionSchedule', 'Schedule')}</div>
+          <p className="muted">{t('sync.scheduleHint', '定时检查近期列表用于补漏。关闭后仍接收推送，历史补全和已入队下载继续执行。')}</p>
           <div className="form-grid">
             <label className="switch">
               <span>{t('sync.enabled', 'Enable automatic sync')}</span>
@@ -78,6 +79,7 @@ export function SyncSettingsPanel({
         </section>
         <section className="sync-form-section">
           <div className="sync-section-title">{t('sync.sectionFetch', 'Fetch')}</div>
+          <p className="muted">{t('sync.fetchHint', '正文和图片由独立后台队列处理；列表检查或历史列表补全完成，不代表下载完成。')}</p>
           <div className="form-grid">
             <label>
               <span>{t('sync.sleepSeconds', 'Sleep (seconds)')}</span>

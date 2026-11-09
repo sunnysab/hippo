@@ -57,7 +57,9 @@ class SettingsApiNamespaceTest(unittest.TestCase):
         sync_run_hook = SYNC_RUN_HOOK.read_text(encoding='utf-8')
 
         self.assertIn('/api/settings/status', sync_page)
-        self.assertIn('/api/settings/tasks?limit=5&detail=true', sync_page)
+        # Pagination and active/history filters may change; the namespace must not.
+        self.assertIn('/api/settings/tasks?', sync_page)
+        self.assertNotIn('/api/sync/tasks', sync_page)
         self.assertIn('/api/settings', settings_page)
         self.assertIn('/api/settings', sync_settings_panel)
         self.assertIn('/api/settings/test-email', email_panel)
