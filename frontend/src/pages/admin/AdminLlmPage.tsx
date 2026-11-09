@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiGet, apiSend } from '../../api';
 import { useI18n } from '../../i18n';
 import { useToast } from '../../hooks/useToast';
@@ -42,17 +42,37 @@ export function AdminLlmPage() {
   const [probing, setProbing] = useState<number | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Provider | null>(null);
 
+  const [loadError, setLoadError] = useState(false);
+  const latestLoad = useRef(0);
+
   const load = useCallback(async () => {
+    const request = ++latestLoad.current;
+    setLoading(true);
+    setLoadError(false);
     try {
       const payload = await apiGet('/api/llm/provider');
-      setProviders((payload.items as Provider[]) ?? []);
+      if (request === latestLoad.current) {
+        setProviders((payload.items as Provider[]) ?? []);
+      }
+    } catch {
+      if (request === latestLoad.current) {
+        setLoadError(true);
+      }
     } finally {
-      setLoading(false);
+      if (request === latestLoad.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    void load();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) void load();
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [load]);
 
   const submit = async () => {
@@ -125,6 +145,13 @@ export function AdminLlmPage() {
 
         {loading ? (
           <div className="muted admin-empty">{t('admin.loading', '加载中…')}</div>
+        ) : loadError ? (
+          <div className="admin-empty" role="alert">
+            <p>{t('admin.llm.loadError', '加载 LLM 配置失败，请重试')}</p>
+            <button className="btn ghost" type="button" onClick={() => void load()}>
+              {t('common.retry', '重试')}
+            </button>
+          </div>
         ) : providers.length === 0 ? (
           <div className="muted admin-empty">{t('admin.llm.none', '还没有配置 provider')}</div>
         ) : (
