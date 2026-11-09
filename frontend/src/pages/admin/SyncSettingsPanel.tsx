@@ -40,7 +40,7 @@ export function SyncSettingsPanel({
       <div className="panel-header">
         <div>
           <h2>{t('sync.title', 'Sync Settings')}</h2>
-          <p className="muted">{t('sync.subtitle', 'Configure how account and article sync runs.')}</p>
+
         </div>
         <div className="toolbar">
           <button className="btn" id="btn-sync-save" type="button" onClick={handleSave}>
@@ -79,7 +79,7 @@ export function SyncSettingsPanel({
         </section>
         <section className="sync-form-section">
           <div className="sync-section-title">{t('sync.sectionFetch', 'Fetch')}</div>
-          <p className="muted">{t('sync.fetchHint', '正文和图片由独立后台队列处理；列表检查或历史列表补全完成，不代表下载完成。')}</p>
+
           <div className="form-grid">
             <label>
               <span>{t('sync.sleepSeconds', 'Sleep (seconds)')}</span>

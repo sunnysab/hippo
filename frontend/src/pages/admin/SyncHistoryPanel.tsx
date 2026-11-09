@@ -17,7 +17,7 @@ export function SyncHistoryPanel() {
         <div className="panel-header">
           <div>
             <h2>{t('sync.historyTitle', 'Sync History')}</h2>
-            <p className="muted">{t('sync.historySubtitle', 'Recent runs and status.')}</p>
+
           </div>
         </div>
         <div className="list" id="sync-history">
@@ -32,7 +32,7 @@ export function SyncHistoryPanel() {
       <div className="panel-header">
         <div>
           <h2>{t('sync.historyTitle', 'Sync History')}</h2>
-          <p className="muted">{t('sync.historySubtitle', 'Recent runs and status.')}</p>
+
         </div>
       </div>
       <div className="list" id="sync-history">

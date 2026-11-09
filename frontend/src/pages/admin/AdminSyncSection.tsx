@@ -64,11 +64,7 @@ export function AdminSyncSection({ source }: { source?: string }) {
       <div className="panel-header">
         <div>
           <h2>{t('sync.historyTitle', '同步记录')}</h2>
-          <p className="muted">
-            {source
-              ? t('admin.sync.sourceSubtitle', '这个来源最近的任务。')
-              : t('sync.historySubtitle', '最近的同步状态。')}
-          </p>
+
         </div>
         <div className="toolbar">
           <button className="btn" type="button" disabled={busy} onClick={() => void run()}>

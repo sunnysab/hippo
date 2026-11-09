@@ -71,7 +71,7 @@ export function EmailPanel({
       <div className="panel-header">
         <div>
           <h2>{t('email.title', 'Email Settings')}</h2>
-          <p className="muted">{t('email.subtitle', 'Configure SMTP delivery for failure alerts.')}</p>
+
         </div>
         <div className="toolbar">
           <button className="btn" id="btn-email-save" type="button" onClick={saveEmail}>

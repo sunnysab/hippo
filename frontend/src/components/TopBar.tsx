@@ -36,9 +36,7 @@ export function TopBar({ topbarRef, currentTab }: TopBarProps) {
         <BrandMark className="brand-mark" />
         <div className="brand-text">
           <div className="brand-title">Hippo</div>
-          <div className="brand-subtitle">
-            {t('brand.subtitle', 'Personal information and knowledge platform')}
-          </div>
+
         </div>
       </div>
       <nav className="tabs" aria-label={t('settings.navAria', 'Primary navigation')}>

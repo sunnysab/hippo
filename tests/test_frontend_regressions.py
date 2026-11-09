@@ -101,10 +101,8 @@ class FrontendRegressionTest(unittest.TestCase):
         translations = json.loads(I18N_ZH.read_text(encoding='utf-8'))
 
         # 公共订阅管理的文案不再默认指向公众号：读者跟着的是订阅与频道。
-        self.assertEqual(translations['groups.subtitle'], '按分组管理订阅。')
         self.assertEqual(translations['sources.add'], '添加订阅')
         self.assertEqual(translations['sources.addTitle'], '添加订阅')
-        self.assertEqual(translations['sync.subtitle'], '设置订阅和文章内容的同步方式。')
         self.assertEqual(translations['admin.source.channels'], '频道')
         # 一个入口同时收地址和名字：占位符必须把两件事都说出来，
         # 否则读者看不出这里也能搜公众号。
@@ -180,11 +178,6 @@ class FrontendRegressionTest(unittest.TestCase):
             self.assertIn('<BrandMark className="brand-mark" />', source)
             self.assertNotIn('>H</span>', source)
         self.assertIn('favicon.svg', (ROOT / 'frontend' / 'index.html').read_text(encoding='utf-8'))
-
-    def test_brand_subtitle_describes_a_personal_knowledge_platform(self) -> None:
-        translations = json.loads(I18N_ZH.read_text(encoding='utf-8'))
-
-        self.assertEqual(translations['brand.subtitle'], '个人信息与知识平台')
 
     def test_the_view_rail_keeps_the_group_subscription_counts(self) -> None:
         # /api/group 会返回 account_count：hook 要是把它丢了，分组行就没有数字可显示。

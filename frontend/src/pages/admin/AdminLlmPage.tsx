@@ -121,9 +121,6 @@ export function AdminLlmPage() {
       <section className="panel">
         <div className="panel-header">
           <h2 className="panel-title">{t('admin.llm.title', 'LLM Provider')}</h2>
-          <span className="muted">
-            {t('admin.llm.hint', '环境变量 HIPPO_LLM_* 仅用于首次初始化')}
-          </span>
         </div>
 
         {loading ? (

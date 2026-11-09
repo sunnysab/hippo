@@ -37,7 +37,7 @@ export function AccountPanel() {
       <div className="panel-header">
         <div>
           <h2>{t('account.title', '账号')}</h2>
-          <p className="muted">{t('account.subtitle', '修改接收系统邮件的邮箱地址。')}</p>
+
         </div>
         <div className="toolbar">
           <button className="btn" type="button" disabled={saving} onClick={() => void save()}>

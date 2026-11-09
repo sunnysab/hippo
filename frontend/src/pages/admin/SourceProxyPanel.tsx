@@ -64,9 +64,7 @@ export function SourceProxyPanel({ source }: { source: string }) {
       <div className="panel-header">
         <div>
           <h2>{t('admin.media.proxy', '代理')}</h2>
-          <p className="muted">
-            {t('admin.source.proxySubtitle', '这个来源的出口；每个来源的出口可以不同。')}
-          </p>
+
         </div>
       </div>
       <div className="form-grid">

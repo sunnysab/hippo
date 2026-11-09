@@ -1,6 +1,6 @@
 import { act, fireEvent, waitFor, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../../i18n';
 import zhCN from '../../i18n/zh-CN.json';
 import { SourceSubscriptionPanel } from './SourceSubscriptionPanel';
@@ -35,6 +35,7 @@ const renderPanel = (source: string) => render(
 );
 
 describe('SourceSubscriptionPanel', () => {
+  afterEach(() => vi.useRealTimers());
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
@@ -57,6 +58,8 @@ describe('SourceSubscriptionPanel', () => {
     expect(screen.getByText(zhCN['time.hoursAgo'].replace('{n}', '2'))).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: zhCN['accounts.lastUpdatedLabel'] })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: zhCN['accounts.lastSyncedLabel'] })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '已收录文章' })).toBeTruthy();
+    expect(screen.queryByText('已收录 {n} 篇')).toBeNull();
   });
 
   it('pages the subscription list instead of silently truncating it', async () => {
@@ -120,4 +123,55 @@ describe('SourceSubscriptionPanel', () => {
 
     expect(await screen.findByText('name-recovered')).toBeTruthy();
   });
+  it('searches subscriptions beyond the loaded page and resets pagination', async () => {
+    apiGetMock
+      .mockResolvedValueOnce(page(0, 50, 120))
+      .mockResolvedValueOnce({ accounts: [account('beyond-page')], total: 1 })
+      .mockResolvedValueOnce(page(0, 50, 120));
+    renderPanel('weixin');
+    await screen.findByText('name-biz-0');
+    const input = screen.getByRole('searchbox', { name: '搜索订阅' });
+    fireEvent.change(input, { target: { value: '郭延娇' } });
+    expect(await screen.findByText('name-beyond-page')).toBeTruthy();
+    const url = new URL(apiGetMock.mock.calls.at(-1)![0], 'http://hippo.test');
+    expect(url.searchParams.get('q')).toBe('郭延娇');
+    expect(url.searchParams.get('page')).toBe('1');
+    expect(url.searchParams.get('source')).toBe('weixin');
+    expect(screen.queryByRole('button', { name: zhCN['admin.source.loadMore'] })).toBeNull();
+    fireEvent.change(input, { target: { value: '' } });
+    expect(await screen.findByText('name-biz-0')).toBeTruthy();
+    expect(apiGetMock).toHaveBeenLastCalledWith('/api/account?source=weixin&page=1&page_size=50');
+  });
+
+  it('ignores a late search response after the query changes', async () => {
+    let resolveOld!: (value: unknown) => void;
+    apiGetMock
+      .mockResolvedValueOnce(page(0, 1, 1))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))
+      .mockResolvedValueOnce({ accounts: [account('new-match')], total: 1 });
+    renderPanel('weixin');
+    await screen.findByText('name-biz-0');
+    const input = screen.getByRole('searchbox');
+    fireEvent.change(input, { target: { value: 'old' } });
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledTimes(2));
+    fireEvent.change(input, { target: { value: 'new' } });
+    expect(await screen.findByText('name-new-match')).toBeTruthy();
+    await act(async () => resolveOld({ accounts: [account('old-match')], total: 1 }));
+    expect(screen.queryByText('name-old-match')).toBeNull();
+  });
+
+  it('keeps the search scope while polling', async () => {
+    vi.useFakeTimers();
+    apiGetMock.mockResolvedValue({ accounts: [account('one')], total: 1 });
+    const view = renderPanel('weixin');
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'one' } });
+    await act(() => vi.advanceTimersByTimeAsync(250));
+    apiGetMock.mockClear();
+    await act(() => vi.advanceTimersByTimeAsync(10000));
+    const url = new URL(apiGetMock.mock.calls.at(-1)![0], 'http://hippo.test');
+    expect(url.searchParams.get('q')).toBe('one');
+    view.unmount();
+  });
+
 });

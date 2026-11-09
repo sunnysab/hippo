@@ -488,3 +488,9 @@ a.sync-progress-item:hover .account-name {
 .credential-verdict.is-bad {
   color: var(--danger);
 }
+
+.toolbar .subscription-search {
+  width: 200px;
+  max-width: 100%;
+  min-width: 0;
+}

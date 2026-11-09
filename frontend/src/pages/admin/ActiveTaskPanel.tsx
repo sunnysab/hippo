@@ -60,7 +60,7 @@ export function ActiveTaskPanel() {
       <div className="panel-header">
         <div>
           <h2>{t('sync.activeTitle', 'Active Task')}</h2>
-          <p className="muted">{t('sync.activeSubtitle', 'Live progress for the current sync task.')}</p>
+
         </div>
         {canCancel ? (
           <div className="toolbar">

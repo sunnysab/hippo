@@ -78,31 +78,26 @@ function SettingsPageContent({ initialFormState, formResetKey }: SettingsPageCon
       key: 'account',
       path: '/settings/account',
       title: t('settings.navAccount', '账号'),
-      summary: t('settings.navAccountSummary', '修改接收邮件的邮箱地址。'),
     },
     {
       key: 'source',
       path: '/settings/source',
       title: t('settings.navSources', '来源凭证'),
-      summary: t('settings.navSourcesSummary', 'B站等来源自己的 Cookie。'),
     },
     {
       key: 'apikey',
       path: '/settings/apikey',
       title: t('settings.navApiKeys', 'API 密钥'),
-      summary: t('settings.navApiKeysSummary', '给脚本与阅读器的只读凭证。'),
     },
     {
       key: 'filter',
       path: '/settings/filter',
       title: t('settings.navFilter', 'Filter'),
-      summary: t('settings.navFilterSummary', 'Manage article filters and reading preferences.'),
     },
     {
       key: 'correction',
       path: '/settings/correction',
       title: t('correction.title', 'Text corrections'),
-      summary: t('correction.subtitle', 'Personal corrections for ASR transcripts.'),
     },
     ...(isAdmin
       ? [
@@ -110,7 +105,6 @@ function SettingsPageContent({ initialFormState, formResetKey }: SettingsPageCon
             key: 'email',
             path: '/settings/email',
             title: t('settings.navEmail', 'Email'),
-            summary: t('settings.navEmailSummary', 'Configure SMTP and test delivery.'),
           },
         ]
       : []),
@@ -128,7 +122,7 @@ function SettingsPageContent({ initialFormState, formResetKey }: SettingsPageCon
           <div className="panel-header rail-sidebar-header">
             <div>
               <h2>{t('settings.title', 'Settings')}</h2>
-              <p className="muted">{t('settings.subtitle', 'Manage filters and email settings.')}</p>
+
             </div>
           </div>
           <nav className="rail-nav" aria-label={t('settings.navAria', 'Settings sections')}>
@@ -140,7 +134,6 @@ function SettingsPageContent({ initialFormState, formResetKey }: SettingsPageCon
                   className={({ isActive: itemActive }) => `rail-nav-item${itemActive ? ' is-active' : ''}`}
                 >
                   <span className="rail-nav-label">{item.title}</span>
-                  <span className="rail-nav-summary">{item.summary}</span>
                 </NavLink>
               ))}
             </div>

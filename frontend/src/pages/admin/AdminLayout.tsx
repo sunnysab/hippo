@@ -27,7 +27,7 @@ export function AdminLayout() {
           <div className="panel-header rail-sidebar-header">
             <div>
               <h2>{t('admin.title', 'Admin')}</h2>
-              <p className="muted">{t('admin.subtitle', '管理来源、同步、用户与站点配置。')}</p>
+
             </div>
           </div>
           <nav className="rail-nav" aria-label={t('admin.navAria', '管理面板导航')}>

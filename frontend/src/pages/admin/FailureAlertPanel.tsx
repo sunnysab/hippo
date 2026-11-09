@@ -34,7 +34,7 @@ export function FailureAlertPanel({
       <div className="panel-header">
         <div>
           <h2>{t('sync.alertTitle', 'Failure Alerts')}</h2>
-          <p className="muted">{t('sync.alertSubtitle', 'Choose whether sync failures should send notifications.')}</p>
+
         </div>
         <div className="toolbar">
           <button className="btn" id="btn-sync-alert-save" type="button" onClick={handleSave}>

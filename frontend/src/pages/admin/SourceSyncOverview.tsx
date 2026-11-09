@@ -36,7 +36,7 @@ export function SourceSyncOverview() {
       <div className="panel-header">
         <div>
           <h2>{t('admin.sync.overviewTitle', '各来源概览')}</h2>
-          <p className="muted">{t('admin.sync.overviewSubtitle', '每个来源的积压与最近一次同步。')}</p>
+
         </div>
         <Link className="btn ghost" to="/admin/source">
           {t('admin.source.title', '来源')}

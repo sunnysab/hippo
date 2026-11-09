@@ -38,7 +38,7 @@ export function QueuePanel() {
       <div className="panel-header">
         <div>
           <h2>{t('sync.queueTitle', 'Queue Backlog')}</h2>
-          <p className="muted">{t('sync.queueSubtitle', 'Pending article bodies and images.')}</p>
+
         </div>
         <div className="toolbar">
           <span className="muted" id="worker-heartbeat">{heartbeatText}</span>

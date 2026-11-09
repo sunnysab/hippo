@@ -81,9 +81,7 @@ export function AdminSourcePage() {
         <div className="panel-header">
           <div>
             <h2 className="panel-title">{t('admin.source.title', '来源')}</h2>
-            <p className="muted">
-              {t('admin.source.subtitle', '每个来源的订阅、凭证与同步状态；点进去改配置。')}
-            </p>
+
           </div>
         </div>
 

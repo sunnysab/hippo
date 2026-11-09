@@ -114,9 +114,7 @@ export function LoginPanel() {
       <div className="panel-header">
         <div>
           <h2>{t('login.title', 'Login')}</h2>
-          <p className="muted">
-            {t('login.subtitle', 'The weixin-rs daemon owns the session; check or renew it here.')}
-          </p>
+
         </div>
         <div className="toolbar">
           <button className="btn" id="btn-login-auto" type="button" onClick={autoLogin} disabled={busy}>

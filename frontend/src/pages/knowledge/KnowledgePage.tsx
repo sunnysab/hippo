@@ -894,7 +894,7 @@ export function KnowledgePage() {
           <div className="panel-header knowledge-sidebar-header">
             <div>
               <h2>{t('knowledge.library.title', 'Knowledge')}</h2>
-              <p className="muted">{t('knowledge.library.subtitle', 'Manage documents per knowledge base.')}</p>
+
             </div>
             <button
               type="button"

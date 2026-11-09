@@ -29,6 +29,8 @@ const PAGE_SIZE = 50;
  */
 export function SourceSubscriptionPanel({ source }: { source: string }) {
   const { t } = useI18n();
+  const [query, setQuery] = useState('');
+  const [search, setSearch] = useState('');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -37,6 +39,11 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
   // Switching source or retrying races the request it replaces: only the newest
   // answer may touch the list.
   const requestIdRef = useRef(0);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(query.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [query]);
 
   const loadPage = useCallback(async (page: number) => {
     const requestId = requestIdRef.current + 1;
@@ -50,6 +57,7 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
         page: String(page),
         page_size: String(PAGE_SIZE),
       });
+      if (search) query.set('q', search);
       const payload = await apiGet(`/api/account?${query.toString()}`);
       if (requestId !== requestIdRef.current) return;
       const next = (payload.accounts as Account[]) || [];
@@ -64,7 +72,7 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
         setLoadingMore(false);
       }
     }
-  }, [source]);
+  }, [source, search]);
 
   useEffect(() => {
     let disposed = false;
@@ -78,12 +86,12 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
   }, [loadPage]);
 
   const refreshVisible = useCallback(async (signal: AbortSignal) => {
-    if (!accounts.length || loadingMore) return;
+    if (!accounts.length || loadingMore || loading || query.trim() !== search) return;
     const requestId = ++requestIdRef.current;
     try {
       const pages = Math.ceil(accounts.length / PAGE_SIZE);
       const payloads = await Promise.all(Array.from({ length: pages }, (_, index) => apiGet(
-        `/api/account?${new URLSearchParams({ source, page: String(index + 1), page_size: String(PAGE_SIZE) })}`,
+        `/api/account?${new URLSearchParams({ source, page: String(index + 1), page_size: String(PAGE_SIZE), ...(search ? { q: search } : {}) })}`,
         { signal },
       )));
       if (signal.aborted || requestId !== requestIdRef.current) return;
@@ -93,7 +101,7 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
     } catch (err) {
       if (!signal.aborted && requestId === requestIdRef.current) setError((err as Error).message);
     }
-  }, [accounts.length, loadingMore, source]);
+  }, [accounts.length, loadingMore, loading, source, search, query]);
   usePolling(refreshVisible, 10000, false);
 
   const hasMore = accounts.length < total;
@@ -103,13 +111,21 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
       <div className="panel-header">
         <div>
           <h2>{t('admin.source.subscriptions', '订阅')}</h2>
-          <p className="muted">
-            {t('admin.source.subscriptionsHint', '你订阅的频道；添加与删除在「分组」页。')}
-          </p>
+
         </div>
-        <Link className="btn ghost" to="/groups">
-          {t('admin.source.manageGroups', '前往分组')}
-        </Link>
+        <div className="toolbar">
+          <input
+            type="search"
+            className="subscription-search"
+            aria-label={t('admin.source.searchSubscriptions', '搜索订阅')}
+            placeholder={t('admin.source.searchSubscriptions', '搜索订阅')}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <Link className="btn ghost" to="/groups">
+            {t('admin.source.manageGroups', '前往分组')}
+          </Link>
+        </div>
       </div>
 
       {loading ? (
@@ -118,7 +134,7 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
         <div className="muted admin-empty">
           {error
             ? t('admin.source.subscriptionsFailed', 'Failed to load subscriptions.')
-            : t('admin.source.noSubscriptions', '还没有订阅。')}
+            : search ? t('admin.source.noMatches', '没有匹配的订阅。') : t('admin.source.noSubscriptions', '还没有订阅。')}
           {error ? (
             <button className="btn ghost" type="button" onClick={() => void loadPage(1)}>
               {t('common.retry', 'Retry')}
@@ -131,7 +147,7 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
             <thead>
               <tr>
                 <th>{t('groups.title', '名称')}</th>
-                <th>{t('accounts.articleCount', '文章')}</th>
+                <th>{t('accounts.articleCountLabel', '已收录文章')}</th>
                 <th>{t('accounts.lastUpdatedLabel', 'Latest publication')}</th>
                 <th>{t('accounts.lastSyncedLabel', 'Last sync')}</th>
                 <th>{t('sync.accountStatus', '采集状态')}</th>
@@ -163,7 +179,7 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
             <button
               className="btn ghost"
               type="button"
-              disabled={loadingMore}
+              disabled={loadingMore || query.trim() !== search}
               onClick={() => void loadPage(accounts.length / PAGE_SIZE + 1)}
             >
               {loadingMore ? t('common.loading', 'Loading…') : t('admin.source.loadMore', 'Load more')}

@@ -23,7 +23,7 @@ export function ReaderFilterPanel() {
             onChange={(event) => updateConfig({ hideSmall: event.target.checked })}
           />
         </label>
-        <p className="muted sync-inline-note">{t('reader.hideSmallImagesHint', 'Use local heuristics to reduce decorative or low-value images while reading.')}</p>
+
         <label className="switch">
           <span>{t('reader.followPlayback', '跟随播放滚动')}</span>
           <input
@@ -33,7 +33,7 @@ export function ReaderFilterPanel() {
             onChange={(event) => updateConfig({ followPlayback: event.target.checked })}
           />
         </label>
-        <p className="muted sync-inline-note">{t('reader.followPlaybackHint', '播放音视频时，正在播放的段落会自动滚到视口中间。')}</p>
+
         <label className="switch">
           <span>{t('reader.miniPlayer', '播放时小窗')}</span>
           <input
@@ -43,7 +43,7 @@ export function ReaderFilterPanel() {
             onChange={(event) => updateConfig({ miniPlayer: event.target.checked })}
           />
         </label>
-        <p className="muted sync-inline-note">{t('reader.miniPlayerHint', '视频滚出视野后浮在角落继续播，可以暂停、拖开或关掉。')}</p>
+
       </div>
     </div>
   );

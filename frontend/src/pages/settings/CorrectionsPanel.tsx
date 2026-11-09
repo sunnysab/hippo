@@ -46,7 +46,7 @@ export function CorrectionsPanel() {
   };
   const filtered = rules.filter((r) => `${r.source_text} ${r.replacement_text}`.toLowerCase().includes(search.toLowerCase()) && (!account || r.account_biz.includes(account)) && (!status || String(r.enabled) === status));
   return <div className="panel correction-panel">
-    <div className="panel-header"><div><h2>{t('correction.title', 'Text corrections')}</h2><p className="muted">{t('correction.subtitle', 'Personal corrections for ASR transcripts.')}</p></div><button className="btn" type="button" onClick={() => setEditing(null)}>{t('correction.create', 'Add correction')}</button></div>
+    <div className="panel-header"><div><h2>{t('correction.title', 'Text corrections')}</h2></div><button className="btn" type="button" onClick={() => setEditing(null)}>{t('correction.create', 'Add correction')}</button></div>
     <div className="toolbar correction-filters">
       <label>{t('correction.search', 'Search text')}<input className="input" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
       <label>{t('correction.accountFilter', 'Account')}<select value={account} onChange={(e) => setAccount(e.target.value)}><option value="">{t('correction.allAccounts', 'All accounts')}</option>{accounts.map((a) => <option key={a.biz} value={a.biz}>{a.nickname}</option>)}</select></label>

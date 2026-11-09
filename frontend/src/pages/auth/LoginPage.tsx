@@ -35,7 +35,7 @@ export function LoginPage() {
           <BrandMark className="brand-mark" />
           <div>
             <div className="brand-title">Hippo</div>
-            <div className="brand-subtitle">{t('brand.subtitle', 'Personal information and knowledge platform')}</div>
+
           </div>
         </div>
 

@@ -45,9 +45,7 @@ export function ReaderControls({ config, updateConfig }: ReaderControlsProps) {
           />
           <span>{t('reader.hideSmallImages', 'Hide small images')}</span>
         </label>
-        <p className="muted reader-controls-note">
-          {t('reader.hideSmallImagesHint', 'Use local heuristics to reduce decorative or low-value images while reading.')}
-        </p>
+
         <label className="switch">
           <input
             id="reader-follow-playback"
@@ -57,9 +55,7 @@ export function ReaderControls({ config, updateConfig }: ReaderControlsProps) {
           />
           <span>{t('reader.followPlayback', '跟随播放滚动')}</span>
         </label>
-        <p className="muted reader-controls-note">
-          {t('reader.followPlaybackHint', '播放音视频时，正在播放的段落会自动滚到视口中间。')}
-        </p>
+
         <label className="switch">
           <input
             id="reader-mini-player"
@@ -69,9 +65,7 @@ export function ReaderControls({ config, updateConfig }: ReaderControlsProps) {
           />
           <span>{t('reader.miniPlayer', '播放时小窗')}</span>
         </label>
-        <p className="muted reader-controls-note">
-          {t('reader.miniPlayerHint', '视频滚出视野后浮在角落继续播，可以暂停、拖开或关掉。')}
-        </p>
+
       </div>
     </div>
   );
