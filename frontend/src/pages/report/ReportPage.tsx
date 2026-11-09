@@ -40,47 +40,75 @@ interface GroupOption {
   name: string;
 }
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const todayISO = (timezone: string) => new Intl.DateTimeFormat('en-CA', {
+  timeZone: timezone,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+}).format(new Date());
 
 export function ReportPage() {
   const { t } = useI18n();
   const { showToast } = useToast();
   const { user } = useAuth();
-  const [date, setDate] = useState(todayISO);
-  const [payload, setPayload] = useState<ReportPayload | null>(null);
+  const [date, setDate] = useState(() => todayISO(user?.timezone ?? 'Asia/Shanghai'));
+  const [report, setReport] = useState<{
+    key: string;
+    payload: ReportPayload | null;
+    error: string | null;
+  } | null>(null);
+  const [retry, setRetry] = useState(0);
+  const [sending, setSending] = useState(false);
   const [setting, setSetting] = useState<ReportSetting | null>(null);
   const [groups, setGroups] = useState<GroupOption[]>([]);
   const [selectedGroups, setSelectedGroups] = useState<number[]>([]);
-  const [loading, setLoading] = useState(true);
 
   const query = useMemo(
     () => (selectedGroups.length ? `?group_ids=${selectedGroups.join(',')}` : ''),
     [selectedGroups],
   );
 
-  // Fetch inside the effect: the state writes then land after an await, which
-  // keeps the effect from cascading renders.
+  const reportKey = `${date}${query}`;
+  const loading = report?.key !== reportKey;
+  const payload = loading ? null : report?.payload ?? null;
+  const error = loading ? null : report?.error ?? null;
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [reportPayload, settingPayload] = await Promise.all([
-          apiGet(`/api/report/${date}${query}`),
-          apiGet('/api/report/setting'),
-        ]);
+        const reportPayload = await apiGet(`/api/report/${reportKey}`);
         if (cancelled) return;
-        setPayload(reportPayload as unknown as ReportPayload);
-        setSetting(settingPayload as unknown as ReportSetting);
+        setReport({ key: reportKey, payload: reportPayload as unknown as ReportPayload, error: null });
       } catch (error) {
-        if (!cancelled) showToast(error instanceof Error ? error.message : String(error));
-      } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setReport({
+            key: reportKey,
+            payload: null,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [date, query, showToast]);
+  }, [reportKey, retry]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const settingPayload = await apiGet('/api/report/setting');
+        if (!cancelled) setSetting(settingPayload as unknown as ReportSetting);
+      } catch (error) {
+        if (!cancelled) showToast(error instanceof Error ? error.message : String(error));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showToast]);
 
   useEffect(() => {
     void (async () => {
@@ -104,6 +132,8 @@ export function ReportPage() {
   };
 
   const sendNow = async () => {
+    if (sending || !payload || payload.total === 0) return;
+    setSending(true);
     try {
       const result = await apiSend(`/api/report/${date}/send`, 'POST', {});
       showToast(
@@ -113,6 +143,8 @@ export function ReportPage() {
       );
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSending(false);
     }
   };
 
@@ -125,7 +157,11 @@ export function ReportPage() {
             className="input"
             type="date"
             value={date}
-            onChange={(event) => setDate(event.target.value)}
+            onChange={(event) => {
+              if (event.target.value === date) return;
+              setReport(null);
+              setDate(event.target.value);
+            }}
           />
         </label>
         <div className="report-groups">
@@ -135,25 +171,33 @@ export function ReportPage() {
               <input
                 type="checkbox"
                 checked={selectedGroups.includes(group.id)}
-                onChange={(event) =>
+                onChange={(event) => {
+                  setReport(null);
                   setSelectedGroups((current) =>
                     event.target.checked
                       ? [...current, group.id]
                       : current.filter((id) => id !== group.id),
-                  )
-                }
+                  );
+                }}
               />
               <span>{group.name}</span>
             </label>
           ))}
         </div>
         <div className="panel-footer">
-          <span className="muted">
-            {t('report.summary', '共 {n} 篇 · 时区 {tz}')
-              .replace('{n}', String(payload?.total ?? 0))
-              .replace('{tz}', payload?.timezone ?? user?.timezone ?? '')}
-          </span>
-          <button className="btn ghost" type="button" onClick={() => void sendNow()}>
+          {payload && (
+            <span className="muted">
+              {t('report.summary', '共 {n} 篇 · 时区 {tz}')
+                .replace('{n}', String(payload.total))
+                .replace('{tz}', payload.timezone)}
+            </span>
+          )}
+          <button
+            className="btn ghost"
+            type="button"
+            disabled={!payload || payload.total === 0 || sending}
+            onClick={() => void sendNow()}
+          >
             {t('report.sendNow', '立即发送')}
           </button>
         </div>
@@ -162,6 +206,20 @@ export function ReportPage() {
       <section className="panel report-preview">
         {loading ? (
           <p className="muted admin-empty">{t('admin.loading', '加载中…')}</p>
+        ) : error !== null ? (
+          <div className="admin-empty" role="alert">
+            <p>{t('report.loadFailed', '日报加载失败：{error}').replace('{error}', error)}</p>
+            <button
+              className="btn ghost"
+              type="button"
+              onClick={() => {
+                setReport(null);
+                setRetry((value) => value + 1);
+              }}
+            >
+              {t('report.retry', '重试')}
+            </button>
+          </div>
         ) : !payload || payload.total === 0 ? (
           <p className="muted admin-empty">{t('report.none', '这一天没有新文章')}</p>
         ) : (
