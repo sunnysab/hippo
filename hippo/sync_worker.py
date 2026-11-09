@@ -14,6 +14,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from psycopg_pool import AsyncConnectionPool
+
 from .config import WORKER_SERVICE, get_settings
 from .container import build_sync_container
 from .logger import get_logger, setup_logger
@@ -88,26 +90,51 @@ FORCING_TRIGGER_TYPES = frozenset({'manual'})
 
 
 async def publish_worker_state(storage: PostgresStorage) -> None:
-    """把 worker 心跳和队列水位写进 meta。
-
-    web 轮询 ``/api/settings/status`` 时直接读 meta，不用每次去扫 ``article_images``
-    那种百万行的表。主循环（5s）、正文 drain（60s）和图片回填（120s）都会调用，
-    进程内按 ``_WORKER_STATE_MIN_INTERVAL`` 节流，所以长任务期间心跳也不会断。
-    """
+    """Publish a cheap heartbeat; queue sampling has its own connection and loop."""
     global _last_worker_state_at
     now = time.monotonic()
     if now - _last_worker_state_at < _WORKER_STATE_MIN_INTERVAL:
         return
-    _last_worker_state_at = now
-    queue_stats = {
-        'articles': await storage.article_queue.stats(),
-        'images': await storage.images.count_backlog(),
-        # 媒体源的积压走自己的表（微信那条队列里看不到），按来源分开统计。
-        'media': await storage.media_jobs.stats_by_source(),
-    }
     async with storage.transaction():
         await storage.meta.set(WORKER_HEARTBEAT_KEY, utc_now_iso())
+    _last_worker_state_at = now
+
+
+async def sample_queue_stats(storage: PostgresStorage) -> None:
+    """Replace the last sample only after every counter has been collected."""
+    async with storage.transaction():
+        await storage.conn.execute("SET LOCAL statement_timeout = '10s'")
+        queue_stats = {
+            'articles': await storage.article_queue.stats(),
+            'images': await storage.images.count_backlog(),
+            'media': await storage.media_jobs.stats_by_source(),
+            'sampled_at': utc_now_iso(),
+        }
         await save_meta_json(storage, QUEUE_STATS_KEY, queue_stats)
+
+
+async def _queue_stats_loop(poll_interval: float = 120.0) -> None:
+    # One dedicated connection leaves the main pool's control/source budget intact.
+    database = get_settings().database
+    options = '-c timezone=Asia/Shanghai' + (' -c jit=off' if database.disable_jit else '')
+    async with AsyncConnectionPool(
+        database.dsn,
+        min_size=0,
+        max_size=1,
+        timeout=5,
+        open=False,
+        kwargs={'connect_timeout': 5, 'options': options},
+    ) as pool:
+        while True:
+            try:
+                async with asyncio.timeout(20):
+                    async with PostgresStorage(database.dsn, pool=pool) as storage:
+                        await sample_queue_stats(storage)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception('队列统计采集失败，保留上次结果')
+            await asyncio.sleep(poll_interval)
 
 
 class _WorkerProgressTracker:
@@ -629,8 +656,6 @@ async def _image_backfill_loop(
     """常驻图片队列消费：与正文抓取并行，互不干扰。"""
     while True:
         try:
-            async with open_storage() as storage:
-                await publish_worker_state(storage)
             await backfill_images_once(batch=batch)
         except asyncio.CancelledError:
             raise
@@ -665,7 +690,6 @@ async def _media_job_loop(
     while True:
         try:
             async with open_storage() as storage:
-                await publish_worker_state(storage)
                 await transcribe_media_once(storage, limit=batch)
         except asyncio.CancelledError:
             raise
@@ -691,7 +715,6 @@ async def _body_drain_loop(poll_interval: float = DRAIN_POLL_SECONDS) -> None:
     while True:
         try:
             async with open_storage() as storage:
-                await publish_worker_state(storage)
                 ingested = await drain_bodies_once(storage)
                 if ingested:
                     await mark_content_ingested(storage)
@@ -730,6 +753,7 @@ async def run_sync_worker(
     media_task = asyncio.create_task(_media_job_loop())
     # 实时通道：daemon 推 article_push 时立刻入队（列表轮询仍然是兜底）
     watch_task = asyncio.create_task(watch_article_push())
+    stats_task = asyncio.create_task(_queue_stats_loop())
     jobs: set[asyncio.Task[bool]] = set()
     # Each active job keeps a tracker handle; leave room for source connections
     # and body/image/media consumers plus control queries. No new configuration knob.
@@ -762,7 +786,7 @@ async def run_sync_worker(
                 jobs.add(asyncio.create_task(execute()))
             await asyncio.sleep(max(float(poll_interval), 0.2))
     finally:
-        stopping = [*jobs, drain_task, image_task, media_task, watch_task]
+        stopping = [*jobs, drain_task, image_task, media_task, watch_task, stats_task]
         for task in stopping:
             task.cancel()
         outcomes = await asyncio.gather(*stopping, return_exceptions=True)

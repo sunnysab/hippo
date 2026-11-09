@@ -726,6 +726,9 @@ POST /api/settings/tasks/{task_id}/cancel     → 可取消状态返回更新后
 
 任务列表默认返回摘要，包含 `trigger_type`、`total_saved`、状态、时间与当前进度，不包含 `accounts`、`biz_list` 和完整 `report`。`total_saved` 优先读取任务报告，旧任务没有报告时汇总账号进度。展开账号明细时使用单任务接口；`detail=true` 仍返回完整列表，通常无需使用。
 
+`queue.sampled_at` 是队列统计采集完成时间，与 `worker_heartbeat_at` 独立。统计每轮完成后等待 120 秒再采集，失败保留上次结果，超过 5 分钟在界面标记过期；无有效样本时显示未知。统计使用额外一条专用数据库连接，不占用同步工作连接池，单条查询限时 10 秒、整轮采集限时 20 秒。
+
+
 
 任务列表只给当前用户自己的任务（管理员看全部）；`detail=false` 返回精简摘要，`detail=true` 才带逐账号进度。
 任务状态字段：`task_id`、`status`、`trigger_type`（`manual`/`scheduled`/`backfill`）、`phase`、

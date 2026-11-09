@@ -169,6 +169,7 @@ class QueueStatsOut(BaseModel):
 
     model_config = ConfigDict(extra='ignore')
 
+    sampled_at: str | None = None
     articles: QueueStateOut = Field(default_factory=QueueStateOut)
     images: ImageQueueOut = Field(default_factory=ImageQueueOut)
     media: dict[str, QueueStateOut] = Field(default_factory=dict)

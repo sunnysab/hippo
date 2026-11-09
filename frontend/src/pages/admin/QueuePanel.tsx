@@ -1,14 +1,15 @@
+import { useEffect, useState } from 'react';
 import { useSettingsState } from '../../store/settings';
 import { useI18n } from '../../i18n';
 import { escapeHtml, formatRelativeTime } from '../../utils/format';
 import { getSyncTone } from '../../utils/sync';
 
-const CountRow = ({ label, value, tone }: { label: string; value: number; tone: string }) => (
+const CountRow = ({ label, value, tone }: { label: string; value: number | undefined; tone: string }) => (
   <div className={`sync-progress-item sync-tone-${getSyncTone(tone)}`}>
     <div className="sync-progress-copy">
       <div className="sync-progress-title-row">
         <div className="account-name">{label}</div>
-        <span className="meta-count">{value}</span>
+        <span className="meta-count">{value ?? '—'}</span>
       </div>
     </div>
   </div>
@@ -24,9 +25,16 @@ export function QueuePanel() {
   const { state } = useSettingsState();
   const { t } = useI18n();
 
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, []);
   const queue = state.syncStatus?.queue;
-  const articles = queue?.articles;
-  const images = queue?.images;
+  const sampledAt = queue?.sampled_at;
+  const stale = !sampledAt || !Number.isFinite(Date.parse(sampledAt)) || now - Date.parse(sampledAt) > 300000;
+  const articles = sampledAt ? queue?.articles : undefined;
+  const images = sampledAt ? queue?.images : undefined;
   const failed = queue?.failed_items || [];
   const heartbeat = state.syncStatus?.worker_heartbeat_at || '';
   const heartbeatText = heartbeat
@@ -45,30 +53,35 @@ export function QueuePanel() {
         </div>
       </div>
       <div className="sync-active-body" id="sync-queue">
+        <p className="muted" role={stale ? 'status' : undefined}>
+          {sampledAt
+            ? t(stale ? 'sync.queueStale' : 'sync.queueSampled', stale ? '统计已过期 · {time}' : '统计更新于 {time}').replace('{time}', formatRelativeTime(sampledAt, t))
+            : t('sync.queueUnknown', '尚无有效统计')}
+        </p>
         <div className="sync-progress-list">
           <CountRow
             label={t('sync.queueArticlesPending', 'Article bodies pending')}
-            value={articles?.pending ?? 0}
+            value={articles?.pending}
             tone="pending"
           />
           <CountRow
             label={t('sync.queueArticlesProcessing', 'Article bodies in flight')}
-            value={articles?.processing ?? 0}
+            value={articles?.processing}
             tone="running"
           />
           <CountRow
             label={t('sync.queueArticlesFailed', 'Article bodies failed')}
-            value={articles?.failed ?? 0}
+            value={articles?.failed}
             tone="failed"
           />
           <CountRow
             label={t('sync.queueImagesPending', 'Images pending')}
-            value={images?.pending ?? 0}
+            value={images?.pending}
             tone="pending"
           />
           <CountRow
             label={t('sync.queueImagesFailed', 'Images failed')}
-            value={images?.failed ?? 0}
+            value={images?.failed}
             tone="failed"
           />
         </div>

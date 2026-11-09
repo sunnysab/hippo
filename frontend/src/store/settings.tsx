@@ -11,6 +11,7 @@ export interface QueueFailedItem {
 }
 
 export interface QueueStats {
+  sampled_at?: string | null;
   articles?: { pending: number; processing: number; failed: number; done: number };
   images?: { pending: number; failed: number };
   failed_items?: QueueFailedItem[];

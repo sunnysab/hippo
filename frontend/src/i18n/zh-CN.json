@@ -886,5 +886,8 @@
   "admin.source.noMatches": "没有匹配的订阅。",
   "accounts.articleCountLabel": "已收录文章",
   "admin.source.credentialInstanceHint": "个人凭证优先，实例凭证备用。",
-  "sync.taskDetails": "账号明细"
+  "sync.taskDetails": "账号明细",
+  "sync.queueStale": "统计已过期 · {time}",
+  "sync.queueSampled": "统计更新于 {time}",
+  "sync.queueUnknown": "尚无有效统计"
 }

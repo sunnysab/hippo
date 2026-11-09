@@ -30,6 +30,7 @@ describe('QueuePanel', () => {
         syncStatus: {
           worker_heartbeat_at: '2026-05-02T11:59:00.000Z',
           queue: {
+            sampled_at: '2026-11-09T05:00:00Z',
             articles: { pending: 3, processing: 1, failed: 2, done: 10 },
             images: { pending: 7, failed: 1 },
             failed_items: [
@@ -58,12 +59,22 @@ describe('QueuePanel', () => {
     expect(screen.getByText('timeout')).toBeTruthy();
   });
 
-  it('falls back to zeros when the worker has not published stats yet', () => {
+  it('shows unknown counters when the worker has not published stats yet', () => {
     settingsStateMock.mockReturnValue({ state: { syncStatus: null } });
 
     render(<QueuePanel />);
 
     expect(screen.getByText('no worker heartbeat yet')).toBeTruthy();
-    expect(screen.getAllByText('0')).toHaveLength(5);
+    expect(screen.getAllByText('—')).toHaveLength(5);
+    expect(screen.getByText('尚无有效统计')).toBeTruthy();
   });
+  it('retains old counters while marking an expired sample', () => {
+    settingsStateMock.mockReturnValue({ state: { syncStatus: { queue: {
+      sampled_at: '2000-01-01T00:00:00Z', articles: { pending: 42 },
+    } } } });
+    render(<QueuePanel />);
+    expect(screen.getByText('统计已过期 · recently')).toBeTruthy();
+    expect(screen.getByText('42')).toBeTruthy();
+  });
+
 });
