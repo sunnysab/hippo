@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from hippo.api import deps
 from hippo.api.errors import install_exception_handlers
+from hippo.api.routers import admin as admin_api
 from hippo.api.routers import llm as llm_api
 from hippo.api.routers import settings as settings_api
 from hippo.sync_types import SyncTaskState
@@ -127,6 +128,7 @@ def _client(storage: _Storage) -> TestClient:
     install_exception_handlers(app)
     app.include_router(settings_api.router, prefix='/api')
     app.include_router(llm_api.router, prefix='/api')
+    app.include_router(admin_api.router, prefix='/api')
     app.dependency_overrides[deps.get_storage] = lambda: storage
     return TestClient(app)
 
@@ -149,6 +151,7 @@ class AdminApiKeyIsolationTest(unittest.TestCase):
             ('patch', '/api/settings', {'enabled': True}),
             ('post', '/api/settings/admin/run', {}),
             ('get', '/api/llm/provider', None),
+            ('delete', '/api/admin/user/7', None),
         ):
             with self.subTest(path=path):
                 response = client.request(method, path, headers=headers, json=body)

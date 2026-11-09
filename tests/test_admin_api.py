@@ -5,11 +5,16 @@ out, and silent password/session changes going unlogged.
 """
 
 import unittest
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from hippo.api import deps
+from hippo.api.errors import install_exception_handlers
 from hippo.api.routers import admin as admin_api
 from hippo.api.schemas.admin import (
     PasswordResetRequest,
@@ -40,6 +45,7 @@ def _storage(*, target: SimpleNamespace | None = None) -> SimpleNamespace:
             set_disabled=AsyncMock(),
             set_role=AsyncMock(),
             set_password=AsyncMock(),
+            delete=AsyncMock(return_value=True),
         ),
         sessions=SimpleNamespace(revoke_all_for_user=AsyncMock(return_value=2)),
         audit=SimpleNamespace(record=AsyncMock()),
@@ -47,6 +53,59 @@ def _storage(*, target: SimpleNamespace | None = None) -> SimpleNamespace:
 
 
 class AdminGuardTest(unittest.IsolatedAsyncioTestCase):
+    async def test_deleting_a_user_and_auditing_share_one_transaction(self) -> None:
+        storage = _storage(target=_user(7, role='user'))
+        active = False
+
+        @asynccontextmanager
+        async def transaction():
+            nonlocal active
+            active = True
+            try:
+                yield
+            finally:
+                active = False
+
+        async def delete(user_id):
+            self.assertTrue(active)
+            return True
+
+        async def audit(*args, **kwargs):
+            self.assertTrue(active)
+
+        storage.transaction = transaction
+        storage.users.delete.side_effect = delete
+        storage.audit.record.side_effect = audit
+        await admin_api.delete_user(
+            '7', SimpleNamespace(headers={}, client=None), actor=_user(1), storage=storage
+        )
+
+        storage.users.delete.assert_awaited_once_with(7)
+        storage.audit.record.assert_awaited_once_with(
+            1, 'admin.user_deleted', target='u7', detail={'user_id': 7}, ip=None
+        )
+        self.assertFalse(active)
+
+    async def test_an_admin_cannot_delete_themselves(self) -> None:
+        storage = _storage(target=_user(1))
+        with self.assertRaises(ApiError) as ctx:
+            await admin_api.delete_user('1', SimpleNamespace(headers={}, client=None), actor=_user(1), storage=storage)
+        self.assertEqual(400, ctx.exception.status)
+        storage.users.delete.assert_not_awaited()
+        storage.audit.record.assert_not_awaited()
+
+    async def test_deleting_a_missing_user_returns_404(self) -> None:
+        for target in (None, _user(7)):
+            with self.subTest(target=target):
+                storage = _storage(target=target)
+                storage.users.delete.return_value = False
+                with self.assertRaises(ApiError) as ctx:
+                    await admin_api.delete_user(
+                        '7', SimpleNamespace(headers={}, client=None), actor=_user(1), storage=storage
+                    )
+                self.assertEqual(404, ctx.exception.status)
+                storage.audit.record.assert_not_awaited()
+
     async def test_an_admin_cannot_disable_themselves(self) -> None:
         storage = _storage(target=_user(1))
         with self.assertRaises(ApiError) as ctx:
@@ -188,6 +247,25 @@ class AdminGuardTest(unittest.IsolatedAsyncioTestCase):
         # reaches the route as a string the guard could inspect.
         with self.assertRaises(ValidationError):
             UserUpdateRequest(role='superuser')  # type: ignore[arg-type]
+
+
+class AdminDeleteHttpTest(unittest.TestCase):
+    def test_delete_requires_an_admin_session_and_returns_204(self) -> None:
+        storage = _storage(target=_user(7, role='user'))
+        app = FastAPI()
+        install_exception_handlers(app)
+        app.include_router(admin_api.router, prefix='/api')
+        app.dependency_overrides[deps.get_storage] = lambda: storage
+        actor = _user(1, role='user')
+        app.dependency_overrides[deps.current_user] = lambda: actor
+        with TestClient(app) as client:
+            self.assertEqual(403, client.delete('/api/admin/user/7').status_code)
+            storage.users.delete.assert_not_awaited()
+            actor.role = 'admin'
+            response = client.delete('/api/admin/user/7')
+            self.assertEqual(204, response.status_code, response.text)
+            self.assertEqual(b'', response.content)
+            self.assertEqual(400, client.delete('/api/admin/user/invalid').status_code)
 
 
 class AdminCreateUserTest(unittest.IsolatedAsyncioTestCase):

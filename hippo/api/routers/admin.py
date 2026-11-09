@@ -67,7 +67,7 @@ def _target_id(user_id: str) -> int:
 def _guard_self(actor: User, target_id: int, action: str) -> None:
     """Refuse operations that would strip the acting admin's own access."""
     if actor.id == target_id:
-        raise ApiError(f'不能对自己执行{action}', status=400)
+        raise ApiError(f'Cannot {action} your own account', status=400)
 
 
 @router.get('/admin/user', response_model=AdminUserListOut)
@@ -143,7 +143,7 @@ async def update_user(
         if 'is_disabled' in updates:
             disabled = bool(updates['is_disabled'])
             if disabled:
-                _guard_self(actor, target_id, '禁用')
+                _guard_self(actor, target_id, 'disable')
                 await storage.sessions.revoke_all_for_user(target_id)
             await storage.users.set_disabled(target_id, disabled)
             changes['is_disabled'] = disabled
@@ -151,7 +151,7 @@ async def update_user(
         if 'role' in updates:
             role = str(updates['role'])
             if role != 'admin':
-                _guard_self(actor, target_id, '降级')
+                _guard_self(actor, target_id, 'demote')
             await storage.users.set_role(target_id, role)
             changes['role'] = role
 
@@ -178,6 +178,29 @@ async def update_user(
             ip=client_ip(request),
         )
     return {'id': target_id, 'changes': changes}
+
+
+@router.delete('/admin/user/{user_id}', status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(
+    user_id: str,
+    request: Request,
+    actor: User = Depends(require_admin),
+    storage: PostgresStorage = Depends(get_storage),
+) -> None:
+    """Delete a user and their private records, keeping the shared catalogue."""
+    target_id = _target_id(user_id)
+    _guard_self(actor, target_id, 'delete')
+    async with storage.transaction():
+        target = await storage.users.get(target_id)
+        if target is None or not await storage.users.delete(target_id):
+            raise ApiError('User not found', status=404)
+        await storage.audit.record(
+            actor.id,
+            'admin.user_deleted',
+            target=target.username,
+            detail={'user_id': target_id},
+            ip=client_ip(request),
+        )
 
 
 @router.post('/admin/user/{user_id}/password', status_code=status.HTTP_204_NO_CONTENT)

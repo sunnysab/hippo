@@ -134,6 +134,12 @@ class UserRepository:
             row = await cur.fetchone()
         return int(row[0]) if row else 0
 
+    async def delete(self, user_id: int) -> bool:
+        """Delete the account; user-owned rows follow their existing FK cascades."""
+        async with self._conn.cursor() as cur:
+            await cur.execute('DELETE FROM users WHERE id = %s', (user_id,))
+            return cur.rowcount > 0
+
     async def any_admin_exists(self) -> bool:
         async with self._conn.cursor() as cur:
             await cur.execute("SELECT 1 FROM users WHERE role = 'admin' LIMIT 1")

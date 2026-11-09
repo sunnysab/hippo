@@ -27,31 +27,40 @@ export function AdminPage() {
   const { user: actor } = useAuth();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState({ username: '', email: '', password: '', role: 'user' });
-  const [confirmUser, setConfirmUser] = useState<AdminUser | null>(null);
+  const [confirmation, setConfirmation] = useState<{ user: AdminUser; action: 'disable' | 'delete' } | null>(null);
 
   const load = useCallback(async () => {
     try {
       const payload = await apiGet('/api/admin/user');
       setUsers((payload.items as AdminUser[]) ?? []);
+      setLoadError('');
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : String(error));
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void load();
+    let cancelled = false;
+    queueMicrotask(() => { if (!cancelled) void load(); });
+    return () => { cancelled = true; };
   }, [load]);
 
   const createUser = async () => {
-    if (!draft.username || !draft.password) {
+    if (creating) return;
+    if (!draft.username.trim() || !draft.password) {
       showToast(t('admin.user.missing', '用户名和密码不能为空'));
       return;
     }
+    setCreating(true);
     try {
       await apiSend('/api/admin/user', 'POST', {
-        username: draft.username,
-        email: draft.email || null,
+        username: draft.username.trim(),
+        email: draft.email.trim() || null,
         password: draft.password,
         role: draft.role,
       });
@@ -60,6 +69,8 @@ export function AdminPage() {
       await load();
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -96,16 +107,33 @@ export function AdminPage() {
     }
   };
 
+  const confirmAction = async () => {
+    if (!confirmation) return;
+    const { user, action } = confirmation;
+    if (action === 'delete') {
+      await apiSend(`/api/admin/user/${user.id}`, 'DELETE', {});
+      showToast(t('admin.user.deleted', '用户已删除'));
+    } else {
+      await apiSend(`/api/admin/user/${user.id}`, 'PATCH', { is_disabled: true });
+    }
+    await load();
+  };
+
   return (
     <div className="admin-page">
       <section className="panel">
         <div className="panel-header">
           <h2 className="panel-title">{t('admin.user.title', '用户管理')}</h2>
-          <span className="muted">{t('admin.user.count', '{n} 个账号').replace('{n}', String(users.length))}</span>
+          {!loading && !loadError && <span className="muted">{t('admin.user.count', '{n} 个账号').replace('{n}', String(users.length))}</span>}
         </div>
 
         {loading ? (
           <div className="muted admin-empty">{t('admin.loading', '加载中…')}</div>
+        ) : loadError ? (
+          <div className="admin-empty" role="alert">
+            <p>{loadError}</p>
+            <button className="btn ghost" type="button" onClick={() => void load()}>{t('common.retry', '重试')}</button>
+          </div>
         ) : (
           <div className="admin-table-wrap">
             <table className="admin-table">
@@ -148,6 +176,7 @@ export function AdminPage() {
                           className="input"
                           value={row.role}
                           disabled={isSelf}
+                          aria-label={t('admin.user.roleFor', '{name} 的角色').replace('{name}', row.username)}
                           onChange={(event) => void patchUser(row, { role: event.target.value })}
                         >
                           <option value="user">{t('admin.user.roleUser', '普通用户')}</option>
@@ -169,15 +198,26 @@ export function AdminPage() {
                         <button
                           className="btn ghost"
                           type="button"
+                          disabled={isSelf}
+                          title={isSelf ? t('admin.user.selfProtected', '不能禁用或删除自己的账户') : undefined}
                           onClick={() =>
                             row.is_disabled
                               ? void patchUser(row, { is_disabled: false })
-                              : setConfirmUser(row)
+                              : setConfirmation({ user: row, action: 'disable' })
                           }
                         >
                           {row.is_disabled
                             ? t('admin.user.enable', '启用')
                             : t('admin.user.disable', '禁用')}
+                        </button>
+                        <button
+                          className="btn ghost"
+                          type="button"
+                          disabled={isSelf}
+                          title={isSelf ? t('admin.user.selfProtected', '不能禁用或删除自己的账户') : undefined}
+                          onClick={() => setConfirmation({ user: row, action: 'delete' })}
+                        >
+                          {t('common.delete', '删除')}
                         </button>
                         <button className="btn ghost" type="button" onClick={() => void resetPassword(row)}>
                           {t('admin.user.reset', '重置密码')}
@@ -245,8 +285,8 @@ export function AdminPage() {
           </label>
         </div>
         <div className="panel-footer">
-          <button className="btn" type="button" onClick={() => void createUser()}>
-            {t('admin.create.submit', '创建')}
+          <button className="btn" type="button" disabled={creating} onClick={() => void createUser()}>
+            {creating ? t('admin.create.submitting', '创建中…') : t('admin.create.submit', '创建')}
           </button>
           <span className="muted">
             {t('admin.create.hint', '邮箱留空则只能由管理员重置密码')}
@@ -255,15 +295,18 @@ export function AdminPage() {
       </section>
 
       <ConfirmModal
-        isOpen={confirmUser !== null}
-        title={t('admin.user.disableTitle', '禁用账号')}
-        message={t(
+        isOpen={confirmation !== null}
+        title={confirmation?.action === 'delete' ? t('admin.user.deleteTitle', '删除用户') : t('admin.user.disableTitle', '禁用账号')}
+        message={(confirmation?.action === 'delete' ? t(
+          'admin.user.deleteConfirm',
+          '将永久删除用户 {name} 及其订阅、阅读记录、收藏、批注、会话和知识库记录，无法恢复。共享文章和图片会保留。确定删除？',
+        ) : t(
           'admin.user.disableConfirm',
           '禁用 {name} 会立即吊销其全部会话，确定继续？',
-        ).replace('{name}', confirmUser?.username ?? '')}
-        confirmLabel={t('admin.user.disable', '禁用')}
-        onConfirm={() => patchUser(confirmUser!, { is_disabled: true })}
-        onClose={() => setConfirmUser(null)}
+        )).replace('{name}', confirmation?.user.username ?? '')}
+        confirmLabel={confirmation?.action === 'delete' ? t('common.delete', '删除') : t('admin.user.disable', '禁用')}
+        onConfirm={confirmAction}
+        onClose={() => setConfirmation(null)}
       />
     </div>
   );

@@ -853,6 +853,7 @@ POST /api/llm/provider
 | GET | `/api/admin/user` | 用户列表（含验证、活跃、会话统计） |
 | POST | `/api/admin/user` | 创建用户（直接设密码，邮箱可空） |
 | PATCH | `/api/admin/user/{user_id}` | 停用/启用、改角色、改时区、置为已验证 |
+| DELETE | `/api/admin/user/{user_id}` | 删除用户及其个人记录，保留共享文章和图片 |
 | POST | `/api/admin/user/{user_id}/password` | 重置密码并吊销该用户全部会话 |
 | DELETE | `/api/admin/user/{user_id}/session` | 吊销该用户全部会话 |
 | GET | `/api/admin/audit` | 审计日志（筛选 + 分页） |
@@ -902,12 +903,17 @@ POST  /api/admin/user { "username": "u", "password": "…", "email": "u@example.
 PATCH /api/admin/user/3 { "is_disabled": true, "role": "admin", "timezone": "Asia/Shanghai", "email_verified": true }
 POST  /api/admin/user/3/password { "password": "…" }   → 204
 DELETE /api/admin/user/3/session                       → 204
+DELETE /api/admin/user/3                               → 204
 ```
 
 创建用户直接设密码，因此不强制邮箱；`username` 必填，密码至少 8 位，`role` 只能是 `user` 或 `admin`（非法值 `400`）。
 用户名已存在或邮箱已被使用是 `409`。
 `email_verified` 缺省为 `true`：管理员手工建号即视为可信，且这一路径不发验证邮件；
 传 `false` 可显式建一个待验证账号（此时该账号若有邮箱则无法登录，需用 `PATCH /api/admin/user/{id}` 置回）。
+
+删除用户需要管理员会话，禁止删除自己（`400`），用户不存在时返回 `404`。删除和审计记录在同一事务内提交。
+用户的订阅、会话、API 密钥、阅读记录、收藏、批注、聊天和知识库记录随账号删除；共享账号目录、文章和图片保留，其他用户的订阅不受影响。
+知识库原始对象不在此接口中物理清理；此接口不承诺擦除对象存储中的文件。
 
 ### 审计与日志
 
@@ -1255,6 +1261,7 @@ Content-Type: application/pdf
 | GET | `/api/admin/user` | 管理员 |
 | POST | `/api/admin/user` | 管理员 |
 | PATCH | `/api/admin/user/{user_id}` | 管理员 |
+| DELETE | `/api/admin/user/{user_id}` | 管理员 |
 | POST | `/api/admin/user/{user_id}/password` | 管理员 |
 | DELETE | `/api/admin/user/{user_id}/session` | 管理员 |
 | GET | `/api/apikey` | 登录 |
