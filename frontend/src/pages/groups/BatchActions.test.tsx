@@ -90,3 +90,31 @@ describe('batch update intervals', () => {
     expect(document.querySelector('#btn-batch-group-sync')).toBeTruthy();
   });
 });
+
+describe('unsubscribing', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.state.selectedAccounts = ['feed:https://example.test/rss', 'two'];
+    mocks.state.accounts = [];
+    vi.mocked(apiSend).mockResolvedValue({});
+  });
+
+  it('describes retained content and confirms before unsubscribing', async () => {
+    render(<BatchActions />);
+    fireEvent.click(screen.getByRole('button', { name: '取消订阅' }));
+    const dialog = within(screen.getByRole('dialog', { name: '确认取消订阅' }));
+    expect(dialog.getByText('将取消 2 个订阅。文章和图片会保留，也可以重新订阅。确定继续？')).toBeTruthy();
+    expect(apiSend).not.toHaveBeenCalled();
+    fireEvent.click(dialog.getByRole('button', { name: '取消订阅' }));
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('已取消 2 个订阅，文章和图片会保留。'));
+    expect(apiSend).toHaveBeenCalledWith('/api/account/feed%3Ahttps%3A%2F%2Fexample.test%2Frss', 'DELETE', {});
+  });
+
+  it('reports the failed count for a partially completed unsubscribe', async () => {
+    vi.mocked(apiSend).mockRejectedValueOnce(new Error('Unavailable'));
+    render(<BatchActions />);
+    fireEvent.click(screen.getByRole('button', { name: '取消订阅' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '取消订阅' }));
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('1/2 个订阅取消失败，请重试。'));
+  });
+});

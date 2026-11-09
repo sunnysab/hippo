@@ -91,7 +91,7 @@ export function BatchActions() {
     let failed = 0;
     for (const biz of bizList) {
       try {
-        await apiSend(`/api/account/${biz}`, 'DELETE', {});
+        await apiSend(`/api/account/${encodeURIComponent(biz)}`, 'DELETE', {});
         dispatch({ type: 'REMOVE_ACCOUNT', biz });
       } catch (err) {
         if (isAuthError(err)) return;
@@ -100,9 +100,9 @@ export function BatchActions() {
     }
     dispatch({ type: 'CLEAR_SELECTED' });
     if (failed === 0) {
-      showToast(t('accounts.deleteSuccess', 'Deleted {n} accounts with articles and images.').replace('{n}', String(bizList.length)));
+      showToast(t('accounts.deleteSuccess', '已取消 {n} 个订阅，文章和图片会保留。').replace('{n}', String(bizList.length)));
     } else {
-      showToast(t('accounts.deleteFailed', 'Failed to delete {failed}/{total} accounts.').replace('{failed}', String(failed)).replace('{total}', String(bizList.length)));
+      showToast(t('accounts.deleteFailed', '{failed}/{total} 个订阅取消失败，请重试。').replace('{failed}', String(failed)).replace('{total}', String(bizList.length)));
     }
     emitRefresh();
   };
@@ -212,7 +212,7 @@ export function BatchActions() {
         </button>
         <div className="batch-divider"></div>
         <button className="btn ghost" id="btn-batch-delete" type="button" onClick={() => setShowDeleteModal(true)}>
-          {t('accounts.delete', 'Delete')}
+          {t('accounts.delete', '取消订阅')}
         </button>
       </div>
       <span className="meta-count" id="batch-count">{count}</span>
@@ -227,10 +227,10 @@ export function BatchActions() {
     </div>
     <ConfirmModal
       isOpen={showDeleteModal}
-      title={t('accounts.deleteConfirmTitle', 'Confirm delete')}
-      message={t('accounts.deleteBatchConfirmMessage', 'Delete {count} accounts and all their articles/images. This cannot be undone.')
+      title={t('accounts.deleteConfirmTitle', '确认取消订阅')}
+      message={t('accounts.deleteBatchConfirmMessage', '将取消 {count} 个订阅。文章和图片会保留，也可以重新订阅。确定继续？')
         .replace('{count}', String(count))}
-      confirmLabel={t('accounts.delete', 'Delete')}
+      confirmLabel={t('accounts.delete', '取消订阅')}
       onClose={() => setShowDeleteModal(false)}
       onConfirm={handleDelete}
     />
