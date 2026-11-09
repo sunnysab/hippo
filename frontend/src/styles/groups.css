@@ -369,6 +369,21 @@
   line-height: 1.25;
 }
 
+.account-details {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.account-details summary {
+  width: fit-content;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.account-details[open] > :not(summary) {
+  margin-top: 5px;
+}
+
 .export-format-option {
   display: flex;
   align-items: center;

@@ -504,10 +504,12 @@ class GroupRepository:
                     g.sync_mode,
                     g.sync_recent_days,
                     COALESCE(g.article_count, 0) AS article_count,
-                    COUNT(s.biz) AS account_count
+                    COUNT(s.biz) FILTER (WHERE NOT s.is_disabled) AS account_count,
+                    COUNT(s.biz) AS subscription_count,
+                    COUNT(s.biz) FILTER (WHERE s.is_disabled) AS disabled_count
                 FROM account_groups g
                 LEFT JOIN subscription s
-                       ON s.group_id = g.id AND s.user_id = %s AND NOT s.is_disabled
+                       ON s.group_id = g.id AND s.user_id = %s
                 WHERE g.id = %s AND g.user_id = %s
                 GROUP BY g.id, g.name, g.sync_mode, g.sync_recent_days, g.article_count
                 """,
@@ -520,6 +522,8 @@ class GroupRepository:
             id=row['id'],
             name=row['name'],
             account_count=row['account_count'],
+            subscription_count=row['subscription_count'],
+            disabled_count=row['disabled_count'],
             article_count=row.get('article_count') or 0,
             sync_mode=row.get('sync_mode'),
             sync_recent_days=row.get('sync_recent_days'),
@@ -602,11 +606,13 @@ class GroupRepository:
                     g.name,
                     g.sync_mode,
                     g.sync_recent_days,
-                    COUNT(a.biz) AS account_count,
+                    COUNT(DISTINCT a.biz) FILTER (WHERE NOT s.is_disabled) AS account_count,
+                    COUNT(DISTINCT a.biz) AS subscription_count,
+                    COUNT(DISTINCT a.biz) FILTER (WHERE s.is_disabled) AS disabled_count,
                     COALESCE(g.article_count, 0) AS article_count
                 FROM account_groups g
                 LEFT JOIN subscription s
-                       ON s.group_id = g.id AND s.user_id = %s AND NOT s.is_disabled
+                       ON s.group_id = g.id AND s.user_id = %s
                 LEFT JOIN accounts a
                        ON a.biz = s.biz{source_filter}
                 WHERE g.user_id = %s
@@ -621,6 +627,8 @@ class GroupRepository:
                 id=row['id'],
                 name=row['name'],
                 account_count=row['account_count'],
+                subscription_count=row['subscription_count'],
+                disabled_count=row['disabled_count'],
                 article_count=row.get('article_count') or 0,
                 sync_mode=row.get('sync_mode'),
                 sync_recent_days=row.get('sync_recent_days'),

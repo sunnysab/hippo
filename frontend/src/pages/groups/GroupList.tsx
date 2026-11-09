@@ -34,7 +34,9 @@ export function GroupList({ onSync, onSelect }: GroupListProps) {
             <div>
               <div className="account-name">{group.name}</div>
               <div className="account-sub">
-                {group.account_count || 0} {t('groups.accounts', 'accounts')}
+                {t('groups.subscriptionSummary', '{total} 个订阅，其中 {paused} 个暂停同步。')
+                  .replace('{total}', String(group.subscription_count ?? group.account_count ?? 0))
+                  .replace('{paused}', String(group.disabled_count ?? 0))}
               </div>
             </div>
             <div className="group-item-actions">
@@ -52,7 +54,7 @@ export function GroupList({ onSync, onSelect }: GroupListProps) {
                   <path d="M12 6V3L8 7l4 4V8c2.2 0 4 1.8 4 4a4 4 0 0 1-4 4 4 4 0 0 1-3.8-2.6l-1.9.6A6 6 0 0 0 12 20a6 6 0 0 0 0-12z"/>
                 </svg>
               </button>
-              <span className="meta-count">{group.account_count || 0}</span>
+              <span className="meta-count">{group.subscription_count ?? group.account_count ?? 0}</span>
             </div>
           </div>
         ))}

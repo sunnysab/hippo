@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountCard } from './AccountCard';
 import zhCN from '../../i18n/zh-CN.json';
@@ -70,6 +70,7 @@ describe('AccountCard history backfill state', () => {
     render(<AccountCard account={{ ...baseAccount, backfill_pending: true, backfill_running: true }} />);
 
     expect(screen.getByText(zhCN['accounts.syncing'])).toBeTruthy();
+    expect(screen.getByText(zhCN['accounts.syncingShort'])).toBeTruthy();
     expect(screen.queryByText(zhCN['accounts.lastSyncedEmpty'])).toBeNull();
     expect(screen.queryByText(zhCN['accounts.syncQueued'])).toBeNull();
   });
@@ -78,7 +79,21 @@ describe('AccountCard history backfill state', () => {
     render(<AccountCard account={{ ...baseAccount, backfill_pending: true }} />);
 
     expect(screen.getByText(zhCN['accounts.syncQueued'])).toBeTruthy();
+    expect(screen.getByText(zhCN['accounts.syncQueuedShort'])).toBeTruthy();
+    expect(screen.queryByText(zhCN['accounts.syncingShort'])).toBeNull();
     expect(screen.queryByText(zhCN['accounts.lastSyncedEmpty'])).toBeNull();
+  });
+
+  it('keeps identifiers and counts in a collapsible details panel', () => {
+    render(<AccountCard account={{ ...baseAccount, article_count: 1187 }} />);
+
+    const summary = screen.getByText(zhCN['accounts.syncDetails']);
+    const details = summary.closest('details')!;
+    expect(details.open).toBe(false);
+    expect(details.contains(screen.getByText('Mz1'))).toBe(true);
+    expect(details.contains(screen.getByText(zhCN['accounts.articleCount'].replace('{n}', '1187')))).toBe(true);
+    fireEvent.click(summary);
+    expect(details.open).toBe(true);
   });
 
   it.each([

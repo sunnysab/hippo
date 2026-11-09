@@ -79,7 +79,7 @@ export function GroupHeader({
         </div>
         <p className="muted" id="group-current-meta">
           {t('groups.currentMeta', '{accounts} accounts · {articles} articles')
-            .replace('{accounts}', String(group.account_count || 0))
+            .replace('{accounts}', String(group.subscription_count ?? group.account_count ?? 0))
             .replace('{articles}', String(group.article_count || 0))}
         </p>
       </div>

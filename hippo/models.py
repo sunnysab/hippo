@@ -36,6 +36,8 @@ class AccountGroup(HippoBaseModel):
     id: int
     name: str
     account_count: int = 0
+    subscription_count: int = 0
+    disabled_count: int = 0
     article_count: int = 0
     sync_mode: str | None = None
     sync_recent_days: int | None = None

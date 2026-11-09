@@ -7,6 +7,7 @@ import { useToast } from '../../hooks/useToast';
 import { formatRelativeTime } from '../../utils/format';
 import { emitRefresh } from '../../utils/events';
 import { AccountSyncStatus } from '../../components/AccountSyncStatus';
+import { hasAccountWork } from '../../utils/sync';
 import type { Account } from '../../store/shared';
 
 interface AccountCardProps {
@@ -61,6 +62,15 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
     ? t('accounts.lastSynced', 'Synced {time}').replace('{time}', lastSynced)
     : t('accounts.lastSyncedEmpty', 'Not synced yet');
   const articleCountText = t('accounts.articleCount', '{n} articles').replace('{n}', String(account.article_count));
+  const syncActive = account.sync ? hasAccountWork(account.sync) : account.backfill_running || account.backfill_pending;
+  const syncRunning = account.sync
+    ? ['running', 'cancelling'].includes(account.sync.history.status)
+      || account.sync.listing?.status === 'running' || account.sync.articles.processing > 0
+    : account.backfill_running;
+  const syncFailed = Boolean(account.sync && (
+    account.sync.history.status === 'failed' || account.sync.listing?.status === 'failed'
+    || account.sync.articles.failed > 0 || (account.sync.images?.failed || 0) > 0
+  ));
 
   const handleViewArticles = () => {
     const params = new URLSearchParams();
@@ -110,50 +120,56 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
           >
             {account.nickname}
           </div>
-          <div className="account-sub">{account.alias || account.biz}</div>
           <div className="account-sub account-stats">
             <span className="account-stat">{lastUpdatedText}</span>
-            <span className="account-stat">{articleCountText}</span>
-            {!account.sync && account.backfill_running && (
+            {!account.is_disabled && syncActive && (
               <span className="account-tag account-tag-live">
                 <span className="sync-dot" aria-hidden="true" />
-                {t('accounts.syncing', '同步中')}
+                {syncRunning ? t('accounts.syncingShort', '同步中') : t('accounts.syncQueuedShort', '等待同步')}
               </span>
-            )}
-            {!account.sync && !account.backfill_running && account.backfill_pending && (
-              <span className="account-tag account-tag-quiet">{t('accounts.syncQueued', '排队中')}</span>
             )}
             {account.is_disabled && (
               <span className="account-tag">{t('accounts.syncDisabled', 'Sync disabled')}</span>
             )}
+            {syncFailed && (
+              <span className="account-tag">{t('accounts.syncFailedShort', '同步有失败')}</span>
+            )}
           </div>
-          {account.sync && <AccountSyncStatus sync={account.sync} biz={account.biz} disabled={account.is_disabled} />}
-          {(lastSynced || (!account.sync && !account.backfill_running && !account.backfill_pending)) && (
-            <div className="account-sub">{lastSyncedText}</div>
-          )}
-        </div>
-      </div>
-      <div className="account-sync">
-        <div className="account-sync-row">
-          <span className="account-sync-label">{t('accounts.syncInterval', 'Sync interval')}</span>
-          <select
-            className="account-sync-interval"
-            data-biz={account.biz}
-            value={syncInterval === null ? '' : String(syncInterval)}
-            onChange={(event) => {
-              const val = event.target.value;
-              const nextInterval = val === '' ? null : Number(val);
-              setSyncInterval(nextInterval);
-              void saveSyncInterval(nextInterval);
-            }}
-          >
-            <option value="">{t('accounts.syncIntervalAuto', 'Auto (detect)')}</option>
-            <option value="1">{t('accounts.syncInterval1', 'Every run')}</option>
-            <option value="3">{t('accounts.syncInterval3', 'Every 3 days')}</option>
-            <option value="7">{t('accounts.syncInterval7', 'Weekly')}</option>
-            <option value="14">{t('accounts.syncInterval14', 'Biweekly')}</option>
-            <option value="30">{t('accounts.syncInterval30', 'Monthly')}</option>
-          </select>
+          <details className="account-details">
+            <summary>{t('accounts.syncDetails', '同步详情')}</summary>
+            <div className="account-sub">{account.alias || account.biz}</div>
+            <div className="account-sub">{articleCountText}</div>
+            {(lastSynced || (!account.sync && !account.backfill_running && !account.backfill_pending)) && (
+              <div className="account-sub">{lastSyncedText}</div>
+            )}
+            {account.sync && <AccountSyncStatus sync={account.sync} biz={account.biz} disabled={account.is_disabled} />}
+            {!account.sync && (account.backfill_running || account.backfill_pending) && (
+              <div className="account-sub">{account.backfill_running
+                ? t('accounts.syncing', 'Fetching article history')
+                : t('accounts.syncQueued', 'Article history queued')}</div>
+            )}
+            <div className="account-sync-row">
+              <span className="account-sync-label">{t('accounts.syncInterval', 'Sync interval')}</span>
+              <select
+                className="account-sync-interval"
+                data-biz={account.biz}
+                value={syncInterval === null ? '' : String(syncInterval)}
+                onChange={(event) => {
+                  const val = event.target.value;
+                  const nextInterval = val === '' ? null : Number(val);
+                  setSyncInterval(nextInterval);
+                  void saveSyncInterval(nextInterval);
+                }}
+              >
+                <option value="">{t('accounts.syncIntervalAuto', 'Auto (detect)')}</option>
+                <option value="1">{t('accounts.syncInterval1', 'Every run')}</option>
+                <option value="3">{t('accounts.syncInterval3', 'Every 3 days')}</option>
+                <option value="7">{t('accounts.syncInterval7', 'Weekly')}</option>
+                <option value="14">{t('accounts.syncInterval14', 'Biweekly')}</option>
+                <option value="30">{t('accounts.syncInterval30', 'Monthly')}</option>
+              </select>
+            </div>
+          </details>
         </div>
       </div>
     </div>

@@ -2,6 +2,8 @@ export interface Group {
   id: number;
   name: string;
   account_count: number;
+  subscription_count?: number;
+  disabled_count?: number;
   article_count?: number;
 }
 
