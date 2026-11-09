@@ -19,6 +19,30 @@ class AccountPublicationTest(unittest.IsolatedAsyncioTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+    async def test_internal_accounts_are_excluded_from_both_page_and_total(self) -> None:
+        cursor = AsyncMock()
+        cursor.__aenter__.return_value = cursor
+        cursor.fetchall.return_value = []
+        cursor.fetchone.return_value = {'total': 0}
+        repository = AccountRepository(SimpleNamespace(cursor=lambda **kwargs: cursor))
+
+        await repository.list_accounts_paginated(user_id=7)
+
+        for call in cursor.execute.await_args_list:
+            self.assertIn("a.biz <> 'adhoc'", call.args[0])
+
+    async def test_internal_accounts_are_excluded_from_followed_accounts_and_source_counts(self) -> None:
+        cursor = AsyncMock()
+        cursor.__aenter__.return_value = cursor
+        cursor.fetchall.return_value = []
+        repository = AccountRepository(SimpleNamespace(cursor=lambda **kwargs: cursor))
+
+        await repository.list_followed_accounts(7, group='Default')
+        await repository.count_by_source(7)
+
+        for call in cursor.execute.await_args_list:
+            self.assertIn("a.biz <> 'adhoc'", call.args[0])
+
     async def test_the_paginated_list_reads_the_latest_publication_for_each_account(self) -> None:
         published = datetime(2026, 10, 19, 17, tzinfo=UTC)
         rows = [{'biz': 'youtube:UC123', 'latest_publish_at': published}]

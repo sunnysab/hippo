@@ -40,6 +40,7 @@ class GroupRepositoryTest(unittest.IsolatedAsyncioTestCase):
             sql = ' '.join(call.args[0].split())
             self.assertIn('FILTER (WHERE NOT s.is_disabled) AS account_count', sql)
             self.assertIn('FILTER (WHERE s.is_disabled) AS disabled_count', sql)
+            self.assertIn("s.biz <> 'adhoc'", sql)
 
     async def test_a_source_narrows_the_count_without_dropping_groups(self) -> None:
         # 来源过滤必须挂在 join 上：写进 WHERE 会把没有该来源账号的分组整行吞掉。
@@ -61,6 +62,16 @@ class GroupRepositoryTest(unittest.IsolatedAsyncioTestCase):
         sql, params = executed[0]
         self.assertNotIn('AND a.source = %s', sql)
         self.assertEqual([7, 7], params)
+
+    async def test_internal_accounts_do_not_count_as_group_subscriptions(self) -> None:
+        executed: list[tuple[str, list]] = []
+        repository = GroupRepository(SimpleNamespace(cursor=lambda **kwargs: _Cursor(executed)))
+
+        await repository.list_groups(user_id=7)
+
+        sql, _ = executed[0]
+        self.assertIn("s.biz <> 'adhoc'", sql)
+        self.assertLess(sql.index("s.biz <> 'adhoc'"), sql.index('WHERE g.user_id'))
 
 
 if __name__ == '__main__':

@@ -85,10 +85,11 @@ class AccountRepository:
             ' FROM accounts a'
             ' JOIN subscription s ON s.biz = a.biz AND s.user_id = %s'
             ' LEFT JOIN account_groups g ON g.id = s.group_id'
+            " WHERE a.biz <> 'adhoc'"
         )
         params: list[Any] = [user_id]
         if group:
-            query += ' WHERE g.name = %s'
+            query += ' AND g.name = %s'
             params.append(group)
         query += ' ORDER BY a.nickname ASC'
         async with self._conn.cursor(row_factory=dict_row) as cur:
@@ -108,6 +109,7 @@ class AccountRepository:
                 SELECT a.source, COUNT(*) AS channels
                   FROM accounts a
                   JOIN subscription s ON s.biz = a.biz AND s.user_id = %s
+                 WHERE a.biz <> 'adhoc'
                  GROUP BY a.source
                  ORDER BY a.source
                 """,
@@ -336,7 +338,8 @@ class AccountRepository:
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, Any]:
-        where: list[str] = []
+        # Hand-added articles use this internal account, not a real subscription.
+        where: list[str] = ["a.biz <> 'adhoc'"]
         params: list[Any] = []
         if group_ids is not None:
             where.append('s.group_id = ANY(%s)')
@@ -509,7 +512,7 @@ class GroupRepository:
                     COUNT(s.biz) FILTER (WHERE s.is_disabled) AS disabled_count
                 FROM account_groups g
                 LEFT JOIN subscription s
-                       ON s.group_id = g.id AND s.user_id = %s
+                       ON s.group_id = g.id AND s.user_id = %s AND s.biz <> 'adhoc'
                 WHERE g.id = %s AND g.user_id = %s
                 GROUP BY g.id, g.name, g.sync_mode, g.sync_recent_days, g.article_count
                 """,
@@ -612,7 +615,7 @@ class GroupRepository:
                     COALESCE(g.article_count, 0) AS article_count
                 FROM account_groups g
                 LEFT JOIN subscription s
-                       ON s.group_id = g.id AND s.user_id = %s
+                       ON s.group_id = g.id AND s.user_id = %s AND s.biz <> 'adhoc'
                 LEFT JOIN accounts a
                        ON a.biz = s.biz{source_filter}
                 WHERE g.user_id = %s
