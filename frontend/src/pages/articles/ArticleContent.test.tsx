@@ -588,6 +588,40 @@ describe('ArticleContent media blocks', () => {
     expect(container.querySelector('.reader-video-slot')).toBeNull();
   });
 
+  it('fills the viewport on request and gives the page back, never stacking with the floats', async () => {
+    const layout = layoutStub();
+    const { container } = renderContent([
+      { type: 'video', provider: 'youtube', url: '/api/media/7/video' },
+      { type: 'paragraph', text: '开场', t: 0 },
+    ]);
+    const video = container.querySelector('video')!;
+    Object.defineProperty(video, 'paused', { configurable: true, get: () => false });
+    const frame = () => container.querySelector('.reader-video')!;
+    const fullscreen = () => Array.from(container.querySelectorAll<HTMLButtonElement>('.reader-video-actions button'))
+      .find((button) => button.textContent === '全屏')!;
+
+    fireEvent.click(fullscreen());
+    expect(frame().className).toContain('is-theater');
+    // 帧脱流，槽位保持正文高度，退出时文字不跳。
+    expect(container.querySelector('.reader-video-slot')).not.toBeNull();
+
+    // 全屏时不再有小窗和 dock：同一块画面只能占一个位置。
+    fireEvent.play(video);
+    layout.gone = true;
+    fireEvent.scroll(window);
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 60)));
+    expect(container.querySelector('.is-pip')).toBeNull();
+    expect(container.querySelector('.reader-dock')).toBeNull();
+
+    fireEvent.click(container.querySelector('.reader-theater-exit')!);
+    expect(frame().className).not.toContain('is-theater');
+
+    // Esc 是大多数人先试的那个出口。
+    fireEvent.click(fullscreen());
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(frame().className).not.toContain('is-theater');
+  });
+
   it('highlights nothing before the first timestamped paragraph', () => {
     const { container } = renderContent([
       { type: 'audio', url: '/api/media/7/audio' },

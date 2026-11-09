@@ -124,7 +124,9 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
               <span className="account-tag">{t('accounts.syncDisabled', 'Sync disabled')}</span>
             )}
           </div>
-          <div className="account-sub">{lastSyncedText}</div>
+          {(lastSynced || (!account.backfill_running && !account.backfill_pending)) && (
+            <div className="account-sub">{lastSyncedText}</div>
+          )}
         </div>
       </div>
       <div className="account-sync">

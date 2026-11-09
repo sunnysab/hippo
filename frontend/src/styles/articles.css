@@ -1245,7 +1245,6 @@ mark.hippo-highlight:hover {
 .reader-video {
   position: relative;
   margin: 0 0 20px;
-  aspect-ratio: 16 / 9;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1255,7 +1254,10 @@ mark.hippo-highlight:hover {
 .reader-video video {
   display: block;
   width: 100%;
-  height: 100%;
+  /* The video decides the height, not the frame: a frame with its own aspect
+     ratio and `overflow: hidden` cut off the switches underneath it. */
+  height: auto;
+  aspect-ratio: 16 / 9;
   object-fit: contain;
   background: #000;
 }
@@ -1296,6 +1298,65 @@ mark.hippo-highlight:hover {
   position: static;
   width: auto;
   animation: none;
+}
+
+/* ---- Page fullscreen ---------------------------------------------------
+   The same element again, now filling the viewport instead of the text flow.
+   This is not the browser's fullscreen: the page's own UI has to stay, and a
+   phone offers that only for the video element in its own player. */
+.reader-video.is-theater {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  width: auto;
+  height: auto;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: #000;
+  animation: none;
+}
+
+/* A full frame is its own size again: the picture fills the viewport. */
+.reader-video.is-theater video {
+  height: 100%;
+  aspect-ratio: auto;
+}
+
+/* Over the picture, because the browser's control bar owns the bottom of it. */
+.reader-theater-exit {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px));
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+}
+
+.reader-theater-exit:hover {
+  background: rgba(0, 0, 0, 0.78);
+}
+
+.reader-theater-exit svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+/* The two switches under the player share one row. */
+.reader-video-actions {
+  display: flex;
+  gap: 6px;
 }
 
 @media (max-width: 720px) {

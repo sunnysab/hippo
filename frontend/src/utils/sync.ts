@@ -19,7 +19,7 @@ const SYNC_RUN_LABELS: Record<string, { key: string; fallback: string }> = {
   queued: { key: 'sync.status.pending', fallback: 'Queued' },
   pending: { key: 'sync.status.pending', fallback: 'Queued' },
   running: { key: 'sync.status.running', fallback: 'Updating…' },
-  cancelling: { key: 'sync.status.running', fallback: 'Updating…' },
+  cancelling: { key: 'sync.cancelling', fallback: 'Cancelling…' },
   success: { key: 'sync.status.success', fallback: 'Done' },
   finished: { key: 'sync.status.success', fallback: 'Done' },
   failed: { key: 'sync.status.failed', fallback: 'Failed' },

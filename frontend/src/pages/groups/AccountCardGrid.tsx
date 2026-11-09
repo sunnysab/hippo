@@ -35,6 +35,28 @@ export function AccountCardGrid({ query }: AccountCardGridProps) {
     return onRefresh(handler);
   }, [loadAccounts]);
 
+  const hasActiveBackfill = state.accounts.some((account) => account.backfill_running || account.backfill_pending);
+
+  useEffect(() => {
+    if (!hasActiveBackfill) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      try {
+        await loadAccounts(true);
+      } catch {
+        // Keep the last known state and retry on a transient request failure.
+      } finally {
+        if (!stopped) timer = setTimeout(() => void refresh(), 5000);
+      }
+    };
+    timer = setTimeout(() => void refresh(), 5000);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [hasActiveBackfill, loadAccounts]);
+
   if (!accounts.length) {
     return (
       <div className="card-grid" id="account-list">

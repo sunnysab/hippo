@@ -117,6 +117,29 @@ describe('Mini player styles', () => {
     slot.remove();
   });
 
+  it('keeps the switches under the picture visible instead of clipping them', () => {
+    const frame = document.createElement('div');
+    frame.className = 'reader-video';
+    const video = document.createElement('video');
+    frame.append(video);
+    document.body.append(frame);
+    // 容器一旦自己定死比例，下面那行开关就落在 overflow 之外看不见了。
+    expect(getComputedStyle(frame).aspectRatio).not.toBe('16 / 9');
+    expect(getComputedStyle(video).aspectRatio).toBe('16 / 9');
+    frame.remove();
+  });
+
+  it('fills the viewport with the page still behind it, above the top bar', () => {
+    const frame = document.createElement('div');
+    frame.className = 'reader-video is-theater';
+    document.body.append(frame);
+    const computed = getComputedStyle(frame);
+    expect(computed.position).toBe('fixed');
+    // 顶栏是 30：铺满的画面盖住它，而不是从它下面穿过去。
+    expect(Number(computed.zIndex)).toBeGreaterThan(30);
+    frame.remove();
+  });
+
   it('keeps the drag grip out of the browser gesture that would scroll the page', () => {
     // jsdom's CSSOM drops touch-action, so the source is the only witness here.
     expect(articleStyles).toContain('touch-action: none;');

@@ -23,7 +23,7 @@ type GroupsAction =
   | { type: 'SET_GROUPS'; payload: Group[]; defaultGroupId: number | null }
   | { type: 'UPDATE_GROUP'; groupId: number; patch: Partial<Group> }
   | { type: 'SELECT_GROUP'; groupId: number | null }
-  | { type: 'SET_ACCOUNTS'; accounts: Account[] }
+  | { type: 'SET_ACCOUNTS'; accounts: Account[]; preserveSelection?: boolean }
   | { type: 'UPDATE_ACCOUNT'; biz: string; patch: Partial<Account> }
   | { type: 'TOGGLE_SELECTED'; biz: string }
   | { type: 'SET_SELECTED_ALL'; bizList: string[] }
@@ -52,7 +52,13 @@ function reducer(state: GroupsState, action: GroupsAction): GroupsState {
     case 'SELECT_GROUP':
       return { ...state, selectedGroupId: action.groupId };
     case 'SET_ACCOUNTS':
-      return { ...state, accounts: action.accounts, selectedAccounts: [] };
+      return {
+        ...state,
+        accounts: action.accounts,
+        selectedAccounts: action.preserveSelection
+          ? state.selectedAccounts.filter((biz) => action.accounts.some((account) => account.biz === biz))
+          : [],
+      };
     case 'UPDATE_ACCOUNT':
       return {
         ...state,
@@ -107,6 +113,7 @@ export function useGroupsState() {
 export function useGroupsActions() {
   const { state, dispatch } = useGroupsState();
   const selectedGroupIdRef = useRef(state.selectedGroupId);
+  const accountsRequestIdRef = useRef(0);
 
   useEffect(() => {
     selectedGroupIdRef.current = state.selectedGroupId;
@@ -132,14 +139,16 @@ export function useGroupsActions() {
     return { groups, defaultGroupId: defaultId, nextGroup };
   }, [dispatch]);
 
-  const loadAccounts = useCallback(async () => {
+  const loadAccounts = useCallback(async (preserveSelection = false) => {
+    const requestId = ++accountsRequestIdRef.current;
     const groupId = state.selectedGroupId;
     const url = new URL('/api/account', window.location.origin);
     if (groupId) url.searchParams.set('group_id', String(groupId));
     url.searchParams.set('page_size', '100');
     const payload = await apiGet(url.pathname + url.search);
+    if (requestId !== accountsRequestIdRef.current || groupId !== selectedGroupIdRef.current) return;
     const accounts = (payload.accounts || []) as Account[];
-    dispatch({ type: 'SET_ACCOUNTS', accounts });
+    dispatch({ type: 'SET_ACCOUNTS', accounts, preserveSelection });
   }, [dispatch, state.selectedGroupId]);
 
   return { loadGroups, loadAccounts };

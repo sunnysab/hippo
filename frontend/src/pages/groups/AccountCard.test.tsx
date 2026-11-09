@@ -70,17 +70,31 @@ describe('AccountCard history backfill state', () => {
     render(<AccountCard account={{ ...baseAccount, backfill_pending: true, backfill_running: true }} />);
 
     expect(screen.getByText('同步中')).toBeTruthy();
+    expect(screen.queryByText(zhCN['accounts.lastSyncedEmpty'])).toBeNull();
+    expect(screen.queryByText('排队中')).toBeNull();
   });
 
   it('marks it as queued before the fetch starts', () => {
     render(<AccountCard account={{ ...baseAccount, backfill_pending: true }} />);
 
     expect(screen.getByText('排队中')).toBeTruthy();
+    expect(screen.queryByText(zhCN['accounts.lastSyncedEmpty'])).toBeNull();
+  });
+
+  it.each([
+    { backfill_running: true, backfill_pending: true },
+    { backfill_running: false, backfill_pending: true },
+  ])('keeps the previous sync time during backfill: %j', (backfill) => {
+    vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-10-20T08:00:00+08:00').getTime());
+    render(<AccountCard account={{ ...baseAccount, ...backfill, last_synced_at: '2026-10-20T05:49:00+08:00' }} />);
+
+    expect(screen.getByText(zhCN['accounts.lastSynced'].replace('{time}', zhCN['time.hoursAgo'].replace('{n}', '2')))).toBeTruthy();
   });
 
   it('stays quiet once there is nothing left to backfill', () => {
     render(<AccountCard account={baseAccount} />);
 
+    expect(screen.getByText(zhCN['accounts.lastSyncedEmpty'])).toBeTruthy();
     expect(screen.queryByText('同步中')).toBeNull();
     expect(screen.queryByText('排队中')).toBeNull();
   });

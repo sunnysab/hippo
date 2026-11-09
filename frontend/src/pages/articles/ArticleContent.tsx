@@ -54,6 +54,10 @@ interface PlayerControls {
   showDock: boolean;
   /** True while the video floats over the page instead of sitting in the text. */
   pip: boolean;
+  /** True while the video fills the viewport instead of sitting in the page. */
+  theater: boolean;
+  /** Fills the viewport with the video, or gives the page back. */
+  toggleTheater: () => void;
   /** Where the floating video was dragged to, as a distance from its corner. */
   pipPos: { right: number; bottom: number } | null;
   /** Returns the video to its block, and closes the mini player for good. */
@@ -79,6 +83,8 @@ const PlayerContext = createContext<PlayerControls>({
   backToParagraph: () => {},
   showDock: false,
   pip: false,
+  theater: false,
+  toggleTheater: () => {},
   pipPos: null,
   returnToVideo: () => {},
   closePip: () => {},
@@ -280,6 +286,26 @@ const PlayerModeButton = memo(function PlayerModeButton() {
   );
 });
 
+/**
+ * The in-page fullscreen switch, alongside the listen-only one. It fills the
+ * viewport rather than asking for real fullscreen: the browser's own fullscreen
+ * drops the page's UI on desktop and is not offered at all on an iPhone.
+ */
+const TheaterButton = memo(function TheaterButton() {
+  const { t } = useI18n();
+  const { toggleTheater } = useContext(PlayerContext);
+  return (
+    <button
+      className="reader-audio-toggle"
+      type="button"
+      onClick={toggleTheater}
+      title={t('articles.fullscreenHint', '铺满页面播放，不进入浏览器全屏。')}
+    >
+      {t('articles.fullscreen', '全屏')}
+    </button>
+  );
+});
+
 const ArticleVideoBlock = memo(function ArticleVideoBlock({
   block,
   videoRef,
@@ -300,7 +326,7 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({
   const { t } = useI18n();
   const {
     originalHref, pauseOther, showModeButton, pip, pipPos, playing, togglePlay,
-    backToParagraph, returnToVideo, closePip, startPipDrag,
+    theater, toggleTheater, backToParagraph, returnToVideo, closePip, startPipDrag,
   } = useContext(PlayerContext);
 
   // The archived copy streams from Hippo with Range support, so it plays at once
@@ -311,10 +337,11 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({
     return (
       <>
         {/* Fixed takes the frame out of the text flow; the slot keeps its height so
-            the transcript does not jump when the video floats away. */}
-        {pip ? <div className='reader-video-slot' aria-hidden='true' /> : null}
+            the transcript does not jump when the video floats away or fills the
+            viewport. */}
+        {pip || theater ? <div className='reader-video-slot' aria-hidden='true' /> : null}
         <div
-          className={`reader-video${pip ? ' is-pip' : ''}`}
+          className={`reader-video${pip ? ' is-pip' : ''}${theater ? ' is-theater' : ''}`}
           data-provider={block.provider || ''}
           style={pip && pipPos ? { right: pipPos.right, bottom: pipPos.bottom } : undefined}
         >
@@ -340,7 +367,21 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({
             onLoadedMetadata={onReady}
             data-testid='reader-video-file'
           />
-          {pip ? (
+          {theater ? (
+            // The exit sits over the picture instead of under it: a full frame is
+            // the one thing on screen, and the browser's own bar is large already.
+            <button
+              className='reader-theater-exit'
+              type='button'
+              onClick={toggleTheater}
+              aria-label={t('articles.exitFullscreen', '退出全屏')}
+              title={t('articles.exitFullscreen', '退出全屏')}
+            >
+              <svg viewBox='0 0 24 24' aria-hidden='true'>
+                <path d='M6 6l12 12M18 6L6 18' />
+              </svg>
+            </button>
+          ) : pip ? (
             // The bar sits outside the picture: the native controls need every
             // pixel of the video itself, and a drag surface over them would eat
             // the seek bar.
@@ -385,7 +426,10 @@ const ArticleVideoBlock = memo(function ArticleVideoBlock({
               </button>
             </div>
           ) : showModeButton ? (
-            <PlayerModeButton />
+            <div className='reader-video-actions'>
+              <PlayerModeButton />
+              <TheaterButton />
+            </div>
           ) : null}
         </div>
       </>
@@ -835,6 +879,9 @@ function RenderedContent({
   // The mini player is dismissed by hand or by scrolling back, per article.
   const [pipDismissed, setPipDismissed] = useState(false);
   const [pipPos, setPipPos] = useState<{ right: number; bottom: number } | null>(null);
+  // In-page fullscreen. Per article like the mini player: opening something new
+  // starts with the page back, and the two frames are never up at once.
+  const [theater, setTheater] = useState(false);
   // A new article resets playback; a personal projection refresh does not.
   const [renderedArticleId, setRenderedArticleId] = useState(articleId);
   if (renderedArticleId !== articleId) {
@@ -848,7 +895,30 @@ function RenderedContent({
     setStarted(false);
     setPipDismissed(false);
     setPipPos(null);
+    setTheater(false);
   }
+  // Escape is the way out everybody tries first, whether or not the exit button is
+  // found. A field that is being typed in keeps its own Escape.
+  useEffect(() => {
+    if (!theater) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (event.target instanceof HTMLElement && /^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName)) return;
+      setTheater(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [theater]);
+  // Wheeling over the covering frame would scroll the transcript behind it, so the
+  // pane that owns the scroll is held still while the full frame is up.
+  useEffect(() => {
+    if (!theater) return;
+    const pane = scrollPane(videoRef.current);
+    if (!(pane instanceof HTMLElement)) return;
+    const previous = pane.style.overflowY;
+    pane.style.overflowY = 'hidden';
+    return () => { pane.style.overflowY = previous; };
+  }, [theater]);
   const markAt = useCallback((seconds: number) => {
     // Last start at or before `seconds`; -1 before the first paragraph.
     let low = 0;
@@ -993,10 +1063,11 @@ function RenderedContent({
   // The mini player: the video floats over the page once it has been scrolled out
   // of sight while it plays. It is dismissed by hand or by scrolling back, and both
   // ways are per article -- nothing here is remembered beyond the open payload.
-  const pip = miniPlayer && hasVideo && !audioOnly && started && videoGone && !pipDismissed;
+  const pip = miniPlayer && hasVideo && !audioOnly && started && videoGone && !pipDismissed && !theater;
   // Two floats in the same corner would sit on top of each other, and the frame
-  // carries its own controls while it is there.
-  const showDock = activeIndex >= 0 && paragraphGone && !pip;
+  // carries its own controls while it is there. A full frame covers the text the
+  // dock would send the reader back to.
+  const showDock = activeIndex >= 0 && paragraphGone && !pip && !theater;
   // Coming back into view is the reset: the next scroll away may float it again.
   // Adjusted during render, the same way the previous article's state is cleared.
   const [pipWasGone, setPipWasGone] = useState(videoGone);
@@ -1186,6 +1257,8 @@ function RenderedContent({
           ? { time: current.currentTime, playing: !current.paused, rate: current.playbackRate }
           : null;
         if (current && !current.paused) current.pause();
+        // Listening has no picture to fill, so the frame goes back to the page.
+        setTheater(false);
         if (!audioOnly && !audioUrl) {
           // Nothing to switch to yet: extract first, and turn the player over once
           // the file exists.
@@ -1208,6 +1281,8 @@ function RenderedContent({
       },
       showDock,
       pip,
+      theater,
+      toggleTheater: () => setTheater((previous) => !previous),
       pipPos,
       returnToVideo,
       closePip: () => setPipDismissed(true),
@@ -1230,7 +1305,7 @@ function RenderedContent({
     };
   }, [
     audioOnly, audioUrl, canSeek, hasVideo, markAt, mounted, originalHref, pip, pipPos,
-    playing, prepareAudio, preparingAudio, returnToVideo, showDock, startPipDrag,
+    playing, prepareAudio, preparingAudio, returnToVideo, showDock, startPipDrag, theater,
   ]);
   const contentKeys = buildContentBlockKeys(content);
   let outlineIndex = 0;
