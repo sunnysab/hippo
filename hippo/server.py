@@ -47,7 +47,7 @@ from .observability.otel import init_telemetry, instrument_app
 from .outline_worker import run_loop as run_outline_loop
 from .report_scheduler import ReportScheduler
 from .storage import open_storage
-from .sync_scheduler import SyncScheduler
+from .sync_runner import SyncWorkerRunner
 from .topic_worker import run_loop as run_topic_loop
 
 SERVICE_NAME = WEB_SERVICE
@@ -190,14 +190,14 @@ def create_app(
             await _ensure_avatar_images_table(storage)
         should_enable_sync = _inprocess_sync_enabled() if enable_inprocess_sync is None else enable_inprocess_sync
         if should_enable_sync:
-            app.state.sync_scheduler = SyncScheduler()
+            app.state.sync_worker = SyncWorkerRunner()
             # Both start() methods are coroutines; calling one without awaiting
             # leaves the scheduler created but never running.
-            await app.state.sync_scheduler.start()
+            await app.state.sync_worker.start()
             app.state.report_scheduler = ReportScheduler()
             await app.state.report_scheduler.start()
         else:
-            app.state.sync_scheduler = None
+            app.state.sync_worker = None
             app.state.report_scheduler = None
         outline_task = asyncio.create_task(run_outline_loop())
         topic_task = asyncio.create_task(run_topic_loop())
@@ -209,7 +209,7 @@ def create_app(
             for task in (outline_task, topic_task):
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
-            scheduler = getattr(app.state, 'sync_scheduler', None)
+            scheduler = getattr(app.state, 'sync_worker', None)
             if scheduler:
                 await scheduler.stop()
             report_scheduler = getattr(app.state, 'report_scheduler', None)

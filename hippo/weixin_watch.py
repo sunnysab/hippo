@@ -14,7 +14,9 @@ from typing import Any
 
 from .config import get_settings
 from .logger import get_logger
-from .storage import PostgresStorage, open_storage
+from .storage import PostgresStorage, open_storage, save_meta_json
+from .sync_settings import PUSH_RECEIVED_KEY, PUSH_STATE_KEY
+from .utils import utc_now_iso
 from .weixin_daemon import load_bot_class, query_param, select_cover_url
 
 logger = get_logger(__name__)
@@ -93,28 +95,39 @@ async def enqueue_pushed_article(storage: PostgresStorage, push: Any) -> bool:
 
 async def watch_article_push(*, reconnect_seconds: float = RECONNECT_SECONDS) -> None:
     """常驻监听公众号推送（断线由 SDK 的 ``start()`` 自行重连）。"""
-    bot_class = load_bot_class()
     weixin = get_settings().weixin
     host = weixin.daemon_host
     port = weixin.daemon_port
-    while True:
-        bot = bot_class(host=host, port=port)
 
-        @bot.on_article
-        async def _on_article(push: Any) -> None:
-            try:
-                async with open_storage() as storage:
-                    await enqueue_pushed_article(storage, push)
-            except Exception:
-                logger.exception('article_push 入队失败')
-
+    async def publish(status: str) -> None:
         try:
+            async with open_storage() as storage, storage.transaction():
+                await save_meta_json(storage, PUSH_STATE_KEY, {'status': status, 'updated_at': utc_now_iso()})
+        except Exception:
+            logger.exception('推送监听状态记录失败')
+
+    async def on_article(push: Any) -> None:
+        try:
+            async with open_storage() as storage:
+                async with storage.transaction():
+                    await storage.meta.set(PUSH_RECEIVED_KEY, utc_now_iso())
+                await enqueue_pushed_article(storage, push)
+        except Exception:
+            logger.exception('article_push 入队失败')
+
+    while True:
+        try:
+            bot = load_bot_class()(host=host, port=port)
+            bot.on_article(on_article)
             async with bot:
+                await publish('listening')
                 await bot.start()
         except asyncio.CancelledError:
+            await publish('stopped')
             raise
         except Exception:
             logger.exception('文章推送通道断开，稍后重连')
+        await publish('reconnecting')
         await asyncio.sleep(max(float(reconnect_seconds), 5.0))
 
 

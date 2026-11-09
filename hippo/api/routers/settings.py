@@ -1,8 +1,9 @@
 """Sync, filter and mail settings endpoints."""
 
 import asyncio
+import contextlib
 import time as time_module
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Body, Depends, Request, status
@@ -14,14 +15,12 @@ from ...logger import get_logger
 from ...models import User
 from ...repositories.llm import mask_key
 from ...storage import PostgresStorage, fetchone_row, load_meta_json
-from ...sync_core import request_sync_cancel
-from ...sync_scheduler import SyncScheduler
-from ...sync_settings import QUEUE_STATS_KEY, WORKER_HEARTBEAT_KEY
+from ...sync_settings import PUSH_RECEIVED_KEY, PUSH_STATE_KEY, QUEUE_STATS_KEY, WORKER_HEARTBEAT_KEY
 from ...sync_settings import get_sync_settings as load_sync_settings
 from ...sync_settings import get_sync_status as load_sync_status
 from ...sync_settings import set_sync_settings as save_sync_settings
 from ...sync_types import SyncTaskState
-from ..deps import current_user, get_storage, get_sync_scheduler, is_admin_session, require_admin
+from ..deps import current_user, get_storage, is_admin_session, require_admin
 from ..schemas.settings import (
     EmailSettingsUpdate,
     EmailTestRequest,
@@ -91,6 +90,17 @@ async def sync_status(
     queue['failed_items'] = await storage.article_queue.list_failed(limit=5)
     payload['queue'] = queue
     payload['worker_heartbeat_at'] = await storage.meta.get(WORKER_HEARTBEAT_KEY)
+    payload['push'] = await load_meta_json(storage, PUSH_STATE_KEY, {}) or {}
+    payload['push']['last_received_at'] = await storage.meta.get(PUSH_RECEIVED_KEY)
+    settings = await load_sync_settings(storage)
+    next_check_at = None
+    if settings.get('enabled') and payload.get('last_started_at'):
+        with contextlib.suppress(ValueError):
+            next_check_at = (
+                datetime.fromisoformat(payload['last_started_at'])
+                + timedelta(minutes=max(int(settings.get('interval_minutes') or 1), 1))
+            ).isoformat()
+    payload['schedule'] = {'enabled': bool(settings.get('enabled')), 'next_eligible_at': next_check_at}
     return payload
 
 
@@ -100,6 +110,7 @@ async def list_sync_tasks(
     limit: int = 5,
     detail: bool = False,
     source: str | None = None,
+    active: bool | None = None,
     storage: PostgresStorage = Depends(get_storage),
     user: User = Depends(current_user),
 ) -> SyncTaskListResponse:
@@ -108,10 +119,12 @@ async def list_sync_tasks(
     API keys remain owner-scoped even when their owner has the admin role.
     ``source`` narrows either scope to that source.
     """
+    filters = {'active': active} if active is not None else {}
     tasks = await storage.sync_jobs.list_jobs(
         limit=max(int(limit), 1),
         source=source or None,
         requester_user_id=None if is_admin_session(request, user) else user.id,
+        **filters,
     )
     formatter = (lambda task: task.to_dict()) if detail else (lambda task: task.to_summary_dict())
     return SyncTaskListResponse(tasks=[formatter(task) for task in tasks])
@@ -152,9 +165,11 @@ async def cancel_sync_task(
         raise ApiError('Task not found', status=404)
     async with storage.transaction():
         cancelled = await storage.sync_jobs.cancel_job(task_id)
+        if cancelled and state.trigger_type == 'backfill' and state.biz_list:
+            for biz in state.biz_list:
+                await storage.accounts.set_backfill_state(biz, 'paused')
     if not cancelled:
         raise ApiError('Task not found or not in a cancellable state', status=404)
-    request_sync_cancel()
     refreshed = await storage.sync_jobs.get_job(task_id) or state
     return SyncTaskDetail.model_validate(refreshed.to_dict())
 
@@ -179,7 +194,6 @@ async def get_sync_settings(
 async def update_sync_settings(
     body: SyncSettingsUpdateRequest = Body(default_factory=SyncSettingsUpdateRequest),
     storage: PostgresStorage = Depends(get_storage),
-    scheduler: SyncScheduler | None = Depends(get_sync_scheduler),
     admin: User = Depends(require_admin),
 ) -> dict[str, Any]:
     """
@@ -220,8 +234,6 @@ async def update_sync_settings(
     if email_updates:
         await set_email_settings(storage, email_updates)
     settings['email'] = _public_email_settings(await get_email_settings(storage))
-    if settings.get('enabled') and scheduler:
-        scheduler.trigger()
     return settings
 
 

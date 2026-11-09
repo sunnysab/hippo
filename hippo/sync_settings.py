@@ -23,6 +23,8 @@ ALERT_SENT_KEY = 'sync:alert_sent'
 # worker 侧写的运行态：心跳 + 队列水位（web 轮询直接读 meta，不扫大表）
 WORKER_HEARTBEAT_KEY = 'sync:worker_heartbeat_at'
 QUEUE_STATS_KEY = 'sync:queue_stats'
+PUSH_STATE_KEY = 'sync:push_state'
+PUSH_RECEIVED_KEY = 'sync:push_received_at'
 #: 最近一次真正把文章落库的时刻。公众号推送是实时入队的，列表同步 job 可能
 #: 很久才跑一次，只用 SYNC_FINISHED_KEY 判断新鲜度会长期显示成几天前。
 SYNC_INGEST_KEY = 'sync:last_ingest_at'

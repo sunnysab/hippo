@@ -9,7 +9,6 @@ from fastapi import Depends, Request
 from ..exceptions import ApiError
 from ..models import User
 from ..storage import PostgresStorage, open_storage
-from ..sync_scheduler import SyncScheduler
 
 #: Name of the cookie carrying the opaque session token.
 SESSION_COOKIE = 'hippo_session'
@@ -46,10 +45,6 @@ def parse_int(value: str | None) -> int | None:
 async def get_storage() -> AsyncIterator[PostgresStorage]:
     async with open_storage() as storage:
         yield storage
-
-
-def get_sync_scheduler(request: Request) -> SyncScheduler | None:
-    return getattr(request.app.state, 'sync_scheduler', None)
 
 
 def client_ip(request: Request) -> str | None:
@@ -178,7 +173,6 @@ __all__ = [
     'current_user',
     'current_user_optional',
     'get_storage',
-    'get_sync_scheduler',
     'is_admin_session',
     'parse_group_ids',
     'parse_int',

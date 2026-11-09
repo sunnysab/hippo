@@ -422,7 +422,7 @@ cp config.example.toml config.toml
 | | `region` / `prefix` | `us-east-1` / `mp/image/` | 按 path-style 寻址 |
 | `[web]` | `cookie_secure` | `false` | HTTPS 部署置 `true` |
 | | `session_ttl_hours` | `168` | 会话有效期 |
-| | `inprocess_sync` | `false` | 在 Web 进程内跑同步（仅开发用）|
+| | `inprocess_sync` | `false` | 在 Web 进程内运行持久化队列 worker（仅开发用；勿与独立 worker 同时启用）|
 | | `signoz_url` | — | 管理台「看日志」深链目标 |
 | `[logging]` | `level` | `WARNING` | 日志级别 |
 | | `format` | `json` | `json`（SignOz 吃的格式）或 `console` |
@@ -476,8 +476,8 @@ hippo/
 ├── weixin_watch.py      # 微信文章推送监听与入队
 ├── sync_worker.py       # 任务领取与执行
 ├── sync_service.py      # 同步流程编排
-├── sync_jobs.py / sync_tasks.py / sync_types.py / sync_core.py / sync_settings.py
-├── sync_scheduler.py    # 定时同步
+├── sync_jobs.py / sync_types.py / sync_core.py / sync_settings.py / account_sync.py
+├── sync_runner.py       # 开发模式下运行同一持久化队列 worker
 ├── image_backfill.py    # 图片回填循环
 ├── image_store.py / image_hashes.py / s3.py / file_storage.py
 ├── avatar.py            # 各来源头像缓存
@@ -546,3 +546,18 @@ journalctl -u hippo-knowledge-worker -n 50
 
 `Dockerfile` 只打包 API/UI：容器里没有 weixin-rs daemon 与其 SDK，因此**不能同步**，仅适合看界面或调 API。
 它同样没有知识 worker 的入口，需要知识库时请用 systemd 单元而不是这个镜像。
+
+
+### 公众号采集的四个阶段
+
+新公众号登记后自动进入历史列表补全队列，分页游标随进度保存；完成只表示
+已发现历史文章。推送事件与定时近期列表检查也将文章写入同一正文队列，
+由独立消费者抓正文并入库，再处理图片。列表任务的新入队数不等于已收录数。
+
+管理台的「定时检查近期文章」用于推送补漏，沿用原 `enabled` 与周期配置；
+关闭后推送、历史补全和已入队下载仍继续。正文、图片下载开关分别控制各自消费者。
+公众号卡片和来源页共用 `sync` 状态：历史列表进度、正文积压、近期检查时间分开显示。
+历史任务暂停保留游标，使用「继续补全历史」恢复，不会重新翻完已完成的历史。
+
+后台任务以 PostgreSQL `sync_jobs` 为唯一执行入口。开发用 `web.inprocess_sync`
+也运行同一 worker，不再直接执行另一套定时同步；生产继续使用独立 systemd worker。

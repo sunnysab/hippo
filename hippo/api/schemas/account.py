@@ -73,6 +73,31 @@ class AccountBatchRequest(BaseModel):
 # -- responses ---------------------------------------------------------------
 
 
+class AccountHistoryOut(BaseModel):
+    status: str
+    task_id: str | None = None
+    error: str | None = None
+
+
+class AccountBodyQueueOut(BaseModel):
+    pending: int = 0
+    processing: int = 0
+    failed: int = 0
+
+
+class AccountListingOut(BaseModel):
+    task_id: str
+    status: str
+    kind: str
+
+
+class AccountSyncOut(BaseModel):
+    history: AccountHistoryOut
+    articles: AccountBodyQueueOut
+    listing: AccountListingOut | None = None
+    last_checked_at: datetime | None = None
+
+
 class AccountOut(BaseModel):
     """One subscribed account, as the list and detail return it.
 
@@ -88,7 +113,9 @@ class AccountOut(BaseModel):
     group_id: int | None = None
     group_name: str | None = None
     is_disabled: bool = False
-    last_synced_at: datetime | None = Field(default=None, description='Last time the sync touched this account.')
+    last_synced_at: datetime | None = Field(
+        default=None, description='Last successful recent-list check; not a body-download or history-completion time.'
+    )
     latest_publish_at: datetime | None = Field(
         default=None, description='Publication time of the latest stored work; null when unavailable.'
     )
@@ -100,6 +127,7 @@ class AccountOut(BaseModel):
     avatar_url: str = Field(description='Same-origin URL of the cached avatar.')
     backfill_pending: bool = False
     backfill_running: bool = False
+    sync: AccountSyncOut | None = None
 
 
 class AccountListOut(BaseModel):

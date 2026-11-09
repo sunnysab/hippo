@@ -468,7 +468,7 @@ async def subscribe_weixin_account(
         # 新加进来的号要把它能被看到的历史翻完：丢一条回填 job，worker 下一轮（5s 内）接手。
         # 目录里已有的号（backfill_state 早就置 done）不会被重复回填。
         if account.backfill_state == 'pending':
-            await storage.sync_jobs.create_job(trigger_type='backfill', biz_list=[account.biz])
+            await storage.sync_jobs.create_job(trigger_type='backfill', biz_list=[account.biz], source='weixin')
     return _normalize_account_payload(
         {
             'biz': account.biz,
@@ -704,3 +704,35 @@ async def get_account_avatar(
             payload, content_type = cached
             return binary_response(payload, content_type)
     raise ApiError('Avatar not found', status=404)
+
+
+@router.post('/account/{biz}/backfill')
+async def resume_account_backfill(
+    biz: str,
+    storage: PostgresStorage = Depends(get_storage),
+    user: User = Depends(current_user),
+) -> dict[str, Any]:
+    """Resume an unfinished history from its saved cursor; never restart completed history."""
+    try:
+        account = await storage.accounts.get_account_detail(biz, user_id=user.id)
+    except LookupError:
+        raise ApiError('Account not found', status=404)
+    if account['source'] != 'weixin':
+        raise ApiError('This source does not support history backfill', status=400)
+    if account['is_disabled']:
+        raise ApiError('Enable this subscription before resuming history', status=409)
+    async with storage.transaction():
+        # Serialize retries for this shared account, including different subscribers.
+        async with storage.conn.cursor() as cur:
+            await cur.execute('SELECT backfill_state FROM accounts WHERE biz = %s FOR UPDATE', (biz,))
+            row = await cur.fetchone()
+        if row[0] == 'done':
+            return {'status': 'complete', 'task_id': None}
+        active = await storage.sync_jobs.get_active_backfill(biz)
+        if active is not None:
+            if active.status == 'cancelling':
+                raise ApiError('History cancellation is still in progress', status=409, code='history.cancelling')
+            return {'status': active.status, 'task_id': active.task_id}
+        await storage.accounts.set_backfill_state(biz, 'pending')
+        job = await storage.sync_jobs.create_job(trigger_type='backfill', biz_list=[biz], source='weixin')
+    return {'status': job.status, 'task_id': job.task_id}

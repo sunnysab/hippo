@@ -208,6 +208,7 @@ DELETE /api/group/3 → 204
 | GET | `/api/account` | 登录 | 已关注账号列表（可筛选、分页） |
 | POST | `/api/account` | 登录 | 添加账号（同时订阅） |
 | GET | `/api/account/{biz}` | 登录 | 账号详情 |
+| POST | `/api/account/{biz}/backfill` | 登录 | 继续未完成的历史列表补全（保留游标） |
 | PATCH | `/api/account/{biz}` | 登录 | 更新昵称/别名/头像/分组/停用/同步间隔 |
 | DELETE | `/api/account/{biz}` | 登录 | 取消关注 |
 | POST | `/api/account/move` | 登录 | 批量移动到分组 |
@@ -716,6 +717,8 @@ GET /api/settings/status?limit=5
 
 ```
 GET /api/settings/tasks?limit=5&detail=false   → { "tasks": [ … ] }
+GET /api/settings/tasks?active=true&detail=true # 活跃任务独立查询，不受最近历史条数限制
+GET /api/settings/tasks?active=false          # 已结束的列表任务
 GET /api/settings/tasks?source=bilibili        # 只看某个来源的任务
 GET /api/settings/tasks/{task_id}             → 任务完整状态（不存在或不是你的任务都是 404）
 POST /api/settings/tasks/{task_id}/cancel     → 可取消状态返回更新后的任务，否则 404
@@ -1217,6 +1220,7 @@ Content-Type: application/pdf
 | GET | `/api/account/search/{biz}/avatar` | 登录 |
 | DELETE | `/api/account/{biz}` | 登录 |
 | GET | `/api/account/{biz}` | 登录 |
+| POST | `/api/account/{biz}/backfill` | 登录 |
 | PATCH | `/api/account/{biz}` | 登录 |
 | GET | `/api/account/{biz}/avatar` | 登录 |
 | GET | `/api/admin/source` | 管理员 |
@@ -1388,3 +1392,29 @@ curl -sS -b jar.txt -X POST "$BASE/api/settings/run" \
 # RSS
 curl -sS "$BASE/api/feed/mixed?format=rss&limit=50&token=<会话令牌>"
 ```
+
+
+## 采集状态与完成语义
+
+公众号列表和详情的 `sync` 是统一读模型：`history` 描述历史列表补全，
+`articles` 分别计数正文队列的 `pending` / `processing` / `failed`，
+`listing` 是当前定向任务或全站任务正在访问此账号时的任务摘要，
+`last_checked_at` 与原有 `last_synced_at` 相同，表示最近成功的近期列表检查。
+旧字段继续返回；历史列表完成和正文入库都不伪造最近检查时间。
+
+`history.status` 为 `pending`、`queued`、`running`、`cancelling`、`complete`、
+`paused`、`failed` 或 `unsupported`。`complete` 只承诺列表翻页结束，不能据此
+推断正文与图片已经下载完。`POST /api/account/{biz}/backfill` 要求本人订阅且未停用，
+从已有游标继续；已完成的历史保持完成，不重新翻页。重复恢复会返回同一活跃任务。
+
+任务 `report.total_saved` 和账号进度 `saved` 保留兼容名称，但列表任务中含义是
+新入队正文数，不能解释成已入库正文数。`trigger_type` 区分 `backfill`（历史列表）、
+`scheduled`（定时近期检查）和 `manual`（手动近期检查）。
+
+`GET /api/settings/status` 新增 `push`（监听器运行状态及最后收到事件的时间）和
+`schedule`（是否开启定时检查、`next_eligible_at` 最早可执行时间）。监听器启动不代表
+微信会话正常，须结合 `/api/login` 与 worker 心跳；队列忙碌时定时检查可以晚于该时间。
+
+`enabled` 只控制定时近期列表检查；关闭它不停止推送监听、历史补全或已入队下载。
+`download_content` 控制正文消费，`download_images` 控制图片下载。账号停用不会
+把未完成历史标成完成；取消历史任务保留游标并暂停，显式继续后才重新入队。

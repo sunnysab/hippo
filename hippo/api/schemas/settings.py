@@ -210,6 +210,8 @@ class SyncStatusOut(BaseModel):
     history: list[SyncHistoryEntryOut] = Field(default_factory=list)
     queue: QueueStatsOut = Field(default_factory=QueueStatsOut)
     worker_heartbeat_at: str | None = None
+    push: dict[str, Any] = Field(default_factory=dict)
+    schedule: dict[str, Any] = Field(default_factory=dict)
 
 
 __all__ = [

@@ -1,7 +1,7 @@
 import unittest
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from hippo.repositories.account import AccountRepository
 
@@ -13,6 +13,12 @@ LATEST_PUBLICATION_QUERY = (
 
 
 class AccountPublicationTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # This class exercises publication SQL; sync read-model tests live separately.
+        patcher = patch('hippo.repositories.account.enrich_account_sync', new_callable=AsyncMock)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     async def test_the_paginated_list_reads_the_latest_publication_for_each_account(self) -> None:
         published = datetime(2026, 10, 19, 17, tzinfo=UTC)
         rows = [{'biz': 'youtube:UC123', 'latest_publish_at': published}]

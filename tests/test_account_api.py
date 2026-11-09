@@ -95,6 +95,7 @@ class AccountApiTest(unittest.IsolatedAsyncioTestCase):
         storage.sync_jobs.create_job.assert_awaited_once_with(
             trigger_type='backfill',
             biz_list=['Mz123'],
+            source='weixin',
         )
 
     async def test_an_account_already_backfilled_is_not_queued_again(self) -> None:

@@ -91,6 +91,12 @@ class SyncJobRepository:
         deduping = dedupe and requester_user_id is not None
         conflict = 'ON CONFLICT DO NOTHING' if deduping else ''
         async with self._conn.cursor(row_factory=dict_row) as cur:
+            if trigger_type == 'backfill' and biz_list and len(biz_list) == 1:
+                # All enqueuers hold the account lock until their transaction commits.
+                await cur.execute('SELECT biz FROM accounts WHERE biz = %s FOR UPDATE', (biz_list[0],))
+                existing = await self.get_active_backfill(biz_list[0])
+                if existing:
+                    return existing
             await cur.execute(
                 f"""
                 INSERT INTO sync_jobs (
@@ -138,23 +144,48 @@ class SyncJobRepository:
             raise RuntimeError('Failed to create sync job')
         return _row_to_state(dict(row))  # type: ignore[arg-type]
 
+    async def get_active_backfill(self, biz: str) -> SyncTaskState | None:
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM sync_jobs WHERE trigger_type = 'backfill' "
+                "AND status IN ('queued', 'running', 'cancelling') "
+                'AND biz_list @> jsonb_build_array(%s::text) ORDER BY created_at LIMIT 1',
+                (biz,),
+            )
+            row = await cur.fetchone()
+        return _row_to_state(dict(row)) if row else None
+
     async def list_jobs(
         self,
         *,
         limit: int = 5,
         source: str | None = None,
         requester_user_id: int | None = None,
+        active: bool | None = None,
     ) -> list[SyncTaskState]:
         """Recent jobs, optionally narrowed to one source and/or requester."""
         query = 'SELECT * FROM sync_jobs'
         params: list[Any] = []
         where: list[str] = []
         if source:
-            where.append('source = %s')
-            params.append(source)
+            where.append("""(source = %s OR (source IS NULL AND (
+                EXISTS (SELECT 1 FROM accounts a
+                        WHERE a.source = %s AND sync_jobs.biz_list @> jsonb_build_array(a.biz))
+                OR (biz_list IS NULL AND group_id IS NULL)
+                OR EXISTS (SELECT 1 FROM subscription s JOIN accounts a ON a.biz = s.biz
+                           WHERE s.group_id = sync_jobs.group_id AND a.source = %s
+                             AND (sync_jobs.biz_list IS NULL
+                                  OR sync_jobs.biz_list @> jsonb_build_array(a.biz)))
+                OR EXISTS (SELECT 1 FROM jsonb_array_elements(sync_jobs.accounts) item
+                           WHERE item->>'source' = %s)
+            )))""")
+            params.extend([source, source, source, source])
         if requester_user_id is not None:
             where.append('requester_user_id = %s')
             params.append(requester_user_id)
+        if active is not None:
+            operator = 'IN' if active else 'NOT IN'
+            where.append(f"status {operator} ('queued', 'running', 'cancelling')")
         if where:
             query += ' WHERE ' + ' AND '.join(where)
         query += ' ORDER BY created_at DESC LIMIT %s'
@@ -171,7 +202,7 @@ class SyncJobRepository:
         return _row_to_state(dict(row)) if row else None  # type: ignore[arg-type]
 
     async def has_active_job(self, *, trigger_type: str | None = None) -> bool:
-        query = "SELECT 1 FROM sync_jobs WHERE status IN ('queued', 'running')"
+        query = "SELECT 1 FROM sync_jobs WHERE status IN ('queued', 'running', 'cancelling')"
         params: list[Any] = []
         if trigger_type:
             query += ' AND trigger_type = %s'

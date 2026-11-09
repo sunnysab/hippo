@@ -8,6 +8,7 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from ..account_sync import enrich_account_sync
 from ..models import AccountCredential, AccountGroup
 from ..utils import build_set_clause, normalize_value, utc_now_dt
 
@@ -265,6 +266,15 @@ class AccountRepository:
                 (utc_now_dt(), biz),
             )
 
+    async def set_backfill_state(self, biz: str, state: str) -> None:
+        if state not in ('pending', 'paused'):
+            raise ValueError('Only pending or paused may be requested')
+        async with self._conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE accounts SET backfill_state = %s, updated_at = %s WHERE biz = %s AND backfill_state <> 'done'",
+                (state, utc_now_dt(), biz),
+            )
+
     async def list_pending_backfill(
         self,
         *,
@@ -280,7 +290,11 @@ class AccountRepository:
         ``cooldown_minutes`` > 0 时跳过刚回填失败过的号：失败不会把账号从 pending 挪走，
         不退避就是每个 tick 都重排同一个失败号（线上实测 0.15s 一轮）。
         """
-        where = ["a.backfill_state = 'pending'"]
+        where = [
+            "a.backfill_state = 'pending'",
+            'NOT a.is_disabled',
+            'EXISTS (SELECT 1 FROM subscription s WHERE s.biz = a.biz AND NOT s.is_disabled)',
+        ]
         params: list[Any] = []
         if source is not None:
             where.append('a.source = %s')
@@ -393,6 +407,7 @@ class AccountRepository:
             await cur.execute(count_sql, [user_id, *params])
             total_row = await cur.fetchone()
         total = int(total_row['total']) if total_row else 0
+        await enrich_account_sync(self._conn, rows)
         return {'accounts': rows, 'page': page, 'page_size': page_size, 'total': total}
 
     async def get_account_detail(self, biz: str, *, user_id: int) -> dict[str, Any]:
@@ -424,6 +439,7 @@ class AccountRepository:
             raise LookupError('Account not found')
         result = dict(row)
         result['avatar_url'] = f'/api/account/{result["biz"]}/avatar'
+        await enrich_account_sync(self._conn, [result])
         return result
 
     async def update_account_fields(self, biz: str, **updates: Any) -> None:

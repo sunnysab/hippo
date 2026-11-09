@@ -6,7 +6,13 @@ from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from .models import AccountCredential
+    from .models import AccountCredential, ArticleRecord
+
+
+def article_snapshot(record: ArticleRecord | None) -> dict[str, Any] | None:
+    if record is None:
+        return None
+    return {key: getattr(record, key) for key in ('article_id', 'title', 'item_show_type', 'link', 'publish_at')}
 
 
 @dataclass(frozen=True)

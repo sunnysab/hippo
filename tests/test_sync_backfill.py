@@ -68,6 +68,7 @@ class BackfillTest(unittest.IsolatedAsyncioTestCase):
         storage.sync_jobs.create_job.assert_awaited_once_with(
             trigger_type='backfill',
             biz_list=['Mz9'],
+            source='weixin',
         )
 
     async def test_skips_a_non_wechat_account(self) -> None:
@@ -189,8 +190,34 @@ class BackfillTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual('skipped', result.status['status'])
         on_log.assert_called_once()
-        storage.accounts.mark_backfill_done.assert_awaited_once_with('Mz3')
+        storage.accounts.mark_backfill_done.assert_not_awaited()
 
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class BackfillCancellationTest(unittest.IsolatedAsyncioTestCase):
+    async def test_cancellation_preserves_cursor_and_never_marks_history_complete(self):
+        account = SimpleNamespace(
+            biz='Mz1',
+            nickname='A',
+            source='weixin',
+            gh_id='gh_1',
+            alias=None,
+            backfill_cursor='saved-cursor',
+        )
+        storage = _storage(account)
+        storage.sync_jobs = SimpleNamespace(is_cancelling=AsyncMock(return_value=True))
+        storage.accounts.set_backfill_state = AsyncMock()
+        sync = SimpleNamespace(sync_account=AsyncMock())
+        with (
+            patch('hippo.sync_worker.WeixinSource', return_value=_FakeSource()),
+            patch('hippo.sync_worker.WeixinArticleSync', return_value=sync),
+        ):
+            result = await backfill_account_history(storage, biz='Mz1', task_id='job')
+        self.assertEqual('cancelled', result.status['status'])
+        storage.accounts.set_backfill_state.assert_awaited_once_with('Mz1', 'paused')
+        storage.accounts.set_backfill_cursor.assert_not_awaited()
+        storage.accounts.mark_backfill_done.assert_not_awaited()
+        sync.sync_account.assert_not_awaited()

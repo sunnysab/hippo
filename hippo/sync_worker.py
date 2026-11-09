@@ -36,8 +36,15 @@ from .sync_settings import (
     get_sync_settings,
     mark_content_ingested,
 )
-from .sync_tasks import _article_snapshot
-from .sync_types import AccountProgress, SyncAccountResult, SyncObserver, SyncReport, SyncStats, SyncSummary
+from .sync_types import (
+    AccountProgress,
+    SyncAccountResult,
+    SyncObserver,
+    SyncReport,
+    SyncStats,
+    SyncSummary,
+    article_snapshot,
+)
 from .utils import utc_now_iso
 from .weixin_daemon import SessionExpiredError, WeixinSource
 from .weixin_ingest import WeixinArticleSync
@@ -146,6 +153,18 @@ class _WorkerProgressTracker:
                 accounts=[p.__dict__.copy() for p in self._accounts.values()],
                 report=self._report,
             )
+
+    async def history_page(self, account: AccountCredential, *, pages: int, enqueued: int) -> None:
+        progress = self._progress_for(account)
+        progress.saved = enqueued
+        progress.page_count = pages
+        progress.touch()
+        await self.flush()
+
+    async def flush(self) -> None:
+        if self._saving is not None:
+            await self._saving
+        await self._save()
 
     def _progress_for(self, account: AccountCredential) -> AccountProgress:
         progress = self._accounts.get(account.biz)
@@ -262,7 +281,7 @@ class _WorkerObserver(SyncObserver):
         progress = self._tracker._progress_for(self._account)
         progress.page_count = int(payload.get('page_count') or progress.page_count)
         progress.saved += int(payload.get('saved') or 0)
-        progress.last_article = _article_snapshot(last_record)
+        progress.last_article = article_snapshot(last_record)
         progress.touch()
         self._tracker._current_article = progress.last_article
         self._tracker._persist()
@@ -346,7 +365,7 @@ async def maybe_enqueue_backfill_job(storage: PostgresStorage) -> bool:
     if not pending:
         return False
     async with storage.transaction():
-        await storage.sync_jobs.create_job(trigger_type='backfill', biz_list=[pending[0].biz])
+        await storage.sync_jobs.create_job(trigger_type='backfill', biz_list=[pending[0].biz], source=WEIXIN_SOURCE)
     return True
 
 
@@ -367,6 +386,8 @@ async def backfill_account_history(
     *,
     biz: str,
     on_log: Callable[[str], None] | None = None,
+    tracker: _WorkerProgressTracker | None = None,
+    task_id: str | None = None,
 ) -> SyncJobResult:
     """把一个号的历史文章从新到旧翻到底。
 
@@ -396,10 +417,11 @@ async def backfill_account_history(
         )
     if not await storage.accounts.list_syncable_accounts(biz_list=[biz]):
         log(f'{account.nickname}：所有订阅者都已停用，跳过回填')
-        async with storage.transaction():
-            await storage.accounts.mark_backfill_done(biz)
         return SyncJobResult(status={'status': 'skipped'}, report=empty, error=None)
 
+    if tracker is not None:
+        tracker.on_accounts_loaded([account])
+        tracker.on_account_start(account)
     cursor = account.backfill_cursor or ''
     total = 0
     pages = 0
@@ -408,6 +430,21 @@ async def backfill_account_history(
     async with WeixinSource() as source:
         sync = WeixinArticleSync(storage=storage, source=source)
         while True:
+            if task_id is not None and await storage.sync_jobs.is_cancelling(task_id):
+                async with storage.transaction():
+                    await storage.accounts.set_backfill_state(biz, 'paused')
+                return SyncJobResult(
+                    status={'status': 'cancelled'},
+                    report=SyncReport(total_saved=total, summary=[], details=[], downloaded=0),
+                    error=None,
+                )
+            if not await storage.accounts.list_syncable_accounts(biz_list=[biz]):
+                log(f'{account.nickname}：订阅已停用，保留历史游标')
+                return SyncJobResult(
+                    status={'status': 'skipped'},
+                    report=SyncReport(total_saved=total, summary=[], details=[], downloaded=0),
+                    error=None,
+                )
             log(f'{account.nickname}：第 {pages + 1} 页…')
             stats = await sync.sync_account(
                 biz=biz,
@@ -419,6 +456,8 @@ async def backfill_account_history(
             total += stats.enqueued
             logger.info('回填 %s：第 %d 页 %d 篇，累计入队 %d', source_key, pages, stats.listed, total)
             log(f'第 {pages} 页：{stats.listed} 篇，累计入队 {total} 篇')
+            if tracker is not None:
+                await tracker.history_page(account, pages=pages, enqueued=total)
             if stats.is_end or not stats.next_offset:
                 break
             cursor = stats.next_offset
@@ -428,6 +467,12 @@ async def backfill_account_history(
 
     async with storage.transaction():
         await storage.accounts.mark_backfill_done(biz)
+    if tracker is not None:
+        tracker.on_account_done(
+            SyncAccountResult(biz=biz, nickname=account.nickname, source=account.source, saved=total, completed=True),
+            SyncSummary(total_saved=total, page_count=pages, completed=True),
+        )
+        await tracker.flush()
     logger.info('回填 %s 完成：%d 页，入队 %d 篇', source_key, pages, total)
     return SyncJobResult(
         status={'status': 'success'},
@@ -452,6 +497,8 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
                     storage,
                     biz=job.biz_list[0],
                     on_log=tracker.on_log,
+                    tracker=tracker,
+                    task_id=job.task_id,
                 )
             else:
                 result = await run_sync_job(
@@ -477,6 +524,7 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
                 )
             return True
         tracker.set_report(result)
+        await tracker.flush()
         was_cancelled = await storage.sync_jobs.is_cancelling(job.task_id)
         final_status = 'cancelled' if was_cancelled else str(result.status.get('status') or 'success')
         final_error = 'Cancelled by user' if was_cancelled else result.error
@@ -641,12 +689,14 @@ async def run_sync_worker(
     poll_interval: float = 5.0,
     worker_id: str | None = None,
     drain_interval: float = DRAIN_POLL_SECONDS,
+    configure_process: bool = True,
 ) -> None:
     resolved_worker_id = worker_id or f'{socket.gethostname()}-{os.getpid()}'
-    telemetry = init_telemetry(SERVICE_NAME)
+    telemetry = init_telemetry(SERVICE_NAME) if configure_process else None
     # 进程启动后重建日志管线，指向本进程自己的日志文件
     # （deploy 时两个服务共用一份 config.toml），并把 OTLP log handler 挂上
-    setup_logger(service=SERVICE_NAME, extra_handlers=telemetry.log_handlers if telemetry else None)
+    if configure_process:
+        setup_logger(service=SERVICE_NAME, extra_handlers=telemetry.log_handlers if telemetry else None)
     # 正文抓取跑在独立 task：它经常被 daemon 的节奏闸门挡住几十秒，
     # 不能拖住主循环里「入队新文章 / 执行同步 job」的响应。
     drain_task = asyncio.create_task(_body_drain_loop(drain_interval))
@@ -661,8 +711,8 @@ async def run_sync_worker(
                 await publish_worker_state(storage)
                 async with storage.transaction():
                     await recover_stale_running_jobs(storage)
-                    await maybe_enqueue_scheduled_job(storage)
                     await maybe_enqueue_backfill_job(storage)
+                    await maybe_enqueue_scheduled_job(storage)
                 pending = int((await storage.article_queue.stats()).get('pending') or 0)
                 with span('worker.round'):
                     try:
@@ -683,7 +733,8 @@ async def run_sync_worker(
                 await task
         if telemetry is not None:
             telemetry.shutdown()
-        shutdown_logging()
+        if configure_process:
+            shutdown_logging()
 
 
 __all__ = [

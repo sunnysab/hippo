@@ -1,7 +1,6 @@
 """Report scheduler.
 
-Same shape as :class:`~hippo.sync_scheduler.SyncScheduler`: an ``asyncio.Event``
-loop that wakes on a timer or on an explicit trigger. It ticks hourly rather
+An ``asyncio.Event`` loop wakes on a timer or on an explicit trigger. It ticks hourly rather
 than per user, because each user's ``send_hour`` is in their own time zone and
 the delivery ledger already guarantees at most one send per local day.
 """
