@@ -139,14 +139,14 @@ export function useGroupsActions() {
     return { groups, defaultGroupId: defaultId, nextGroup };
   }, [dispatch]);
 
-  const loadAccounts = useCallback(async (preserveSelection = false) => {
+  const loadAccounts = useCallback(async (preserveSelection = false, signal?: AbortSignal) => {
     const requestId = ++accountsRequestIdRef.current;
     const groupId = state.selectedGroupId;
     const url = new URL('/api/account', window.location.origin);
     if (groupId) url.searchParams.set('group_id', String(groupId));
     url.searchParams.set('page_size', '100');
-    const payload = await apiGet(url.pathname + url.search);
-    if (requestId !== accountsRequestIdRef.current || groupId !== selectedGroupIdRef.current) return;
+    const payload = await apiGet(url.pathname + url.search, { signal });
+    if (signal?.aborted || requestId !== accountsRequestIdRef.current || groupId !== selectedGroupIdRef.current) return;
     const accounts = (payload.accounts || []) as Account[];
     dispatch({ type: 'SET_ACCOUNTS', accounts, preserveSelection });
   }, [dispatch, state.selectedGroupId]);

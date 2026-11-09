@@ -1,9 +1,10 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useGroupsState, useGroupsActions } from '../../store/groups';
 import { AccountCard } from './AccountCard';
 import { useI18n } from '../../i18n';
 import { EmptyState } from '../../components/EmptyState';
 import { hasAccountWork } from '../../utils/sync';
+import { usePolling } from '../../hooks/usePolling';
 import { onRefresh } from '../../utils/events';
 
 interface AccountCardGridProps {
@@ -38,24 +39,10 @@ export function AccountCardGrid({ query }: AccountCardGridProps) {
 
   const hasActiveBackfill = state.accounts.some((account) => account.sync ? hasAccountWork(account.sync) : account.backfill_running || account.backfill_pending);
 
-  useEffect(() => {
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const refresh = async () => {
-      try {
-        await loadAccounts(true);
-      } catch {
-        // Keep the last known state and retry on a transient request failure.
-      } finally {
-        if (!stopped) timer = setTimeout(() => void refresh(), hasActiveBackfill ? 5000 : 30000);
-      }
-    };
-    timer = setTimeout(() => void refresh(), hasActiveBackfill ? 5000 : 30000);
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-    };
-  }, [hasActiveBackfill, loadAccounts]);
+  const refreshAccounts = useCallback(async (signal: AbortSignal) => {
+    await loadAccounts(true, signal);
+  }, [loadAccounts]);
+  usePolling(refreshAccounts, hasActiveBackfill ? 5000 : 30000, false);
 
   if (!accounts.length) {
     return (

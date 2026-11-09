@@ -37,6 +37,9 @@ export function AccountSyncStatus({ sync, biz, disabled }: { sync: AccountSync; 
       {(['pending', 'processing', 'failed'] as const).map((status) => sync.articles[status] > 0 && (
         <div key={status}>{t(`sync.bodies.${status}`, '{n}').replace('{n}', String(sync.articles[status]))}</div>
       ))}
+      {(['pending', 'failed'] as const).map((status) => (sync.images?.[status] || 0) > 0 && (
+        <div key={`images-${status}`}>{t(`sync.images.${status}`, '{n}').replace('{n}', String(sync.images![status]))}</div>
+      ))}
       {sync.history.error && <div>{sync.history.error}</div>}
       {!disabled && ['failed', 'paused'].includes(sync.history.status) && (
         <button className="btn ghost" type="button" disabled={busy} onClick={() => void resume()}>

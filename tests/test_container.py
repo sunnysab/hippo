@@ -279,7 +279,7 @@ class RunSyncJobSourceTest(unittest.IsolatedAsyncioTestCase):
             async def __aexit__(self, exc_type, exc, tb):
                 return None
 
-        container = SimpleNamespace(adapters={}, downloader=None, weixin_unavailable=None)
+        container = MagicMock(adapters={}, downloader=None, weixin_unavailable=None)
         container.__aenter__ = AsyncMock(return_value=container)
         container.__aexit__ = AsyncMock(return_value=None)
 
@@ -292,7 +292,11 @@ class RunSyncJobSourceTest(unittest.IsolatedAsyncioTestCase):
             patch.object(sync_service, 'ArticleSyncService') as service,
             patch.object(sync_service, '_persist_sync_outcome', AsyncMock(return_value={'status': 'success'})),
         ):
-            service.return_value.sync_accounts = AsyncMock(return_value=MagicMock())
+            from hippo.sync_types import SyncReport
+
+            service.return_value.sync_accounts = AsyncMock(
+                return_value=SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
+            )
             await sync_service.run_sync_job()
             return build
 
@@ -301,7 +305,7 @@ class RunSyncJobSourceTest(unittest.IsolatedAsyncioTestCase):
             [SimpleNamespace(biz='wx', source='weixin'), SimpleNamespace(biz='yt', source='youtube')]
         )
 
-        self.assertEqual(build.call_args.kwargs['sources'], {'weixin', 'youtube'})
+        self.assertEqual([call.kwargs['sources'] for call in build.call_args_list], [{'weixin'}, {'youtube'}])
 
     async def test_a_media_only_run_excludes_weixin(self) -> None:
         build = await self._run([SimpleNamespace(biz='yt', source='youtube')])

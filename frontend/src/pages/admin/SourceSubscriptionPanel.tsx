@@ -67,9 +67,14 @@ export function SourceSubscriptionPanel({ source }: { source: string }) {
   }, [source]);
 
   useEffect(() => {
+    let disposed = false;
     queueMicrotask(() => {
-      void loadPage(1);
+      if (!disposed) void loadPage(1);
     });
+    return () => {
+      disposed = true;
+      requestIdRef.current += 1;
+    };
   }, [loadPage]);
 
   const refreshVisible = useCallback(async (signal: AbortSignal) => {

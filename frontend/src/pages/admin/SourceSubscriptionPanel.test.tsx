@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, waitFor, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../../i18n';
@@ -87,6 +87,7 @@ describe('SourceSubscriptionPanel', () => {
       .mockResolvedValueOnce({ accounts: [account('from-youtube')], total: 1 });
 
     const view = renderPanel('bilibili');
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledTimes(1));
     view.rerender(
       <MemoryRouter>
         <I18nProvider>

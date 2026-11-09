@@ -70,6 +70,7 @@ export interface SyncTaskAccount {
 }
 
 export interface SyncTask {
+  source?: string | null;
   task_id: string;
   status: string;
   created_at: string;

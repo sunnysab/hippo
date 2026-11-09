@@ -10,7 +10,7 @@ vi.mock('../hooks/useToast', () => ({ useToast: () => ({ showToast: vi.fn() }) }
 vi.mock('../i18n', () => ({ useI18n: () => ({ t: (key: string, fallback?: string) => zhCN[key as keyof typeof zhCN] || fallback || key }) }));
 const base: AccountSync = {
   history: { status: 'complete', task_id: null, error: null },
-  articles: { pending: 1112, processing: 2, failed: 3 }, listing: null, last_checked_at: null,
+  articles: { pending: 1112, processing: 2, failed: 3 }, images: { pending: 12, failed: 1 }, listing: null, last_checked_at: null,
 };
 
 describe('account ingestion stages', () => {
@@ -20,6 +20,8 @@ describe('account ingestion stages', () => {
     expect(screen.getByText('正文待抓取 1112 篇')).toBeTruthy();
     expect(screen.getByText('正文正在抓取 2 篇')).toBeTruthy();
     expect(screen.getByText('正文抓取失败 3 篇')).toBeTruthy();
+    expect(screen.getByText('图片待下载 12 张')).toBeTruthy();
+    expect(screen.getByText('图片下载失败 1 张')).toBeTruthy();
     expect(screen.queryByText(zhCN['accounts.lastSyncedEmpty'])).toBeNull();
   });
 

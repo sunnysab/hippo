@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import math
 import os
+import signal
 import socket
 import time
 from collections.abc import Callable
@@ -20,11 +21,11 @@ from .media_settings import get_media_settings
 from .models import AccountCredential
 from .observability.logging import shutdown_logging
 from .observability.metrics import instrument as metric
-from .observability.otel import add_span_attributes, init_telemetry, span, traced
+from .observability.otel import add_span_attributes, init_telemetry, traced
 from .sources import body_adapters
 from .sources.weixin import SOURCE as WEIXIN_SOURCE
 from .storage import PostgresStorage, close_pool, open_storage, save_meta_json
-from .sync_core import request_sync_cancel
+from .sync_core import request_sync_cancel, reset_sync_cancel
 from .sync_service import (
     SyncJobResult,
     run_sync_job,
@@ -153,6 +154,11 @@ class _WorkerProgressTracker:
                 accounts=[p.__dict__.copy() for p in self._accounts.values()],
                 report=self._report,
             )
+
+    async def stop(self) -> None:
+        if self._saving is not None:
+            self._saving.cancel()
+            await asyncio.gather(self._saving, return_exceptions=True)
 
     async def history_page(self, account: AccountCredential, *, pages: int, enqueued: int) -> None:
         progress = self._progress_for(account)
@@ -328,7 +334,7 @@ async def maybe_enqueue_scheduled_job(storage: PostgresStorage) -> bool:
     settings = await get_sync_settings(storage)
     if not settings.get('enabled'):
         return False
-    if await storage.sync_jobs.has_active_job():
+    if await storage.sync_jobs.has_active_job(trigger_type='scheduled'):
         return False
     interval_seconds = max(int(settings.get('interval_minutes') or 1), 1) * 60
     last_started = _parse_meta_datetime(await storage.meta.get(SYNC_STARTED_KEY))
@@ -337,7 +343,11 @@ async def maybe_enqueue_scheduled_job(storage: PostgresStorage) -> bool:
         if elapsed < interval_seconds:
             return False
     async with storage.transaction():
-        await storage.sync_jobs.create_job(trigger_type='scheduled')
+        accounts = await storage.accounts.list_syncable_accounts()
+        for source in sorted({account.source or WEIXIN_SOURCE for account in accounts}):
+            await storage.sync_jobs.create_job(trigger_type='scheduled', source=source)
+        if accounts:
+            await storage.meta.set(SYNC_STARTED_KEY, utc_now_iso())
     return True
 
 
@@ -355,7 +365,7 @@ async def maybe_enqueue_backfill_job(storage: PostgresStorage) -> bool:
     失败的号还要等过 ``BACKFILL_RETRY_COOLDOWN_MINUTES``：同一个账号失败后仍留在
     pending，不退避就还是每轮重排一次。
     """
-    if await storage.sync_jobs.has_active_job():
+    if await storage.sync_jobs.has_active_job(trigger_type='backfill'):
         return False
     pending = await storage.accounts.list_pending_backfill(
         limit=1,
@@ -482,13 +492,14 @@ async def backfill_account_history(
 
 
 async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
-    job = await storage.sync_jobs.claim_next_job(worker_id=worker_id)
-    if not job:
-        return False
-    add_span_attributes({'sync.job.id': job.task_id, 'sync.job.trigger': job.trigger_type})
     async with storage.transaction():
+        job = await storage.sync_jobs.claim_next_job(worker_id=worker_id)
+        if not job:
+            return False
         await storage.sync_jobs.mark_running(job.task_id, worker_id=worker_id)
+    add_span_attributes({'sync.job.id': job.task_id, 'sync.job.trigger': job.trigger_type})
     tracker = _WorkerProgressTracker(storage=storage, task_id=job.task_id)
+    reset_sync_cancel()
     poll_task = asyncio.create_task(_poll_cancel(job.task_id))
     try:
         try:
@@ -509,6 +520,7 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
                     # still throttles it. Scheduled/backfill/subscription jobs keep
                     # the policy.
                     force=job.trigger_type in FORCING_TRIGGER_TYPES,
+                    scope_sources=job.scope_sources,
                     observer_factory=lambda account, _: _WorkerObserver(tracker=tracker, account=account),
                     observer=tracker,
                 )
@@ -535,7 +547,14 @@ async def run_worker_once(*, storage: PostgresStorage, worker_id: str) -> bool:
                 error=final_error,
                 result=result.report.to_dict(),
             )
+    except asyncio.CancelledError:
+        await tracker.stop()
+        await storage.rollback()
+        async with storage.transaction():
+            await storage.sync_jobs.release_interrupted_job(job.task_id, worker_id=worker_id)
+        raise
     finally:
+        await tracker.stop()
         poll_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await poll_task
@@ -552,7 +571,8 @@ async def drain_bodies_once(storage: PostgresStorage, *, limit: int = BODY_BATCH
     settings = await get_sync_settings(storage)
     if not settings.get('download_content'):
         return 0
-    if not (await storage.article_queue.stats()).get('pending'):
+    counts = await storage.article_queue.stats()
+    if not (counts.get('pending') or counts.get('processing')):
         return 0
     container = build_sync_container(
         storage=storage,
@@ -704,33 +724,41 @@ async def run_sync_worker(
     media_task = asyncio.create_task(_media_job_loop())
     # 实时通道：daemon 推 article_push 时立刻入队（列表轮询仍然是兜底）
     watch_task = asyncio.create_task(watch_article_push())
+    jobs: set[asyncio.Task[bool]] = set()
+
+    async def execute() -> bool:
+        async with open_storage() as job_storage:
+            return await run_worker_once(storage=job_storage, worker_id=resolved_worker_id)
+
     try:
         while True:
-            started_at = time.perf_counter()
+            for finished in list(jobs):
+                if finished.done():
+                    jobs.remove(finished)
+                    try:
+                        finished.result()
+                    except Exception:
+                        logger.exception('Sync job failed')
             async with open_storage() as storage:
                 await publish_worker_state(storage)
                 async with storage.transaction():
+                    await storage.sync_jobs.heartbeat_jobs(worker_id=resolved_worker_id)
                     await recover_stale_running_jobs(storage)
                     await maybe_enqueue_backfill_job(storage)
                     await maybe_enqueue_scheduled_job(storage)
-                pending = int((await storage.article_queue.stats()).get('pending') or 0)
-                with span('worker.round'):
-                    try:
-                        handled = await run_worker_once(storage=storage, worker_id=resolved_worker_id)
-                    except Exception:
-                        # 单个 job 的异常不该拖垮 worker（drain / 图片回填还跑在旁边）
-                        logger.exception('同步 job 执行异常，继续下一轮')
-                        handled = True
-            metric('histogram', 'hippo.worker.round.duration', unit='s').record(time.perf_counter() - started_at)
-            metric('histogram', 'hippo.queue.pending', unit='{article}').record(pending)
-            if handled:
-                continue
+            # At most one additional claimant per tick; the database excludes
+            # overlapping sources, while disjoint sources use separate connections.
+            if len(jobs) < 6:
+                jobs.add(asyncio.create_task(execute()))
             await asyncio.sleep(max(float(poll_interval), 0.2))
     finally:
-        for task in (drain_task, image_task, media_task, watch_task):
+        stopping = [*jobs, drain_task, image_task, media_task, watch_task]
+        for task in stopping:
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+        outcomes = await asyncio.gather(*stopping, return_exceptions=True)
+        for outcome in outcomes:
+            if isinstance(outcome, Exception):
+                logger.error('Worker shutdown cleanup failed: %s', outcome)
         if telemetry is not None:
             telemetry.shutdown()
         if configure_process:
@@ -762,9 +790,15 @@ def main(argv: list[str] | None = None) -> int:
         parser.error('--poll-interval must be a finite number of at least 0.2')
 
     async def run() -> None:
+        task = asyncio.current_task()
+        loop = asyncio.get_running_loop()
+        loop.add_signal_handler(signal.SIGTERM, task.cancel)
         try:
             await run_sync_worker(poll_interval=args.poll_interval)
+        except asyncio.CancelledError:
+            pass
         finally:
+            loop.remove_signal_handler(signal.SIGTERM)
             # Close the pool while the loop is alive: after asyncio.run tears the
             # loop down a connection still in flight hangs the exit.
             await close_pool()

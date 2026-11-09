@@ -91,9 +91,15 @@ class AccountListingOut(BaseModel):
     kind: str
 
 
+class AccountImageQueueOut(BaseModel):
+    pending: int = 0
+    failed: int = 0
+
+
 class AccountSyncOut(BaseModel):
     history: AccountHistoryOut
     articles: AccountBodyQueueOut
+    images: AccountImageQueueOut = Field(default_factory=AccountImageQueueOut)
     listing: AccountListingOut | None = None
     last_checked_at: datetime | None = None
 

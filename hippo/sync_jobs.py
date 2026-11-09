@@ -52,6 +52,7 @@ def _row_to_state(row: dict[str, Any] | None) -> SyncTaskState | None:
         group_id=row.get('group_id'),
         biz_list=tuple(str(item) for item in biz_list_raw) if isinstance(biz_list_raw, list) else None,
         source=str(row['source']) if row.get('source') else None,
+        scope_sources=tuple(row['scope_sources']) if row.get('scope_sources') is not None else None,
         trigger_type=str(row.get('trigger_type') or 'manual'),
         requester_user_id=int(row['requester_user_id']) if row.get('requester_user_id') is not None else None,
         phase=row.get('phase'),
@@ -214,21 +215,35 @@ class SyncJobRepository:
 
     async def claim_next_job(self, *, worker_id: str) -> SyncTaskState | None:
         async with self._conn.cursor(row_factory=dict_row) as cur:
+            # The caller commits claim and running status together. Serialize scope checks.
+            await cur.execute("SELECT pg_advisory_xact_lock(hashtext('hippo.sync.claim'))")
             await cur.execute(
                 """
-                WITH candidate AS (
-                    SELECT id
-                    FROM sync_jobs
-                    WHERE status = 'queued'
-                      AND (locked_at IS NULL OR locked_at < NOW() - INTERVAL '15 minutes')
-                    ORDER BY created_at ASC
-                    FOR UPDATE SKIP LOCKED
-                    LIMIT 1
+                WITH scopes AS MATERIALIZED (
+                    SELECT j.id, j.status, j.created_at, j.locked_at,
+                           COALESCE(j.scope_sources,
+                               CASE WHEN j.source IS NOT NULL THEN ARRAY[j.source]
+                               ELSE ARRAY(SELECT DISTINCT a.source FROM accounts a
+                                   WHERE (j.biz_list IS NULL OR j.biz_list @> jsonb_build_array(a.biz))
+                                     AND (j.group_id IS NULL OR EXISTS (
+                                         SELECT 1 FROM subscription s WHERE s.biz = a.biz
+                                         AND s.group_id = j.group_id))) END) AS sources
+                    FROM sync_jobs j WHERE j.status IN ('queued', 'running', 'cancelling')
+                ), candidate AS (
+                    SELECT job.id FROM sync_jobs job JOIN scopes q ON q.id = job.id
+                    WHERE job.status = 'queued' AND job.locked_at IS NULL
+                      AND NOT EXISTS (SELECT 1 FROM scopes active
+                          WHERE active.id <> q.id
+                            AND (active.status IN ('running', 'cancelling') OR active.locked_at IS NOT NULL)
+                            AND active.sources && q.sources)
+                    ORDER BY job.created_at ASC
+                    FOR UPDATE OF job SKIP LOCKED LIMIT 1
                 )
                 UPDATE sync_jobs j
                 SET locked_by = %s,
-                    locked_at = NOW()
-                FROM candidate
+                    locked_at = NOW(),
+                    scope_sources = scopes.sources
+                FROM candidate JOIN scopes ON scopes.id = candidate.id
                 WHERE j.id = candidate.id
                 RETURNING j.*
                 """,
@@ -249,6 +264,29 @@ class SyncJobRepository:
                 WHERE id = %s
                 """,
                 (worker_id, task_id),
+            )
+
+    async def heartbeat_jobs(self, *, worker_id: str) -> None:
+        async with self._conn.cursor() as cur:
+            await cur.execute(
+                'UPDATE sync_jobs SET locked_at = clock_timestamp() '
+                "WHERE locked_by = %s AND status IN ('running', 'cancelling')",
+                (worker_id,),
+            )
+
+    async def release_interrupted_job(self, task_id: str, *, worker_id: str) -> None:
+        """Return only this worker's unfinished job; preserve explicit cancellation."""
+        async with self._conn.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE sync_jobs
+                SET status = CASE WHEN status = 'cancelling' THEN 'cancelled' ELSE 'queued' END,
+                    phase = NULL, current_account = NULL, current_article = NULL,
+                    locked_by = NULL, locked_at = NULL, scope_sources = NULL,
+                    finished_at = CASE WHEN status = 'cancelling' THEN clock_timestamp() ELSE NULL END
+                WHERE id = %s AND locked_by = %s AND status IN ('running', 'cancelling')
+                """,
+                (task_id, worker_id),
             )
 
     async def recover_stale_running_jobs(self, *, stale_after_minutes: int = 15) -> int:

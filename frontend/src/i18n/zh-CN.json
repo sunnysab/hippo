@@ -890,6 +890,8 @@
   "articles.meta.directions": "方向",
   "articles.event.reports": "这件事共 {n} 篇报道",
   "articles.event.open": "看这件事的其它报道",
+  "sync.images.pending": "图片待下载 {n} 张",
+  "sync.images.failed": "图片下载失败 {n} 张",
   "sync.bodies.pending": "正文待抓取 {n} 篇",
   "sync.bodies.processing": "正文正在抓取 {n} 篇",
   "sync.bodies.failed": "正文抓取失败 {n} 篇",

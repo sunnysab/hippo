@@ -50,5 +50,5 @@ export const getSyncTaskKind = (kind: string | undefined, t: (key: string, fallb
 
 export function hasAccountWork(sync: AccountSync): boolean {
   return Boolean(sync.listing) || ['pending', 'queued', 'running', 'cancelling'].includes(sync.history.status)
-    || sync.articles.pending > 0 || sync.articles.processing > 0;
+    || sync.articles.pending > 0 || sync.articles.processing > 0 || (sync.images?.pending || 0) > 0;
 }

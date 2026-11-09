@@ -510,6 +510,20 @@ class SessionFailureBookkeepingTest(unittest.TestCase):
         self.assertEqual(queue.requeued, [7])
         self.assertEqual(queue.failed, [], '会话失效不得记成文章失败')
 
+    def test_worker_shutdown_requeues_batch_without_attempts(self) -> None:
+        queue = _RecordingQueue()
+        storage = _storage_with(queue)
+        sync = WeixinArticleSync(
+            storage=storage,
+            source=_FailingSource(asyncio.CancelledError()),
+            downloader=None,
+        )
+        with self.assertRaises(asyncio.CancelledError):
+            asyncio.run(sync._process_batch(self._batch(), SyncStats()))
+        self.assertEqual([7], queue.requeued)
+        self.assertEqual([], queue.failed)
+        storage.rollback.assert_awaited_once()
+
     def test_upstream_failure_still_records_attempt(self) -> None:
         queue = _RecordingQueue()
         sync = WeixinArticleSync(

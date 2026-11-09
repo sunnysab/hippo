@@ -50,4 +50,19 @@ describe('account refresh', () => {
     });
     expect(result.current.state.accounts.map((account) => account.biz)).toEqual(['new']);
   });
+  it('ignores an aborted response even if the transport still resolves', async () => {
+    const { result } = renderHook(useTestGroups, { wrapper: GroupsProvider });
+    const controller = new AbortController();
+    let resolve!: (value: unknown) => void;
+    apiGetMock.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+    let request!: Promise<void>;
+    act(() => { request = result.current.loadAccounts(true, controller.signal); });
+    controller.abort();
+    await act(async () => {
+      resolve({ accounts: [{ biz: 'stale' }] });
+      await request;
+    });
+    expect(result.current.state.accounts).toEqual([]);
+  });
+
 });

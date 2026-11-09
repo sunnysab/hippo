@@ -1,3 +1,4 @@
+import { getSourceLabel } from '../../utils/source';
 import { useEffect, useState } from 'react';
 import { useSettingsState } from '../../store/settings';
 import { useI18n } from '../../i18n';
@@ -71,7 +72,7 @@ export function ActiveTaskPanel() {
         ) : null}
       </div>
       {state.syncTasks.filter((task) => task.task_id !== activeTask?.task_id && ['queued', 'pending', 'running', 'cancelling'].includes(task.status)).map((task) => (
-        <div className="account-sub" key={task.task_id}>{getSyncTaskKind(task.trigger_type, t)} · {getSyncRunLabel(task.status, t)} · {task.current_account?.nickname || task.biz_list?.join(', ')}</div>
+        <div className="account-sub" key={task.task_id}>{getSourceLabel(task.source, t)} · {getSyncTaskKind(task.trigger_type, t)} · {getSyncRunLabel(task.status, t)} · {task.current_account?.nickname || task.biz_list?.slice(0, 3).join(', ')}</div>
       ))}
       <div className="sync-active-body" id="sync-active-task">
         {!activeTask ? (
@@ -96,7 +97,7 @@ export function ActiveTaskPanel() {
                     <span className="sync-phase-badge">{phaseLabel(activeTask.phase)}</span>
                   )}
                 </div>
-                <div className="account-sub">{getSyncTaskKind(activeTask.trigger_type, t)}</div>
+                <div className="account-sub">{activeTask.source && <>{getSourceLabel(activeTask.source, t)} · </>}{getSyncTaskKind(activeTask.trigger_type, t)}</div>
                 {activeTask.last_log && <div className="account-sub">{activeTask.last_log}</div>}
                 <div className="account-sub">
                   {activeTask.started_at || activeTask.created_at

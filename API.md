@@ -1398,6 +1398,7 @@ curl -sS "$BASE/api/feed/mixed?format=rss&limit=50&token=<会话令牌>"
 
 公众号列表和详情的 `sync` 是统一读模型：`history` 描述历史列表补全，
 `articles` 分别计数正文队列的 `pending` / `processing` / `failed`，
+`images` 分别计数图片待下载 `pending` 和已停止重试的 `failed`，
 `listing` 是当前定向任务或全站任务正在访问此账号时的任务摘要，
 `last_checked_at` 与原有 `last_synced_at` 相同，表示最近成功的近期列表检查。
 旧字段继续返回；历史列表完成和正文入库都不伪造最近检查时间。
@@ -1418,3 +1419,6 @@ curl -sS "$BASE/api/feed/mixed?format=rss&limit=50&token=<会话令牌>"
 `enabled` 只控制定时近期列表检查；关闭它不停止推送监听、历史补全或已入队下载。
 `download_content` 控制正文消费，`download_images` 控制图片下载。账号停用不会
 把未完成历史标成完成；取消历史任务保留游标并暂停，显式继续后才重新入队。
+
+不同来源的列表任务可并行，同一来源按领取时固定的账号范围互斥；混合来源任务内部按来源并行。
+正常停机保留历史游标，并归还本 worker 未完成的任务和正文批次；明确取消的任务不会自动恢复。

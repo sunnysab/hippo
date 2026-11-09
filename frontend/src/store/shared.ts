@@ -8,6 +8,7 @@ export interface Group {
 export interface AccountSync {
   history: { status: string; task_id: string | null; error: string | null };
   articles: { pending: number; processing: number; failed: number };
+  images?: { pending: number; failed: number };
   listing: { task_id: string; status: string; kind: string } | null;
   last_checked_at: string | null;
 }

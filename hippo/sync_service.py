@@ -5,18 +5,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 from .container import build_sync_container
 from .exceptions import SyncInterrupted
-from .file_storage import FileStorageError
 from .logger import get_logger
 from .media_settings import get_media_settings
 from .models import AccountCredential
-from .sources import SourceAdapter, UnsupportedSource, adapter_for, body_adapters
+from .sources import SourceAdapter, UnsupportedSource, adapter_for
 from .storage import PostgresStorage, open_storage
-from .sync_core import _get_cancel_event, reset_sync_cancel
+from .sync_core import _get_cancel_event
 from .sync_settings import (
     _persist_sync_outcome,
     get_sync_settings,
@@ -49,9 +48,6 @@ LIST_ACCOUNT_MIN_INTERVAL = 15.0
 # 同一来源连续失败这么多账号就跳过该来源在本轮的其余账号：多半是被限流，继续打只会更糟。
 # 按来源分别计数，微信 daemon 挂掉不会挡住 bilibili/youtube/podcast。
 MAX_CONSECUTIVE_LIST_FAILURES = 3
-# 一次 sync job 只顺带抓一批正文；持续抓是 worker 里常驻 drain 循环的活
-JOB_BODY_BATCH = 5
-
 SYNC_RUN_LOCK = asyncio.Lock()
 
 
@@ -365,6 +361,7 @@ async def run_sync_job(
     observer_factory: Callable[[AccountCredential, bool], SyncObserver] | None = None,
     observer: SyncJobObserver | None = None,
     lock: asyncio.Lock | None = None,
+    scope_sources: tuple[str, ...] | None = None,
 ) -> SyncJobResult:
     job_observer = observer or NullSyncJobObserver()
     if lock:
@@ -378,9 +375,9 @@ async def run_sync_job(
                 observer_factory=observer_factory,
                 observer=job_observer,
                 lock=None,
+                scope_sources=scope_sources,
             )
     job_observer.on_lock_acquired()
-    reset_sync_cancel()
     started_at = utc_now_iso()
     empty_report = SyncReport(total_saved=0, summary=[], details=[], downloaded=0)
     async with open_storage() as storage:
@@ -398,58 +395,56 @@ async def run_sync_job(
                 biz_list=biz_list,
                 source=source,
             )
+            if scope_sources is not None:
+                accounts = [account for account in accounts if (account.source or 'weixin') in scope_sources]
             job_observer.on_accounts_loaded(accounts)
 
-            container = None
-            try:
-                container = build_sync_container(
-                    storage=storage,
-                    enable_download=bool(settings.get('download_content')),
-                    enable_images=bool(settings.get('download_images')),
-                    media_settings=media_settings,
-                    # Only build the sources this run actually selected: a task with
-                    # no WeChat account must not open the daemon at all.
-                    sources={account.source or 'weixin' for account in accounts},
-                )
-            except FileStorageError as exc:
-                error = str(exc)
+            source_groups: dict[str, list[AccountCredential]] = {}
+            for account in accounts:
+                source_groups.setdefault(account.source or 'weixin', []).append(account)
 
-            if error is None and container:
-                async with container as app:
-                    if app.weixin_unavailable:
-                        job_observer.on_log(f'WeChat source unavailable: {app.weixin_unavailable}')
-                    config = _build_sync_config(settings, force=force)
-                    service = ArticleSyncService(
-                        storage=storage,
-                        adapters=app.adapters,
-                    )
-                    try:
-                        report = await service.sync_accounts(
-                            accounts=accounts,
-                            config=config,
-                            bulk=True,
-                            observer_factory=observer_factory,
-                            observer=job_observer,
+            async def sync_source(selected: list[AccountCredential]) -> tuple[SyncReport, str | None]:
+                try:
+                    async with open_storage() as source_storage:
+                        container = build_sync_container(
+                            storage=source_storage,
+                            enable_download=False,
+                            enable_images=bool(settings.get('download_images')),
+                            media_settings=media_settings,
+                            sources={selected[0].source or 'weixin'},
                         )
-                    except SyncRunError as exc:
-                        error = str(exc)
-                        report = exc.report or empty_report
-                    except Exception as exc:
-                        error = str(exc)
-                        report = empty_report
-                    # 列表入队完，接着把正文抓下来（节流在 daemon 侧）
-                    if error is None and settings.get('download_content'):
-                        job_observer.on_log('正文阶段：处理待抓队列')
-                        for adapter in body_adapters(app.adapters):
-                            drained = await adapter.drain(limit=settings.get('content_limit') or JOB_BODY_BATCH)
-                            job_observer.on_log(f'正文落库 {drained.ingested} 篇，失败 {drained.failed} 篇')
-                            report = replace(report, downloaded=report.downloaded + drained.ingested)
-                    if _get_cancel_event().is_set() and not error:
-                        error = 'Cancelled by user'
-                    if settings.get('download_images') and app.downloader:
-                        job_observer.on_images_start()
-                        await app.downloader.wait_for_images()
-                        job_observer.on_images_done()
+                        async with container as app:
+                            service = ArticleSyncService(storage=source_storage, adapters=app.adapters)
+                            source_report = await service.sync_accounts(
+                                accounts=selected,
+                                config=_build_sync_config(settings, force=force),
+                                bulk=True,
+                                observer_factory=observer_factory,
+                                observer=job_observer,
+                            )
+                            return source_report, None
+                except SyncRunError as exc:
+                    return exc.report or empty_report, str(exc)
+                except Exception as exc:
+                    logger.exception('Source listing failed')
+                    return empty_report, str(exc)
+
+            async with asyncio.TaskGroup() as group:
+                tasks = [group.create_task(sync_source(selected)) for selected in source_groups.values()]
+            outcomes = [task.result() for task in tasks]
+            reports = [item[0] for item in outcomes]
+            error = '; '.join(item[1] for item in outcomes if item[1]) or None
+            report = SyncReport(
+                total_saved=sum(item.total_saved for item in reports),
+                summary=[row for item in reports for row in item.summary],
+                details=[row for item in reports for row in item.details],
+                downloaded=sum(item.downloaded for item in reports),
+                failed_accounts=sum(item.failed_accounts for item in reports),
+                accounts_total=len(accounts),
+                accounts_done=sum(item.accounts_done for item in reports),
+            )
+            if _get_cancel_event().is_set():
+                error = 'Cancelled by user'
         except Exception as exc:
             logger.exception('Sync job failed unexpectedly')
             error = str(exc)

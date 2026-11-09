@@ -33,7 +33,7 @@ describe('AccountCardGrid', () => {
     groupsStateMock.mockReturnValue({ state });
     const { rerender } = render(<AccountCardGrid query="no match" />);
     await act(() => vi.advanceTimersByTimeAsync(5000));
-    expect(loadAccountsMock).toHaveBeenCalledWith(true);
+    expect(loadAccountsMock).toHaveBeenCalledWith(true, expect.any(AbortSignal));
     state.accounts = [{ ...account, backfill_pending: false }];
     rerender(<AccountCardGrid query="no match" />);
     await act(() => vi.advanceTimersByTimeAsync(15000));

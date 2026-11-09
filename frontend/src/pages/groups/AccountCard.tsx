@@ -5,6 +5,7 @@ import { useI18n } from '../../i18n';
 import { apiSend, isAuthError } from '../../api';
 import { useToast } from '../../hooks/useToast';
 import { formatRelativeTime } from '../../utils/format';
+import { emitRefresh } from '../../utils/events';
 import { AccountSyncStatus } from '../../components/AccountSyncStatus';
 import type { Account } from '../../store/shared';
 
@@ -28,6 +29,7 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
     try {
       await apiSend(`/api/account/${account.biz}`, 'PATCH', { is_disabled: nextDisabled });
       dispatch({ type: 'UPDATE_ACCOUNT', biz: account.biz, patch: { is_disabled: nextDisabled } });
+      emitRefresh();
       showToast(
         nextDisabled
           ? t('accounts.syncDisabledToast', 'Sync disabled.')

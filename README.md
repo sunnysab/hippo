@@ -511,9 +511,10 @@ hippo/knowledge/worker.py                   # 知识导入 worker（python -m hi
 `hippo.server`、`hippo.sync_worker` 与（需要知识库时）`hippo.knowledge.worker`。注意顺序：先迁移（`init-db`）、
 后重启服务，schema 版本不匹配时服务会拒绝启动。
 
-上线（含 schema 33）前还有几件必须做的事，**在真实隔离环境验证完成并经授权后再执行**：
+上线前须完成隔离验证并取得部署授权：
 
-1. 当前代码 `SCHEMA_VERSION = '33'`。31 → 32 追加 `article_outline` 缓存/任务表与待处理索引；
+1. 当前代码 `SCHEMA_VERSION = '37'`，36 → 37 为同步任务追加 `scope_sources TEXT[]`，
+   用于固定运行期间的来源互斥范围。31 → 32 追加 `article_outline` 缓存/任务表与待处理索引；
    32 → 33 追加 `article_reference` 直接引用表、身份查询及队列关联索引，
    使用**纯追加、幂等**的 `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`；
    完整初始化脚本仍有历史清理语句，执行前必须核对这些清理项不会触及现存数据。
@@ -521,14 +522,13 @@ hippo/knowledge/worker.py                   # 知识导入 worker（python -m hi
    并验证 S3 的上传/下载/删除。
 2. 正式迁移流程：**先备份代码和配置**，数据库转储仅在操作者明确要求时执行，不作为日常部署默认步骤；
    然后**停掉 Web、sync worker 与知识 worker 三个进程**（
-   知识 worker 持有 lease/长事务，迁移前必须停），再人工跑 `python -m hippo.ops init-db`，确认库 `schema_version=33`
+   知识 worker 持有 lease/长事务，迁移前必须停），再人工跑 `python -m hippo.ops init-db`，确认库的 `schema_version` 与代码一致
    后再重启。不要让旧进程在新 schema 上继续跑。
-3. **schema 只能前进**：库一旦升到 33，回退到 schema 32 的代码会因 `SCHEMA_VERSION(32) != meta.schema_version(33)`
+3. **schema 只能前进**：库升级后，回退到较旧 schema 版本的代码会因版本不匹配
    拒绝启动；优先修复并继续迁移，不能改 `meta.schema_version` 蒙混过关。确需恢复时，先将备份恢复到
    **新的隔离数据库**核对，再由操作者批准切换；不要直接用旧快照覆盖生产库，避免丢失备份之后的写入。
-4. **发布窗口压自动同步**：生产 `sync:settings` 当前为 `enabled=false`、`interval_minutes=120`，调度循环不会自动跑；
-   需要更新时，普通用户可调用 `POST /api/settings/run`；管理员全站更新使用 `POST /api/settings/admin/run`。
-   验收通过后可开启自动调度，保持实例的 120 分钟间隔。
+4. **保留调度配置**：部署不改变 `enabled` 与检查周期。普通用户可调用 `POST /api/settings/run`；
+   管理员全站更新使用 `POST /api/settings/admin/run`。定时检查关闭不停止已入队任务。
 5. **`systemctl is-active` 不等于功能健康**：验收要看 sync worker 新日志（如图片回填是否仍有持续失败）、
    页面 `frontend/dist/assets/` 的哈希是否与新 build 一致，以及只启一个媒体消费者。
 6. `deploy.sh` 是被 Git 忽略的本地运维工具，不随仓库分发。使用前必须核对它是否在覆盖代码前备份、
@@ -556,8 +556,11 @@ journalctl -u hippo-knowledge-worker -n 50
 
 管理台的「定时检查近期文章」用于推送补漏，沿用原 `enabled` 与周期配置；
 关闭后推送、历史补全和已入队下载仍继续。正文、图片下载开关分别控制各自消费者。
-公众号卡片和来源页共用 `sync` 状态：历史列表进度、正文积压、近期检查时间分开显示。
+公众号卡片和来源页共用 `sync` 状态：历史列表进度、正文和图片积压、近期检查时间分开显示。
 历史任务暂停保留游标，使用「继续补全历史」恢复，不会重新翻完已完成的历史。
 
 后台任务以 PostgreSQL `sync_jobs` 为唯一执行入口。开发用 `web.inprocess_sync`
 也运行同一 worker，不再直接执行另一套定时同步；生产继续使用独立 systemd worker。
+
+不同来源（公众号、YouTube、RSS 等）的列表任务并行执行，同一来源保持串行请求和限流。
+正常重启会归还未完成任务，历史补全从已保存游标继续；正文批次归还队列且不增加失败次数。

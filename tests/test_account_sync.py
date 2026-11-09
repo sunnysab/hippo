@@ -58,7 +58,7 @@ async def _visible_accounts_are_enriched_in_one_bounded_query():
     rows = [{'biz': 'one'}, {'biz': 'two'}]
     await enrich_account_sync(SimpleNamespace(cursor=lambda **_: cursor), rows)
     cursor.execute.assert_awaited_once()
-    assert cursor.execute.await_args.args[1] == (['one', 'two'], ['one', 'two'], ['one', 'two'])
+    assert cursor.execute.await_args.args[1] == (['one', 'two'],) * 4
     assert rows[0]['sync']['history']['status'] == 'complete'
     assert rows[0]['sync']['articles']['pending'] == 1112
     assert rows[1]['sync']['history']['status'] == 'running'

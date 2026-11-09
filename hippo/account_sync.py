@@ -33,6 +33,7 @@ def account_sync_state(row: dict[str, Any]) -> dict[str, Any]:
             'task_id': row.get('history_task_id'),
         },
         'articles': {key: int(row.get(key) or 0) for key in ('pending', 'processing', 'failed')},
+        'images': {key: int(row.get(f'images_{key}') or 0) for key in ('pending', 'failed')},
         'listing': row.get('listing'),
         'last_checked_at': row.get('last_synced_at'),
     }
@@ -59,6 +60,14 @@ async def enrich_account_sync(conn: Any, accounts: list[dict[str, Any]]) -> None
                        COUNT(*) FILTER (WHERE state = 'failed') AS failed
                 FROM article_queue WHERE biz = ANY(%s) AND state <> 'done'
                 GROUP BY biz
+            ), image_counts AS (
+                SELECT ar.biz,
+                       COUNT(*) FILTER (WHERE im.failed_at IS NULL) AS pending,
+                       COUNT(*) FILTER (WHERE im.failed_at IS NOT NULL) AS failed
+                FROM article_images im JOIN articles ar ON ar.id = im.article_pk
+                WHERE (im.s3_key IS NULL OR im.s3_key = '') AND im.orig_url IS NOT NULL
+                  AND ar.biz = ANY(%s)
+                GROUP BY ar.biz
             ), history_candidates AS MATERIALIZED (
                 SELECT id, status, error, created_at, biz_list FROM sync_jobs
                 WHERE trigger_type = 'backfill'
@@ -71,13 +80,15 @@ async def enrich_account_sync(conn: Any, accounts: list[dict[str, Any]]) -> None
                 JOIN selected a ON a.biz = b.biz
                 ORDER BY b.biz, (j.status IN ('queued', 'running', 'cancelling')) DESC, j.created_at DESC
             ), listing_candidates AS MATERIALIZED (
-                SELECT id, status, trigger_type, created_at, biz_list, current_account FROM sync_jobs
+                SELECT id, status, trigger_type, created_at, biz_list, current_account, accounts FROM sync_jobs
                 WHERE status IN ('queued', 'running', 'cancelling')
             ), listing AS (
                 SELECT DISTINCT ON (a.biz) a.biz,
                        jsonb_build_object('task_id', j.id, 'status', j.status, 'kind', j.trigger_type) AS listing
                 FROM selected a JOIN listing_candidates j
                   ON j.current_account->>'biz' = a.biz OR j.biz_list @> jsonb_build_array(a.biz)
+                    OR EXISTS (SELECT 1 FROM jsonb_array_elements(j.accounts) progress
+                               WHERE progress->>'biz' = a.biz AND progress->>'status' = 'running')
                 ORDER BY a.biz, (j.status IN ('running', 'cancelling')) DESC, j.created_at ASC
             )
             SELECT a.biz, a.source, a.backfill_state, a.last_synced_at,
@@ -85,14 +96,16 @@ async def enrich_account_sync(conn: Any, accounts: list[dict[str, Any]]) -> None
                        SELECT 1 FROM subscription s WHERE s.biz = a.biz AND NOT s.is_disabled
                    )) AS history_enabled,
                    q.pending, q.processing, q.failed,
+                   images.pending AS images_pending, images.failed AS images_failed,
                    h.id AS history_task_id, h.status AS history_job_status, h.error AS history_error,
                    l.listing
             FROM selected a
             LEFT JOIN body_counts q ON q.biz = a.biz
+            LEFT JOIN image_counts images ON images.biz = a.biz
             LEFT JOIN history h ON h.biz = a.biz
             LEFT JOIN listing l ON l.biz = a.biz
             """,
-            (biz_list, biz_list, biz_list),
+            (biz_list, biz_list, biz_list, biz_list),
         )
         states = {row['biz']: account_sync_state(dict(row)) for row in await cur.fetchall()}
     for account in accounts:

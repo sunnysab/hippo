@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -115,6 +116,11 @@ class WeixinArticleSync:
     async def _process_batch(self, batch: list[dict[str, Any]], stats: SyncStats) -> None:
         try:
             await self._process_batch_inner(batch, stats)
+        except asyncio.CancelledError:
+            await self._storage.rollback()
+            await self._storage.article_queue.requeue([int(row['id']) for row in batch], error='worker stopped')
+            await self._storage.commit()
+            raise
         except SessionExpiredError:
             # 会话失效是基础设施故障：整批回 pending 且不计 attempts，交给上层等重新登录。
             await self._storage.article_queue.requeue([int(row['id']) for row in batch], error='daemon session expired')

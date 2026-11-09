@@ -121,6 +121,7 @@ class SyncTaskState:
     biz_list: tuple[str, ...] | None = None
     #: 这次任务限定在哪个来源；空值表示全站同步。
     source: str | None = None
+    scope_sources: tuple[str, ...] | None = None
     trigger_type: str = 'manual'
     #: 谁发起了这次任务。调度/回填等系统任务为空；普通用户只能看到与自己 id 相同的任务。
     requester_user_id: int | None = None
@@ -135,6 +136,7 @@ class SyncTaskState:
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
+        d.pop('scope_sources', None)
         d['accounts'] = [p.__dict__.copy() for p in self.accounts.values()]
         return d
 

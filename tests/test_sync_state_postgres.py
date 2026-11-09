@@ -17,6 +17,7 @@ from hippo.api.routers.account import resume_account_backfill
 from hippo.api.routers.settings import cancel_sync_task
 from hippo.exceptions import ApiError
 from hippo.repositories.account import AccountRepository
+from hippo.storage import StorageTransaction
 from hippo.sync_jobs import SyncJobRepository
 
 DSN = os.environ.get('HIPPO_TEST_PG_DSN')
@@ -31,11 +32,23 @@ class SyncStatePostgresTest(unittest.IsolatedAsyncioTestCase):
         await self.conn.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(self.schema)))
         self.addAsyncCleanup(self.cleanup)
         schema = (Path(__file__).resolve().parent.parent / 'schema/postgres.sql').read_text()
-        for table in ('account_groups', 'accounts', 'users', 'subscription', 'sync_jobs', 'article_queue'):
+        for table in (
+            'account_groups',
+            'accounts',
+            'users',
+            'subscription',
+            'sync_jobs',
+            'article_queue',
+            'articles',
+            'article_images',
+        ):
             ddl = re.search(rf'CREATE TABLE IF NOT EXISTS {table} \(.*?\n\);', schema, re.DOTALL)
             await self.conn.execute(ddl.group())
         await self.conn.execute("ALTER TABLE accounts ADD COLUMN source text NOT NULL DEFAULT 'weixin'")
         await self.conn.execute('ALTER TABLE sync_jobs ADD COLUMN source text, ADD COLUMN requester_user_id integer')
+        scope_ddl = re.search(r'ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS scope_sources TEXT\[\];', schema).group()
+        await self.conn.execute(scope_ddl)
+        await self.conn.execute(scope_ddl)
         await self.conn.execute("""
             INSERT INTO accounts (biz, nickname, backfill_state, backfill_cursor, created_at, updated_at)
             VALUES ('one', 'One', 'pending', 'saved-cursor', NOW(), NOW());
@@ -90,9 +103,7 @@ class SyncStatePostgresTest(unittest.IsolatedAsyncioTestCase):
         ids = {job.task_id for job in await self.jobs.list_jobs(source='weixin', active=True)}
         self.assertIn(grouped.task_id, ids)
         async with self.conn.transaction():
-            narrowed = await self.jobs.create_job(
-                trigger_type='manual', group_id=group[0], biz_list=['youtube:UC1']
-            )
+            narrowed = await self.jobs.create_job(trigger_type='manual', group_id=group[0], biz_list=['youtube:UC1'])
         ids = {job.task_id for job in await self.jobs.list_jobs(source='weixin', active=True)}
         self.assertNotIn(narrowed.task_id, ids)
 
@@ -167,3 +178,163 @@ class SyncStatePostgresTest(unittest.IsolatedAsyncioTestCase):
             await self.conn.execute("SELECT backfill_state, backfill_cursor FROM accounts WHERE biz = 'one'")
         ).fetchone()
         self.assertEqual(('pending', 'saved-cursor'), row)
+
+    async def test_image_backlog_is_separate_and_excludes_stored_images(self):
+        row = await (
+            await self.conn.execute("""
+            INSERT INTO articles (biz, article_id, title, link, raw_json, created_at, updated_at)
+            VALUES ('one', 'a', 'A', 'https://test/a', '{}', NOW(), NOW()) RETURNING id
+        """)
+        ).fetchone()
+        for url, key, failed in [('pending', None, None), ('failed', None, 'bad'), ('stored', 'key', None)]:
+            await self.conn.execute(
+                """
+                INSERT INTO article_images (article_pk, position, kind, orig_url, s3_key, failed_at, updated_at)
+                VALUES (%s, 0, 'image', %s, %s, CASE WHEN %s::text IS NULL THEN NULL ELSE NOW() END, NOW())
+            """,
+                (row[0], url, key, failed),
+            )
+        rows = [{'biz': 'one'}]
+        await enrich_account_sync(self.conn, rows)
+        self.assertEqual({'pending': 1, 'failed': 1}, rows[0]['sync']['images'])
+
+    async def test_shutdown_releases_only_owned_job_and_preserves_history_cursor(self):
+        async with self.conn.transaction():
+            job = await self.jobs.create_job(trigger_type='backfill', biz_list=['one'], source='weixin')
+            await self.jobs.mark_running(job.task_id, worker_id='owner')
+            await self.jobs.release_interrupted_job(job.task_id, worker_id='other')
+        self.assertEqual('running', (await self.jobs.get_job(job.task_id)).status)
+        async with self.conn.transaction():
+            await self.jobs.release_interrupted_job(job.task_id, worker_id='owner')
+        self.assertEqual('queued', (await self.jobs.get_job(job.task_id)).status)
+        row = await (await self.conn.execute("SELECT backfill_cursor FROM accounts WHERE biz = 'one'")).fetchone()
+        self.assertEqual('saved-cursor', row[0])
+        async with self.conn.transaction():
+            await self.jobs.mark_running(job.task_id, worker_id='owner')
+            await self.jobs.cancel_job(job.task_id)
+            await self.jobs.release_interrupted_job(job.task_id, worker_id='owner')
+        self.assertEqual('cancelled', (await self.jobs.get_job(job.task_id)).status)
+
+    async def test_different_sources_can_run_while_same_source_waits(self):
+        async with self.conn.transaction():
+            first = await self.jobs.create_job(trigger_type='scheduled', source='weixin')
+            waiting = await self.jobs.create_job(trigger_type='scheduled', source='weixin')
+            parallel = await self.jobs.create_job(trigger_type='scheduled', source='youtube')
+            claimed = await self.jobs.claim_next_job(worker_id='one')
+            await self.jobs.mark_running(claimed.task_id, worker_id='one')
+        self.assertEqual(first.task_id, claimed.task_id)
+        async with self.conn.transaction():
+            claimed = await self.jobs.claim_next_job(worker_id='two')
+            await self.jobs.mark_running(claimed.task_id, worker_id='two')
+        self.assertEqual(parallel.task_id, claimed.task_id)
+        async with self.conn.transaction():
+            self.assertIsNone(await self.jobs.claim_next_job(worker_id='three'))
+        self.assertEqual('queued', (await self.jobs.get_job(waiting.task_id)).status)
+
+    async def test_worker_interruption_requeues_and_next_run_reads_saved_cursor(self):
+        from hippo.sync_service import SyncJobResult
+        from hippo.sync_types import SyncReport
+        from hippo.sync_worker import run_worker_once
+
+        async with self.conn.transaction():
+            original = await self.jobs.create_job(trigger_type='backfill', biz_list=['one'], source='weixin')
+        storage = SimpleNamespace(
+            sync_jobs=self.jobs,
+            accounts=AccountRepository(self.conn),
+            transaction=lambda: StorageTransaction(self.conn),
+            rollback=self.conn.rollback,
+        )
+        saved = asyncio.Event()
+
+        async def interrupted(storage, **kwargs):
+            async with storage.transaction():
+                await storage.accounts.set_backfill_cursor('one', 'next-page')
+            saved.set()
+            await asyncio.Event().wait()
+
+        async def poll(*args):
+            await asyncio.Event().wait()
+
+        with (
+            patch('hippo.sync_worker._poll_cancel', poll),
+            patch('hippo.sync_worker.backfill_account_history', interrupted),
+        ):
+            task = asyncio.create_task(run_worker_once(storage=storage, worker_id='owner'))
+            await asyncio.wait_for(saved.wait(), 2)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertEqual('queued', (await self.jobs.get_job(original.task_id)).status)
+
+        async def resumed(storage, **kwargs):
+            account = await storage.accounts.get_account('one', fallback_to_default=False)
+            self.assertEqual('next-page', account.backfill_cursor)
+            return SyncJobResult(
+                status={'status': 'success'},
+                report=SyncReport(total_saved=0, summary=[], details=[], downloaded=0),
+                error=None,
+            )
+
+        with (
+            patch('hippo.sync_worker._poll_cancel', poll),
+            patch('hippo.sync_worker.backfill_account_history', resumed),
+        ):
+            self.assertTrue(await run_worker_once(storage=storage, worker_id='new-owner'))
+        self.assertEqual('success', (await self.jobs.get_job(original.task_id)).status)
+
+    async def test_running_group_scope_survives_subscription_moves(self):
+        group = await (
+            await self.conn.execute(
+                "INSERT INTO account_groups (name,created_at,updated_at) VALUES ('moving',NOW(),NOW()) RETURNING id"
+            )
+        ).fetchone()
+        await self.conn.execute("UPDATE subscription SET group_id=%s WHERE biz='one'", (group[0],))
+        async with self.conn.transaction():
+            running = await self.jobs.create_job(trigger_type='manual', group_id=group[0])
+            claimed = await self.jobs.claim_next_job(worker_id='owner')
+            await self.jobs.mark_running(claimed.task_id, worker_id='owner')
+        self.assertEqual(running.task_id, claimed.task_id)
+        self.assertEqual(('weixin',), claimed.scope_sources)
+        await self.conn.execute("UPDATE subscription SET group_id=NULL WHERE biz='one'")
+        async with self.conn.transaction():
+            await self.jobs.create_job(trigger_type='scheduled', source='weixin')
+            self.assertIsNone(await self.jobs.claim_next_job(worker_id='other'))
+
+    async def test_shutdown_during_final_flush_releases_running_job(self):
+        from hippo.sync_service import SyncJobResult
+        from hippo.sync_types import SyncReport
+        from hippo.sync_worker import run_worker_once
+
+        async with self.conn.transaction():
+            job = await self.jobs.create_job(trigger_type='backfill', biz_list=['one'], source='weixin')
+        storage = SimpleNamespace(
+            sync_jobs=self.jobs,
+            accounts=AccountRepository(self.conn),
+            transaction=lambda: StorageTransaction(self.conn),
+            rollback=self.conn.rollback,
+        )
+        flushing = asyncio.Event()
+
+        async def flush(tracker):
+            flushing.set()
+            await asyncio.Event().wait()
+
+        async def poll(*args):
+            await asyncio.Event().wait()
+
+        result = SyncJobResult(
+            status={'status': 'success'},
+            report=SyncReport(total_saved=0, summary=[], details=[], downloaded=0),
+            error=None,
+        )
+        with (
+            patch('hippo.sync_worker._poll_cancel', poll),
+            patch('hippo.sync_worker._WorkerProgressTracker.flush', flush),
+            patch('hippo.sync_worker.backfill_account_history', AsyncMock(return_value=result)),
+        ):
+            task = asyncio.create_task(run_worker_once(storage=storage, worker_id='owner'))
+            await asyncio.wait_for(flushing.wait(), 2)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertEqual('queued', (await self.jobs.get_job(job.task_id)).status)
