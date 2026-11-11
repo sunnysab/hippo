@@ -408,6 +408,8 @@
   "sync.workerAlive": "worker 最后活跃 {time}",
   "sync.workerUnknown": "尚无 worker 心跳",
   "sync.historyTitle": "列表任务记录",
+  "sync.sourceHistoryTitle": "来源同步记录",
+  "sync.siteTasksTitle": "全站任务记录",
   "sync.historyEmpty": "暂无同步记录。",
   "sync.runningTitle": "正在检查 {name}",
   "sync.runningSince": "已开始 {n} 分钟",

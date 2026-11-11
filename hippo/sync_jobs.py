@@ -190,19 +190,43 @@ class SyncJobRepository:
         filters = (' AND ' + ' AND '.join(where)) if where else ''
         limit = max(int(limit), 1)
         if source:
-            # Separate indexed source ranges before merging their newest rows.
-            # An OR across explicit and legacy sources sorts/evaluates all old
-            # jobs (including their correlated account lookups) before LIMIT.
+            # Historical jobs did not always record ``source``. Attribute one
+            # only when its stored execution scope proves a single source; an
+            # unknown whole-site job belongs on the overview, never on every
+            # source page. Do not infer history from today's group membership.
             legacy = """(
-                EXISTS (SELECT 1 FROM jsonb_array_elements_text(biz_list) b
-                        WHERE b.value IN (SELECT a.biz FROM accounts a WHERE a.source = %s))
-                OR (biz_list IS NULL AND group_id IS NULL)
-                OR (group_id IS NOT NULL AND EXISTS (SELECT 1 FROM subscription s JOIN accounts a ON a.biz = s.biz
-                           WHERE s.group_id = sync_jobs.group_id AND a.source = %s
-                             AND (sync_jobs.biz_list IS NULL
-                                  OR sync_jobs.biz_list @> jsonb_build_array(a.biz))))
-                OR EXISTS (SELECT 1 FROM jsonb_array_elements(sync_jobs.accounts) item
-                           WHERE item->>'source' = %s)
+                scope_sources = ARRAY[%s]::text[]
+                OR (
+                    scope_sources IS NULL AND (
+                        (
+                            jsonb_typeof(accounts) = 'array'
+                            AND jsonb_array_length(accounts) > 0
+                            AND EXISTS (
+                                SELECT 1 FROM jsonb_array_elements(accounts) item
+                                WHERE item->>'source' = %s
+                            )
+                            AND NOT EXISTS (
+                                SELECT 1 FROM jsonb_array_elements(accounts) item
+                                WHERE item->>'source' IS DISTINCT FROM %s
+                            )
+                        )
+                        OR (
+                            jsonb_typeof(biz_list) = 'array'
+                            AND jsonb_array_length(biz_list) > 0
+                            AND EXISTS (
+                                SELECT 1 FROM jsonb_array_elements_text(biz_list) b
+                                JOIN accounts a ON a.biz = b.value
+                                WHERE a.source = %s
+                            )
+                            AND jsonb_array_length(biz_list) = (
+                                SELECT COUNT(*)
+                                FROM jsonb_array_elements_text(biz_list) b
+                                JOIN accounts a ON a.biz = b.value
+                                WHERE a.source = %s
+                            )
+                        )
+                    )
+                )
             )"""
             query = (
                 f'(SELECT {columns} FROM sync_jobs WHERE source = %s{filters} ORDER BY created_at DESC LIMIT %s) '
@@ -211,7 +235,19 @@ class SyncJobRepository:
                 'ORDER BY created_at DESC LIMIT %s) '
                 'ORDER BY created_at DESC LIMIT %s'
             )
-            params = [source, *params, limit, *params, source, source, source, limit, limit]
+            params = [
+                source,
+                *params,
+                limit,
+                *params,
+                source,
+                source,
+                source,
+                source,
+                source,
+                limit,
+                limit,
+            ]
         else:
             query = f'SELECT {columns} FROM sync_jobs'
             if where:

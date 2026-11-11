@@ -83,13 +83,14 @@ class SyncStatePostgresTest(unittest.IsolatedAsyncioTestCase):
         await enrich_account_sync(self.conn, rows)
         self.assertEqual(0, rows[0]['sync']['articles']['pending'])
 
-    async def test_source_filter_keeps_legacy_and_whole_site_jobs_but_excludes_other_sources(self):
+    async def test_source_filter_only_keeps_jobs_with_proven_single_source_scope(self):
         async with self.conn.transaction():
             legacy = await self.jobs.create_job(trigger_type='backfill', biz_list=['one'])
             site = await self.jobs.create_job(trigger_type='scheduled')
             other = await self.jobs.create_job(trigger_type='manual', source='youtube')
         ids = {job.task_id for job in await self.jobs.list_jobs(source='weixin', active=True)}
-        self.assertEqual({legacy.task_id, site.task_id}, ids)
+        self.assertEqual({legacy.task_id}, ids)
+        self.assertNotIn(site.task_id, ids)
         self.assertNotIn(other.task_id, ids)
         self.assertEqual([], await self.jobs.list_jobs(source='weixin', active=False))
         group = await (
@@ -101,11 +102,19 @@ class SyncStatePostgresTest(unittest.IsolatedAsyncioTestCase):
         async with self.conn.transaction():
             grouped = await self.jobs.create_job(trigger_type='manual', group_id=group[0])
         ids = {job.task_id for job in await self.jobs.list_jobs(source='weixin', active=True)}
-        self.assertIn(grouped.task_id, ids)
+        self.assertNotIn(grouped.task_id, ids)
         async with self.conn.transaction():
             narrowed = await self.jobs.create_job(trigger_type='manual', group_id=group[0], biz_list=['youtube:UC1'])
         ids = {job.task_id for job in await self.jobs.list_jobs(source='weixin', active=True)}
         self.assertNotIn(narrowed.task_id, ids)
+        await self.conn.execute(
+            """INSERT INTO sync_jobs
+               (id, status, trigger_type, biz_list, accounts, created_at)
+               VALUES ('multi', 'success', 'manual', '[]',
+                       '[{"biz":"one","source":"weixin"},{"biz":"yt","source":"youtube"}]', NOW())"""
+        )
+        ids = {job.task_id for job in await self.jobs.list_jobs(source='weixin', active=False)}
+        self.assertNotIn('multi', ids)
 
     async def test_source_history_merges_explicit_and_legacy_jobs_before_limit(self):
         await self.conn.execute("""

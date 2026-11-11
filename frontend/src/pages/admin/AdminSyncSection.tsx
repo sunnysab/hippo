@@ -18,11 +18,34 @@ const TASK_LIMIT = 8;
  * survive a restart, and `source` is a column on them, so "this source's last
  * runs" is a query and not a guess.
  */
-export function AdminSyncSection({ source }: { source?: string }) {
-  return <SourceTaskHistory key={source || 'all'} source={source} />;
+export function AdminSyncSection({
+  source,
+  disabled = false,
+  disabledReason = '',
+}: {
+  source?: string;
+  disabled?: boolean;
+  disabledReason?: string;
+}) {
+  return (
+    <SourceTaskHistory
+      key={source || 'all'}
+      source={source}
+      disabled={disabled}
+      disabledReason={disabledReason}
+    />
+  );
 }
 
-function SourceTaskHistory({ source }: { source?: string }) {
+function SourceTaskHistory({
+  source,
+  disabled,
+  disabledReason,
+}: {
+  source?: string;
+  disabled: boolean;
+  disabledReason: string;
+}) {
   const { t } = useI18n();
   const { runSync } = useSyncRun();
   const [historyTasks, setHistoryTasks] = useState<SyncTaskSummary[]>([]);
@@ -87,15 +110,16 @@ function SourceTaskHistory({ source }: { source?: string }) {
     <div className="panel">
       <div className="panel-header">
         <div>
-          <h2>{t('sync.historyTitle', '同步记录')}</h2>
-
+          <h2>{source ? t('sync.sourceHistoryTitle', '来源同步记录') : t('sync.siteTasksTitle', '全站任务记录')}</h2>
         </div>
         <div className="toolbar">
-          <button className="btn" type="button" disabled={busy} onClick={() => void run()}>
+          <button className="btn" type="button" disabled={busy || disabled} onClick={() => void run()}>
             {t('sync.run', '运行')}
           </button>
         </div>
       </div>
+
+      {disabledReason ? <p className="muted admin-note">{disabledReason}</p> : null}
 
       {error && <p role="alert">{error} <button className="btn ghost" type="button" onClick={refresh}>{t('common.retry', '重试')}</button></p>}
       <div className="list">
