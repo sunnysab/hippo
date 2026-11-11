@@ -33,6 +33,17 @@ interface AccountHit {
   is_added: boolean;
 }
 
+interface CaixinChannel {
+  channel_id: number;
+  biz: string;
+  name: string;
+  url: string;
+  collecting: boolean;
+  has_articles: boolean;
+  subscribed: boolean;
+  can_subscribe: boolean;
+}
+
 /** 输入框里的一行字属于哪一类：一个地址，还是一个要找的名字。 */
 type Target = 'link' | 'name';
 
@@ -56,6 +67,12 @@ export function AddSubscriptionModal({ onClose, groupId, onSubscribed }: AddSubs
   const [adding, setAdding] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [caixinChannels, setCaixinChannels] = useState<CaixinChannel[] | null>(null);
+  const [caixinOpen, setCaixinOpen] = useState(false);
+  const [caixinBusy, setCaixinBusy] = useState('');
+  const [caixinLoading, setCaixinLoading] = useState(true);
+  const [caixinLoadError, setCaixinLoadError] = useState('');
+  const [caixinRetry, setCaixinRetry] = useState(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const target: Target = looksLikeLink(input.trim()) ? 'link' : 'name';
@@ -66,6 +83,26 @@ export function AddSubscriptionModal({ onClose, groupId, onSubscribed }: AddSubs
   useEffect(() => () => {
     if (timerRef.current) clearTimeout(timerRef.current);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void apiGet('/api/source/caixin/channel')
+      .then((payload) => {
+        if (!cancelled) setCaixinChannels((payload.channels || []) as CaixinChannel[]);
+      })
+      .catch((err: unknown) => {
+        if (cancelled || isAuthError(err)) return;
+        const apiError = err as { code?: string; message?: string; status?: number };
+        setCaixinChannels(null);
+        if (apiError.status !== 403 || apiError.code !== 'source.subscription_unavailable') {
+          setCaixinLoadError(apiError.message || t('sources.caixinLoadFailed', '加载财新板块失败。'));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCaixinLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [caixinRetry, t]);
 
   useEffect(() => {
     const handleEsc = (event: KeyboardEvent) => {
@@ -172,6 +209,28 @@ export function AddSubscriptionModal({ onClose, groupId, onSubscribed }: AddSubs
     }
   };
 
+  const subscribeCaixin = async (channel: CaixinChannel) => {
+    setCaixinBusy(channel.biz);
+    setError('');
+    try {
+      await apiSend('/api/source/channel', 'POST', {
+        url: channel.url,
+        ...(groupId != null ? { group_id: groupId } : {}),
+      });
+      setCaixinChannels((current) => current?.map((item) => (
+        item.biz === channel.biz ? { ...item, subscribed: true, can_subscribe: false } : item
+      )) ?? current);
+      showToast(t('sources.caixinSubscribed', '已订阅财新板块，后续更新按实例采集计划进行。'));
+      emitRefresh();
+      onSubscribed?.();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      setError((err as Error)?.message || t('sources.subscribeFailed', '订阅失败。'));
+    } finally {
+      setCaixinBusy('');
+    }
+  };
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== 'Enter') return;
     if (target === 'link') {
@@ -224,10 +283,88 @@ export function AddSubscriptionModal({ onClose, groupId, onSubscribed }: AddSubs
 
           {error ? <p className="settings-error" role="alert">{error}</p> : null}
 
+          {!input.trim() && caixinLoadError ? (
+            <p className="settings-error" role="alert">
+              {caixinLoadError}{' '}
+              <button
+                className="btn ghost"
+                type="button"
+                disabled={caixinLoading}
+                onClick={() => {
+                  setCaixinLoading(true);
+                  setCaixinLoadError('');
+                  setCaixinOpen(false);
+                  setCaixinRetry((value) => value + 1);
+                }}
+              >
+                {t('common.retry', '重试')}
+              </button>
+            </p>
+          ) : null}
+
           {target === 'link' && !preview && !busy ? (
             <p className="muted subscribe-hint">
               {t('sources.addHint', '支持 B站视频 / UP、YouTube 频道、播客与公众号文章链接。')}
             </p>
+          ) : null}
+
+          {!input.trim() && caixinChannels?.length ? (
+            <div className="source-preview">
+              <div className="source-preview-main">
+                <div>
+                  <div>{t('sources.caixinTitle', '财新')}</div>
+                  <div className="muted">{t('sources.caixinHint', '选择感兴趣的板块，不需要粘贴地址。')}</div>
+                </div>
+              </div>
+              <button
+                className="btn ghost"
+                type="button"
+                aria-expanded={caixinOpen}
+                aria-controls="caixin-channel-list"
+                onClick={() => setCaixinOpen((open) => !open)}
+              >
+                {caixinOpen ? t('common.close', '关闭') : t('sources.chooseChannels', '选择板块')}
+              </button>
+            </div>
+          ) : null}
+
+          {caixinOpen ? (
+            <div
+              className="search-results"
+              id="caixin-channel-list"
+              aria-label={t('sources.caixinChannels', '财新板块')}
+            >
+              {caixinChannels?.map((channel) => (
+                <div key={channel.biz} className="search-item">
+                  <div className="search-meta">
+                    <div className="account-name">{channel.name}</div>
+                    <div className="account-sub">
+                      {channel.subscribed
+                        ? t('sources.alreadySubscribed', '已经订阅过了。')
+                        : channel.collecting
+                          ? t('sources.collecting', '正在采集')
+                          : channel.has_articles
+                            ? t('sources.historyOnly', '暂停更新，可订阅历史内容')
+                            : t('sources.notCollecting', '管理员尚未启用')}
+                    </div>
+                  </div>
+                  <div className="search-actions">
+                    {channel.subscribed ? (
+                      <span className="muted">{t('sources.subscribedShort', '已订阅')}</span>
+                    ) : channel.can_subscribe ? (
+                      <button
+                        className="btn ghost"
+                        type="button"
+                        disabled={Boolean(caixinBusy)}
+                        onClick={() => void subscribeCaixin(channel)}
+                      >
+                        {caixinBusy === channel.biz ? t('common.loading', '正在加载…') : t('sources.subscribe', '订阅')}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : null}
 
           {preview ? (

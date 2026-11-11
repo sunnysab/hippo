@@ -209,6 +209,34 @@ describe('ArticlesPage update entry', () => {
     expect((screen.getByRole('combobox', { name: '来源' }) as HTMLSelectElement).value).toBe('feed');
   });
 
+  it('shows the Caixin discovery entry and opens its local channel selector', async () => {
+    const original = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === '/api/source') {
+        return Promise.resolve({ sources: [{ source: 'caixin', channels: 0, discoverable: true }] });
+      }
+      if (path === '/api/source/caixin/channel') return Promise.resolve({ channels: [] });
+      return original(path);
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: '选择财新板块' }));
+
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/api/source/caixin/channel'));
+    expect(screen.getByText('添加订阅')).toBeTruthy();
+  });
+
+  it('hides the Caixin discovery entry when the administrator disables it', async () => {
+    const original = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string) => path === '/api/source'
+      ? Promise.resolve({ sources: [{ source: 'caixin', channels: 0, discoverable: false }] })
+      : original(path));
+    renderPage();
+
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/api/source'));
+    expect(screen.queryByRole('button', { name: '选择财新板块' })).toBeNull();
+  });
+
   it('replaces the hidden wide rail with a source selector when the list is collapsed', async () => {
     viewportWidth = 2000;
     const { container } = renderPage('/articles?source=youtube');

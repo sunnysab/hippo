@@ -6,6 +6,7 @@ import { onRefresh } from '../utils/events';
 export interface ArticleSource {
   source: string;
   channels: number;
+  discoverable?: boolean;
 }
 
 /** Share source choices between the wide rail and the compact toolbar. */

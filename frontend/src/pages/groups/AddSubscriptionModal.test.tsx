@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AddSubscriptionModal } from './AddSubscriptionModal';
 
@@ -36,6 +36,7 @@ describe('AddSubscriptionModal', () => {
   beforeEach(() => {
     apiGetMock.mockReset();
     apiSendMock.mockReset();
+    apiGetMock.mockResolvedValue({ channels: [] });
   });
 
   it('treats a URL as a link and resolves it into a channel', async () => {
@@ -53,7 +54,7 @@ describe('AddSubscriptionModal', () => {
 
     await waitFor(() => expect(screen.getByText('影视飓风')).toBeTruthy());
     expect(screen.getByText(/哔哩哔哩/)).toBeTruthy();
-    expect(apiGetMock.mock.calls[0][0]).toContain('/api/source/preview?url=');
+    expect(apiGetMock.mock.calls.some(([path]) => String(path).includes('/api/source/preview?url='))).toBe(true);
     // 只是预览，还没写任何东西
     expect(apiSendMock).not.toHaveBeenCalled();
   });
@@ -114,8 +115,7 @@ describe('AddSubscriptionModal', () => {
     open();
     type('中投数研');
 
-    await waitFor(() => expect(apiGetMock).toHaveBeenCalled());
-    expect(apiGetMock.mock.calls[0][0]).toContain('/api/account/search?q=');
+    await waitFor(() => expect(apiGetMock.mock.calls.some(([path]) => String(path).includes('/api/account/search?q='))).toBe(true));
     await waitFor(() => expect(screen.getByText('中投数研')).toBeTruthy());
   });
 
@@ -145,6 +145,91 @@ describe('AddSubscriptionModal', () => {
     type('中');
 
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
-    expect(apiGetMock).not.toHaveBeenCalled();
+    expect(apiGetMock.mock.calls.some(([path]) => String(path).includes('/api/account/search?'))).toBe(false);
+  });
+
+  it('offers local Caixin channel choices and keeps successful rows visible', async () => {
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === '/api/source/caixin/channel') {
+        return Promise.resolve({
+          channels: [
+            {
+              channel_id: 125,
+              biz: 'caixin:125',
+              name: '金融',
+              url: 'https://finance.caixin.com/',
+              collecting: true,
+              has_articles: true,
+              subscribed: false,
+              can_subscribe: true,
+            },
+            {
+              channel_id: 124,
+              biz: 'caixin:124',
+              name: '要闻',
+              url: 'https://www.caixin.com/',
+              collecting: false,
+              has_articles: false,
+              subscribed: false,
+              can_subscribe: false,
+            },
+          ],
+        });
+      }
+      return Promise.resolve({});
+    });
+    apiSendMock.mockResolvedValue({});
+    const onSubscribed = open(vi.fn(), null);
+
+    fireEvent.click(await screen.findByRole('button', { name: '选择板块' }));
+    const finance = screen.getByText('金融').closest('.search-item') as HTMLElement;
+    expect(within(finance).getByText('正在采集')).toBeTruthy();
+    expect(screen.getByText('管理员尚未启用')).toBeTruthy();
+    fireEvent.click(within(finance).getByRole('button', { name: '订阅' }));
+
+    await waitFor(() => expect(apiSendMock).toHaveBeenCalledWith('/api/source/channel', 'POST', {
+      url: 'https://finance.caixin.com/',
+    }));
+    expect(await within(finance).findByText('已订阅')).toBeTruthy();
+    expect(onSubscribed).toHaveBeenCalled();
+    expect(screen.getByText('添加订阅')).toBeTruthy();
+  });
+
+  it('does not show a Caixin entry when the server hides discovery', async () => {
+    apiGetMock.mockImplementation((path: string) => path === '/api/source/caixin/channel'
+      ? Promise.reject(Object.assign(new Error('forbidden'), {
+        status: 403,
+        code: 'source.subscription_unavailable',
+      }))
+      : Promise.resolve({}));
+    open();
+
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/api/source/caixin/channel'));
+    expect(screen.queryByText('选择感兴趣的板块，不需要粘贴地址。')).toBeNull();
+    expect(screen.queryByText('加载财新板块失败。')).toBeNull();
+  });
+
+  it('shows a retry when the Caixin catalogue request fails', async () => {
+    apiGetMock
+      .mockRejectedValueOnce(new Error('network unavailable'))
+      .mockResolvedValueOnce({
+        channels: [{
+          channel_id: 125,
+          biz: 'caixin:125',
+          name: '金融',
+          url: 'https://finance.caixin.com/',
+          collecting: true,
+          has_articles: true,
+          subscribed: false,
+          can_subscribe: true,
+        }],
+      });
+
+    open();
+    expect(await screen.findByText('network unavailable')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+
+    expect(await screen.findByRole('button', { name: '选择板块' })).toBeTruthy();
+    expect(screen.queryByText('network unavailable')).toBeNull();
   });
 });

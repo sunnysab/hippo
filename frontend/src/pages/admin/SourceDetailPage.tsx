@@ -1,3 +1,4 @@
+import { useCallback, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useI18n } from '../../i18n';
 import { getSourceLabel } from '../../utils/source';
@@ -7,6 +8,7 @@ import { SourceProxyPanel } from './SourceProxyPanel';
 import { SourceSubscriptionPanel } from './SourceSubscriptionPanel';
 import { SourceSchedulePanel } from './SourceSchedulePanel';
 import { AdminSyncSection } from './AdminSyncSection';
+import { CaixinVisibilityPanel } from './CaixinVisibilityPanel';
 
 /**
  * One source, everything about it: how hippo signs in, what it crawls, and what
@@ -17,6 +19,11 @@ export function SourceDetailPage() {
   const { source = '' } = useParams();
   const { t } = useI18n();
   const navigate = useNavigate();
+  const [caixinCollection, setCaixinCollection] = useState({ source: '', enabled: false });
+  const onCaixinCollectionChange = useCallback((enabled: boolean) => {
+    setCaixinCollection({ source, enabled });
+  }, [source]);
+  const caixinHasEnabledChannels = caixinCollection.source === source && caixinCollection.enabled;
 
   if (!source) {
     return <div className="muted admin-empty">{t('admin.loading', '加载中…')}</div>;
@@ -45,9 +52,20 @@ export function SourceDetailPage() {
         <SourceSchedulePanel key={source} source={source} />
       )}
 
-      <SourceSubscriptionPanel source={source} />
+      <SourceSubscriptionPanel
+        source={source}
+        onCollectionStateChange={source === 'caixin' ? onCaixinCollectionChange : undefined}
+      />
 
-      <AdminSyncSection source={source} />
+      {source === 'caixin' ? <CaixinVisibilityPanel /> : null}
+
+      <AdminSyncSection
+        source={source}
+        disabled={source === 'caixin' && !caixinHasEnabledChannels}
+        disabledReason={source === 'caixin' && !caixinHasEnabledChannels
+          ? t('admin.caixin.noEnabledChannels', '尚未启用任何采集板块。')
+          : ''}
+      />
     </div>
   );
 }

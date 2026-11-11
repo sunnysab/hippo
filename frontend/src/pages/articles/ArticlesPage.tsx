@@ -23,6 +23,7 @@ import { useSyncRun } from '../../hooks/useSyncRun';
 import { getSyncRunLabel } from '../../utils/sync';
 import { useArticleSources } from '../../hooks/useArticleSources';
 import { getSourceLabel } from '../../utils/source';
+import { AddSubscriptionModal } from '../groups/AddSubscriptionModal';
 
 export function ArticlesPage() {
   const { state, dispatch } = useArticlesState();
@@ -55,6 +56,7 @@ export function ArticlesPage() {
   const readingActive = !isNarrowViewport || mobileReading;
   const [autoPlayId, setAutoPlayId] = useState<number | null>(null);
   const [endedArticleId, setEndedArticleId] = useState<number | null>(null);
+  const [showSubscribe, setShowSubscribe] = useState(false);
   if (endedArticleId !== null && (!filters.watchLater || !readingActive || state.selectedArticleId !== endedArticleId)) {
     setEndedArticleId(null);
   }
@@ -95,6 +97,7 @@ export function ArticlesPage() {
   // Keep the source selector available whenever the wide navigation is hidden.
   const showViewRail = useMediaQuery('(min-width: 1600px)');
   const { sources, error: sourcesFailed, reload: reloadSources } = useArticleSources();
+  const caixinDiscoverable = sources.some((item) => item.source === 'caixin' && item.discoverable);
   const railVisible = showViewRail && !listCollapsed;
   const listVisible = isNarrowViewport ? !mobileReading : !listCollapsed;
   const listLabel = isNarrowViewport
@@ -162,6 +165,15 @@ export function ArticlesPage() {
           }}>
           {t('articles.toggleFilters', 'Filters')}{filterCount ? ` · ${filterCount}` : ''}
         </button> : null}
+        {caixinDiscoverable && !filters.watchLater ? (
+          <button
+            className="btn ghost"
+            type="button"
+            onClick={() => setShowSubscribe(true)}
+          >
+            {t('articles.chooseCaixinChannels', '选择财新板块')}
+          </button>
+        ) : null}
       </div>
       <div
         className={`article-layout${listCollapsed ? ' is-collapsed' : ''}${mobileReading ? ' is-mobile-reading' : ''}${
@@ -389,6 +401,13 @@ export function ArticlesPage() {
           />
         </div>
       </div>
+      {showSubscribe ? (
+        <AddSubscriptionModal
+          groupId={null}
+          onClose={() => setShowSubscribe(false)}
+          onSubscribed={() => { void reloadSources(); }}
+        />
+      ) : null}
     </section>
   );
 }

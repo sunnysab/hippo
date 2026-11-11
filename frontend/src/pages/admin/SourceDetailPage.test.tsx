@@ -80,4 +80,34 @@ describe('SourceDetailPage', () => {
 
     expect(await screen.findByText(/播客 不需要凭证/)).toBeTruthy();
   });
+
+  it('disables Caixin sync when every channel is paused', async () => {
+    const original = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string) => path === '/api/admin/source/caixin/channel'
+      ? Promise.resolve({ channels: [
+          { biz: 'caixin:125', nickname: '财新·金融', alias: 'finance', is_disabled: true },
+          { biz: 'caixin:126', nickname: '财新·经济', alias: 'economy', is_disabled: true },
+        ] })
+      : original(path));
+    renderAt('caixin');
+
+    const run = await screen.findByRole('button', { name: '运行' });
+    await waitFor(() => expect((run as HTMLButtonElement).disabled).toBe(true));
+    expect(screen.getByText('尚未启用任何采集板块。')).toBeTruthy();
+  });
+
+  it('allows Caixin sync when at least one channel is enabled', async () => {
+    const original = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string) => path === '/api/admin/source/caixin/channel'
+      ? Promise.resolve({ channels: [
+          { biz: 'caixin:125', nickname: '财新·金融', alias: 'finance', is_disabled: false },
+          { biz: 'caixin:126', nickname: '财新·经济', alias: 'economy', is_disabled: true },
+        ] })
+      : original(path));
+    renderAt('caixin');
+
+    const run = await screen.findByRole('button', { name: '运行' });
+    await waitFor(() => expect((run as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByText('尚未启用任何采集板块。')).toBeNull();
+  });
 });
