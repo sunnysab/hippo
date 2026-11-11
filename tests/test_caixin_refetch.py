@@ -28,7 +28,7 @@ class _AsyncContext:
 
 
 class CaixinRefetchTest(unittest.TestCase):
-    def _exercise(self, *, personal_cookie, failure=None):
+    def _exercise(self, *, personal_cookie, failure=None, collectable=True):
         row = {
             'biz': 'caixin:132',
             'article_id': '102500001',
@@ -80,6 +80,7 @@ class CaixinRefetchTest(unittest.TestCase):
                 lambda **kwargs: _AsyncContext(SimpleNamespace(downloader=downloader)),
             ),
             patch.object(article_api, 'CaixinSource', constructor),
+            patch.object(article_api, 'caixin_channel_is_collectable', AsyncMock(return_value=collectable)),
             patch.object(article_api.threading, 'Thread', _DeferredThread),
         ):
             started = asyncio.run(article_api.refetch_article(42, storage=SimpleNamespace(), user=user))
@@ -141,3 +142,13 @@ class CaixinRefetchTest(unittest.TestCase):
         visible = json.dumps(run.status)
         self.assertNotIn('personal-secret-marker', visible)
         self.assertNotIn('instance-secret-marker', visible)
+
+    def test_disabled_channel_never_reaches_the_upstream(self):
+        run = self._exercise(personal_cookie=PERSONAL_COOKIE, collectable=False)
+
+        run.constructor.assert_not_called()
+        run.storage.credentials.get.assert_not_awaited()
+        run.source.fetch_article.assert_not_awaited()
+        run.downloader.ingest_body.assert_not_awaited()
+        self.assertEqual('error', run.status['status'])
+        self.assertIn('已停用', run.status['error'])

@@ -698,6 +698,9 @@ POST /api/settings/admin/run { "source": "podcast" }  # 全站目录里只看某
 显式传空的 `biz_list` 是 `400`；请求体字段未知或类型不对是 `422`。`source` 会把「我订阅的该来源频道」
 展开成 `biz_list` 写进任务，任务行上的 `source` 用于按来源筛历史。
 
+管理员指定 `{"source":"caixin"}` 触发全站同步时，若八个板块全部停用，返回 `409` 与
+`code: caixin.no_enabled_channels`，不会创建空任务。不指定来源的全站任务仍可同步其他来源。
+
 ### 状态与任务
 
 `GET /api/settings/status` 是**管理员**接口（队列水位与 worker 心跳是全站视角）。响应为封闭模型：
@@ -875,7 +878,19 @@ GET /api/admin/source
 
 每个来源的目录规模、凭证是否配置、生效的代理与 `media_job` 积压。来源清单由后端给出
 （`hippo/sources/registry.py` 的 `source_names()`），前端不维护副本；不收凭证的来源
-`credential` 为 `null`，没有被配置代理的来源 `proxy` 为解析后的默认值。
+`credential` 为 `null`，没有被配置代理的来源 `proxy` 为解析后的默认值。`followers` 是订阅该来源
+的去重用户数；财新的 `enabled_channels / channels` 是实例采集板块范围。
+
+### 来源实例目录
+
+```
+GET   /api/admin/source/{source}/channel
+PATCH /api/admin/source/{source}/channel { "biz_list": ["caixin:125"], "is_disabled": false }
+```
+
+返回全实例目录及有效订阅用户数、文章数和最近发布时间，与当前管理员的个人订阅无关。
+PATCH 只修改所列且属于路径来源的目录行并写审计；目前仅财新目录可写，其他来源返回
+`400` 与 `code: source.catalogue_read_only`。接口仅限管理员网页会话，API Key 不可调用。
 
 ### 站点设置
 

@@ -188,6 +188,9 @@ def create_app(
             # Groups are per-user and created on demand the first time a user
             # opens the app; only the shared avatar cache needs bootstrapping.
             await _ensure_avatar_images_table(storage)
+            from .sources.caixin_catalog import ensure_caixin_channels
+
+            await ensure_caixin_channels(storage)
         should_enable_sync = _inprocess_sync_enabled() if enable_inprocess_sync is None else enable_inprocess_sync
         if should_enable_sync:
             app.state.sync_worker = SyncWorkerRunner()

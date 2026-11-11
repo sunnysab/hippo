@@ -32,6 +32,19 @@ async def caixin_article_access(storage: PostgresStorage, article_id: str):
         yield
 
 
+async def caixin_channel_is_collectable(storage: PostgresStorage, biz: str) -> bool:
+    """Lock an enabled channel row through the in-flight upstream request.
+
+    A disable operation waits for this share lock, so a request that observed
+    the channel enabled may finish, while every later request sees the change.
+    """
+    cursor = await storage.conn.execute(
+        'SELECT 1 FROM accounts WHERE biz = %s AND source = %s AND NOT is_disabled FOR SHARE',
+        (biz, SOURCE),
+    )
+    return await cursor.fetchone() is not None
+
+
 async def ingest_caixin_body(
     *,
     storage: PostgresStorage,
@@ -123,6 +136,8 @@ class CaixinSync:
                         body = dict(cached.get('raw_json') or {})
                         body['content_html'] = cached['raw_html']
                     else:
+                        if not await caixin_channel_is_collectable(self._storage, biz):
+                            continue
                         secrets = await self._credentials(biz)
                         # Try another credential on a later, paced attempt, never in a request burst.
                         cookie = secrets[int(row.get('attempts') or 0) % len(secrets)]

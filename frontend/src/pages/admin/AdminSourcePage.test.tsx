@@ -91,8 +91,26 @@ describe('AdminSourcePage', () => {
     });
     renderPage(<AdminSourcePage />);
 
-    const button = await screen.findByRole('button', { name: '运行' });
+    const button = (await screen.findAllByRole('button', { name: '运行' }))
+      .find((element) => element.closest('tr'))!;
     expect((button as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('shows the enabled Caixin channel range and its distinct subscribers', async () => {
+    apiGetMock.mockResolvedValue({
+      media_enabled: true,
+      sources: [{
+        ...OVERVIEW.sources[1],
+        source: 'caixin',
+        channels: 8,
+        enabled_channels: 3,
+        followers: 2,
+      }],
+    });
+    renderPage(<AdminSourcePage />);
+
+    expect(await screen.findByText(/已启用 3 \/ 8 个板块/)).toBeTruthy();
+    expect(screen.getByText(/2 人订阅/)).toBeTruthy();
   });
 
   it('shows a load failure and retries it', async () => {

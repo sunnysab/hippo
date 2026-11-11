@@ -18,12 +18,16 @@ class _Accounts:
     def __init__(self, latest_publish_at: datetime | None = None) -> None:
         self.latest_publish_at = latest_publish_at
         self.synced: list[str] = []
+        self.collectable = True
 
     async def get_latest_publish_at(self, biz: str) -> datetime | None:
         return self.latest_publish_at
 
     async def update_last_synced(self, biz: str) -> None:
         self.synced.append(biz)
+
+    async def list_syncable_accounts(self, **_kwargs) -> list[object]:
+        return [object()] if self.collectable else []
 
 
 class _Storage:
@@ -132,6 +136,26 @@ class ManualRunPolicyTest(unittest.TestCase):
         self.assertTrue(result.skipped)
         self.assertEqual(result.skip_reason, 'recently_synced')
         self.assertEqual(adapter.calls, [])
+
+
+class CaixinInstanceRecheckTest(unittest.IsolatedAsyncioTestCase):
+    async def test_a_channel_disabled_during_a_job_makes_no_listing_request(self) -> None:
+        storage = _Storage()
+        storage.accounts.collectable = False
+        adapter = _RecordingAdapter(SyncStats(listed=1, enqueued=1))
+        service = ArticleSyncService(storage=storage, adapters={'caixin': adapter})
+
+        result, summary = await service.sync_account(
+            account=_account('caixin:125', source='caixin'),
+            config=SyncConfig(sleep_seconds=0, force=True, skip_minutes=None),
+            bulk=True,
+            observer=NullSyncObserver(),
+        )
+
+        self.assertTrue(result.skipped)
+        self.assertEqual('disabled', result.skip_reason)
+        self.assertIsNone(summary)
+        self.assertEqual([], adapter.calls)
 
 
 class _RecordingJobObserver(NullSyncJobObserver):

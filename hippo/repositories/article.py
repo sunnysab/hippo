@@ -366,6 +366,11 @@ class ArticleRepository:
 
     async def list_missing_bodies(self, *, source: str, limit: int, max_attempts: int = 3) -> list[dict[str, Any]]:
         """Existing article rows are the durable backlog for text sources."""
+        subscription_gate = (
+            ''
+            if source == 'caixin'
+            else 'AND EXISTS (SELECT 1 FROM subscription s WHERE s.biz = a.biz AND NOT s.is_disabled)'
+        )
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 f"""
@@ -375,7 +380,7 @@ class ArticleRepository:
                 LEFT JOIN article_content c ON c.article_pk = a.id
                 LEFT JOIN article_download_attempts d ON d.biz = a.biz AND d.article_id = a.article_id
                 WHERE account.source = %s AND NOT account.is_disabled
-                  AND EXISTS (SELECT 1 FROM subscription s WHERE s.biz = a.biz AND NOT s.is_disabled)
+                  {subscription_gate}
                   AND NOT COALESCE({ARTICLE_CONTENT_PRESENT_SQL}, FALSE)
                   AND COALESCE(d.attempts, 0) < %s AND COALESCE(d.retryable, TRUE)
                 ORDER BY d.last_attempt_at ASC NULLS FIRST, a.publish_at DESC NULLS LAST, a.id

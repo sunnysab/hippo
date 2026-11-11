@@ -5,6 +5,7 @@ import { useSyncRun } from '../../hooks/useSyncRun';
 import { formatRelativeTime } from '../../utils/format';
 import { getSourceLabel, getSourceTone } from '../../utils/source';
 import { loadSourceOverview, pendingTotal, type SourceOverview, type SourceOverviewPayload } from './sources';
+import { AdminSyncSection } from './AdminSyncSection';
 
 /**
  * Every source in one list: what it is following, whether its credential is in
@@ -90,7 +91,7 @@ export function AdminSourcePage() {
             <thead>
               <tr>
                 <th>{t('admin.source.name', '来源')}</th>
-                <th>{t('admin.source.channels', '订阅')}</th>
+                <th>{t('admin.source.collectionObjects', '采集对象')}</th>
                 <th>{t('admin.source.credential', '凭证')}</th>
                 <th>{t('admin.source.lastSync', '最近同步')}</th>
                 <th>{t('admin.source.backlog', '积压')}</th>
@@ -116,6 +117,7 @@ export function AdminSourcePage() {
           </p>
         ) : null}
       </section>
+      <AdminSyncSection />
     </div>
   );
 }
@@ -137,7 +139,11 @@ function SourceRow({ row, busy, onSync }: { row: SourceOverview; busy: boolean; 
         </Link>
       </td>
       <td>
-        {t('admin.source.channelCount', '{n} 个频道').replace('{n}', String(row.channels))}
+        {row.source === 'caixin'
+          ? t('admin.source.enabledCount', '已启用 {enabled} / {total} 个板块')
+            .replace('{enabled}', String(row.enabled_channels))
+            .replace('{total}', String(row.channels))
+          : t('admin.source.channelCount', '{n} 个频道').replace('{n}', String(row.channels))}
         {row.followers > 0 ? (
           <span className="muted"> · {t('admin.source.followerCount', '{n} 人订阅').replace('{n}', String(row.followers))}</span>
         ) : null}
@@ -167,9 +173,14 @@ function SourceRow({ row, busy, onSync }: { row: SourceOverview; busy: boolean; 
         )}
       </td>
       <td className="admin-actions">
-        {/* 能不能同步取决于有没有人订阅，不是目录里有多少条：一个没人订阅的
-            频道点下去只会得到 404。 */}
-        <button className="btn ghost" type="button" disabled={busy || row.followers === 0} onClick={onSync}>
+        {/* Caixin is collected by instance scope. Other sources stay driven by
+            at least one enabled personal subscription. */}
+        <button
+          className="btn ghost"
+          type="button"
+          disabled={busy || (row.source === 'caixin' ? row.enabled_channels === 0 : row.followers === 0)}
+          onClick={onSync}
+        >
           {busy ? t('admin.source.syncing', '排队中…') : t('sync.run', '运行')}
         </button>
         <Link className="btn ghost" to={`/admin/source/${row.source}`}>

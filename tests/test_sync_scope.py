@@ -234,6 +234,30 @@ class SyncRunScopeTest(unittest.TestCase):
         self.assertIsNone(result.biz_list)
         self.assertEqual(jobs.created[0]['requester_user_id'], 1)
 
+    def test_a_caixin_site_run_is_refused_when_no_channels_are_enabled(self) -> None:
+        jobs = _Jobs()
+        storage = _Storage(jobs, [])
+        storage.accounts.list_instance_accounts = AsyncMock(return_value=[{'is_disabled': True}, {'is_disabled': True}])
+
+        with self.assertRaises(ApiError) as caught:
+            asyncio.run(run_site_sync(body=SyncSiteRunRequest(source='caixin'), storage=storage, user=_admin()))
+
+        self.assertEqual(409, caught.exception.status)
+        self.assertEqual('caixin.no_enabled_channels', caught.exception.code)
+        self.assertEqual([], jobs.created)
+
+    def test_a_caixin_site_run_queues_when_any_channel_is_enabled(self) -> None:
+        jobs = _Jobs()
+        storage = _Storage(jobs, [])
+        storage.accounts.list_instance_accounts = AsyncMock(
+            return_value=[{'is_disabled': True}, {'is_disabled': False}]
+        )
+
+        result = asyncio.run(run_site_sync(body=SyncSiteRunRequest(source='caixin'), storage=storage, user=_admin()))
+
+        self.assertEqual('caixin', result.source)
+        self.assertEqual(1, len(jobs.created))
+
     def test_a_different_scope_while_active_is_a_conflict_not_a_silent_drop(self) -> None:
         jobs = _Jobs()
         storage = _Storage(jobs, [_account('a', source='youtube'), _account('b', source='weixin')])

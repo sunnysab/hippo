@@ -17,9 +17,15 @@ from psycopg.rows import dict_row
 
 from hippo.downloader import ArticleDownloader
 from hippo.models import ArticleRecord
-from hippo.sources.caixin import CaixinRateLimited
+from hippo.sources.caixin import CHANNELS, CaixinRateLimited
+from hippo.sources.caixin_catalog import CAIXIN_CATALOG_KEY, ensure_caixin_channels
 from hippo.sources.caixin_pacing import STATE_KEY, CaixinPacer, CaixinPaused
-from hippo.sources.caixin_sync import CaixinSync, caixin_article_access, ingest_caixin_body
+from hippo.sources.caixin_sync import (
+    CaixinSync,
+    caixin_article_access,
+    caixin_channel_is_collectable,
+    ingest_caixin_body,
+)
 from hippo.storage import PostgresStorage
 
 DSN = os.environ.get('HIPPO_TEST_PG_DSN')
@@ -68,6 +74,23 @@ class CaixinPostgresTest(unittest.IsolatedAsyncioTestCase):
             storage.conn = conn
             storage._bind_repositories()
             yield storage
+
+    async def test_source_overview_counts_distinct_subscribers(self):
+        await self.conn.execute("""
+            INSERT INTO users (id, username, password_hash, created_at, updated_at)
+            VALUES (7, 'reader-a', 'test-only', NOW(), NOW()),
+                   (8, 'reader-b', 'test-only', NOW(), NOW());
+            INSERT INTO accounts (biz, nickname, source, created_at, updated_at)
+            VALUES ('caixin:125', 'Finance', 'caixin', NOW(), NOW()),
+                   ('caixin:126', 'Economy', 'caixin', NOW(), NOW());
+            INSERT INTO subscription (user_id, biz, created_at)
+            VALUES (7, 'caixin:125', NOW()), (7, 'caixin:126', NOW()),
+                   (8, 'caixin:125', NOW());
+        """)
+
+        rows = await self.storage.accounts.overview_by_source()
+        caixin = next(row for row in rows if row['source'] == 'caixin')
+        self.assertEqual(2, caixin['followers'])
 
     async def test_independent_connections_serialize_and_preserve_retry_after(self):
         gate = asyncio.Event()
@@ -204,7 +227,15 @@ class CaixinPostgresTest(unittest.IsolatedAsyncioTestCase):
             raw_json={'article_id': 1001},
         )
         rows = await self.storage.articles.list_missing_bodies(source='caixin', limit=5)
-        self.assertEqual([2], [row['id'] for row in rows])
+        self.assertEqual([2, 6], [row['id'] for row in rows])
+        syncable = await self.storage.accounts.list_syncable_accounts(source='caixin')
+        self.assertEqual(
+            ['caixin:113', 'caixin:132', 'caixin:unsubscribed'],
+            [account.biz for account in syncable],
+        )
+        async with self.storage.transaction():
+            self.assertTrue(await caixin_channel_is_collectable(self.storage, 'caixin:113'))
+            self.assertFalse(await caixin_channel_is_collectable(self.storage, 'caixin:disabled'))
         cached = await self.storage.documents.find_by_identity(source='caixin', article_id='1001')
         self.assertEqual('<p>Complete body</p>', cached['raw_html'])
         self.assertEqual(1001, cached['raw_json']['article_id'])
@@ -272,3 +303,32 @@ class CaixinPostgresTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(body['content_html'], (await observer.documents.get(2))['raw_html'])
         await self.conn.rollback()
         await self.conn.set_autocommit(True)
+
+    async def test_catalogue_initialization_is_one_time_and_preserves_admin_choices(self):
+        await self.conn.execute("""
+            INSERT INTO users (id, username, password_hash, created_at, updated_at)
+            VALUES (7, 'reader', 'test-only', NOW(), NOW());
+            INSERT INTO accounts
+                (biz, nickname, source, is_disabled, backfill_state, created_at, updated_at)
+            VALUES ('caixin:125', 'Finance', 'caixin', FALSE, 'done', NOW(), NOW()),
+                   ('caixin:126', 'Economy', 'caixin', FALSE, 'done', NOW(), NOW()),
+                   ('caixin:128', 'Opinion', 'caixin', TRUE, 'done', NOW(), NOW());
+            INSERT INTO subscription (user_id, biz, created_at)
+            VALUES (7, 'caixin:126', NOW());
+        """)
+
+        inserted = await ensure_caixin_channels(self.storage)
+        rows = await self.storage.accounts.list_instance_accounts('caixin')
+        by_biz = {row['biz']: row for row in rows}
+        self.assertEqual(len(CHANNELS), inserted)
+        self.assertEqual(len(CHANNELS), len(rows))
+        self.assertTrue(by_biz['caixin:125']['is_disabled'])
+        self.assertFalse(by_biz['caixin:126']['is_disabled'])
+        self.assertTrue(by_biz['caixin:128']['is_disabled'])
+        self.assertTrue(all(by_biz[f'caixin:{channel}']['is_disabled'] for channel in (124, 130, 131, 132, 160)))
+        self.assertEqual('1', await self.storage.meta.get(CAIXIN_CATALOG_KEY))
+
+        await self.conn.execute("UPDATE accounts SET is_disabled = FALSE WHERE biz = 'caixin:130'")
+        self.assertEqual(0, await ensure_caixin_channels(self.storage))
+        row = await self.conn.execute("SELECT is_disabled FROM accounts WHERE biz = 'caixin:130'")
+        self.assertFalse((await row.fetchone())[0])

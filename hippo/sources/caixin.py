@@ -20,7 +20,7 @@ from .ingest import ChannelInfo, Item, Listing
 SOURCE = 'caixin'
 REQUEST_TIMEOUT = 45.0
 CHANNELS = {
-    124: ('www', '财新网'),
+    124: ('www', '要闻'),
     125: ('finance', '金融'),
     126: ('economy', '经济'),
     128: ('opinion', '观点'),

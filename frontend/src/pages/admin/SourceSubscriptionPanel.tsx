@@ -1,190 +1,221 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { apiGet } from '../../api';
+import { apiGet, apiSend } from '../../api';
 import { useI18n } from '../../i18n';
-import type { AccountSync } from '../../store/shared';
-import { AccountSyncStatus } from '../../components/AccountSyncStatus';
-import { usePolling } from '../../hooks/usePolling';
+import { useToast } from '../../hooks/useToast';
 import { formatRelativeTime } from '../../utils/format';
+import { emitRefresh } from '../../utils/events';
 
-interface Account {
+interface InstanceChannel {
   biz: string;
   nickname: string;
+  source: string;
   alias: string | null;
   is_disabled: boolean;
   last_synced_at: string | null;
   latest_publish_at: string | null;
   article_count: number;
-  sync?: AccountSync | null;
+  subscribers: number;
 }
 
-const PAGE_SIZE = 50;
-
 /**
- * What hippo is following from this source, for the admin's own subscriptions.
- *
- * The catalogue is shared, so these are the admin's rows: a full instance-wide
- * channel list belongs in a future page of its own, not in a settings pane.
- * The list pages through the account endpoint instead of truncating at one page.
+ * The shared catalogue for one source, not the signed-in administrator's own
+ * subscriptions. Caixin rows can also change instance collection eligibility;
+ * other sources retain their existing subscription-driven collection policy.
  */
-export function SourceSubscriptionPanel({ source }: { source: string }) {
+export function SourceSubscriptionPanel({
+  source,
+  onCollectionStateChange,
+}: {
+  source: string;
+  onCollectionStateChange?: (hasEnabledChannels: boolean) => void;
+}) {
   const { t } = useI18n();
+  const { showToast } = useToast();
+  const [channels, setChannels] = useState<InstanceChannel[]>([]);
+  const [draftDisabled, setDraftDisabled] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
-  const [search, setSearch] = useState('');
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  // Switching source or retrying races the request it replaces: only the newest
-  // answer may touch the list.
   const requestIdRef = useRef(0);
 
-  useEffect(() => {
-    const timer = setTimeout(() => setSearch(query.trim()), 250);
-    return () => clearTimeout(timer);
-  }, [query]);
-
-  const loadPage = useCallback(async (page: number) => {
+  const load = useCallback(async () => {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    if (page === 1) setLoading(true);
-    else setLoadingMore(true);
+    setLoading(true);
     setError('');
     try {
-      const query = new URLSearchParams({
-        source,
-        page: String(page),
-        page_size: String(PAGE_SIZE),
-      });
-      if (search) query.set('q', search);
-      const payload = await apiGet(`/api/account?${query.toString()}`);
+      const payload = await apiGet(`/api/admin/source/${encodeURIComponent(source)}/channel`);
       if (requestId !== requestIdRef.current) return;
-      const next = (payload.accounts as Account[]) || [];
-      setAccounts((previous) => (page === 1 ? next : [...previous, ...next]));
-      setTotal(Number(payload.total || 0));
+      const next = (payload.channels || []) as InstanceChannel[];
+      setChannels(next);
+      setDraftDisabled(new Set(next.filter((item) => item.is_disabled).map((item) => item.biz)));
+      onCollectionStateChange?.(next.some((item) => !item.is_disabled));
     } catch (err) {
       if (requestId !== requestIdRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
+      onCollectionStateChange?.(false);
     } finally {
-      if (requestId === requestIdRef.current) {
-        setLoading(false);
-        setLoadingMore(false);
-      }
+      if (requestId === requestIdRef.current) setLoading(false);
     }
-  }, [source, search]);
+  }, [onCollectionStateChange, source]);
 
   useEffect(() => {
-    let disposed = false;
     queueMicrotask(() => {
-      if (!disposed) void loadPage(1);
+      void load();
     });
-    return () => {
-      disposed = true;
-      requestIdRef.current += 1;
-    };
-  }, [loadPage]);
+  }, [load]);
 
-  const refreshVisible = useCallback(async (signal: AbortSignal) => {
-    if (!accounts.length || loadingMore || loading || query.trim() !== search) return;
-    const requestId = ++requestIdRef.current;
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    if (!needle) return channels;
+    return channels.filter((item) =>
+      [item.nickname, item.alias, item.biz].some((value) => value?.toLocaleLowerCase().includes(needle)),
+    );
+  }, [channels, query]);
+
+  const dirty = channels.some((item) => draftDisabled.has(item.biz) !== item.is_disabled);
+  const enabled = channels.filter((item) => !draftDisabled.has(item.biz)).length;
+
+  const toggle = (biz: string) => {
+    setDraftDisabled((current) => {
+      const next = new Set(current);
+      if (next.has(biz)) next.delete(biz);
+      else next.add(biz);
+      return next;
+    });
+  };
+
+  const save = async () => {
+    if (!dirty || saving) return;
+    const enabledBiz = channels
+      .filter((item) => item.is_disabled && !draftDisabled.has(item.biz))
+      .map((item) => item.biz);
+    const disabledBiz = channels
+      .filter((item) => !item.is_disabled && draftDisabled.has(item.biz))
+      .map((item) => item.biz);
+    setSaving(true);
     try {
-      const pages = Math.ceil(accounts.length / PAGE_SIZE);
-      const payloads = await Promise.all(Array.from({ length: pages }, (_, index) => apiGet(
-        `/api/account?${new URLSearchParams({ source, page: String(index + 1), page_size: String(PAGE_SIZE), ...(search ? { q: search } : {}) })}`,
-        { signal },
-      )));
-      if (signal.aborted || requestId !== requestIdRef.current) return;
-      setAccounts(payloads.flatMap((payload) => (payload.accounts || []) as Account[]));
-      setTotal(Number(payloads[0]?.total || 0));
-      setError('');
+      if (enabledBiz.length) {
+        await apiSend(`/api/admin/source/${encodeURIComponent(source)}/channel`, 'PATCH', {
+          biz_list: enabledBiz,
+          is_disabled: false,
+        });
+      }
+      if (disabledBiz.length) {
+        await apiSend(`/api/admin/source/${encodeURIComponent(source)}/channel`, 'PATCH', {
+          biz_list: disabledBiz,
+          is_disabled: true,
+        });
+      }
+      await load();
+      emitRefresh();
+      showToast(t('admin.source.channelsSaved', '采集范围已保存。'));
     } catch (err) {
-      if (!signal.aborted && requestId === requestIdRef.current) setError((err as Error).message);
+      showToast(err instanceof Error ? err.message : String(err));
+      await load();
+    } finally {
+      setSaving(false);
     }
-  }, [accounts.length, loadingMore, loading, source, search, query]);
-  usePolling(refreshVisible, 10000, false);
+  };
 
-  const hasMore = accounts.length < total;
+  const editable = source === 'caixin';
 
   return (
     <div className="panel">
       <div className="panel-header">
         <div>
-          <h2>{t('admin.source.subscriptions', '订阅')}</h2>
-
+          <h2>{editable ? t('admin.source.collectionScope', '采集板块') : t('admin.source.catalog', '实例采集目录')}</h2>
+          <p className="muted">
+            {editable
+              ? t('admin.source.collectionScopeHint', '这里控制实例采集范围，与管理员个人订阅无关。')
+              : t('admin.source.catalogHint', '这里展示全实例目录；管理员个人订阅不会改变后台采集。')}
+          </p>
         </div>
         <div className="toolbar">
           <input
             type="search"
             className="subscription-search"
-            aria-label={t('admin.source.searchSubscriptions', '搜索订阅')}
-            placeholder={t('admin.source.searchSubscriptions', '搜索订阅')}
+            aria-label={t('admin.source.searchChannels', '搜索采集对象')}
+            placeholder={t('admin.source.searchChannels', '搜索采集对象')}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
-          <Link className="btn ghost" to="/groups">
-            {t('admin.source.manageGroups', '前往分组')}
-          </Link>
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="muted admin-empty">{t('admin.loading', '加载中…')}</div>
-      ) : accounts.length === 0 ? (
-        <div className="muted admin-empty">
-          {error
-            ? t('admin.source.subscriptionsFailed', 'Failed to load subscriptions.')
-            : search ? t('admin.source.noMatches', '没有匹配的订阅。') : t('admin.source.noSubscriptions', '还没有订阅。')}
-          {error ? (
-            <button className="btn ghost" type="button" onClick={() => void loadPage(1)}>
-              {t('common.retry', 'Retry')}
+          {editable ? (
+            <button className="btn" type="button" disabled={!dirty || saving} onClick={() => void save()}>
+              {saving ? t('common.saving', '正在保存…') : t('admin.source.saveChannels', '保存范围')}
             </button>
           ) : null}
         </div>
+      </div>
+
+      {editable ? (
+        <p className="muted admin-note">
+          {t('admin.source.enabledCount', '已启用 {enabled} / {total} 个板块')
+            .replace('{enabled}', String(enabled))
+            .replace('{total}', String(channels.length))}
+        </p>
+      ) : null}
+
+      {loading ? (
+        <div className="muted admin-empty">{t('admin.loading', '加载中…')}</div>
+      ) : error ? (
+        <div className="muted admin-empty">
+          {t('admin.source.channelsFailed', '加载实例采集目录失败。')}
+          <button className="btn ghost" type="button" onClick={() => void load()}>{t('common.retry', '重试')}</button>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="muted admin-empty">{t('admin.source.noChannels', '没有匹配的采集对象。')}</div>
       ) : (
         <div className="admin-table-wrap">
           <table className="admin-table">
             <thead>
               <tr>
+                {editable ? <th>{t('admin.source.collecting', '采集')}</th> : null}
                 <th>{t('groups.title', '名称')}</th>
+                <th>{t('admin.source.subscribers', '订阅用户')}</th>
                 <th>{t('accounts.articleCountLabel', '已收录文章')}</th>
-                <th>{t('accounts.lastUpdatedLabel', 'Latest publication')}</th>
-                <th>{t('accounts.lastSyncedLabel', 'Last sync')}</th>
-                <th>{t('sync.accountStatus', '采集状态')}</th>
+                <th>{t('accounts.lastUpdatedLabel', '最新文章')}</th>
+                <th>{t('accounts.lastSyncedLabel', '最近成功')}</th>
                 <th />
               </tr>
             </thead>
             <tbody>
-              {accounts.map((account) => (
-                <tr key={account.biz} className={account.is_disabled ? 'is-disabled' : ''}>
-                  <td>
-                    {account.nickname}
-                    <div className="account-sub admin-mono">{account.biz}</div>
-                  </td>
-                  <td>{account.article_count}</td>
-                  <td className="muted">{formatRelativeTime(account.latest_publish_at, t) || '—'}</td>
-                  <td className="muted">{formatRelativeTime(account.last_synced_at, t) || '—'}</td>
-                  <td>{account.sync && <AccountSyncStatus sync={account.sync} biz={account.biz} disabled={account.is_disabled} />}</td>
-                  <td>
-                    <Link className="btn ghost" to={`/articles?account=${encodeURIComponent(account.biz)}`}>
-                      {t('groups.viewArticles', '查看文章')}
-                    </Link>
-                  </td>
-                </tr>
-              ))}
+              {filtered.map((channel) => {
+                const collecting = !draftDisabled.has(channel.biz);
+                return (
+                  <tr key={channel.biz} className={collecting ? '' : 'is-disabled'}>
+                    {editable ? (
+                      <td>
+                        <input
+                          type="checkbox"
+                          aria-label={t('admin.source.collectChannel', '采集 {name}')
+                            .replace('{name}', channel.nickname)}
+                          checked={collecting}
+                          disabled={saving}
+                          onChange={() => toggle(channel.biz)}
+                        />
+                      </td>
+                    ) : null}
+                    <td>
+                      {channel.nickname}
+                      <div className="account-sub admin-mono">{channel.biz}</div>
+                    </td>
+                    <td>{channel.subscribers}</td>
+                    <td>{channel.article_count}</td>
+                    <td className="muted">{formatRelativeTime(channel.latest_publish_at, t) || '—'}</td>
+                    <td className="muted">{formatRelativeTime(channel.last_synced_at, t) || '—'}</td>
+                    <td>
+                      <Link className="btn ghost" to={`/articles?account=${encodeURIComponent(channel.biz)}`}>
+                        {t('groups.viewArticles', '查看文章')}
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
-          {error ? <p className="muted admin-note">{t('admin.source.subscriptionsFailed', 'Failed to load subscriptions.')}</p> : null}
-          {hasMore ? (
-            <button
-              className="btn ghost"
-              type="button"
-              disabled={loadingMore || query.trim() !== search}
-              onClick={() => void loadPage(accounts.length / PAGE_SIZE + 1)}
-            >
-              {loadingMore ? t('common.loading', 'Loading…') : t('admin.source.loadMore', 'Load more')}
-            </button>
-          ) : null}
         </div>
       )}
     </div>

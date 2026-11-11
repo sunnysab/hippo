@@ -34,6 +34,7 @@ from ...sources.credentials import CredentialError
 from ...sources.credentials import clean as clean_credential
 from ...sources.registry import source_names
 from ...storage import PostgresStorage
+from ...utils import normalize_value
 from ..deps import client_ip, get_storage, require_admin
 from ..schemas.admin import (
     AdminUserCreatedOut,
@@ -49,6 +50,8 @@ from ..schemas.admin import (
     SignozLinkOut,
     SiteSettingsOut,
     SiteSettingsUpdateRequest,
+    SourceChannelListOut,
+    SourceChannelsUpdateRequest,
     SourceOverviewListOut,
     UserCreateRequest,
     UserUpdateRequest,
@@ -559,3 +562,56 @@ async def source_overview(
         'sources': sources,
         'media_enabled': bool(settings.get('enabled')),
     }
+
+
+def _require_source(source: str) -> str:
+    if source not in source_names():
+        raise ApiError(f'Unknown source: {source}', status=404)
+    return source
+
+
+@router.get('/admin/source/{source}/channel', response_model=SourceChannelListOut)
+async def list_source_channels(
+    source: str,
+    _: User = Depends(require_admin),
+    storage: PostgresStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """The shared catalogue for one source, never the administrator's subscriptions."""
+    source = _require_source(source)
+    rows = await storage.accounts.list_instance_accounts(source)
+    for row in rows:
+        row['last_synced_at'] = normalize_value(row.get('last_synced_at'))
+        row['latest_publish_at'] = normalize_value(row.get('latest_publish_at'))
+    return {'source': source, 'channels': rows}
+
+
+@router.patch('/admin/source/{source}/channel', response_model=SourceChannelListOut)
+async def update_source_channels(
+    request: Request,
+    source: str,
+    body: SourceChannelsUpdateRequest,
+    actor: User = Depends(require_admin),
+    storage: PostgresStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Change instance collection eligibility for exact catalogue rows."""
+    source = _require_source(source)
+    if source != 'caixin':
+        raise ApiError('This source catalogue is read-only', status=400, code='source.catalogue_read_only')
+    if not body.biz_list:
+        raise ApiError('biz_list must not be empty', status=400)
+    async with storage.transaction():
+        updated = await storage.accounts.set_instance_disabled(
+            source=source,
+            biz_list=body.biz_list,
+            is_disabled=body.is_disabled,
+        )
+        if updated != len(set(body.biz_list)):
+            raise ApiError('One or more channels do not belong to this source', status=404)
+        await storage.audit.record(
+            actor.id,
+            'admin.source_channels_updated',
+            target=source,
+            detail={'biz_list': body.biz_list, 'is_disabled': body.is_disabled},
+            ip=client_ip(request),
+        )
+    return await list_source_channels(source, actor, storage)

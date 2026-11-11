@@ -17,6 +17,7 @@ import sys
 
 from .config import get_settings
 from .security import hash_password
+from .sources.caixin_catalog import ensure_caixin_channels
 from .storage import PostgresStorage, StorageInitError, close_pool, open_storage
 
 #: Same floor as the admin API, so this command is not a way around it.
@@ -67,8 +68,8 @@ async def init_db(*, dsn: str | None = None) -> None:
     """Create or migrate the schema; repeatable because it just replays schema.sql."""
     resolved_dsn = _resolve_dsn(dsn)
     try:
-        async with PostgresStorage(resolved_dsn, auto_init=True):
-            pass
+        async with PostgresStorage(resolved_dsn, auto_init=True) as storage:
+            await ensure_caixin_channels(storage)
     finally:
         await close_pool()
     print('PostgreSQL schema initialized.')

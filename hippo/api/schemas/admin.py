@@ -89,6 +89,7 @@ class MediaSettingsUpdateRequest(BaseModel):
     bilibili_cookie: str | None = None
     youtube_cookies: str | None = None
     caixin_cookie: str | None = None
+    caixin_visible_to_users: bool | None = None
     proxy_default: str | None = None
     proxy_weixin: str | None = None
     proxy_bilibili: str | None = None
@@ -169,6 +170,7 @@ class MediaSettingsOut(BaseModel):
     youtube_cookies_set: bool
     caixin_cookie: str = Field(description='Masked.')
     caixin_cookie_set: bool
+    caixin_visible_to_users: bool
     proxy_default: str
     proxy_weixin: str
     proxy_bilibili: str
@@ -268,3 +270,25 @@ class SourceOverviewOut(BaseModel):
 class SourceOverviewListOut(BaseModel):
     sources: list[SourceOverviewOut]
     media_enabled: bool
+
+
+class SourceChannelOut(BaseModel):
+    biz: str
+    nickname: str
+    source: str
+    alias: str | None = None
+    is_disabled: bool
+    last_synced_at: str | None = None
+    latest_publish_at: str | None = None
+    article_count: int = 0
+    subscribers: int = 0
+
+
+class SourceChannelListOut(BaseModel):
+    source: str
+    channels: list[SourceChannelOut]
+
+
+class SourceChannelsUpdateRequest(BaseModel):
+    biz_list: list[str]
+    is_disabled: bool

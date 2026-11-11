@@ -149,6 +149,29 @@ class ArticleSyncService:
                 None,
             )
 
+        if account.source == 'caixin':
+            # A queued Caixin job is an intent. The administrator may disable a
+            # channel while earlier channels in the same job are still running.
+            fresh = await self._storage.accounts.list_syncable_accounts(
+                biz_list=[account.biz],
+                source='caixin',
+                source_intervals_days=config.source_intervals_days,
+            )
+            if not fresh:
+                observer.on_skip('disabled')
+                return (
+                    SyncAccountResult(
+                        biz=account.biz,
+                        nickname=account.nickname,
+                        source=account.source,
+                        saved=0,
+                        completed=False,
+                        skipped=True,
+                        skip_reason='disabled',
+                    ),
+                    None,
+                )
+
         try:
             adapter = adapter_for(self._adapters, account.source or 'weixin')
             if before_request is not None:

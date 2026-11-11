@@ -124,7 +124,7 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertIn("path: '/admin/transcribe'", layout)
         self.assertNotIn("path: '/admin/login'", layout)
         self.assertNotIn("path: '/admin/media'", layout)
-        self.assertIn("path=\"source/:source\" element={<SourceDetailPage />}", app)
+        self.assertIn('path="source/:source" element={<SourceDetailPage />}', app)
         # 旧地址已经删掉：登录与转写都在各自的来源页上，没有重定向残留。
         self.assertNotIn('path="login"', app)
         self.assertNotIn('path="media"', app)
@@ -147,15 +147,18 @@ class FrontendRegressionTest(unittest.TestCase):
         self.assertIn("'common.retry'", page)
         self.assertIn('requestIdRef', panel)
         self.assertIn("'common.retry'", panel)
-        # 订阅列表按页取，不再默默截断在 100 条。
-        self.assertNotIn('page_size=100', panel)
-        self.assertIn('page_size', panel)
+        # 管理页读取实例目录接口，不再复用当前用户的个人订阅分页。
+        self.assertNotIn('page_size', panel)
+        self.assertIn('/api/admin/source/${encodeURIComponent(source)}/channel', panel)
 
     def test_admin_source_page_lists_what_the_backend_reports(self) -> None:
         source = ADMIN_SOURCE_PAGE.read_text(encoding='utf-8')
 
         # 来源清单来自后端，前端不再自己维护一份。
-        self.assertIn('/api/admin/source', (ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'sources.ts').read_text(encoding='utf-8'))
+        self.assertIn(
+            '/api/admin/source',
+            (ROOT / 'frontend' / 'src' / 'pages' / 'admin' / 'sources.ts').read_text(encoding='utf-8'),
+        )
         self.assertIn('runSync({ source, siteWide: true })', source)
 
     def test_brand_mark_is_one_colour_and_matches_the_favicon(self) -> None:
@@ -238,7 +241,7 @@ class FrontendRegressionTest(unittest.TestCase):
     def test_groups_page_syncs_selected_group_with_route_query(self) -> None:
         source = GROUPS_PAGE.read_text(encoding='utf-8')
 
-        self.assertIn("useSearchParams", source)
+        self.assertIn('useSearchParams', source)
         self.assertIn("searchParams.get('group')", source)
         self.assertIn("nextParams.set('group', nextGroup)", source)
         self.assertIn("dispatch({ type: 'SELECT_GROUP', groupId: nextGroupId })", source)

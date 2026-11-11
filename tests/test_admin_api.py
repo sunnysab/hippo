@@ -19,6 +19,7 @@ from hippo.api.routers import admin as admin_api
 from hippo.api.schemas.admin import (
     PasswordResetRequest,
     SiteSettingsUpdateRequest,
+    SourceChannelsUpdateRequest,
     UserCreateRequest,
     UserUpdateRequest,
 )
@@ -76,9 +77,7 @@ class AdminGuardTest(unittest.IsolatedAsyncioTestCase):
         storage.transaction = transaction
         storage.users.delete.side_effect = delete
         storage.audit.record.side_effect = audit
-        await admin_api.delete_user(
-            '7', SimpleNamespace(headers={}, client=None), actor=_user(1), storage=storage
-        )
+        await admin_api.delete_user('7', SimpleNamespace(headers={}, client=None), actor=_user(1), storage=storage)
 
         storage.users.delete.assert_awaited_once_with(7)
         storage.audit.record.assert_awaited_once_with(
@@ -291,6 +290,90 @@ class AdminCreateUserTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(create.await_args.kwargs['email_verified'])
+
+
+class AdminSourceCatalogueTest(unittest.IsolatedAsyncioTestCase):
+    async def test_updating_one_source_scope_is_audited_and_returns_the_catalogue(self) -> None:
+        storage = _storage()
+        storage.accounts = SimpleNamespace(
+            set_instance_disabled=AsyncMock(return_value=2),
+            list_instance_accounts=AsyncMock(
+                return_value=[
+                    {
+                        'biz': 'caixin:125',
+                        'nickname': '财新·金融',
+                        'source': 'caixin',
+                        'alias': 'finance',
+                        'is_disabled': False,
+                        'last_synced_at': None,
+                        'latest_publish_at': None,
+                        'article_count': 3,
+                        'subscribers': 1,
+                    }
+                ]
+            ),
+        )
+
+        result = await admin_api.update_source_channels(
+            SimpleNamespace(headers={}, client=SimpleNamespace(host='127.0.0.1')),
+            'caixin',
+            SourceChannelsUpdateRequest(
+                biz_list=['caixin:125', 'caixin:126'],
+                is_disabled=False,
+            ),
+            actor=_user(1),
+            storage=storage,
+        )
+
+        self.assertEqual('caixin', result['source'])
+        storage.accounts.set_instance_disabled.assert_awaited_once_with(
+            source='caixin',
+            biz_list=['caixin:125', 'caixin:126'],
+            is_disabled=False,
+        )
+        self.assertEqual('admin.source_channels_updated', storage.audit.record.await_args.args[1])
+
+    async def test_a_foreign_channel_makes_the_whole_update_fail(self) -> None:
+        storage = _storage()
+        storage.accounts = SimpleNamespace(
+            set_instance_disabled=AsyncMock(return_value=1),
+            list_instance_accounts=AsyncMock(return_value=[]),
+        )
+
+        with self.assertRaises(ApiError) as caught:
+            await admin_api.update_source_channels(
+                SimpleNamespace(headers={}, client=None),
+                'caixin',
+                SourceChannelsUpdateRequest(
+                    biz_list=['caixin:125', 'weixin:foreign'],
+                    is_disabled=True,
+                ),
+                actor=_user(1),
+                storage=storage,
+            )
+
+        self.assertEqual(404, caught.exception.status)
+        storage.audit.record.assert_not_awaited()
+
+    async def test_other_source_catalogues_are_read_only(self) -> None:
+        storage = _storage()
+        storage.accounts = SimpleNamespace(
+            set_instance_disabled=AsyncMock(),
+            list_instance_accounts=AsyncMock(),
+        )
+
+        with self.assertRaises(ApiError) as caught:
+            await admin_api.update_source_channels(
+                SimpleNamespace(headers={}, client=None),
+                'bilibili',
+                SourceChannelsUpdateRequest(biz_list=['bilibili:1'], is_disabled=True),
+                actor=_user(1),
+                storage=storage,
+            )
+
+        self.assertEqual((400, 'source.catalogue_read_only'), (caught.exception.status, caught.exception.code))
+        storage.accounts.set_instance_disabled.assert_not_awaited()
+        storage.audit.record.assert_not_awaited()
 
 
 if __name__ == '__main__':

@@ -57,6 +57,7 @@ class InitDbTest(unittest.IsolatedAsyncioTestCase):
     async def test_init_db_uses_auto_init_and_closes_the_pool(self) -> None:
         captured: dict[str, object] = {}
         closed = AsyncMock()
+        catalogue = AsyncMock()
 
         class DummyStorage:
             def __init__(self, dsn, **kwargs) -> None:
@@ -72,11 +73,13 @@ class InitDbTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch('hippo.ops.PostgresStorage', DummyStorage),
             patch('hippo.ops.close_pool', closed),
+            patch('hippo.ops.ensure_caixin_channels', catalogue),
         ):
             await ops.init_db(dsn='postgresql://example')
 
         self.assertEqual('postgresql://example', captured['dsn'])
         self.assertTrue(captured['kwargs']['auto_init'])
+        catalogue.assert_awaited_once()
         # A one-shot command must not leave the pool attached to a dead loop.
         closed.assert_awaited_once()
 

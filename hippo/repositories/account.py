@@ -118,6 +118,39 @@ class AccountRepository:
             rows = await cur.fetchall()
         return [{'source': str(row['source']), 'channels': int(row['channels'])} for row in rows]
 
+    async def list_instance_accounts(self, source: str) -> list[dict[str, Any]]:
+        """The instance catalogue for one source, independent of the admin's own groups."""
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT a.biz, a.nickname, a.source, a.alias, a.is_disabled,
+                       a.last_synced_at, COALESCE(a.article_count, 0) AS article_count,
+                       (SELECT to_timestamp(ar.publish_at) FROM articles ar
+                         WHERE ar.biz = a.biz AND ar.publish_at IS NOT NULL
+                         ORDER BY ar.publish_at DESC LIMIT 1) AS latest_publish_at,
+                       COUNT(DISTINCT s.user_id) FILTER (WHERE NOT s.is_disabled) AS subscribers
+                  FROM accounts a
+                  LEFT JOIN subscription s ON s.biz = a.biz
+                 WHERE a.source = %s AND a.biz <> 'adhoc'
+                 GROUP BY a.biz
+                 ORDER BY a.nickname ASC, a.biz ASC
+                """,
+                (source,),
+            )
+            rows = await cur.fetchall()
+        return [dict(row) for row in rows]
+
+    async def set_instance_disabled(self, *, source: str, biz_list: list[str], is_disabled: bool) -> int:
+        """Change collection eligibility in the shared catalogue."""
+        if not biz_list:
+            return 0
+        async with self._conn.cursor() as cur:
+            await cur.execute(
+                'UPDATE accounts SET is_disabled = %s, updated_at = %s WHERE source = %s AND biz = ANY(%s)',
+                (is_disabled, utc_now_dt(), source, list(biz_list)),
+            )
+            return cur.rowcount or 0
+
     async def overview_by_source(self) -> list[dict[str, Any]]:
         """One row per source, for the admin source page.
 
@@ -133,7 +166,7 @@ class AccountRepository:
                        COUNT(*) AS channels,
                        COUNT(*) FILTER (WHERE a.is_disabled = FALSE) AS enabled_channels,
                        MAX(a.last_synced_at) AS last_synced_at,
-                       (SELECT COUNT(*) FROM subscription s
+                       (SELECT COUNT(DISTINCT s.user_id) FROM subscription s
                           JOIN accounts sa ON sa.biz = s.biz
                          WHERE sa.source = a.source) AS followers
                   FROM accounts a
@@ -161,11 +194,11 @@ class AccountRepository:
         source: str | None = None,
         source_intervals_days: dict[str, int] | None = None,
     ) -> list[AccountCredential]:
-        """Accounts that at least one user still follows.
+        """Accounts eligible for instance collection.
 
-        The catalogue is shared across users, so crawling is driven by
-        subscriptions: an account is fetched while somebody follows it, and the
-        data already collected stays once the last subscriber leaves.
+        Most sources are fetched while at least one user follows an account.
+        Caixin is fetched from its instance catalogue instead; its personal
+        subscriptions only choose what each reader can see.
 
         ``sync_interval_days`` is aggregated with ``MIN`` so the most eager
         subscriber decides how often the shared account gets refreshed, and
@@ -174,17 +207,18 @@ class AccountRepository:
         query = """
             SELECT a.*, g.name AS group_name, agg.sync_interval_days, agg.uses_source_interval
             FROM accounts a
-            JOIN (
+            LEFT JOIN LATERAL (
                 SELECT s.biz,
                        MIN(s.sync_interval_days) AS sync_interval_days,
                        BOOL_OR(s.sync_interval_days IS NULL) AS uses_source_interval,
                        array_agg(DISTINCT s.group_id) AS group_ids
                 FROM subscription s
-                WHERE NOT s.is_disabled
+                WHERE s.biz = a.biz AND NOT s.is_disabled
                 GROUP BY s.biz
-            ) agg ON agg.biz = a.biz
+            ) agg ON TRUE
             LEFT JOIN account_groups g ON g.id = a.group_id
             WHERE a.is_disabled = FALSE
+              AND (a.source = 'caixin' OR agg.biz IS NOT NULL)
         """
         params: list[Any] = []
         if group_ids:
@@ -197,7 +231,10 @@ class AccountRepository:
             # 按来源同步：来源页面上的「立即同步」只应挑动这个源的账号。
             query += ' AND a.source = %s'
             params.append(source)
-        query += ' ORDER BY a.nickname ASC'
+        if source == 'caixin':
+            query += ' ORDER BY a.last_synced_at ASC NULLS FIRST, a.biz ASC'
+        else:
+            query += ' ORDER BY a.nickname ASC'
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(query, params)
             rows = await cur.fetchall()

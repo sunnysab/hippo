@@ -1,4 +1,4 @@
-import { act, fireEvent, waitFor, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../../i18n';
@@ -6,172 +6,130 @@ import zhCN from '../../i18n/zh-CN.json';
 import { SourceSubscriptionPanel } from './SourceSubscriptionPanel';
 
 const apiGetMock = vi.fn();
+const apiSendMock = vi.fn();
+const showToastMock = vi.fn();
+const emitRefreshMock = vi.fn();
 
 vi.mock('../../api', () => ({
   apiGet: (...args: unknown[]) => apiGetMock(...args),
+  apiSend: (...args: unknown[]) => apiSendMock(...args),
 }));
+vi.mock('../../hooks/useToast', () => ({ useToast: () => ({ showToast: showToastMock }) }));
+vi.mock('../../utils/events', () => ({ emitRefresh: () => emitRefreshMock() }));
 
-const account = (biz: string) => ({
+const channel = (biz: string, overrides: Record<string, unknown> = {}) => ({
   biz,
   nickname: `name-${biz}`,
+  source: biz.split(':')[0],
   alias: null,
   is_disabled: false,
-  last_synced_at: null,
-  latest_publish_at: null,
-  article_count: 0,
+  last_synced_at: '2026-10-20T05:49:00+08:00',
+  latest_publish_at: '2026-10-20T01:00:00+08:00',
+  article_count: 4,
+  subscribers: 2,
+  ...overrides,
 });
 
-const page = (from: number, count: number, total: number) => ({
-  accounts: Array.from({ length: count }, (_, index) => account(`biz-${from + index}`)),
-  total,
-});
-
-const renderPanel = (source: string) => render(
-  <MemoryRouter>
-    <I18nProvider>
-      <SourceSubscriptionPanel source={source} />
-    </I18nProvider>
-  </MemoryRouter>,
-);
+const renderPanel = (source: string, onCollectionStateChange = vi.fn()) => {
+  const ui = (nextSource: string) => (
+    <MemoryRouter>
+      <I18nProvider>
+        <SourceSubscriptionPanel
+          source={nextSource}
+          onCollectionStateChange={onCollectionStateChange}
+        />
+      </I18nProvider>
+    </MemoryRouter>
+  );
+  const view = render(ui(source));
+  return {
+    onCollectionStateChange,
+    ...view,
+    rerenderSource: (nextSource: string) => view.rerender(ui(nextSource)),
+  };
+};
 
 describe('SourceSubscriptionPanel', () => {
-  afterEach(() => vi.useRealTimers());
   beforeEach(() => {
-    vi.restoreAllMocks();
     vi.clearAllMocks();
+    apiSendMock.mockResolvedValue({});
   });
 
-  it('keeps publication and sync times in separate columns', async () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('loads the instance catalogue and keeps publication and sync times separate', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-10-20T08:00:00+08:00').getTime());
-    apiGetMock.mockResolvedValueOnce({
-      accounts: [{
-        ...account('youtube:UC123'),
-        latest_publish_at: '2026-10-20T01:00:00+08:00',
-        last_synced_at: '2026-10-20T05:49:00+08:00',
-      }],
-      total: 1,
-    });
+    apiGetMock.mockResolvedValue({ channels: [channel('youtube:UC123')] });
 
     renderPanel('youtube');
 
-    expect(await screen.findByText(zhCN['time.hoursAgo'].replace('{n}', '7'))).toBeTruthy();
-    expect(screen.getByText(zhCN['time.hoursAgo'].replace('{n}', '2'))).toBeTruthy();
+    expect(await screen.findByText('name-youtube:UC123')).toBeTruthy();
+    expect(apiGetMock).toHaveBeenCalledWith('/api/admin/source/youtube/channel');
     expect(screen.getByRole('columnheader', { name: zhCN['accounts.lastUpdatedLabel'] })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: zhCN['accounts.lastSyncedLabel'] })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: '已收录文章' })).toBeTruthy();
-    expect(screen.queryByText('已收录 {n} 篇')).toBeNull();
+    expect(screen.getByRole('columnheader', { name: zhCN['accounts.articleCountLabel'] })).toBeTruthy();
+    expect(screen.queryByRole('checkbox')).toBeNull();
   });
 
-  it('pages the subscription list instead of silently truncating it', async () => {
-    apiGetMock
-      .mockResolvedValueOnce(page(0, 50, 120))
-      .mockResolvedValueOnce(page(50, 50, 120));
+  it('saves the exact Caixin collection range and reports whether any channel remains enabled', async () => {
+    const initial = [
+      channel('caixin:125'),
+      channel('caixin:126', { is_disabled: true }),
+    ];
+    const updated = [
+      channel('caixin:125', { is_disabled: true }),
+      channel('caixin:126'),
+    ];
+    apiGetMock.mockResolvedValueOnce({ channels: initial }).mockResolvedValueOnce({ channels: updated });
+    const { onCollectionStateChange } = renderPanel('caixin');
 
-    renderPanel('bilibili');
+    fireEvent.click(await screen.findByRole('checkbox', { name: '采集 name-caixin:125' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '采集 name-caixin:126' }));
+    fireEvent.click(screen.getByRole('button', { name: zhCN['admin.source.saveChannels'] }));
 
-    expect(await screen.findByText('name-biz-0')).toBeTruthy();
-    expect(apiGetMock).toHaveBeenCalledWith(
-      '/api/account?source=bilibili&page=1&page_size=50',
+    await waitFor(() => expect(apiSendMock).toHaveBeenCalledTimes(2));
+    expect(apiSendMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/admin/source/caixin/channel',
+      'PATCH',
+      { biz_list: ['caixin:126'], is_disabled: false },
     );
-
-    fireEvent.click(screen.getByRole('button', { name: zhCN['admin.source.loadMore'] }));
-
-    expect(await screen.findByText('name-biz-50')).toBeTruthy();
-    expect(screen.getByText('name-biz-0')).toBeTruthy();
-    expect(apiGetMock).toHaveBeenLastCalledWith(
-      '/api/account?source=bilibili&page=2&page_size=50',
+    expect(apiSendMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/admin/source/caixin/channel',
+      'PATCH',
+      { biz_list: ['caixin:125'], is_disabled: true },
     );
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledTimes(2));
+    expect(onCollectionStateChange).toHaveBeenLastCalledWith(true);
+    expect(emitRefreshMock).toHaveBeenCalled();
   });
 
-  it('drops a late answer for the source it was switched away from', async () => {
-    let releaseOld: (value: unknown) => void = () => {};
-    apiGetMock
-      .mockImplementationOnce(() => new Promise((resolve) => { releaseOld = resolve; }))
-      .mockResolvedValueOnce({ accounts: [account('from-youtube')], total: 1 });
-
-    const view = renderPanel('bilibili');
-    await waitFor(() => expect(apiGetMock).toHaveBeenCalledTimes(1));
-    view.rerender(
-      <MemoryRouter>
-        <I18nProvider>
-          <SourceSubscriptionPanel source="youtube" />
-        </I18nProvider>
-      </MemoryRouter>,
-    );
-
-    expect(await screen.findByText('name-from-youtube')).toBeTruthy();
-
-    await act(async () => {
-      releaseOld({ accounts: [account('from-bilibili')], total: 1 });
-      await Promise.resolve();
-    });
-
-    expect(screen.queryByText('name-from-bilibili')).toBeNull();
-    expect(screen.getByText('name-from-youtube')).toBeTruthy();
-  });
-
-  it('surfaces a load failure with a retry', async () => {
-    apiGetMock
-      .mockRejectedValueOnce(new Error('boom'))
-      .mockResolvedValueOnce({ accounts: [account('recovered')], total: 1 });
-
-    renderPanel('bilibili');
-
-    expect(await screen.findByText(zhCN['admin.source.subscriptionsFailed'])).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: zhCN['common.retry'] }));
-
-    expect(await screen.findByText('name-recovered')).toBeTruthy();
-  });
-  it('searches subscriptions beyond the loaded page and resets pagination', async () => {
-    apiGetMock
-      .mockResolvedValueOnce(page(0, 50, 120))
-      .mockResolvedValueOnce({ accounts: [account('beyond-page')], total: 1 })
-      .mockResolvedValueOnce(page(0, 50, 120));
-    renderPanel('weixin');
-    await screen.findByText('name-biz-0');
-    const input = screen.getByRole('searchbox', { name: '搜索订阅' });
-    fireEvent.change(input, { target: { value: '郭延娇' } });
-    expect(await screen.findByText('name-beyond-page')).toBeTruthy();
-    const url = new URL(apiGetMock.mock.calls.at(-1)![0], 'http://hippo.test');
-    expect(url.searchParams.get('q')).toBe('郭延娇');
-    expect(url.searchParams.get('page')).toBe('1');
-    expect(url.searchParams.get('source')).toBe('weixin');
-    expect(screen.queryByRole('button', { name: zhCN['admin.source.loadMore'] })).toBeNull();
-    fireEvent.change(input, { target: { value: '' } });
-    expect(await screen.findByText('name-biz-0')).toBeTruthy();
-    expect(apiGetMock).toHaveBeenLastCalledWith('/api/account?source=weixin&page=1&page_size=50');
-  });
-
-  it('ignores a late search response after the query changes', async () => {
+  it('drops a late answer from the source it was switched away from', async () => {
     let resolveOld!: (value: unknown) => void;
     apiGetMock
-      .mockResolvedValueOnce(page(0, 1, 1))
       .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))
-      .mockResolvedValueOnce({ accounts: [account('new-match')], total: 1 });
-    renderPanel('weixin');
-    await screen.findByText('name-biz-0');
-    const input = screen.getByRole('searchbox');
-    fireEvent.change(input, { target: { value: 'old' } });
-    await waitFor(() => expect(apiGetMock).toHaveBeenCalledTimes(2));
-    fireEvent.change(input, { target: { value: 'new' } });
-    expect(await screen.findByText('name-new-match')).toBeTruthy();
-    await act(async () => resolveOld({ accounts: [account('old-match')], total: 1 }));
-    expect(screen.queryByText('name-old-match')).toBeNull();
+      .mockResolvedValueOnce({ channels: [channel('youtube:new')] });
+    const view = renderPanel('bilibili');
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledTimes(1));
+    view.rerenderSource('youtube');
+
+    expect(await screen.findByText('name-youtube:new')).toBeTruthy();
+    await act(async () => resolveOld({ channels: [channel('bilibili:old')] }));
+    expect(screen.queryByText('name-bilibili:old')).toBeNull();
   });
 
-  it('keeps the search scope while polling', async () => {
-    vi.useFakeTimers();
-    apiGetMock.mockResolvedValue({ accounts: [account('one')], total: 1 });
-    const view = renderPanel('weixin');
-    await act(() => vi.advanceTimersByTimeAsync(0));
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'one' } });
-    await act(() => vi.advanceTimersByTimeAsync(250));
-    apiGetMock.mockClear();
-    await act(() => vi.advanceTimersByTimeAsync(10000));
-    const url = new URL(apiGetMock.mock.calls.at(-1)![0], 'http://hippo.test');
-    expect(url.searchParams.get('q')).toBe('one');
-    view.unmount();
-  });
+  it('surfaces a load failure and supports retry', async () => {
+    apiGetMock
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce({ channels: [channel('bilibili:recovered')] });
+    renderPanel('bilibili');
 
+    expect(await screen.findByText(zhCN['admin.source.channelsFailed'])).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: zhCN['common.retry'] }));
+
+    expect(await screen.findByText('name-bilibili:recovered')).toBeTruthy();
+  });
 });

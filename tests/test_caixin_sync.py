@@ -87,6 +87,9 @@ class CaixinSyncTest(unittest.IsolatedAsyncioTestCase):
                 find_by_identity=AsyncMock(return_value=None),
                 save=AsyncMock(),
             ),
+            accounts=SimpleNamespace(
+                get_account=AsyncMock(return_value=SimpleNamespace(is_disabled=False)),
+            ),
             download_attempts=SimpleNamespace(increment_attempt=AsyncMock()),
             commit=AsyncMock(),
             rollback=AsyncMock(),
@@ -200,6 +203,18 @@ class CaixinSyncTest(unittest.IsolatedAsyncioTestCase):
         self.source.fetch_article.assert_not_awaited()
         self.credentials.assert_not_awaited()
         self.downloader.ingest_body.assert_not_awaited()
+
+    async def test_a_channel_disabled_after_selection_stops_before_upstream(self):
+        with patch(
+            'hippo.sources.caixin_sync.caixin_channel_is_collectable',
+            AsyncMock(return_value=False),
+        ):
+            stats = await self.adapter.drain(limit=1)
+
+        self.assertEqual((0, 0), (stats.ingested, stats.failed))
+        self.credentials.assert_not_awaited()
+        self.source.fetch_article.assert_not_awaited()
+        self.storage.download_attempts.increment_attempt.assert_not_awaited()
 
     async def test_an_archived_identity_reuses_its_body_without_upstream_access(self):
         self.storage.documents.find_by_identity.return_value = {

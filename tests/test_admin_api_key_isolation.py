@@ -151,6 +151,12 @@ class AdminApiKeyIsolationTest(unittest.TestCase):
             ('patch', '/api/settings', {'enabled': True}),
             ('post', '/api/settings/admin/run', {}),
             ('get', '/api/llm/provider', None),
+            ('get', '/api/admin/source/caixin/channel', None),
+            (
+                'patch',
+                '/api/admin/source/caixin/channel',
+                {'biz_list': ['caixin:125'], 'is_disabled': False},
+            ),
             ('delete', '/api/admin/user/7', None),
         ):
             with self.subTest(path=path):

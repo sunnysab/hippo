@@ -530,4 +530,12 @@ async def run_site_sync(
         SyncRunResponse: 任务 id、状态与作用域（site）。
     """
     source = (body.source or '').strip() or None
+    if source == 'caixin':
+        channels = await storage.accounts.list_instance_accounts('caixin')
+        if not any(not bool(channel.get('is_disabled')) for channel in channels):
+            raise ApiError(
+                'No Caixin channels are enabled for collection',
+                status=409,
+                code='caixin.no_enabled_channels',
+            )
     return await _queue_manual_job(storage, user=user, group_id=None, source=source, biz_list=None)

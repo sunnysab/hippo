@@ -54,7 +54,7 @@ from ...s3 import guess_extension
 from ...site_settings import get_site_settings
 from ...sources.caixin import CaixinSource
 from ...sources.caixin_pacing import CaixinPacer
-from ...sources.caixin_sync import caixin_article_access, ingest_caixin_body
+from ...sources.caixin_sync import caixin_article_access, caixin_channel_is_collectable, ingest_caixin_body
 from ...storage import PostgresStorage, fetchall_rows, fetchone_row, open_storage
 from ..deps import current_user, get_storage, parse_group_ids
 from ..responses import binary_response
@@ -930,6 +930,8 @@ async def refetch_article(
                         raise RuntimeError('Downloader not initialized')
                     if account_source == 'caixin':
                         async with caixin_article_access(thread_storage, owner_article_id):
+                            if not await caixin_channel_is_collectable(thread_storage, owner_biz):
+                                raise RuntimeError('财新板块已停用，不再重新抓取正文')
                             cookie = await thread_storage.credentials.get(user.id, 'caixin')
                             source = CaixinSource(
                                 cookie=cookie or instance_credential(media_settings, 'caixin'),
