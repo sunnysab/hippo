@@ -43,7 +43,13 @@ class _FakeStorage:
         async def update_last_synced(biz: str) -> None:
             self.synced.append(biz)
 
-        self.accounts = SimpleNamespace(update_last_synced=update_last_synced)
+        async def list_syncable_accounts(**_kwargs) -> list[object]:
+            return [object()]
+
+        self.accounts = SimpleNamespace(
+            update_last_synced=update_last_synced,
+            list_syncable_accounts=list_syncable_accounts,
+        )
 
     def transaction(self):
         return contextlib.nullcontext()
@@ -125,6 +131,16 @@ class ServiceDispatchTest(unittest.TestCase):
         self.assertEqual(1, len(bilibili.calls))
         self.assertEqual('key-1', bilibili.calls[0]['source_key'])
         self.assertEqual(0, summary.total_saved)
+
+    def test_caixin_uses_the_channel_id_instead_of_its_host_alias(self) -> None:
+        caixin = _Adapter()
+
+        self._run(
+            {'caixin': caixin},
+            _account(biz='caixin:124', source='caixin', alias='www'),
+        )
+
+        self.assertEqual('124', caixin.calls[0]['source_key'])
 
     def test_an_unregistered_source_is_skipped_not_failed(self) -> None:
         result, summary = self._run({'weixin': _Adapter()}, _account(source='bilibili'))
