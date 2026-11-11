@@ -9,6 +9,7 @@ import { SourceSubscriptionPanel } from './SourceSubscriptionPanel';
 import { SourceSchedulePanel } from './SourceSchedulePanel';
 import { AdminSyncSection } from './AdminSyncSection';
 import { CaixinVisibilityPanel } from './CaixinVisibilityPanel';
+import { SyncHealthPanel } from './SyncHealthPanel';
 
 /**
  * One source, everything about it: how hippo signs in, what it crawls, and what
@@ -39,12 +40,33 @@ export function SourceDetailPage() {
       </div>
 
       {source === 'weixin' ? (
-        <LoginPanel />
+        <>
+          <LoginPanel />
+          <SyncHealthPanel showPush />
+        </>
       ) : (
         <SourceCredentialPanel source={source} />
       )}
 
-      <SourceProxyPanel source={source} />
+      {source === 'caixin' ? (
+        <section className="panel">
+          <h2>{t('admin.caixin.proxyTitle', '网络分流')}</h2>
+          <p>
+            {t(
+              'admin.caixin.proxyRoute',
+              'gateway.caixin.com 和 deepview.caixin.com 走公司代理，其他财新域名直连。',
+            )}
+          </p>
+          <p className="muted">
+            {t(
+              'admin.caixin.proxyManaged',
+              '这两条路由由实例的财新代理配置文件统一管理，这里不需要重复填写代理。',
+            )}
+          </p>
+        </section>
+      ) : (
+        <SourceProxyPanel source={source} />
+      )}
 
       {source === 'weixin' ? (
         <p className="muted">{t('sync.weixinPushHint', '微信公众号通过实时推送更新，可手动检查近期文章。')}</p>

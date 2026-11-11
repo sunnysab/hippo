@@ -67,7 +67,6 @@ class MediaSources:
         caixin = self._client(
             CaixinSource(
                 cookie=caixin_cookie if caixin_cookie is not None else instance_credential(settings, CAIXIN_SOURCE),
-                proxy=resolve_proxy(settings, CAIXIN_SOURCE),
                 pacer=CaixinPacer(),
             )
         )

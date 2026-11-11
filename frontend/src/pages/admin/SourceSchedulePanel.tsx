@@ -6,7 +6,8 @@ import { useToast } from '../../hooks/useToast';
 export function SourceSchedulePanel({ source }: { source: string }) {
   const { t } = useI18n();
   const { showToast } = useToast();
-  const [intervalDays, setIntervalDays] = useState('1');
+  const caixin = source === 'caixin';
+  const [intervalValue, setIntervalValue] = useState('1');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -17,24 +18,27 @@ export function SourceSchedulePanel({ source }: { source: string }) {
     void apiGet('/api/settings', { signal: controller.signal }).then((payload) => {
       if (controller.signal.aborted) return;
       const intervals = payload.source_intervals_days as Record<string, number> | undefined;
-      setIntervalDays(String(intervals?.[source] ?? 1));
+      setIntervalValue(String(caixin ? payload.caixin_interval_hours ?? 6 : intervals?.[source] ?? 1));
     }).catch((err: unknown) => {
       if (!controller.signal.aborted && !isAuthError(err)) setError((err as Error).message);
     }).finally(() => {
       if (!controller.signal.aborted) setLoading(false);
     });
     return () => controller.abort();
-  }, [source, loadAttempt]);
+  }, [caixin, source, loadAttempt]);
 
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const days = Number(intervalDays);
-    if (!Number.isInteger(days) || days < 1) return;
+    const interval = Number(intervalValue);
+    if (!Number.isInteger(interval) || interval < 1) return;
     setSaving(true);
     try {
-      const payload = await apiSend('/api/settings', 'PATCH', { source_intervals_days: { [source]: days } });
-      const intervals = payload.source_intervals_days as Record<string, number>;
-      setIntervalDays(String(intervals[source]));
+      const payload = await apiSend('/api/settings', 'PATCH', caixin
+        ? { caixin_interval_hours: interval }
+        : { source_intervals_days: { [source]: interval } });
+      setIntervalValue(String(caixin
+        ? payload.caixin_interval_hours
+        : (payload.source_intervals_days as Record<string, number>)[source]));
       showToast(t('sync.saved', '同步设置已保存'));
     } catch (err) {
       if (!isAuthError(err)) showToast((err as Error).message);
@@ -61,11 +65,24 @@ export function SourceSchedulePanel({ source }: { source: string }) {
         <p className="muted">{t('admin.loading', '加载中…')}</p>
       ) : (
         <label>
-          <span>{t('sync.sourceIntervalDays', '默认更新间隔（天）')}</span>
-          <input type="number" min="1" step="1" required value={intervalDays} onChange={(event) => setIntervalDays(event.target.value)} />
+          <span>{caixin
+            ? t('sync.caixinIntervalHours', '财新检查间隔（小时）')
+            : t('sync.sourceIntervalDays', '默认更新间隔（天）')}</span>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            required
+            value={intervalValue}
+            onChange={(event) => setIntervalValue(event.target.value)}
+          />
         </label>
       )}
-      <p className="muted">{t('sync.sourceScheduleHint', '添加后立即同步；之后按上次成功检查的时间计算间隔，账号可单独设置。')}</p>
+      {caixin && !loading && !error ? (
+        <p className="muted">
+          {t('sync.caixinHistoryHint', '先检查各板块的新文章，每轮再轮换补抓一页旧文章。')}
+        </p>
+      ) : null}
     </form>
   );
 }

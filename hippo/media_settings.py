@@ -56,8 +56,10 @@ INSTANCE_CREDENTIALS = {'bilibili': 'bilibili_cookie', 'youtube': 'youtube_cooki
 
 #: Sources that open their own network connections, each with a proxy field.
 #: ``weixin`` is here too: its article pages, avatars and images are fetched over
-#: HTTP even though the article *list* comes from the local daemon.
-PROXY_SOURCES = ('weixin', 'bilibili', 'youtube', 'podcast', 'caixin')
+#: HTTP even though the article *list* comes from the local daemon. Caixin is
+#: absent because its Rust client routes two named hosts from ``proxy.toml`` while
+#: connecting every other Caixin host directly.
+PROXY_SOURCES = ('weixin', 'bilibili', 'youtube', 'podcast')
 
 #: Sources that share another source's connection pool, and so its proxy.
 #: A text feed and a podcast are the same client; ``feed`` only says there is no
@@ -112,7 +114,6 @@ def default_media_settings() -> dict[str, Any]:
         'proxy_bilibili': PROXY_DIRECT,
         'proxy_youtube': 'http://100.111.170.110:8082',
         'proxy_podcast': PROXY_FOLLOW,
-        'proxy_caixin': PROXY_FOLLOW,
     }
 
 
@@ -268,6 +269,10 @@ def resolve_proxy(settings: Mapping[str, Any], source: str) -> str:
 
     ``''`` means "connect directly", which is also what an unset default gives.
     """
+    # Caixin's Rust client applies its domain-specific proxy file itself. Sending
+    # a general proxy here would bypass that split for every request.
+    if source == 'caixin':
+        return ''
     source = PROXY_ALIASES.get(source, source)
     value = _as_text(settings.get(f'proxy_{source}')) or PROXY_FOLLOW
     if value == PROXY_DIRECT:

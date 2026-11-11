@@ -6,7 +6,6 @@ import type { SyncSettings, SyncStatus, SyncTaskSummary } from '../../store/sett
 import { buildSyncSettingsFormState, type SyncSettingsFormState } from '../settings/form';
 import { emitRefresh, onRefresh } from '../../utils/events';
 import { usePolling } from '../../hooks/usePolling';
-import { LoginPanel } from './LoginPanel';
 import { SyncHealthPanel } from './SyncHealthPanel';
 import { ActiveTaskPanel } from './ActiveTaskPanel';
 import { FailureAlertPanel } from './FailureAlertPanel';
@@ -92,7 +91,6 @@ function AdminSyncPanels({ initialFormState, settingsLoaded }: { initialFormStat
 
   return (
     <div className="admin-page">
-      <LoginPanel />
       <SyncHealthPanel />
       <ActiveTaskPanel />
       <QueuePanel />

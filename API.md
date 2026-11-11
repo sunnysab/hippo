@@ -209,10 +209,10 @@ DELETE /api/group/3 → 204
 | POST | `/api/account` | 登录 | 添加账号（同时订阅） |
 | GET | `/api/account/{biz}` | 登录 | 账号详情 |
 | POST | `/api/account/{biz}/backfill` | 登录 | 继续未完成的历史列表补全（保留游标） |
-| PATCH | `/api/account/{biz}` | 登录 | 更新昵称/别名/头像/分组/停用/同步间隔 |
+| PATCH | `/api/account/{biz}` | 登录 | 更新昵称/别名/头像/分组/停用/媒体来源同步间隔 |
 | DELETE | `/api/account/{biz}` | 登录 | 取消关注 |
 | POST | `/api/account/move` | 登录 | 批量移动到分组 |
-| POST | `/api/account/batch` | 登录 | 批量设置同步间隔 |
+| POST | `/api/account/batch` | 登录 | 批量设置媒体来源同步间隔 |
 | GET | `/api/account/search` | 登录 | 搜索账号（候选，仅微信来源） |
 | GET | `/api/account/search/{gh_id}/avatar` | 登录 | 候选头像（仅微信来源） |
 | GET | `/api/account/{biz}/avatar` | 登录 | 已关注账号头像 |
@@ -265,6 +265,8 @@ PATCH /api/account/Mz123
 
 字段分两类：`nickname`/`alias`/`round_head_img` 是**全站共享**的目录字段；
 `group_id`/`is_disabled`/`sync_interval_days` 属于**你自己的订阅**。`group_id: null` 会落回默认分组。
+财新所有板块使用全实例统一的小时级间隔，不接受账号或个人订阅覆盖；给财新传
+`sync_interval_days` 返回 `409` 与 `code: caixin.interval_global`。
 没有任何可更新字段时 `400`，账号不存在（或不在你的订阅里）时 `404`。
 
 ```
@@ -634,6 +636,7 @@ JSON 形态返回 `{"articles": [...]}`；`format=rss` 时返回 `application/rs
 ```
 GET /api/settings
 → { "source_intervals_days": { "feed": 1, "youtube": 1, "bilibili": 1, "podcast": 1 },
+    "caixin_interval_hours": 6,
     "sleep_seconds": 15, "skip_minutes": 30,
     "download_content": true, "download_images": true, "article_exclude_keywords": "",
     "alert_enabled": false, "alert_email": "",
@@ -647,12 +650,14 @@ GET /api/settings
 写回时，若 `smtp_password` 里还带着掩码（前端把回显值原样提交），服务端会**丢弃该字段**，不会把已存密码
 覆盖成一串圆点；传空串才是“清除密码”，传新值才是“替换”。
 
-`PATCH /api/settings` 只更新传入的字段（`source_intervals_days`、`sleep_seconds`、`skip_minutes`、
+`PATCH /api/settings` 只更新传入的字段（`source_intervals_days`、`caixin_interval_hours`、`sleep_seconds`、`skip_minutes`、
 `download_content`、`download_images`、`article_exclude_keywords`、`alert_enabled`、`alert_email`）；`email` 传对象时
 按其子字段更新 SMTP。
 `source_intervals_days` 只允许 `feed`、`youtube`、`bilibili`、`podcast`，值为至少 1 的整数天数，默认每天一次。
 只传部分来源会保留其他来源的设置，例如 `{"source_intervals_days":{"feed":3}}` 只调整 RSS。
-账号的 `sync_interval_days = null` 跟随来源设置，有明确值则覆盖；多人订阅同一账号时取实际最短间隔。
+`caixin_interval_hours` 是全实例统一的小时级周期，默认 6 小时；财新不接受账号覆盖。
+每轮先检查各启用板块的最新页，再轮换补抓一个板块的一页旧文，旧文游标随板块保存。
+其他来源的 `sync_interval_days = null` 跟随来源设置，有明确值则覆盖；多人订阅同一账号时取实际最短间隔。
 周期从上次成功检查起算，1 天代表完整 24 小时；后台每分钟检查到期账号，排队会影响实际执行时间。
 失败任务最早在上次入队 15 分钟后重新调度，重启不会清除此限制。新订阅立即检查，手动检查跳过天数周期但保留短冷却。
 
@@ -1040,8 +1045,10 @@ POST   /api/source/credential/bilibili/test[?scope=user|instance] -> 探测是�
 
 财新使用同一组接口，将路径中的来源替换为 `caixin`；`secret` 为
 `UID=…; SA_USER_auth=…` 格式的 Cookie 请求头。凭证列表包含 `bilibili`、`youtube`、`caixin`，
-每项仅返回 `configured`。管理设置新增脱敏的 `caixin_cookie` / `caixin_cookie_set` 与 `proxy_caixin`；
-`source_intervals_days.caixin` 设置财新检查周期（整数天，至少 1）。财新预览接受受支持频道根地址或文章地址，
+每项仅返回 `configured`。管理设置新增脱敏的 `caixin_cookie` / `caixin_cookie_set`；
+`caixin_interval_hours` 设置财新检查周期（整数小时，至少 1）。财新代理不在来源页重复配置：
+Rust 客户端固定只让 `gateway.caixin.com` 与 `deepview.caixin.com` 使用实例代理文件中的公司代理，其他域名直连。
+财新预览接受受支持频道根地址或文章地址，
 解析为 `caixin:<频道 ID>`；关闭音视频转写不影响财新预览、订阅与同步。
 财新凭证测试验证当前付费文章的正文权限，`account` 返回被验证文章的标题。
 

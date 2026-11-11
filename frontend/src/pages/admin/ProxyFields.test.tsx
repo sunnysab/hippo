@@ -23,7 +23,6 @@ describe('ProxyFields', () => {
     expect(field('proxy_bilibili').value).toBe('direct');
     expect(field('proxy_youtube').value).toBe('custom');
     expect(field('proxy_podcast').value).toBe('default');
-    expect(field('proxy_caixin').value).toBe('default');
     // 只有「自定义」才需要填地址。
     expect(field('proxy_youtube-url').value).toBe('http://proxy.example:8082');
     expect(field('proxy_bilibili-url')).toBeNull();
@@ -82,6 +81,5 @@ describe('ProxyFields', () => {
     expect(screen.getByText('哔哩哔哩 · 代理')).toBeTruthy();
     expect(screen.getByText('YouTube · 代理')).toBeTruthy();
     expect(screen.getByText('播客 · 代理')).toBeTruthy();
-    expect(screen.getByText('财新 · 代理')).toBeTruthy();
   });
 });

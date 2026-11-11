@@ -168,4 +168,11 @@ describe('account cards and details', () => {
     expect(within(dialog).queryByRole('combobox')).toBeNull();
     expect(within(dialog).getByText(/实时推送/)).toBeTruthy();
   });
+
+  it('keeps Caixin on the instance-wide interval without an account control', () => {
+    render(<AccountCard account={{ ...baseAccount, source: 'caixin', biz: 'caixin:132' }} />);
+    const dialog = openDetails();
+    expect(within(dialog).queryByRole('combobox')).toBeNull();
+    expect(within(dialog).getByText(/所有板块共用一个小时级同步间隔/)).toBeTruthy();
+  });
 });

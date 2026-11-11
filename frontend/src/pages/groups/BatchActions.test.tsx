@@ -82,12 +82,20 @@ describe('batch update intervals', () => {
     }));
   });
 
-  it('hides interval controls when only WeChat subscriptions are selected', () => {
+  it('hides interval controls when only instance-scheduled subscriptions are selected', () => {
     mocks.state.selectedAccounts = ['one'];
     render(<BatchActions />);
     expect(document.querySelector('#batch-sync-interval')).toBeNull();
     expect(document.querySelector('#btn-batch-sync')).toBeNull();
     expect(document.querySelector('#btn-batch-group-sync')).toBeTruthy();
+  });
+
+  it('does not apply account intervals to Caixin', () => {
+    mocks.state.accounts = [{ biz: 'one', source: 'caixin' }];
+    mocks.state.selectedAccounts = ['one'];
+    render(<BatchActions />);
+    expect(document.querySelector('#batch-sync-interval')).toBeNull();
+    expect(document.querySelector('#btn-batch-sync')).toBeNull();
   });
 });
 

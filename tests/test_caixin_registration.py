@@ -49,11 +49,10 @@ class CaixinCredentialTest(unittest.TestCase):
             ).caixin.configured
         )
 
-    def test_caixin_uses_its_own_proxy_or_the_instance_default(self) -> None:
+    def test_caixin_uses_only_its_domain_proxy_file(self) -> None:
         settings = normalize_media_settings({'proxy_default': 'http://proxy.example:8082'})
-        self.assertEqual('http://proxy.example:8082', resolve_proxy(settings, 'caixin'))
-        settings = normalize_media_settings({'proxy_caixin': 'direct'}, current=settings)
         self.assertEqual('', resolve_proxy(settings, 'caixin'))
+        self.assertNotIn('proxy_caixin', settings)
         self.assertIn('caixin', source_names())
         self.assertEqual('caixin', detect_source('https://international.caixin.com/'))
         self.assertEqual('podcast', detect_source('https://caixin.com.attacker.example/'))

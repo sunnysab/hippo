@@ -95,7 +95,6 @@ class MediaSettingsUpdateRequest(BaseModel):
     proxy_bilibili: str | None = None
     proxy_youtube: str | None = None
     proxy_podcast: str | None = None
-    proxy_caixin: str | None = None
 
 
 # -- responses ---------------------------------------------------------------
@@ -176,7 +175,6 @@ class MediaSettingsOut(BaseModel):
     proxy_bilibili: str
     proxy_youtube: str
     proxy_podcast: str
-    proxy_caixin: str
 
 
 class AsrProbeOut(BaseModel):

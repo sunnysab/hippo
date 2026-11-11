@@ -24,7 +24,8 @@ export function BatchActions() {
 
   const count = state.selectedAccounts.length;
   const pollingAccounts = state.accounts
-    .filter((account) => state.selectedAccounts.includes(account.biz) && (account.source || 'weixin') !== 'weixin')
+    .filter((account) => state.selectedAccounts.includes(account.biz)
+      && !['weixin', 'caixin'].includes(account.source || 'weixin'))
     .map((account) => account.biz);
   const showActions = isNarrow ? count > 0 && expanded : count > 0;
 

@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SourceDetailPage } from './SourceDetailPage';
+import { SettingsProvider } from '../../store/settings';
 
 const apiGetMock = vi.fn();
 const apiSendMock = vi.fn();
@@ -25,11 +26,13 @@ vi.mock('./LoginPanel', () => ({
 
 const renderAt = (source: string) =>
   render(
-    <MemoryRouter initialEntries={[`/admin/source/${source}`]}>
-      <Routes>
-        <Route path="/admin/source/:source" element={<SourceDetailPage />} />
-      </Routes>
-    </MemoryRouter>,
+    <SettingsProvider>
+      <MemoryRouter initialEntries={[`/admin/source/${source}`]}>
+        <Routes>
+          <Route path="/admin/source/:source" element={<SourceDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    </SettingsProvider>,
   );
 
 describe('SourceDetailPage', () => {
@@ -47,6 +50,7 @@ describe('SourceDetailPage', () => {
     renderAt('weixin');
 
     expect(await screen.findByTestId('weixin-login')).toBeTruthy();
+    expect(screen.getByText('微信公众号后台与推送')).toBeTruthy();
     // 扫码只解决公众号：别的来源上不该出现登录面板。
     expect(screen.queryByText('凭证')).toBeNull();
   });
@@ -109,5 +113,13 @@ describe('SourceDetailPage', () => {
     const run = await screen.findByRole('button', { name: '运行' });
     await waitFor(() => expect((run as HTMLButtonElement).disabled).toBe(false));
     expect(screen.queryByText('尚未启用任何采集板块。')).toBeNull();
+  });
+
+  it('explains Caixin domain routing instead of asking for a second proxy', async () => {
+    renderAt('caixin');
+
+    expect(await screen.findByText(/gateway\.caixin\.com 和 deepview\.caixin\.com 走公司代理/)).toBeTruthy();
+    expect(screen.getByText(/这里不需要重复填写代理/)).toBeTruthy();
+    expect(screen.queryByText('财新 · 代理')).toBeNull();
   });
 });

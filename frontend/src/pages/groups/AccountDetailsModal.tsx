@@ -125,6 +125,8 @@ export function AccountDetailsModal({ account, onClose, onViewArticles }: Accoun
           <h3>{t('accounts.syncSettings', '同步设置')}</h3>
           {source === 'weixin'
             ? <p className="account-sub account-dialog-hint">{t('accounts.weixinUpdates', '通过实时推送更新；可手动检查近期文章。')}</p>
+            : source === 'caixin'
+              ? <p className="account-sub account-dialog-hint">{t('accounts.caixinIntervalGlobal', '财新所有板块共用一个小时级同步间隔。')}</p>
             : <div className="account-dialog-interval">
               <label htmlFor={intervalId}>{t('accounts.syncInterval', 'Sync interval')}</label>
               <select id={intervalId} value={account.sync_interval_days === null ? '' : String(account.sync_interval_days)} disabled={saving} onChange={(event) => void saveInterval(event.target.value)}>
