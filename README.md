@@ -201,6 +201,9 @@ B站合集支持 `https://space.bilibili.com/<mid>/lists?sid=<sid>` 和
 如果之前已将合集误订阅成 UP 主，需要重新粘贴链接订阅合集；旧的 UP 主订阅不会被自动修改或删除。
 验证：`uv run pytest tests/test_source_bilibili.py tests/test_source_api.py`。
 
+Bilibili 的 HTTP、WBI 签名和响应解析集中在 `hippo/sources/bilibili_api.py`；
+`bilibili.py` 保留来源与媒体解析适配，列表入库和转写继续共用现有流程。
+
 ### 转写
 
 一个 `media_job` 一条任务，由 `hippo.sync_worker` 里与正文抓取并行的常驻循环消费：

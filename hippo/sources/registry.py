@@ -21,7 +21,8 @@ from ..media_settings import (
 from ..storage import PostgresStorage
 from . import SourceAdapter, UnsupportedSource
 from .bilibili import SOURCE as BILIBILI_SOURCE
-from .bilibili import BilibiliClient, BilibiliResolver, BilibiliSource
+from .bilibili import BilibiliResolver, BilibiliSource
+from .bilibili_api import BilibiliClient
 from .chain import credentials_for
 from .ingest import ChannelInfo, MediaResolverRegistry, MediaSource, MediaSync
 from .podcast import FEED_SOURCE, PodcastClient, PodcastResolver, PodcastSource

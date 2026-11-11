@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..logger import get_logger
-from .bilibili import BilibiliClient, BilibiliError
+from .bilibili_api import BilibiliClient, BilibiliError
 from .youtube import YoutubeError, is_bot_check, parse_json_lines, run_ytdlp
 
 logger = get_logger(__name__)
