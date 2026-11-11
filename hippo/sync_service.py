@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from .container import build_sync_container
@@ -16,6 +16,7 @@ from .sources import SourceAdapter, SourceDeferred, UnsupportedSource, adapter_f
 from .storage import PostgresStorage, open_storage
 from .sync_core import _get_cancel_event
 from .sync_settings import (
+    CAIXIN_HISTORY_CHANNEL_KEY,
     _persist_sync_outcome,
     get_sync_settings,
     set_sync_state,
@@ -31,7 +32,7 @@ from .sync_types import (
     SyncSummary,
 )
 from .utils import (
-    resolve_sync_interval,
+    resolve_sync_interval_seconds,
     should_skip_by_interval,
     should_skip_by_time,
     utc_now_iso,
@@ -97,7 +98,11 @@ class ArticleSyncService:
             )
 
         if not config.force:
-            effective_interval = resolve_sync_interval(account, config.source_intervals_days)
+            effective_interval = resolve_sync_interval_seconds(
+                account,
+                config.source_intervals_days,
+                config.caixin_interval_hours,
+            )
             if should_skip_by_interval(account.last_synced_at, effective_interval):
                 observer.on_skip('sync_interval')
                 return (
@@ -399,7 +404,30 @@ def _build_sync_config(settings: dict[str, Any], *, force: bool = False) -> Sync
         force=force,
         skip_minutes=settings.get('skip_minutes'),
         source_intervals_days=settings.get('source_intervals_days', {}),
+        caixin_interval_hours=int(settings.get('caixin_interval_hours') or 6),
     )
+
+
+def _next_caixin_history_account(
+    accounts: list[AccountCredential],
+    last_biz: str | None,
+) -> AccountCredential | None:
+    """Pick the next enabled channel after the last successful history page."""
+
+    def channel_id(account: AccountCredential) -> int:
+        try:
+            return int(account.biz.partition(':')[2])
+        except ValueError:
+            return 0
+
+    ordered = sorted(accounts, key=channel_id)
+    if not ordered:
+        return None
+    try:
+        last_id = int((last_biz or '').partition(':')[2])
+    except ValueError:
+        last_id = -1
+    return next((account for account in ordered if channel_id(account) > last_id), ordered[0])
 
 
 async def run_sync_job(
@@ -413,6 +441,7 @@ async def run_sync_job(
     lock: asyncio.Lock | None = None,
     scope_sources: tuple[str, ...] | None = None,
     source_slots: asyncio.Semaphore | None = None,
+    caixin_history: bool = False,
 ) -> SyncJobResult:
     job_observer = observer or NullSyncJobObserver()
     if lock:
@@ -428,6 +457,7 @@ async def run_sync_job(
                 lock=None,
                 scope_sources=scope_sources,
                 source_slots=source_slots,
+                caixin_history=caixin_history,
             )
     job_observer.on_lock_acquired()
     started_at = utc_now_iso()
@@ -446,6 +476,12 @@ async def run_sync_job(
                 source=source,
                 source_intervals_days=settings.get('source_intervals_days', {}),
             )
+            history_account = None
+            if caixin_history:
+                history_account = _next_caixin_history_account(
+                    [account for account in accounts if account.source == 'caixin'],
+                    await storage.meta.get(CAIXIN_HISTORY_CHANNEL_KEY),
+                )
         if scope_sources is not None:
             accounts = [account for account in accounts if (account.source or 'weixin') in scope_sources]
         job_observer.on_accounts_loaded(accounts)
@@ -472,6 +508,44 @@ async def run_sync_job(
                             observer_factory=observer_factory,
                             observer=job_observer,
                         )
+                        if (
+                            history_account is not None
+                            and (selected[0].source or 'weixin') == 'caixin'
+                            and history_account in selected
+                        ):
+                            try:
+                                history_stats = await app.adapters['caixin'].sync_older(
+                                    biz=history_account.biz,
+                                    source_key=history_account.biz.partition(':')[2],
+                                    cursor=history_account.backfill_cursor,
+                                )
+                            except SourceDeferred as exc:
+                                job_observer.on_log(f'财新历史补抓暂缓：{exc}')
+                            except Exception as exc:
+                                logger.warning('Caixin history page failed: %s', type(exc).__name__)
+                                job_observer.on_log('财新历史补抓失败，下一轮继续')
+                            else:
+                                next_cursor = None if history_stats.is_end else history_stats.next_offset
+                                try:
+                                    async with source_storage.transaction():
+                                        await source_storage.accounts.set_backfill_cursor(
+                                            history_account.biz, next_cursor
+                                        )
+                                        await source_storage.meta.set(
+                                            CAIXIN_HISTORY_CHANNEL_KEY, history_account.biz
+                                        )
+                                except Exception as exc:
+                                    logger.warning('Caixin history state failed: %s', type(exc).__name__)
+                                    job_observer.on_log('财新历史进度未保存，下一轮会重试')
+                                if history_stats.enqueued:
+                                    source_report = replace(
+                                        source_report,
+                                        total_saved=source_report.total_saved + history_stats.enqueued,
+                                        summary=[
+                                            *source_report.summary,
+                                            (f'{history_account.nickname} · 历史', history_stats.enqueued),
+                                        ],
+                                    )
                         return source_report, None
             except SyncRunError as exc:
                 return exc.report or empty_report, str(exc)

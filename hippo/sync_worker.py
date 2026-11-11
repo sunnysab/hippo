@@ -48,7 +48,7 @@ from .sync_types import (
     SyncSummary,
     article_snapshot,
 )
-from .utils import resolve_sync_interval, should_skip_by_interval, should_skip_by_time, utc_now_iso
+from .utils import resolve_sync_interval_seconds, should_skip_by_interval, should_skip_by_time, utc_now_iso
 from .weixin_daemon import SessionExpiredError, WeixinSource
 from .weixin_ingest import WeixinArticleSync
 from .weixin_watch import watch_article_push
@@ -374,7 +374,12 @@ async def maybe_enqueue_scheduled_job(storage: PostgresStorage) -> bool:
             account.biz
             for account in accounts
             if not should_skip_by_interval(
-                account.last_synced_at, resolve_sync_interval(account, settings['source_intervals_days'])
+                account.last_synced_at,
+                resolve_sync_interval_seconds(
+                    account,
+                    settings['source_intervals_days'],
+                    settings['caixin_interval_hours'],
+                ),
             )
             and not should_skip_by_time(account.last_synced_at, settings.get('skip_minutes'))
         ]
@@ -561,6 +566,7 @@ async def run_worker_once(
                         else job.scope_sources
                     ),
                     source_slots=source_slots,
+                    caixin_history=job.trigger_type == 'scheduled' and job.source == 'caixin',
                     observer_factory=lambda account, _: _WorkerObserver(tracker=tracker, account=account),
                     observer=tracker,
                 )

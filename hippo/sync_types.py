@@ -28,6 +28,7 @@ class SyncConfig:
     skip_minutes: int | None
     max_pages: int | None = None
     source_intervals_days: dict[str, int] = field(default_factory=dict)
+    caixin_interval_hours: int = 6
 
 
 @dataclass(frozen=True)

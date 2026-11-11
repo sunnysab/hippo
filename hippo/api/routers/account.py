@@ -141,6 +141,16 @@ async def _update_account(
     if 'is_disabled' in payload:
         per_user['is_disabled'] = bool(payload['is_disabled'])
     if 'sync_interval_days' in payload:
+        try:
+            stored = await storage.accounts.get_account(biz)
+        except LookupError:
+            raise ApiError('Account not found', status=404) from None
+        if stored.source == 'caixin':
+            raise ApiError(
+                'Caixin sync interval is controlled by the source-wide setting',
+                status=409,
+                code='caixin.interval_global',
+            )
         value = payload['sync_interval_days']
         per_user['sync_interval_days'] = max(int(value), 1) if value is not None else None
 
@@ -609,6 +619,17 @@ async def batch_update_accounts(
         raise ApiError('biz_list is required')
     if 'sync_interval_days' not in body.model_fields_set:
         raise ApiError('No fields to update')
+    for biz in body.biz_list:
+        try:
+            stored = await storage.accounts.get_account(biz)
+        except LookupError:
+            continue
+        if stored.source == 'caixin':
+            raise ApiError(
+                'Caixin sync interval is controlled by the source-wide setting',
+                status=409,
+                code='caixin.interval_global',
+            )
     interval = body.sync_interval_days
     async with storage.transaction():
         updated = await storage.subscriptions.set_interval(

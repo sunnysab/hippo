@@ -6,7 +6,11 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+from hippo.api.routers.account import _update_account, batch_update_accounts
+from hippo.api.schemas.account import AccountBatchRequest
+from hippo.exceptions import ApiError
 from hippo.repositories.account import AccountRepository
+from hippo.sync_service import _next_caixin_history_account
 from hippo.sync_settings import POLLING_SOURCES, default_sync_settings
 from hippo.sync_worker import maybe_enqueue_scheduled_job
 
@@ -82,6 +86,17 @@ class SourceSchedulingTest(unittest.IsolatedAsyncioTestCase):
             trigger_type='scheduled', source='caixin', biz_list=['caixin:132']
         )
 
+    async def test_caixin_waits_for_the_instance_hour_interval_and_ignores_account_overrides(self):
+        storage = self._storage([
+            _account('caixin:132', 'caixin', 5, 1),
+            _account('caixin:124', 'caixin', 7, 30),
+        ])
+        with patch('hippo.sync_worker.get_sync_settings', AsyncMock(return_value=default_sync_settings())):
+            await maybe_enqueue_scheduled_job(storage)
+        storage.sync_jobs.create_job.assert_awaited_once_with(
+            trigger_type='scheduled', source='caixin', biz_list=['caixin:124']
+        )
+
     async def test_one_busy_source_does_not_block_another(self):
         storage = self._storage([_account('feed', 'feed'), _account('youtube', 'youtube')], active=('feed',))
         with patch('hippo.sync_worker.get_sync_settings', AsyncMock(return_value=default_sync_settings())):
@@ -116,3 +131,42 @@ class SharedAccountIntervalTest(unittest.IsolatedAsyncioTestCase):
                 repo = AccountRepository(SimpleNamespace(cursor=Mock(return_value=cursor)))
                 accounts = await repo.list_syncable_accounts(source_intervals_days={'feed': source_default})
                 self.assertEqual(expected, accounts[0].sync_interval_days)
+
+
+class CaixinIntervalApiTest(unittest.IsolatedAsyncioTestCase):
+    async def test_single_account_interval_cannot_be_set_for_caixin(self):
+        storage = SimpleNamespace(
+            accounts=SimpleNamespace(
+                get_account=AsyncMock(return_value=SimpleNamespace(source='caixin')),
+            ),
+        )
+        with self.assertRaisesRegex(ApiError, 'source-wide') as raised:
+            await _update_account(storage, 1, 'caixin:132', {'sync_interval_days': 1})
+        self.assertEqual('caixin.interval_global', raised.exception.code)
+
+    async def test_batch_interval_cannot_touch_caixin(self):
+        storage = SimpleNamespace(
+            accounts=SimpleNamespace(
+                get_account=AsyncMock(return_value=SimpleNamespace(source='caixin')),
+            ),
+        )
+        with self.assertRaisesRegex(ApiError, 'source-wide') as raised:
+            await batch_update_accounts(
+                AccountBatchRequest(biz_list=['caixin:132'], sync_interval_days=1),
+                storage,
+                SimpleNamespace(id=1),
+            )
+        self.assertEqual('caixin.interval_global', raised.exception.code)
+
+
+class CaixinHistoryRotationTest(unittest.TestCase):
+    def test_history_pages_rotate_across_enabled_channels(self):
+        accounts = [
+            SimpleNamespace(biz='caixin:124'),
+            SimpleNamespace(biz='caixin:125'),
+            SimpleNamespace(biz='caixin:132'),
+        ]
+
+        self.assertEqual('caixin:124', _next_caixin_history_account(accounts, None).biz)
+        self.assertEqual('caixin:132', _next_caixin_history_account(accounts, 'caixin:125').biz)
+        self.assertEqual('caixin:124', _next_caixin_history_account(accounts, 'caixin:132').biz)

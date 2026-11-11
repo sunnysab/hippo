@@ -172,6 +172,16 @@ class CaixinSyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((1, 0), (first.enqueued, repeated.enqueued))
         self.source.fetch_article.assert_not_awaited()
 
+    async def test_older_page_starts_after_the_latest_batch(self):
+        await self.adapter.sync_older(biz=BIZ, source_key='132', cursor=None)
+
+        self.source.list_items.assert_awaited_once_with(source_key='132', limit=5, cursor='5')
+
+    async def test_older_page_resumes_from_the_saved_cursor(self):
+        await self.adapter.sync_older(biz=BIZ, source_key='132', cursor='15')
+
+        self.source.list_items.assert_awaited_once_with(source_key='132', limit=5, cursor='15')
+
     async def test_body_and_raw_document_commit_together_and_keep_article_identity(self):
         stats = await self.adapter.drain(limit=1)
 

@@ -195,7 +195,8 @@ async def update_sync_settings(
     的掩码会被丢弃，不会把已存密码覆盖成一串圆点。
 
     Args:
-        body (SyncSettingsUpdateRequest): 需要更新的设置（`source_intervals_days`、`email` 等）。
+        body (SyncSettingsUpdateRequest): 需要更新的设置（`source_intervals_days`、
+            `caixin_interval_hours`、`email` 等）。
 
     Returns:
         dict: 更新后的设置。
@@ -204,6 +205,8 @@ async def update_sync_settings(
     updates: dict[str, Any] = {}
     if 'source_intervals_days' in sent and body.source_intervals_days is not None:
         updates['source_intervals_days'] = body.source_intervals_days
+    if 'caixin_interval_hours' in sent and body.caixin_interval_hours is not None:
+        updates['caixin_interval_hours'] = body.caixin_interval_hours
     if 'sleep_seconds' in sent and body.sleep_seconds is not None:
         updates['sleep_seconds'] = body.sleep_seconds
     if 'download_content' in sent and body.download_content is not None:

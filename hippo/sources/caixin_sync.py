@@ -116,6 +116,12 @@ class CaixinSync:
                 break
         return stats
 
+    async def sync_older(self, *, biz: str, source_key: str, cursor: str | None) -> SyncStats:
+        """Fetch one page after the current head, resuming where the rotation stopped."""
+        settings = await get_media_settings(self._storage)
+        limit = max(1, int(settings.get('items_per_sync') or 5))
+        return await self.sync_account(biz=biz, source_key=source_key, pages=1, offset=cursor or str(limit))
+
     async def drain(self, *, limit: int | None = None) -> SyncStats:
         if self._downloader is None:
             raise RuntimeError('Caixin body processing requires a downloader')

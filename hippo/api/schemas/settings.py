@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 SourceIntervalsDays = dict[
-    Literal['bilibili', 'youtube', 'podcast', 'feed', 'caixin'],
+    Literal['bilibili', 'youtube', 'podcast', 'feed'],
     Annotated[int, Field(strict=True, ge=1)],
 ]
 
@@ -44,6 +44,7 @@ class SyncSettingsOut(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
     source_intervals_days: SourceIntervalsDays
+    caixin_interval_hours: int
     sleep_seconds: float
     skip_minutes: int
     download_content: bool
@@ -82,6 +83,12 @@ class SyncSettingsUpdateRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
     source_intervals_days: SourceIntervalsDays | None = None
+    caixin_interval_hours: int | None = Field(
+        default=None,
+        strict=True,
+        ge=1,
+        description='Instance-wide hours between Caixin checks.',
+    )
     sleep_seconds: float | None = Field(default=None, ge=0, description='Pause between account requests.')
     skip_minutes: int | None = Field(default=None, ge=0, description='Skip an account synced this recently.')
     download_content: bool | None = None

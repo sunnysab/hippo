@@ -25,6 +25,7 @@ WORKER_HEARTBEAT_KEY = 'sync:worker_heartbeat_at'
 QUEUE_STATS_KEY = 'sync:queue_stats'
 PUSH_STATE_KEY = 'sync:push_state'
 PUSH_RECEIVED_KEY = 'sync:push_received_at'
+CAIXIN_HISTORY_CHANNEL_KEY = 'source:caixin:history_channel'
 #: 最近一次真正把文章落库的时刻。公众号推送是实时入队的，列表同步 job 可能
 #: 很久才跑一次，只用 SYNC_FINISHED_KEY 判断新鲜度会长期显示成几天前。
 SYNC_INGEST_KEY = 'sync:last_ingest_at'
@@ -33,12 +34,14 @@ _ARTICLE_EXCLUDE_KEYWORD_LIMIT = 20
 
 _logger = get_logger(__name__)
 
-POLLING_SOURCES = ('bilibili', 'youtube', 'podcast', 'feed', 'caixin')
+MEDIA_SOURCES = ('bilibili', 'youtube', 'podcast', 'feed')
+POLLING_SOURCES = (*MEDIA_SOURCES, 'caixin')
 
 
 def default_sync_settings() -> dict[str, Any]:
     return {
-        'source_intervals_days': {source: 1 for source in POLLING_SOURCES},
+        'source_intervals_days': {source: 1 for source in MEDIA_SOURCES},
+        'caixin_interval_hours': 6,
         'sleep_seconds': DEFAULT_SYNC_REQUEST_INTERVAL,
         'download_content': True,
         'download_images': True,
@@ -80,10 +83,13 @@ async def get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
     intervals = merged.get('source_intervals_days')
     intervals = intervals if isinstance(intervals, dict) else {}
     merged['source_intervals_days'] = dict(defaults['source_intervals_days'])
-    for source in POLLING_SOURCES:
+    for source in MEDIA_SOURCES:
         value = intervals.get(source)
         if type(value) is int and value >= 1:
             merged['source_intervals_days'][source] = value
+    hours = merged.get('caixin_interval_hours')
+    if type(hours) is not int or hours < 1:
+        merged['caixin_interval_hours'] = defaults['caixin_interval_hours']
     merged['article_exclude_keywords'] = _normalize_article_exclude_keywords(
         merged.get('article_exclude_keywords'),
     )
@@ -97,6 +103,9 @@ async def set_sync_settings(storage: PostgresStorage, updates: dict[str, Any]) -
     if isinstance(updates.get('source_intervals_days'), dict):
         intervals.update({key: value for key, value in updates['source_intervals_days'].items() if key in intervals})
     current['source_intervals_days'] = intervals
+    hours = current.get('caixin_interval_hours')
+    if type(hours) is not int or hours < 1:
+        current['caixin_interval_hours'] = default_sync_settings()['caixin_interval_hours']
     if 'article_exclude_keywords' in current:
         current['article_exclude_keywords'] = _normalize_article_exclude_keywords(
             current.get('article_exclude_keywords'),
@@ -267,6 +276,8 @@ def _today_str() -> str:
 
 __all__ = [
     'ALERT_SENT_KEY',
+    'CAIXIN_HISTORY_CHANNEL_KEY',
+    'MEDIA_SOURCES',
     'POLLING_SOURCES',
     'QUEUE_STATS_KEY',
     'SYNC_ERROR_KEY',

@@ -11,7 +11,7 @@ from hippo.sources.weixin import WeixinSourceAdapter
 from hippo.sync_core import reset_sync_cancel
 from hippo.sync_service import ArticleSyncService
 from hippo.sync_types import NullSyncJobObserver, NullSyncObserver, SyncConfig, SyncStats
-from hippo.utils import resolve_sync_interval, should_skip_by_interval
+from hippo.utils import resolve_sync_interval_seconds, should_skip_by_interval
 
 
 class _Accounts:
@@ -85,24 +85,29 @@ class ResolveSyncIntervalTest(unittest.TestCase):
         for source in ('weixin', 'youtube', 'podcast'):
             account = _account(source=source, sync_interval_days=7)
 
-            self.assertEqual(resolve_sync_interval(account, {'youtube': 3}), 7)
+            self.assertEqual(resolve_sync_interval_seconds(account, {'youtube': 3}), 7 * 86400)
 
     def test_an_account_follows_its_source_interval(self) -> None:
         account = _account(source='youtube')
 
-        self.assertEqual(resolve_sync_interval(account, {'youtube': 3}), 3)
+        self.assertEqual(resolve_sync_interval_seconds(account, {'youtube': 3}), 3 * 86400)
+
+    def test_caixin_ignores_account_overrides_and_uses_instance_hours(self) -> None:
+        account = _account(source='caixin', sync_interval_days=30)
+
+        self.assertEqual(resolve_sync_interval_seconds(account, {}, 4), 4 * 3600)
 
     def test_one_day_requires_a_full_24_hours(self) -> None:
-        self.assertTrue(should_skip_by_interval(datetime.now(UTC) - timedelta(hours=23), 1))
-        self.assertFalse(should_skip_by_interval(datetime.now(UTC) - timedelta(hours=24), 1))
+        self.assertTrue(should_skip_by_interval(datetime.now(UTC) - timedelta(hours=23), 86400))
+        self.assertFalse(should_skip_by_interval(datetime.now(UTC) - timedelta(hours=24), 86400))
 
     def test_long_intervals_require_the_full_elapsed_time(self) -> None:
-        self.assertTrue(should_skip_by_interval(datetime.now(UTC) - timedelta(days=6, hours=23), 7))
-        self.assertFalse(should_skip_by_interval(datetime.now(UTC) - timedelta(days=7), 7))
+        self.assertTrue(should_skip_by_interval(datetime.now(UTC) - timedelta(days=6, hours=23), 7 * 86400))
+        self.assertFalse(should_skip_by_interval(datetime.now(UTC) - timedelta(days=7), 7 * 86400))
 
     def test_naive_timestamps_are_utc_and_new_accounts_are_due(self) -> None:
-        self.assertTrue(should_skip_by_interval(datetime.now(UTC).replace(tzinfo=None), 1))
-        self.assertFalse(should_skip_by_interval(None, 1))
+        self.assertTrue(should_skip_by_interval(datetime.now(UTC).replace(tzinfo=None), 86400))
+        self.assertFalse(should_skip_by_interval(None, 86400))
 
 
 class ManualRunPolicyTest(unittest.TestCase):

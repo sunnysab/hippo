@@ -179,22 +179,25 @@ def should_skip_by_time(last_synced_at: datetime | None, skip_minutes: int | Non
 
 def should_skip_by_interval(
     last_synced_at: datetime | None,
-    sync_interval_days: int | None,
+    sync_interval_seconds: int | None,
 ) -> bool:
     """Wait the full interval after the last successful list check."""
     if not last_synced_at:
         return False
-    return (datetime.now(UTC) - to_utc_dt(last_synced_at)).total_seconds() < (sync_interval_days or 1) * 86400
+    return (datetime.now(UTC) - to_utc_dt(last_synced_at)).total_seconds() < (sync_interval_seconds or 86400)
 
 
-def resolve_sync_interval(
+def resolve_sync_interval_seconds(
     account: Any,
     source_intervals_days: Mapping[str, int],
+    caixin_interval_hours: int = 6,
 ) -> int:
-    """A subscription override wins over its source's default interval."""
+    """Resolve one shared cadence; Caixin never takes a subscription override."""
+    if account.source == 'caixin':
+        return max(int(caixin_interval_hours), 1) * 3600
     if account.sync_interval_days is not None:
-        return account.sync_interval_days
-    return source_intervals_days.get(account.source, 1)
+        return max(int(account.sync_interval_days), 1) * 86400
+    return max(int(source_intervals_days.get(account.source, 1)), 1) * 86400
 
 
 def utc_now_iso() -> str:
@@ -208,7 +211,7 @@ __all__ = [
     'normalize_value',
     'parse_iso_date_to_timestamp',
     'parse_iso_datetime_to_timestamp',
-    'resolve_sync_interval',
+    'resolve_sync_interval_seconds',
     'sanitize_image_url',
     'should_skip_by_interval',
     'should_skip_by_time',
