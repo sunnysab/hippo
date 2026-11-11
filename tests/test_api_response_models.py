@@ -280,7 +280,10 @@ class SourceResponseTest(unittest.TestCase):
 
         body = _client(source_api, storage).get('/api/source/credential').json()
 
-        self.assertEqual({'bilibili': {'configured': True}, 'youtube': {'configured': False}}, body)
+        self.assertEqual(
+            {'bilibili': {'configured': True}, 'youtube': {'configured': False}, 'caixin': {'configured': False}},
+            body,
+        )
 
     def test_the_source_rail_is_a_count_per_source(self) -> None:
         storage = SimpleNamespace(

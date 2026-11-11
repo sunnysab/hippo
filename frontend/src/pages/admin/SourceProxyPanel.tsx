@@ -5,7 +5,7 @@ import { ProxyFields } from './ProxyFields';
 import { createLatestOnly } from '../../utils/latest';
 
 /** Sources that open their own connections, and so each pick their own exit. */
-const PROXY_SOURCES = ['weixin', 'bilibili', 'youtube', 'podcast'];
+const PROXY_SOURCES = ['weixin', 'bilibili', 'youtube', 'podcast', 'caixin'];
 
 /**
  * One source's proxy, and the instance default it may follow.

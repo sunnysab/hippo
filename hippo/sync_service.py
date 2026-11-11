@@ -12,7 +12,7 @@ from .exceptions import SyncInterrupted
 from .logger import get_logger
 from .media_settings import get_media_settings
 from .models import AccountCredential
-from .sources import SourceAdapter, UnsupportedSource, adapter_for
+from .sources import SourceAdapter, SourceDeferred, UnsupportedSource, adapter_for
 from .storage import PostgresStorage, open_storage
 from .sync_core import _get_cancel_event
 from .sync_settings import (
@@ -159,6 +159,20 @@ class ArticleSyncService:
                 biz=account.biz,
                 source_key=source_key,
                 pages=config.max_pages or 1,
+            )
+        except SourceDeferred as exc:
+            observer.on_log(str(exc))
+            observer.on_skip('source_cooldown')
+            return (
+                SyncAccountResult(
+                    biz=account.biz,
+                    nickname=account.nickname,
+                    source=account.source,
+                    completed=False,
+                    skipped=True,
+                    skip_reason='source_cooldown',
+                ),
+                None,
             )
         except UnsupportedSource as exc:
             # 没有适配器是配置问题，不是这篇的失败：跳过并说明原因，别把整轮同步拖垮。

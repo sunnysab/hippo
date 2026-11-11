@@ -52,6 +52,11 @@ class SourceScheduleSettingsTest(unittest.IsolatedAsyncioTestCase):
         request = SyncSettingsUpdateRequest.model_validate({'source_intervals_days': {'feed': 2}})
         self.assertEqual(request.source_intervals_days, {'feed': 2})
 
+    def test_caixin_defaults_to_daily_and_accepts_a_custom_interval(self) -> None:
+        self.assertEqual(1, default_sync_settings()['source_intervals_days']['caixin'])
+        request = SyncSettingsUpdateRequest.model_validate({'source_intervals_days': {'caixin': 3}})
+        self.assertEqual(request.source_intervals_days, {'caixin': 3})
+
     def test_request_rejects_unknown_sources_and_invalid_days(self) -> None:
         for intervals in (
             {'weixin': 1},

@@ -12,7 +12,7 @@ interface Probe {
 }
 
 /** The sources whose credential hippo actually reads. */
-const CREDENTIAL_SOURCES = ['bilibili', 'youtube'];
+const CREDENTIAL_SOURCES = ['bilibili', 'youtube', 'caixin'];
 
 /**
  * The instance-wide credential for one source.
@@ -31,7 +31,7 @@ export function SourceCredentialPanel({ source }: { source: string }) {
   const [probe, setProbe] = useState<Probe | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const field = source === 'youtube' ? 'youtube_cookies' : 'bilibili_cookie';
+  const field = source === 'youtube' ? 'youtube_cookies' : `${source}_cookie`;
 
   // Switching source races the previous read: only the newest answer applies.
   const applyLatest = useMemo(() => createLatestOnly<boolean>(setConfigured), []);
@@ -151,7 +151,7 @@ export function SourceCredentialPanel({ source }: { source: string }) {
             type="password"
             autoComplete="off"
             value={draft}
-            placeholder="SESSDATA=…"
+            placeholder={source === 'caixin' ? 'UID=…; SA_USER_auth=…' : 'SESSDATA=…'}
             onChange={(event) => setDraft(event.target.value)}
           />
         )}

@@ -1008,6 +1008,13 @@ DELETE /api/source/credential/bilibili             -> 204
 POST   /api/source/credential/bilibili/test[?scope=user|instance] -> 探测是否可用
 ```
 
+财新使用同一组接口，将路径中的来源替换为 `caixin`；`secret` 为
+`UID=…; SA_USER_auth=…` 格式的 Cookie 请求头。凭证列表包含 `bilibili`、`youtube`、`caixin`，
+每项仅返回 `configured`。管理设置新增脱敏的 `caixin_cookie` / `caixin_cookie_set` 与 `proxy_caixin`；
+`source_intervals_days.caixin` 设置财新检查周期（整数天，至少 1）。财新预览接受受支持频道根地址或文章地址，
+解析为 `caixin:<频道 ID>`；关闭音视频转写不影响财新预览、订阅与同步。
+财新凭证测试验证当前付费文章的正文权限，`account` 返回被验证文章的标题。
+
 `POST …/test` 只回答凭证能不能用，不回显凭证本身：返回 `{source, credential, ok, detail, account}`，
 `credential` 是 `user`/`instance`/`none`（哪一份被采用），`account` 是它被接受为的账号。
 默认 `scope=user`（自己的凭证，没有再退到实例凭证），`scope=instance` 只有管理员能用（否则 `403`）。

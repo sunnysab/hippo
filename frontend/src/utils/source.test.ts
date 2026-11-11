@@ -7,6 +7,7 @@ describe('source metadata', () => {
   it('labels the sources the backend can return today', () => {
     expect(getSourceLabel('weixin', t)).toBe('微信公众号');
     expect(getSourceLabel('bilibili', t)).toBe('哔哩哔哩');
+    expect(getSourceLabel('caixin', t)).toBe('财新');
   });
 
   it('shows an unknown source instead of hiding it', () => {

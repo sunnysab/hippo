@@ -48,10 +48,13 @@ from ...logger import get_logger
 from ...media import archive as archive_module
 from ...media import audio_export
 from ...media.subtitle import to_markdown, to_srt, to_text
-from ...media_settings import get_media_settings, resolve_proxy
-from ...models import User
+from ...media_settings import get_media_settings, instance_credential, resolve_proxy
+from ...models import ArticleRecord, User
 from ...s3 import guess_extension
 from ...site_settings import get_site_settings
+from ...sources.caixin import CaixinSource
+from ...sources.caixin_pacing import CaixinPacer
+from ...sources.caixin_sync import caixin_article_access, ingest_caixin_body
 from ...storage import PostgresStorage, fetchall_rows, fetchone_row, open_storage
 from ..deps import current_user, get_storage, parse_group_ids
 from ..responses import binary_response
@@ -232,10 +235,9 @@ async def export_articles(
                     except json.JSONDecodeError:
                         content = None
                 account_dir = (
-                    f"accounts/{_export_path_component(row['account_nickname'])}-"
-                    f"{_export_path_component(row['biz'])}"
+                    f'accounts/{_export_path_component(row["account_nickname"])}-{_export_path_component(row["biz"])}'
                 )
-                article_dir = f"{account_dir}/{row['id']}-{_export_path_component(row['title'])}"
+                article_dir = f'{account_dir}/{row["id"]}-{_export_path_component(row["title"])}'
                 attachments: list[str] = []
                 replacements: list[tuple[str, str]] = []
                 blocked_urls: list[str] = []
@@ -256,12 +258,12 @@ async def export_articles(
                         continue
                     try:
                         image_bytes, content_type = await fetch_image_bytes(storage, image_id, allow_origin_fetch=False)
-                    except (LookupError, RuntimeError):
+                    except LookupError, RuntimeError:
                         continue
-                    relative_path = f"attachments/images/{image_id}.{guess_extension(content_type)}"
+                    relative_path = f'attachments/images/{image_id}.{guess_extension(content_type)}'
                     await _export_thread_call(
                         archive.writestr,
-                        f"{article_dir}/{relative_path}",
+                        f'{article_dir}/{relative_path}',
                         image_bytes,
                         compress_type=zipfile.ZIP_DEFLATED,
                         compresslevel=9,
@@ -278,8 +280,8 @@ async def export_articles(
                     kind = re.sub(r'[^a-z0-9_-]', '_', str(media['kind']).lower())
                     content_type = str(media.get('content_type') or '').split(';', 1)[0].strip().lower()
                     extension = 'mp4' if content_type == 'video/mp4' else guess_extension(content_type)
-                    relative_path = f"attachments/media/{kind}.{extension}"
-                    staged_path = work_dir / f"media-{row['id']}-{kind}"
+                    relative_path = f'attachments/media/{kind}.{extension}'
+                    staged_path = work_dir / f'media-{row["id"]}-{kind}'
                     try:
                         await _export_thread_call(archive_module.fetch_object, str(media['s3_key']), staged_path)
                     except archive_module.ArchiveError:
@@ -287,7 +289,7 @@ async def export_articles(
                     await _export_thread_call(
                         archive.write,
                         staged_path,
-                        arcname=f"{article_dir}/{relative_path}",
+                        arcname=f'{article_dir}/{relative_path}',
                         compress_type=zipfile.ZIP_DEFLATED,
                         compresslevel=9,
                     )
@@ -299,26 +301,33 @@ async def export_articles(
                 for source_url in blocked_urls:
                     markdown = re.sub(r'!\[[^\]]*\]\(' + re.escape(source_url) + r'\)', '', markdown)
                 article = {
-                    'id': row['id'], 'account': row['account_nickname'], 'biz': row['biz'],
-                    'title': row['title'], 'author': row['author'], 'digest': row['digest'],
-                    'link': row['link'], 'source_url': row['source_url'], 'publish_at': row['publish_at'],
-                    'content_markdown': markdown, 'content': content,
+                    'id': row['id'],
+                    'account': row['account_nickname'],
+                    'biz': row['biz'],
+                    'title': row['title'],
+                    'author': row['author'],
+                    'digest': row['digest'],
+                    'link': row['link'],
+                    'source_url': row['source_url'],
+                    'publish_at': row['publish_at'],
+                    'content_markdown': markdown,
+                    'content': content,
                     'attachments': attachments,
                 }
                 if format == 'json':
                     payload = json.dumps(article, ensure_ascii=False, indent=2)
                 else:
                     media_links = [
-                        f"- [{FilePath(path).name}]({path})"
+                        f'- [{FilePath(path).name}]({path})'
                         for path in attachments
                         if path.startswith('attachments/media/')
                     ]
                     if media_links:
-                        markdown = f"{markdown}\n\n## 媒体附件\n\n" + '\n'.join(media_links)
+                        markdown = f'{markdown}\n\n## 媒体附件\n\n' + '\n'.join(media_links)
                     payload = (
-                        f"# {article['title'] or 'Untitled'}\n\n公众号：{article['account']}\n\n"
-                        f"发布时间：{article['publish_at'] or '未知'}\n\n"
-                        f"原文：{article['link'] or article['source_url'] or ''}\n\n{markdown}"
+                        f'# {article["title"] or "Untitled"}\n\n公众号：{article["account"]}\n\n'
+                        f'发布时间：{article["publish_at"] or "未知"}\n\n'
+                        f'原文：{article["link"] or article["source_url"] or ""}\n\n{markdown}'
                     )
                 article_filename = 'article.json' if format == 'json' else 'article.md'
                 await _export_thread_call(
@@ -870,7 +879,8 @@ async def refetch_article(
         storage,
         # An account row that is gone leaves the source unknown, and the empty
         # string keeps the refetch on the instance default proxy.
-        "SELECT a.biz, a.article_id, a.link, COALESCE(acc.source, '') AS account_source"
+        'SELECT a.biz, a.article_id, a.link, a.title, a.author, a.digest, a.cover, a.publish_at, a.raw_json, '
+        "COALESCE(acc.source, '') AS account_source"
         ' FROM articles a LEFT JOIN accounts acc ON acc.biz = a.biz'
         ' WHERE a.id = %s',
         [article_id],
@@ -918,12 +928,47 @@ async def refetch_article(
                     downloader = app.downloader
                     if not downloader:
                         raise RuntimeError('Downloader not initialized')
-                    await downloader.download_from_url(
-                        str(link),
-                        with_images=True,
-                        biz=owner_biz,
-                        article_id=owner_article_id,
-                    )
+                    if account_source == 'caixin':
+                        async with caixin_article_access(thread_storage, owner_article_id):
+                            cookie = await thread_storage.credentials.get(user.id, 'caixin')
+                            source = CaixinSource(
+                                cookie=cookie or instance_credential(media_settings, 'caixin'),
+                                proxy=proxy,
+                                pacer=CaixinPacer(),
+                            )
+                            try:
+                                body = await source.fetch_article(str(link))
+                            finally:
+                                await source.aclose()
+                            raw = row.get('raw_json') or {}
+                            if isinstance(raw, str):
+                                raw = json.loads(raw)
+                            article = ArticleRecord(
+                                biz=owner_biz,
+                                article_id=owner_article_id,
+                                title=str(body.get('title') or row.get('title') or ''),
+                                author=body.get('author') or row.get('author'),
+                                digest=row.get('digest'),
+                                cover=row.get('cover'),
+                                link=str(link),
+                                source_url=str(link),
+                                publish_at=row.get('publish_at'),
+                                raw=raw,
+                            )
+                            await ingest_caixin_body(
+                                storage=thread_storage,
+                                downloader=downloader,
+                                article=article,
+                                article_pk=article_id,
+                                body=body,
+                            )
+                    else:
+                        await downloader.download_from_url(
+                            str(link),
+                            with_images=True,
+                            biz=owner_biz,
+                            article_id=owner_article_id,
+                        )
             with _refetch_lock:
                 _refetch_tasks[task_id]['status'] = 'done'
                 _refetch_tasks[task_id]['phase'] = 'done'

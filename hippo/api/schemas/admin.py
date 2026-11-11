@@ -88,11 +88,13 @@ class MediaSettingsUpdateRequest(BaseModel):
     bilibili_cc_subtitle: bool | None = None
     bilibili_cookie: str | None = None
     youtube_cookies: str | None = None
+    caixin_cookie: str | None = None
     proxy_default: str | None = None
     proxy_weixin: str | None = None
     proxy_bilibili: str | None = None
     proxy_youtube: str | None = None
     proxy_podcast: str | None = None
+    proxy_caixin: str | None = None
 
 
 # -- responses ---------------------------------------------------------------
@@ -165,11 +167,14 @@ class MediaSettingsOut(BaseModel):
     bilibili_cookie_set: bool
     youtube_cookies: str = Field(description='Masked.')
     youtube_cookies_set: bool
+    caixin_cookie: str = Field(description='Masked.')
+    caixin_cookie_set: bool
     proxy_default: str
     proxy_weixin: str
     proxy_bilibili: str
     proxy_youtube: str
     proxy_podcast: str
+    proxy_caixin: str
 
 
 class AsrProbeOut(BaseModel):

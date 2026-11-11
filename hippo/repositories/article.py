@@ -364,6 +364,27 @@ class ArticleRepository:
                     )
         return article_pk
 
+    async def list_missing_bodies(self, *, source: str, limit: int, max_attempts: int = 3) -> list[dict[str, Any]]:
+        """Existing article rows are the durable backlog for text sources."""
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"""
+                SELECT a.*, COALESCE(d.attempts, 0) AS attempts
+                FROM articles a
+                JOIN accounts account ON account.biz = a.biz
+                LEFT JOIN article_content c ON c.article_pk = a.id
+                LEFT JOIN article_download_attempts d ON d.biz = a.biz AND d.article_id = a.article_id
+                WHERE account.source = %s AND NOT account.is_disabled
+                  AND EXISTS (SELECT 1 FROM subscription s WHERE s.biz = a.biz AND NOT s.is_disabled)
+                  AND NOT COALESCE({ARTICLE_CONTENT_PRESENT_SQL}, FALSE)
+                  AND COALESCE(d.attempts, 0) < %s AND COALESCE(d.retryable, TRUE)
+                ORDER BY d.last_attempt_at ASC NULLS FIRST, a.publish_at DESC NULLS LAST, a.id
+                LIMIT %s
+                """,
+                (source, max_attempts, limit),
+            )
+            return list(await cur.fetchall())
+
     async def find_biz_by_link(self, link: str, *, slug: str = '') -> str | None:
         """The account that owns an article we already archived.
 
@@ -475,6 +496,20 @@ class ArticleDocumentRepository:
 
     def __init__(self, conn: psycopg.Connection) -> None:
         self._conn = conn
+
+    async def find_by_identity(self, *, source: str, article_id: str) -> dict[str, Any] | None:
+        """Reuse an archived body when multiple channels list the same article."""
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT d.raw_html, d.raw_json
+                FROM article_document d JOIN articles a ON a.id = d.article_pk
+                WHERE d.source = %s AND a.article_id = %s AND btrim(COALESCE(d.raw_html, '')) <> ''
+                ORDER BY d.fetched_at DESC LIMIT 1
+                """,
+                (source, article_id),
+            )
+            return await cur.fetchone()
 
     async def save(
         self,

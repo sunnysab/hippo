@@ -69,6 +69,7 @@ class CredentialListOut(BaseModel):
 
     bilibili: CredentialStateOut
     youtube: CredentialStateOut
+    caixin: CredentialStateOut = Field(default_factory=lambda: CredentialStateOut(configured=False))
 
 
 class CredentialProbeOut(BaseModel):

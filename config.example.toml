@@ -71,6 +71,12 @@ sdk_path = "/opt/weixin-rs/sdk/python"
 daemon_host = "127.0.0.1"
 daemon_port = 9099
 
+[caixin]
+# Rust CLI, installed separately. Relative paths use the repository working directory.
+binary = "caixin"
+# Private TOML from the caixin crate. Contains the company proxy, never deploy secrets in argv.
+proxy_config = ""
+
 [observability]
 # OTLP/gRPC endpoint of the collector. Telemetry stays off while this is empty.
 otlp_endpoint = ""

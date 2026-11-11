@@ -13,7 +13,7 @@ vi.mock('../../hooks/useToast', () => ({
   useToast: () => ({ showToast: vi.fn() }),
 }));
 
-const settings = { source_intervals_days: { feed: 1, youtube: 3, bilibili: 1, podcast: 1 } };
+const settings = { source_intervals_days: { feed: 1, youtube: 3, bilibili: 1, podcast: 1, caixin: 1 } };
 
 describe('SourceSchedulePanel', () => {
   beforeEach(() => {
@@ -43,6 +43,17 @@ describe('SourceSchedulePanel', () => {
     expect((await screen.findByRole('spinbutton', { name: '默认更新间隔（天）' }) as HTMLInputElement).value).toBe('1');
     expect((screen.getByRole('button', { name: '保存设置' }) as HTMLButtonElement).disabled).toBe(false);
     expect(apiSend).not.toHaveBeenCalled();
+  });
+
+  it('saves a Caixin interval independently of the media sources', async () => {
+    render(<I18nProvider><SourceSchedulePanel source="caixin" /></I18nProvider>);
+    const interval = await screen.findByRole('spinbutton', { name: '默认更新间隔（天）' });
+    expect((interval as HTMLInputElement).value).toBe('1');
+    fireEvent.change(interval, { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }));
+    await waitFor(() => expect(apiSend).toHaveBeenCalledWith('/api/settings', 'PATCH', {
+      source_intervals_days: { caixin: 2 },
+    }));
   });
 
   it('refuses fractional update intervals before writing', async () => {

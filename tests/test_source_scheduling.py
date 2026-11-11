@@ -74,6 +74,14 @@ class SourceSchedulingTest(unittest.IsolatedAsyncioTestCase):
         jobs = {call.kwargs['source']: call.kwargs['biz_list'] for call in storage.sync_jobs.create_job.await_args_list}
         self.assertEqual({'youtube': ['daily'], 'feed': ['fresh']}, jobs)
 
+    async def test_a_due_caixin_channel_gets_a_scheduled_job(self):
+        storage = self._storage([_account('caixin:132', 'caixin', 24)])
+        with patch('hippo.sync_worker.get_sync_settings', AsyncMock(return_value=default_sync_settings())):
+            self.assertTrue(await maybe_enqueue_scheduled_job(storage))
+        storage.sync_jobs.create_job.assert_awaited_once_with(
+            trigger_type='scheduled', source='caixin', biz_list=['caixin:132']
+        )
+
     async def test_one_busy_source_does_not_block_another(self):
         storage = self._storage([_account('feed', 'feed'), _account('youtube', 'youtube')], active=('feed',))
         with patch('hippo.sync_worker.get_sync_settings', AsyncMock(return_value=default_sync_settings())):

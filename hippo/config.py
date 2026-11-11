@@ -168,6 +168,14 @@ class ObservabilitySettings:
 
 
 @dataclass(frozen=True)
+class CaixinSettings:
+    """Local CLI and company proxy file; secrets stay in that private file."""
+
+    binary: str = 'caixin'
+    proxy_config: str = ''
+
+
+@dataclass(frozen=True)
 class Settings:
     """The whole file."""
 
@@ -177,6 +185,7 @@ class Settings:
     logging: LoggingSettings = field(default_factory=LoggingSettings)
     http: HttpSettings = field(default_factory=HttpSettings)
     weixin: WeixinSettings = field(default_factory=WeixinSettings)
+    caixin: CaixinSettings = field(default_factory=CaixinSettings)
     observability: ObservabilitySettings = field(default_factory=ObservabilitySettings)
 
 
@@ -241,6 +250,7 @@ def load_settings(path: Path | str = CONFIG_FILE) -> Settings:
         logging=_section(LoggingSettings, raw.get('logging')),
         http=_section(HttpSettings, raw.get('http')),
         weixin=_section(WeixinSettings, raw.get('weixin')),
+        caixin=_section(CaixinSettings, raw.get('caixin')),
         observability=_section(ObservabilitySettings, raw.get('observability')),
     )
 

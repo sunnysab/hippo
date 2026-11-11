@@ -38,6 +38,10 @@ class CredentialRejected(SourceError):
     """
 
 
+class SourceDeferred(SourceError):
+    """A persistent cooldown postponed work without making it fail."""
+
+
 class SourceAdapter(Protocol):
     async def sync_account(
         self,
@@ -86,6 +90,7 @@ __all__ = [
     'BodyAdapter',
     'CredentialRejected',
     'SourceAdapter',
+    'SourceDeferred',
     'SourceError',
     'UnsupportedSource',
     'adapter_for',

@@ -182,11 +182,11 @@ daemon 掉线或会话失效时，同步会整体暂停（不把这种错记成�
 
 ## 数据来源
 
-四个来源共用一条流水线：**列表 → 建文章行（标题封面立刻可见）→ 转写队列 → 正文**。
-来源之间的差异只有两处：怎么列条目、音频从哪来，其余（分片、转写、时间戳、归档、播放）完全相同。
+音视频来源共用列表、文章存储与转写队列；财新与纯文本 RSS 直接存正文，不进入转写队列。
 
 | 来源 | `accounts.source` | `biz` | 列表 | 正文 |
 |---|---|---|---|---|
+| 财新 | `caixin` | `caixin:<频道 ID>` | Rust `caixin` CLI | 登录态授权正文 → HTML / Markdown |
 | 微信公众号 | `weixin` | `Mz…==`（fakeid） | weixin-rs daemon | daemon 取正文 → markdown |
 | 哔哩哔哩 | `bilibili` | `bilibili:<mid>` / `bilibili:season:<mid>:<sid>` | UP 投稿列表 / 合集列表（可能需要 **SESSDATA**） | CC 字幕优先，否则下载音频转写 |
 | YouTube | `youtube` | `youtube:<UC…>` | yt-dlp | 下载音频转写 |
@@ -203,6 +203,47 @@ B站合集支持 `https://space.bilibili.com/<mid>/lists?sid=<sid>` 和
 
 Bilibili 的 HTTP、WBI 签名和响应解析集中在 `hippo/sources/bilibili_api.py`；
 `bilibili.py` 保留来源与媒体解析适配，列表入库和转写继续共用现有流程。
+
+### 财新
+
+hippo 通过带超时、可取消的异步子进程调用 trade-rs 的 `caixin fetch`；取消或超时会终止并回收子进程。
+协议、签名与解析归 Rust crate，来源适配、凭证选择、访问节奏和存储归 hippo。
+开发时可在 trade-rs 仓库构建到 hippo 的本地临时目录：
+
+```bash
+CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 cargo build -p caixin --target-dir /home/sunnysab/Code/hippo/.tmp/caixin-target
+```
+
+在本机 `config.toml` 配置二进制和 crate 的代理文件路径；`binary` 默认从 `PATH` 查找：
+
+```toml
+[caixin]
+binary = "/home/sunnysab/Code/hippo/.tmp/caixin-target/debug/caixin"
+proxy_config = "/home/sunnysab/Code/5-Trade/trade-rs/crates/caixin/proxy.toml"
+```
+
+代理文件非空时优先于来源页面的代理设置；只代理 crate 指定的两个财新域名。
+`.tmp/` 只存构建产物和验证记录，不提交。
+生产部署需要安装同一版本的 `caixin`；仅同步 hippo 的 Python 文件不足以启用抓取。
+
+在来源管理页配置财新 Cookie（`UID=…; SA_USER_auth=…`）与代理，也可在个人设置提交自己的 Cookie。
+粘贴财新频道或文章链接即可按所属频道订阅；支持金融、经济、公司、政经、世界，以及财新要闻、观点、周刊。
+财新要闻使用站内要闻专题列表；观点和周刊仅扫描当前频道首页可见的文章窗口，不宣称完整历史回填，
+首页不提供的发布时间与付费标记不作推断，是否能获取全文以正文接口授权结果为准。
+
+凭证通过子进程标准输入传递，不出现在命令行、日志或 API 响应中。列表先去重并保存元数据，后台再补正文，
+逐篇提交；跨频道相同文章复用已存原文，后台补抓与手动重抓按文章 ID 互斥，避免提交前被并发重复抓取。
+失败记录保留，最多自动尝试三次，后续尝试轮换可用凭证，
+不会在同一次请求中连续尝试。重新抓取沿用原文章标识；授权失败不会覆盖已有正文。
+
+关闭转写后财新仍可同步；默认每日检查。所有 hippo 财新入口共用 PostgreSQL 中的访问预算，重启不会重置：
+列表间隔 15–30 秒，正文间隔 30–90 秒，每看 3–5 篇休息 30–90 分钟；每天最多 60 次操作、20 次正文操作，
+按 UTC 自然日计数。付费权限探测算一次正文操作，内部包含列表和正文请求。失败至少休息 15 分钟，
+HTTP 429 遵守 `Retry-After`。休息时立即返回暂停，不让子进程或请求长时间等待。
+该预算约束 hippo；独立运行 Rust CLI 不使用 hippo 的数据库限速。
+
+财新 Cookie 可以用 crate 附带工具从已登录 Chromium 的本机 CDP 连接导出。Cookie 文件需妥善保存，
+导出工具使用 `0600` 权限且不打印值。正文依赖账号实际订阅权限；凭证测试会尝试当前付费文章。
 
 ### 转写
 

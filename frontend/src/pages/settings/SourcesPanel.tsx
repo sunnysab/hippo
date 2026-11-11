@@ -7,16 +7,14 @@ import { getSourceLabel } from '../../utils/source';
 type CredentialState = Record<string, { configured: boolean }>;
 type Probe = { ok: boolean; detail: string; account: string; credential: string };
 
-/** The sources hippo can log in for. The script fills YouTube in; this page shows it. */
-const SOURCES = ['bilibili', 'youtube'];
+/** The sources hippo accepts personal credentials for. */
+const SOURCES = ['bilibili', 'youtube', 'caixin'];
 
 /**
  * Per-user source credentials.
  *
- * Bilibili's listing endpoint is risk-controlled and YouTube asks a logged-in
- * session to prove it is not a bot, so both want a cookie. The instance has its
- * own (the admin sets those); this is for a reader who wants to use their own,
- * which is what the operations they trigger by hand use.
+ * These sources use cookies for listing, bot checks or paid-article access.
+ * Personal credentials take precedence over the instance credential.
  */
 export function SourcesPanel() {
   const { t } = useI18n();
@@ -104,7 +102,7 @@ export function SourcesPanel() {
           <p className="muted">
             {t(
               'sources.credentialSubtitle',
-              'B站投稿列表需要 SESSDATA，YouTube 需要登录态。这里配置自己的；管理台配的是全实例通用的那一份。',
+              '个人凭证用于你订阅的频道；管理员在管理台维护实例凭证。',
             )}
           </p>
         </div>
@@ -136,7 +134,7 @@ export function SourcesPanel() {
                   type="password"
                   autoComplete="off"
                   value={drafts[source] || ''}
-                  placeholder={configured ? t('sources.credentialReplace', '留空则不改，输入新值覆盖') : 'SESSDATA=…'}
+                  placeholder={configured ? t('sources.credentialReplace', '留空则不改，输入新值覆盖') : source === 'caixin' ? 'UID=…; SA_USER_auth=…' : 'SESSDATA=…'}
                   onChange={(event) => setDrafts((previous) => ({ ...previous, [source]: event.target.value }))}
                 />
               )}
@@ -183,7 +181,7 @@ export function SourcesPanel() {
       })}
 
       <p className="muted admin-note">
-        {t('sources.credentialNote', '凭证只用于你自己触发的操作（解析、订阅）；后台同步用实例级的那一份。')}
+        {t('sources.credentialNote', '解析、订阅和同步会优先使用个人凭证，实例凭证用于补充。')}
       </p>
     </div>
   );

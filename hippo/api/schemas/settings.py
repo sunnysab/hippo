@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 SourceIntervalsDays = dict[
-    Literal['bilibili', 'youtube', 'podcast', 'feed'],
+    Literal['bilibili', 'youtube', 'podcast', 'feed', 'caixin'],
     Annotated[int, Field(strict=True, ge=1)],
 ]
 

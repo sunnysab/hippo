@@ -30,6 +30,8 @@ from ...models import User
 from ...repositories.llm import mask_key
 from ...security import hash_password
 from ...site_settings import get_site_settings, set_site_settings
+from ...sources.credentials import CredentialError
+from ...sources.credentials import clean as clean_credential
 from ...sources.registry import source_names
 from ...storage import PostgresStorage
 from ..deps import client_ip, get_storage, require_admin
@@ -304,7 +306,7 @@ _MASK_CHARACTERS = '•'
 def _public_media_settings(settings: dict[str, Any]) -> dict[str, Any]:
     """Serialisable form: secrets are masked, never echoed whole."""
     public = dict(settings)
-    for key in ('asr_api_key', 'bilibili_cookie', 'youtube_cookies'):
+    for key in ('asr_api_key', 'bilibili_cookie', 'youtube_cookies', 'caixin_cookie'):
         public[key] = mask_key(str(settings.get(key) or ''))
         public[f'{key}_set'] = bool(str(settings.get(key) or '').strip())
     public['asr_endpoints'] = dict(settings.get('asr_endpoints') or {})
@@ -340,6 +342,11 @@ async def update_media_settings(
     """Merge media settings; a field left at its mask keeps the stored value."""
     before = _public_media_settings(await get_media_settings(storage))
     submitted = _without_round_tripped_masks(body.model_dump(exclude_unset=True))
+    if 'caixin_cookie' in submitted:
+        try:
+            submitted['caixin_cookie'] = clean_credential('caixin', submitted['caixin_cookie'])
+        except CredentialError as exc:
+            raise ApiError(str(exc), status=400) from exc
     settings = await set_media_settings(storage, submitted)
     after = _public_media_settings(settings)
     changed = {key: value for key, value in after.items() if before.get(key) != value}

@@ -52,18 +52,20 @@ router = APIRouter(dependencies=[Depends(current_user)])
 #: console and this endpoint cannot drift apart.
 
 
-async def _media_sources(storage: PostgresStorage, user: User) -> MediaSources:
+async def _media_sources(storage: PostgresStorage, user: User, *, source: str = '') -> MediaSources:
     settings = await get_media_settings(storage)
-    if not settings.get('enabled'):
+    if not settings.get('enabled') and source not in {'caixin', 'feed'}:
         raise ApiError('媒体来源未启用，请先在管理台「媒体与转写」里打开', status=400)
     cookie = await storage.credentials.get(user.id, 'bilibili')
     cookies = await storage.credentials.get(user.id, 'youtube')
+    caixin_cookie = await storage.credentials.get(user.id, 'caixin')
     try:
         return MediaSources(
             storage=storage,
             settings=settings,
             bilibili_cookie=cookie,
             youtube_cookies=cookies,
+            caixin_cookie=caixin_cookie,
         )
     except Exception as exc:
         raise ApiError('媒体来源初始化失败', status=500, code='source.init_failed') from exc
@@ -213,7 +215,7 @@ async def preview_source(
     if source == 'weixin':
         info = await _weixin_channel(storage, url)
     else:
-        sources = await _media_sources(storage, user)
+        sources = await _media_sources(storage, user, source=source)
         try:
             info = await _preview(sources, source, url)
         finally:
@@ -263,7 +265,7 @@ async def subscribe_source(
     if source == 'weixin':
         return await _subscribe_weixin(request, storage, user, url=url, group_id=int(group_id))
 
-    sources = await _media_sources(storage, user)
+    sources = await _media_sources(storage, user, source=source)
     try:
         info = await _preview(sources, source, url)
     finally:

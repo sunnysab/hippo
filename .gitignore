@@ -36,3 +36,6 @@ logs/
 
 # Local deploy runbook (contains connection details) and agent scratch plans
 DEPLOY.md
+
+# Local integration builds
+.tmp/

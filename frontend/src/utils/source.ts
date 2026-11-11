@@ -16,6 +16,7 @@ export interface SourceMeta {
 
 export const SOURCE_META: Record<string, SourceMeta> = {
   weixin: { key: 'source.weixin', fallback: '微信公众号', tone: 'regular' },
+  caixin: { key: 'source.caixin', fallback: '财新', tone: 'regular' },
   bilibili: { key: 'source.bilibili', fallback: '哔哩哔哩', tone: 'video' },
   youtube: { key: 'source.youtube', fallback: 'YouTube', tone: 'share' },
   podcast: { key: 'source.podcast', fallback: '播客', tone: 'audio' },

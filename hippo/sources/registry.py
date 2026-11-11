@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
+from ..downloader import ArticleDownloader
 from ..media.pipeline import MediaResolver
 from ..media_settings import (
     INSTANCE_CREDENTIALS,
@@ -23,6 +24,10 @@ from . import SourceAdapter, UnsupportedSource
 from .bilibili import SOURCE as BILIBILI_SOURCE
 from .bilibili import BilibiliResolver, BilibiliSource
 from .bilibili_api import BilibiliClient
+from .caixin import SOURCE as CAIXIN_SOURCE
+from .caixin import CaixinSource
+from .caixin_pacing import CaixinPacer
+from .caixin_sync import CaixinSync
 from .chain import credentials_for
 from .ingest import ChannelInfo, MediaResolverRegistry, MediaSource, MediaSync
 from .podcast import FEED_SOURCE, PodcastClient, PodcastResolver, PodcastSource
@@ -42,6 +47,8 @@ class MediaSources:
         settings: Mapping[str, Any],
         bilibili_cookie: str | None = None,
         youtube_cookies: str | None = None,
+        caixin_cookie: str | None = None,
+        downloader: ArticleDownloader | None = None,
     ) -> None:
         self.adapters: dict[str, SourceAdapter] = {}
         self.resolvers: dict[str, MediaResolver] = {}
@@ -51,8 +58,26 @@ class MediaSources:
         self._storage = storage
         self._settings = settings
         #: 传进来的 cookie 是「预览/测试」用的显式覆盖；同步走凭证链。
-        self._explicit_bilibili = bilibili_cookie
-        self._explicit_youtube = youtube_cookies
+        self._explicit_credentials = {
+            BILIBILI_SOURCE: bilibili_cookie,
+            YOUTUBE_SOURCE: youtube_cookies,
+            CAIXIN_SOURCE: caixin_cookie,
+        }
+
+        caixin = self._client(
+            CaixinSource(
+                cookie=caixin_cookie if caixin_cookie is not None else instance_credential(settings, CAIXIN_SOURCE),
+                proxy=resolve_proxy(settings, CAIXIN_SOURCE),
+                pacer=CaixinPacer(),
+            )
+        )
+        self.sources[CAIXIN_SOURCE] = caixin
+        self.adapters[CAIXIN_SOURCE] = CaixinSync(
+            storage=storage,
+            source=caixin,
+            credentials=self._credentials_for(CAIXIN_SOURCE),
+            downloader=downloader,
+        )
 
         cookie = bilibili_cookie if bilibili_cookie is not None else str(settings.get('bilibili_cookie') or '')
         bilibili = self._client(
@@ -106,9 +131,7 @@ class MediaSources:
 
     def _credentials_for(self, source: str) -> Callable[[str], Awaitable[tuple[str, ...]]]:
         """The chain for one source, bound to this run's instance credential."""
-        explicit = (
-            self._explicit_bilibili if source == BILIBILI_SOURCE else self._explicit_youtube
-        )
+        explicit = self._explicit_credentials.get(source)
         instance = (
             explicit
             if explicit is not None
@@ -151,7 +174,7 @@ class MediaSources:
 #: Every source hippo ships, in the order the console should list them. WeChat
 #: leads because it is the original one; ``feed`` follows ``podcast`` because a
 #: text feed is the same listing with nothing to transcribe.
-SOURCE_ORDER = (WEIXIN_SOURCE, BILIBILI_SOURCE, YOUTUBE_SOURCE, PODCAST_SOURCE, FEED_SOURCE)
+SOURCE_ORDER = (WEIXIN_SOURCE, CAIXIN_SOURCE, BILIBILI_SOURCE, YOUTUBE_SOURCE, PODCAST_SOURCE, FEED_SOURCE)
 
 
 def source_names() -> list[str]:

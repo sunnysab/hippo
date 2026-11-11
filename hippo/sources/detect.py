@@ -43,6 +43,8 @@ def detect_source(value: str) -> str | None:
         return 'youtube'
     if host in WECHAT_HOSTS:
         return 'weixin'
+    if host == 'caixin.com' or host.endswith('.caixin.com'):
+        return 'caixin'
     return 'podcast'
 
 

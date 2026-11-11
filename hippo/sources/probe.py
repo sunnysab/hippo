@@ -13,7 +13,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..logger import get_logger
+from . import SourceError
 from .bilibili_api import BilibiliClient, BilibiliError
+from .caixin import CaixinSource
+from .caixin_pacing import CaixinPacer
 from .youtube import YoutubeError, is_bot_check, parse_json_lines, run_ytdlp
 
 logger = get_logger(__name__)
@@ -25,6 +28,7 @@ logger = get_logger(__name__)
 #: while a live login gets its subscriptions.
 YOUTUBE_PROBE_URL = 'https://www.youtube.com/feed/subscriptions'
 PROBE_TIMEOUT = 90.0
+
 
 @dataclass(frozen=True, slots=True)
 class CredentialProbe:
@@ -44,7 +48,23 @@ async def probe_credential(*, source: str, cookie: str, proxy: str = '') -> Cred
         return await _probe_bilibili(cookie=cookie, proxy=proxy)
     if source == 'youtube':
         return await _probe_youtube(cookie=cookie, proxy=proxy)
+    if source == 'caixin':
+        return await _probe_caixin(cookie=cookie, proxy=proxy)
     return CredentialProbe(source=source, ok=False, detail=f'还不知道怎么测 {source!r} 的凭证')
+
+
+async def _probe_caixin(*, cookie: str, proxy: str) -> CredentialProbe:
+    client = CaixinSource(cookie=cookie, proxy=proxy, pacer=CaixinPacer())
+    try:
+        title = await client.probe()
+    except SourceError as exc:
+        return CredentialProbe(source='caixin', ok=False, detail=str(exc))
+    except Exception as exc:
+        logger.warning('Caixin credential probe failed: %s', type(exc).__name__)
+        return CredentialProbe(source='caixin', ok=False, detail=f'探测失败：{type(exc).__name__}')
+    finally:
+        await client.aclose()
+    return CredentialProbe(source='caixin', ok=True, detail='已验证可读取付费文章正文', account=title)
 
 
 async def _probe_bilibili(*, cookie: str, proxy: str) -> CredentialProbe:

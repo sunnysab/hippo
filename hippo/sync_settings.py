@@ -33,7 +33,7 @@ _ARTICLE_EXCLUDE_KEYWORD_LIMIT = 20
 
 _logger = get_logger(__name__)
 
-POLLING_SOURCES = ('bilibili', 'youtube', 'podcast', 'feed')
+POLLING_SOURCES = ('bilibili', 'youtube', 'podcast', 'feed', 'caixin')
 
 
 def default_sync_settings() -> dict[str, Any]:

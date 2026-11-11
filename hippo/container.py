@@ -157,7 +157,7 @@ def build_sync_container(
         if weixin_source is not None
         else None
     )
-    media_sources = MediaSources(storage=storage, settings=media_settings or {})
+    media_sources = MediaSources(storage=storage, settings=media_settings or {}, downloader=downloader)
     adapters: dict[str, SourceAdapter] = {}
     if weixin_sync is not None:
         adapters['weixin'] = WeixinSourceAdapter(weixin_sync)
@@ -166,9 +166,10 @@ def build_sync_container(
         # A plain text feed (RSS with no enclosure) is listed and stored like any
         # article, so keep its adapter registered instead of reporting those
         # accounts as unsupported.
-        feed_adapter = media_sources.adapters.get(FEED_SOURCE)
-        if feed_adapter is not None:
-            adapters[FEED_SOURCE] = feed_adapter
+        for source in (FEED_SOURCE, 'caixin'):
+            adapter = media_sources.adapters.get(source)
+            if adapter is not None:
+                adapters[source] = adapter
     else:
         adapters.update(media_sources.adapters)
     return AppContainer(

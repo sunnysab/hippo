@@ -605,20 +605,21 @@ async def run_worker_once(
 async def drain_bodies_once(storage: PostgresStorage, *, limit: int = BODY_BATCH) -> int:
     """抓一批待处理正文，返回本次落库篇数。
 
-    列表只负责把文章放进 ``article_queue``；这里才是正文真正的入口，是常驻的
-    （24h 不断），速率由 daemon 的 ``[articles]`` 预算保证。
+    微信消费 ``article_queue``，财新补齐缺正文的文章；各来源独立控制访问节奏。
     """
     settings = await get_sync_settings(storage)
     if not settings.get('download_content'):
         return 0
     counts = await storage.article_queue.stats()
-    if not (counts.get('pending') or counts.get('processing')):
-        return 0
+    sources = {'caixin'}
+    if counts.get('pending') or counts.get('processing'):
+        sources.add('weixin')
     container = build_sync_container(
         storage=storage,
         enable_download=False,
         enable_images=bool(settings.get('download_images')),
         media_settings=await get_media_settings(storage),
+        sources=sources,
     )
     async with container as app:
         result = SyncStats()

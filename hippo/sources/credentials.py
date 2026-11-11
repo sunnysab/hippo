@@ -20,7 +20,7 @@ _COOKIE_HEADER = re.compile(r'[A-Za-z0-9_\-.]+=[^;\s]*(?:;\s*[A-Za-z0-9_\-.]+=[^
 #: A Netscape cookies.txt line: domain, flag, path, secure, expiry, name, value.
 _NETSCAPE_LINE = re.compile(r'^[^\t]+\t(?:TRUE|FALSE)\t[^\t]*\t(?:TRUE|FALSE)\t\d+\t[^\t]+\t[^\t]*$')
 
-SOURCES = ('bilibili', 'youtube')
+SOURCES = ('bilibili', 'youtube', 'caixin')
 
 
 class CredentialError(ValueError):
@@ -40,11 +40,25 @@ def clean(source: str, secret: object) -> str:
     if len(text.encode('utf-8')) > MAX_CREDENTIAL_BYTES:
         raise CredentialError(f'凭证过大，上限 {MAX_CREDENTIAL_BYTES // 1024} KiB')
 
-    if source == 'bilibili':
+    if source in {'bilibili', 'caixin'}:
         # 一行 Cookie 头：换行会被 HTTP 客户端当成头注入拒绝，先压平。
         cookie = ' '.join(text.split())
         if not _COOKIE_HEADER.fullmatch(cookie):
-            raise CredentialError('这不是 Cookie 的样子（形如 SESSDATA=…; bili_jct=…）')
+            message = '请输入 name=value; name=value 格式的 Cookie' if source == 'caixin' else '这不是 Cookie 的样子（形如 SESSDATA=…; bili_jct=…）'
+            raise CredentialError(message)
+        if source == 'caixin':
+            if any(ord(char) < 0x20 or ord(char) > 0x7E for char in cookie):
+                raise CredentialError('财新 Cookie 中含有无效字符')
+            pairs = [part.strip().split('=', 1) for part in cookie.rstrip(';').split(';')]
+            values = dict(pairs)
+            if len(values) != len(pairs):
+                raise CredentialError('Cookie 中有重名字段，请重新导出财新凭证')
+            uid = values.get('UID', '')
+            if not uid.isascii() or not uid.isdecimal() or len(uid) > 19 or not 0 < int(uid) <= 2**63 - 1:
+                raise CredentialError('财新 Cookie 需要有效的 UID')
+            if not values.get('SA_USER_auth'):
+                raise CredentialError('财新 Cookie 中没有 SA_USER_auth，请先登录财新')
+            return cookie
         if 'SESSDATA=' not in cookie:
             raise CredentialError('Cookie 里没有 SESSDATA，B站接口不接受匿名请求')
         return cookie

@@ -545,7 +545,10 @@ class CredentialTest(unittest.IsolatedAsyncioTestCase):
         )
         listed = await source_api.list_credentials(user=_user(), storage=storage)
 
-        self.assertEqual({'bilibili': {'configured': True}, 'youtube': {'configured': False}}, listed)
+        self.assertEqual(
+            {'bilibili': {'configured': True}, 'youtube': {'configured': False}, 'caixin': {'configured': False}},
+            listed,
+        )
         self.assertNotIn('secret', str(listed))
 
     async def test_an_empty_secret_clears_it(self) -> None:
@@ -556,7 +559,7 @@ class CredentialTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            {'bilibili': {'configured': False}, 'youtube': {'configured': False}},
+            {'bilibili': {'configured': False}, 'youtube': {'configured': False}, 'caixin': {'configured': False}},
             await source_api.list_credentials(user=_user(), storage=storage),
         )
 
@@ -566,7 +569,7 @@ class CredentialTest(unittest.IsolatedAsyncioTestCase):
         await source_api.delete_credential(source='bilibili', user=_user(), storage=storage)
 
         self.assertEqual(
-            {'bilibili': {'configured': False}, 'youtube': {'configured': False}},
+            {'bilibili': {'configured': False}, 'youtube': {'configured': False}, 'caixin': {'configured': False}},
             await source_api.list_credentials(user=_user(), storage=storage),
         )
 

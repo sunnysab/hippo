@@ -48,16 +48,16 @@ _ATTEMPTS_RANGE = (1, 10)
 #: audio bitrate used when archiving.
 BITRATES = ('original', '64k', '96k', '128k', '192k', '256k')
 
-_SECRETS = ('asr_api_key', 'bilibili_cookie', 'youtube_cookies')
+_SECRETS = ('asr_api_key', 'bilibili_cookie', 'youtube_cookies', 'caixin_cookie')
 
 #: Where each source's instance-wide credential lives. Both are secrets: masked on
 #: the way out, and never echoed back.
-INSTANCE_CREDENTIALS = {'bilibili': 'bilibili_cookie', 'youtube': 'youtube_cookies'}
+INSTANCE_CREDENTIALS = {'bilibili': 'bilibili_cookie', 'youtube': 'youtube_cookies', 'caixin': 'caixin_cookie'}
 
 #: Sources that open their own network connections, each with a proxy field.
 #: ``weixin`` is here too: its article pages, avatars and images are fetched over
 #: HTTP even though the article *list* comes from the local daemon.
-PROXY_SOURCES = ('weixin', 'bilibili', 'youtube', 'podcast')
+PROXY_SOURCES = ('weixin', 'bilibili', 'youtube', 'podcast', 'caixin')
 
 #: Sources that share another source's connection pool, and so its proxy.
 #: A text feed and a podcast are the same client; ``feed`` only says there is no
@@ -99,6 +99,7 @@ def default_media_settings() -> dict[str, Any]:
         'bilibili_cookie': '',
         # Netscape cookies.txt 的内容（不是服务器上的路径）：由「提交 cookie」接口或管理台写入。
         'youtube_cookies': '',
+        'caixin_cookie': '',
         # 代理按来源分开配置，另有一个实例默认值：`direct` 是直连（用于覆盖默认代理），
         # `default` 是跟随默认代理。下面的默认值与本实例实测一致——公众号与 B站 必须直连
         # （出口代理的 IP 已被 B站拉黑，会 412），YouTube 必须走代理——管理台可改。
@@ -108,6 +109,7 @@ def default_media_settings() -> dict[str, Any]:
         'proxy_bilibili': PROXY_DIRECT,
         'proxy_youtube': 'http://100.111.170.110:8082',
         'proxy_podcast': PROXY_FOLLOW,
+        'proxy_caixin': PROXY_FOLLOW,
     }
 
 
@@ -216,6 +218,8 @@ def normalize_media_settings(values: Any, *, current: dict[str, Any] | None = No
     base['youtube_cookies'] = (
         cookies if len(cookies.encode('utf-8')) <= MAX_CREDENTIAL_BYTES else _as_text(previous.get('youtube_cookies'))
     )
+    if len(base['caixin_cookie'].encode('utf-8')) > MAX_CREDENTIAL_BYTES:
+        base['caixin_cookie'] = _as_text(previous.get('caixin_cookie'))
     base['proxy_default'] = _normalize_proxy(
         base['proxy_default'],
         current=_as_text(previous.get('proxy_default')),

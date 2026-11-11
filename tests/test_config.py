@@ -60,6 +60,10 @@ article_max_connections = 4
 sdk_path = "/opt/sdk"
 daemon_port = 9999
 
+[caixin]
+binary = "/opt/bin/caixin"
+proxy_config = "/opt/caixin/proxy.toml"
+
 [observability]
 otlp_endpoint = "http://collector:4317"
 insecure = true
@@ -103,6 +107,10 @@ environment = "staging"
     assert settings.weixin.sdk_path == '/opt/sdk'
     assert settings.weixin.daemon_host == '127.0.0.1'
     assert settings.weixin.daemon_port == 9999
+    assert settings.caixin == config.CaixinSettings(
+        binary='/opt/bin/caixin',
+        proxy_config='/opt/caixin/proxy.toml',
+    )
     assert settings.observability == config.ObservabilitySettings(
         enabled=True,
         otlp_endpoint='http://collector:4317',
