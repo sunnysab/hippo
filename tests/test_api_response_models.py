@@ -173,7 +173,12 @@ class AccountResponseTest(unittest.TestCase):
 
 
 def _site_settings() -> dict[str, Any]:
-    return {'registration_enabled': False, 'site_name': 'Hippo', 'public_base_url': '', 'vocabulary': default_vocabulary()}
+    return {
+        'registration_enabled': False,
+        'site_name': 'Hippo',
+        'public_base_url': '',
+        'vocabulary': default_vocabulary(),
+    }
 
 
 class ArticleResponseTest(unittest.TestCase):
@@ -287,12 +292,13 @@ class SourceResponseTest(unittest.TestCase):
 
     def test_the_source_rail_is_a_count_per_source(self) -> None:
         storage = SimpleNamespace(
-            accounts=SimpleNamespace(count_by_source=AsyncMock(return_value=[{'source': 'weixin', 'channels': 2}]))
+            accounts=SimpleNamespace(count_by_source=AsyncMock(return_value=[{'source': 'weixin', 'channels': 2}])),
+            meta=SimpleNamespace(get=AsyncMock(return_value=None)),
         )
 
         body = _client(source_api, storage).get('/api/source').json()
 
-        self.assertEqual([{'source': 'weixin', 'channels': 2}], body['sources'])
+        self.assertEqual([{'source': 'weixin', 'channels': 2, 'discoverable': False}], body['sources'])
 
 
 if __name__ == '__main__':

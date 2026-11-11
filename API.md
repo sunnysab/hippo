@@ -952,11 +952,25 @@ B站视频、YouTube 视频与 RSS 播客都是「媒体来源」：它们的文
 GET /api/source
 ```
 
-只统计调用者**订阅的**来源，`channels` 是该来源下的频道数。左栏的「来源」列表用它。
+通常只统计调用者**订阅的**来源，`channels` 是该来源下的频道数。财新对普通用户开放时，
+即使当前没有订阅也会返回一条 `channels: 0, discoverable: true` 的发现入口。管理开关关闭后，
+普通用户不再收到财新来源；已有订阅仍按原有个人阅读权限工作。
 
 ```json
-{"sources": [{"source": "bilibili", "channels": 3}, {"source": "weixin", "channels": 264}]}
+{"sources": [{"source": "bilibili", "channels": 3, "discoverable": false},
+             {"source": "caixin", "channels": 0, "discoverable": true},
+             {"source": "weixin", "channels": 264, "discoverable": false}]}
 ```
+
+### 财新板块目录
+
+```
+GET /api/source/caixin/channel
+```
+
+只读本地实例目录，不访问财新上游。每行包含 `collecting`、`has_articles`、`subscribed`
+和 `can_subscribe`；停采且没有历史内容的板块不能新增个人订阅。普通用户在管理开关关闭时得到
+`403 source.subscription_unavailable`。
 
 ### 解析一个链接
 
@@ -998,7 +1012,8 @@ POST /api/source/channel
 | `url` | str | 必填，同上（含公众号文章链接） |
 | `group_id` | int | 可选，默认分组 |
 
-建账号 + 给调用者建订阅 + 投递一轮列表同步（`202`）。
+建账号 + 给调用者建订阅 + 投递一轮列表同步（`202`）。财新例外：个人订阅只控制阅读范围，
+不创建同步任务；更新节奏由实例采集范围和共享预算决定。
 
 公众号文章链接走的是另一条落库路径：`accounts` 的 `biz` 是 fakeid、`gh_id` 是 `gh_…`，
 不占用媒体来源的命名空间，也不要求「媒体与转写」开关是开的。
@@ -1271,6 +1286,8 @@ Content-Type: application/pdf
 | PATCH | `/api/account/{biz}` | 登录 |
 | GET | `/api/account/{biz}/avatar` | 登录 |
 | GET | `/api/admin/source` | 管理员 |
+| GET | `/api/admin/source/{source}/channel` | 管理员 |
+| PATCH | `/api/admin/source/{source}/channel` | 管理员 |
 | GET | `/api/admin/audit` | 管理员 |
 | GET | `/api/admin/audit/action` | 管理员 |
 | GET | `/api/admin/log/link` | 管理员 |
@@ -1379,6 +1396,7 @@ Content-Type: application/pdf
 | POST | `/api/settings/tasks/{task_id}/cancel` | 管理员 |
 | POST | `/api/settings/test-email` | 管理员 |
 | GET | `/api/source` | 登录 |
+| GET | `/api/source/caixin/channel` | 登录 |
 | POST | `/api/source/channel` | 登录 |
 | GET | `/api/source/credential` | 登录 |
 | DELETE | `/api/source/credential/{source}` | 登录 |

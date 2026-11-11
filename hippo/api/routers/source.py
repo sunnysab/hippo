@@ -20,6 +20,8 @@ from ...logger import get_logger
 from ...media_settings import get_media_settings, instance_credential, resolve_proxy
 from ...models import AccountCredential, User
 from ...sources import SourceError, UnsupportedSource
+from ...sources.caixin import CHANNELS, CaixinSource
+from ...sources.caixin import SOURCE as CAIXIN_SOURCE
 from ...sources.credentials import SOURCES as CREDENTIAL_SOURCES
 from ...sources.credentials import CredentialError
 from ...sources.credentials import clean as clean_credential
@@ -30,8 +32,9 @@ from ...sources.registry import MediaSources
 from ...storage import PostgresStorage, ensure_default_group
 from ...weixin_daemon import WeixinSource as WeixinDaemon
 from ...weixin_daemon import publisher_of
-from ..deps import client_ip, current_user, get_storage
+from ..deps import client_ip, current_user, get_storage, is_admin_session
 from ..schemas.source import (
+    CaixinChannelListOut,
     CredentialListOut,
     CredentialProbeOut,
     CredentialRequest,
@@ -76,6 +79,23 @@ def _require_source(url: str) -> str:
     if source is None:
         raise ApiError('请输入 http(s) 订阅地址', status=400)
     return source
+
+
+def _caixin_available(settings: dict[str, Any], user: User, request: Request | None) -> bool:
+    """Admin web sessions always discover it; regular readers need the switch."""
+    if user.role != 'admin':
+        return bool(settings.get('caixin_visible_to_users'))
+    if request is None:
+        return True
+    return is_admin_session(request, user)
+
+
+def _subscription_unavailable() -> ApiError:
+    return ApiError(
+        '当前无法新增该来源订阅',
+        status=403,
+        code='source.subscription_unavailable',
+    )
 
 
 async def _preview(sources: MediaSources, source: str, url: str) -> ChannelInfo:
@@ -189,19 +209,28 @@ async def _subscribe_weixin(
 
 @router.get('/source', response_model=SourceListOut)
 async def list_sources(
+    request: Request,
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
 ) -> dict[str, Any]:
-    """The sources this user actually follows, for the article rail.
-
-    A source with no subscription is not offered as a filter, and no source is
-    hidden: an unknown one shows up with its raw identifier (see ``SOURCE_META``).
-    """
-    return {'sources': await storage.accounts.count_by_source(user.id)}
+    """Subscription sources plus an available zero-count discovery entry."""
+    rows = await storage.accounts.count_by_source(user.id)
+    settings = await get_media_settings(storage)
+    if not _caixin_available(settings, user, request):
+        rows = [row for row in rows if row['source'] != CAIXIN_SOURCE]
+    elif all(row['source'] != CAIXIN_SOURCE for row in rows):
+        rows.append({'source': CAIXIN_SOURCE, 'channels': 0})
+        rows.sort(key=lambda row: row['source'])
+    if _caixin_available(settings, user, request):
+        for row in rows:
+            if row['source'] == CAIXIN_SOURCE:
+                row['discoverable'] = True
+    return {'sources': rows}
 
 
 @router.get('/source/preview', response_model=SourcePreviewOut)
 async def preview_source(
+    request: Request,
     url: str = Query(..., description='视频 / 频道 / 订阅地址'),
     user: User = Depends(current_user),
     storage: PostgresStorage = Depends(get_storage),
@@ -212,6 +241,10 @@ async def preview_source(
     console can show what is about to be subscribed to.
     """
     source = _require_source(url)
+    if source == CAIXIN_SOURCE:
+        settings = await get_media_settings(storage)
+        if not _caixin_available(settings, user, request):
+            raise _subscription_unavailable()
     if source == 'weixin':
         info = await _weixin_channel(storage, url)
     else:
@@ -235,6 +268,39 @@ async def preview_source(
     }
 
 
+@router.get('/source/caixin/channel', response_model=CaixinChannelListOut)
+async def list_caixin_channels(
+    request: Request,
+    user: User = Depends(current_user),
+    storage: PostgresStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Local-only Caixin channel discovery for personal subscriptions."""
+    settings = await get_media_settings(storage)
+    if not _caixin_available(settings, user, request):
+        raise _subscription_unavailable()
+    rows = {row['biz']: row for row in await storage.accounts.list_instance_accounts(CAIXIN_SOURCE)}
+    followed = {row['biz'] for row in await storage.subscriptions.list_for_user(user.id)}
+    channels = []
+    for channel_id, (host, name) in CHANNELS.items():
+        biz = f'{CAIXIN_SOURCE}:{channel_id}'
+        row = rows.get(biz, {})
+        article_count = int(row.get('article_count') or 0)
+        collecting = not bool(row.get('is_disabled', True))
+        channels.append(
+            {
+                'channel_id': channel_id,
+                'biz': biz,
+                'name': name,
+                'url': f'https://{host}.caixin.com/',
+                'collecting': collecting,
+                'has_articles': article_count > 0,
+                'subscribed': biz in followed,
+                'can_subscribe': (collecting or article_count > 0) and biz not in followed,
+            }
+        )
+    return {'channels': channels}
+
+
 @router.post('/source/channel', status_code=status.HTTP_202_ACCEPTED, response_model=SubscriptionOut)
 async def subscribe_source(
     request: Request,
@@ -252,6 +318,21 @@ async def subscribe_source(
         raise ApiError('缺少 url', status=400)
     source = _require_source(url)
 
+    caixin_info: ChannelInfo | None = None
+    caixin_followed = False
+    if source == CAIXIN_SOURCE:
+        try:
+            caixin_info = await CaixinSource().preview(url)
+        except ValueError as exc:
+            raise ApiError(str(exc), status=400) from exc
+        followed = {row['biz'] for row in await storage.subscriptions.list_for_user(user.id)}
+        caixin_followed = caixin_info.biz in followed
+        settings = await get_media_settings(storage)
+        if not _caixin_available(settings, user, request) and not caixin_followed:
+            # Re-submitting an existing personal subscription is harmless and
+            # keeps the operation idempotent; it grants no new access.
+            raise _subscription_unavailable()
+
     group_id = body.group_id
     if group_id is None:
         default_group = await ensure_default_group(storage, user.id, name=DEFAULT_GROUP_NAME)
@@ -265,11 +346,19 @@ async def subscribe_source(
     if source == 'weixin':
         return await _subscribe_weixin(request, storage, user, url=url, group_id=int(group_id))
 
-    sources = await _media_sources(storage, user, source=source)
-    try:
-        info = await _preview(sources, source, url)
-    finally:
-        await sources.aclose()
+    if caixin_info is not None:
+        info = caixin_info
+        if not caixin_followed:
+            catalogue = {row['biz']: row for row in await storage.accounts.list_instance_accounts(CAIXIN_SOURCE)}
+            channel = catalogue.get(info.biz)
+            if channel is None or (bool(channel.get('is_disabled')) and int(channel.get('article_count') or 0) == 0):
+                raise _subscription_unavailable()
+    else:
+        sources = await _media_sources(storage, user, source=source)
+        try:
+            info = await _preview(sources, source, url)
+        finally:
+            await sources.aclose()
 
     async with storage.transaction():
         account = await storage.accounts.upsert_account(
@@ -285,17 +374,15 @@ async def subscribe_source(
             )
         )
         await storage.subscriptions.upsert(user.id, account.biz, group_id=int(group_id))
-        # 订阅当下就跑一轮列表：媒体来源的正文要排队转写，越早入队越好。
-        # Trigger is ``subscription``, not ``manual``: the partial unique index only
-        # allows one active manual job per requester, so a second subscription by
-        # the same user would be deduped away. The requester is still recorded, so
-        # the user can see and cancel the round their subscription triggered.
-        await storage.sync_jobs.create_job(
-            trigger_type='subscription',
-            biz_list=[account.biz],
-            source=info.source or source,
-            requester_user_id=user.id,
-        )
+        # Caixin collection belongs to the instance catalogue. A reader adding
+        # a channel must not spend the shared upstream budget or create a job.
+        if (info.source or source) != CAIXIN_SOURCE:
+            await storage.sync_jobs.create_job(
+                trigger_type='subscription',
+                biz_list=[account.biz],
+                source=info.source or source,
+                requester_user_id=user.id,
+            )
         await storage.audit.record(
             user.id,
             'source.subscribed',

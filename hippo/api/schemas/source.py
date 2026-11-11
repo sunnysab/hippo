@@ -32,6 +32,7 @@ class SourceCountOut(BaseModel):
 
     source: str
     channels: int = Field(description='Channels the caller follows from this source.')
+    discoverable: bool = Field(default=False, description='Whether this source has a channel-discovery entry.')
 
 
 class SourceListOut(BaseModel):
@@ -55,6 +56,21 @@ class SubscriptionOut(BaseModel):
     nickname: str
     source: str
     group_id: int
+
+
+class CaixinChannelOut(BaseModel):
+    channel_id: int
+    biz: str
+    name: str
+    url: str
+    collecting: bool
+    has_articles: bool
+    subscribed: bool
+    can_subscribe: bool
+
+
+class CaixinChannelListOut(BaseModel):
+    channels: list[CaixinChannelOut]
 
 
 class CredentialStateOut(BaseModel):

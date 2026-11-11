@@ -36,6 +36,11 @@ def _storage() -> SimpleNamespace:
 
 
 class MediaSettingsSerializationTest(unittest.TestCase):
+    def test_caixin_discovery_is_off_by_default(self) -> None:
+        public = admin_api._public_media_settings(_settings())
+
+        self.assertFalse(public['caixin_visible_to_users'])
+
     def test_secrets_are_masked_and_flagged(self) -> None:
         public = admin_api._public_media_settings(
             _settings(asr_api_key='sk-1234567890abcdef', bilibili_cookie='SESSDATA=abcdef')
@@ -96,6 +101,30 @@ class MediaSettingsEndpointTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('asr_api_key', setter.call_args.args[1])
         self.assertEqual(9, setter.call_args.args[1]['items_per_sync'])
         storage.audit.record.assert_not_awaited()
+
+    async def test_caixin_discovery_toggle_keeps_every_other_setting(self) -> None:
+        storage = _storage()
+        before = _settings(caixin_cookie='session=real', caixin_visible_to_users=False)
+        after = _settings(caixin_cookie='session=real', caixin_visible_to_users=True)
+        setter = AsyncMock(return_value=after)
+
+        with (
+            patch(
+                'hippo.api.routers.admin.get_media_settings',
+                new=AsyncMock(return_value=before),
+            ),
+            patch('hippo.api.routers.admin.set_media_settings', new=setter),
+        ):
+            result = await admin_api.update_media_settings(
+                SimpleNamespace(headers={}, client=SimpleNamespace(host='127.0.0.1')),
+                body=MediaSettingsUpdateRequest(caixin_visible_to_users=True),
+                actor=SimpleNamespace(id=7),
+                storage=storage,
+            )
+
+        self.assertTrue(result['caixin_visible_to_users'])
+        self.assertEqual({'caixin_visible_to_users': True}, setter.call_args.args[1])
+        storage.audit.record.assert_awaited_once()
 
 
 class _FakeResponse:

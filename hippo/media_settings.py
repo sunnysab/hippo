@@ -100,6 +100,9 @@ def default_media_settings() -> dict[str, Any]:
         # Netscape cookies.txt 的内容（不是服务器上的路径）：由「提交 cookie」接口或管理台写入。
         'youtube_cookies': '',
         'caixin_cookie': '',
+        #: Discovery is opt-in for regular users; existing subscriptions remain
+        #: readable when this is off.
+        'caixin_visible_to_users': False,
         # 代理按来源分开配置，另有一个实例默认值：`direct` 是直连（用于覆盖默认代理），
         # `default` 是跟随默认代理。下面的默认值与本实例实测一致——公众号与 B站 必须直连
         # （出口代理的 IP 已被 B站拉黑，会 412），YouTube 必须走代理——管理台可改。
@@ -211,6 +214,7 @@ def normalize_media_settings(values: Any, *, current: dict[str, Any] | None = No
     base['keep_media'] = _as_bool(base['keep_media'], True)
     base['keep_media_bitrate'] = _as_choice(base['keep_media_bitrate'], BITRATES, '128k')
     base['bilibili_cc_subtitle'] = _as_bool(base['bilibili_cc_subtitle'], True)
+    base['caixin_visible_to_users'] = _as_bool(base['caixin_visible_to_users'], False)
     for key in _SECRETS:
         base[key] = _as_text(base[key])
     cookies = _as_text(base['youtube_cookies'])

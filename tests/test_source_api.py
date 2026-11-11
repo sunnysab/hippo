@@ -113,12 +113,15 @@ def _credential_methods(seed: dict) -> dict:
     return {'get': get, 'configured': configured, 'set': set_, 'delete': delete}
 
 
-def _user(user_id: int = 1) -> SimpleNamespace:
-    return SimpleNamespace(id=user_id, username='u', role='admin')
+def _user(user_id: int = 1, role: str = 'admin') -> SimpleNamespace:
+    return SimpleNamespace(id=user_id, username='u', role=role)
 
 
-def _request() -> SimpleNamespace:
-    return SimpleNamespace(headers={}, client=SimpleNamespace(host='127.0.0.1'))
+def _request(*, api_key: bool = False) -> SimpleNamespace:
+    state = SimpleNamespace()
+    if api_key:
+        state.api_key = {'id': 1}
+    return SimpleNamespace(headers={}, client=SimpleNamespace(host='127.0.0.1'), state=state)
 
 
 def _sources(info: ChannelInfo | None = None, *, error: Exception | None = None):
@@ -143,7 +146,9 @@ class PreviewTest(unittest.IsolatedAsyncioTestCase):
             patch('hippo.api.routers.source.MediaSources', sources),
             patch('hippo.api.routers.source.get_media_settings', new=AsyncMock(return_value={'enabled': True})),
         ):
-            result = await source_api.preview_source(url='https://feed.example/rss', user=_user(), storage=storage)
+            result = await source_api.preview_source(
+                request=_request(), url='https://feed.example/rss', user=_user(), storage=storage
+            )
 
         self.assertEqual('podcast', result['source'])
         self.assertEqual('一档播客', result['nickname'])
@@ -156,7 +161,9 @@ class PreviewTest(unittest.IsolatedAsyncioTestCase):
             patch('hippo.api.routers.source.MediaSources', sources),
             patch('hippo.api.routers.source.get_media_settings', new=AsyncMock(return_value={'enabled': True})),
         ):
-            result = await source_api.preview_source(url='https://feed.example/rss', user=_user(), storage=storage)
+            result = await source_api.preview_source(
+                request=_request(), url='https://feed.example/rss', user=_user(), storage=storage
+            )
 
         self.assertTrue(result['subscribed'])
 
@@ -169,7 +176,9 @@ class PreviewTest(unittest.IsolatedAsyncioTestCase):
             patch('hippo.api.routers.source.MediaSources', sources),
             patch('hippo.api.routers.source.get_media_settings', new=AsyncMock(return_value={'enabled': True})),
         ):
-            result = await source_api.preview_source(url='https://feed.example/rss', user=_user(42), storage=storage)
+            result = await source_api.preview_source(
+                request=_request(), url='https://feed.example/rss', user=_user(42), storage=storage
+            )
 
         self.assertFalse(result['subscribed'])
         storage.accounts.get_account_detail.assert_awaited_once_with(_INFO.biz, user_id=42)
@@ -195,7 +204,7 @@ class PreviewTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_non_url_is_a_bad_request(self) -> None:
         with self.assertRaises(ApiError) as ctx:
-            await source_api.preview_source(url='not a url', user=_user(), storage=_storage())
+            await source_api.preview_source(request=_request(), url='not a url', user=_user(), storage=_storage())
 
         self.assertEqual(400, ctx.exception.status)
 
@@ -206,7 +215,9 @@ class PreviewTest(unittest.IsolatedAsyncioTestCase):
             patch('hippo.api.routers.source.get_media_settings', new=AsyncMock(return_value={'enabled': False})),
             self.assertRaises(ApiError),
         ):
-            await source_api.preview_source(url='https://feed.example/rss', user=_user(), storage=_storage())
+            await source_api.preview_source(
+                request=_request(), url='https://feed.example/rss', user=_user(), storage=_storage()
+            )
 
         preview.assert_not_awaited()
 
@@ -218,7 +229,9 @@ class PreviewTest(unittest.IsolatedAsyncioTestCase):
             patch('hippo.api.routers.source.get_media_settings', new=AsyncMock(return_value={'enabled': True})),
             self.assertRaises(ApiError) as ctx,
         ):
-            await source_api.preview_source(url='https://space.bilibili.com/1', user=_user(), storage=_storage())
+            await source_api.preview_source(
+                request=_request(), url='https://space.bilibili.com/1', user=_user(), storage=_storage()
+            )
 
         self.assertEqual(502, ctx.exception.status)
         self.assertEqual('source.parse_failed', ctx.exception.code)
@@ -233,7 +246,9 @@ class PreviewTest(unittest.IsolatedAsyncioTestCase):
             patch('hippo.api.routers.source.get_media_settings', new=AsyncMock(return_value={'enabled': True})),
             self.assertRaises(ApiError) as ctx,
         ):
-            await source_api.preview_source(url='https://space.bilibili.com/1', user=_user(), storage=_storage())
+            await source_api.preview_source(
+                request=_request(), url='https://space.bilibili.com/1', user=_user(), storage=_storage()
+            )
 
         self.assertEqual(502, ctx.exception.status)
         self.assertEqual('解析失败', str(ctx.exception))
@@ -248,9 +263,207 @@ class PreviewTest(unittest.IsolatedAsyncioTestCase):
             patch('hippo.api.routers.source.get_media_settings', new=AsyncMock(return_value={'enabled': True})),
             self.assertRaises(ApiError) as ctx,
         ):
-            await source_api.preview_source(url='https://www.bilibili.com/x', user=_user(), storage=_storage())
+            await source_api.preview_source(
+                request=_request(), url='https://www.bilibili.com/x', user=_user(), storage=_storage()
+            )
 
         self.assertEqual(400, ctx.exception.status)
+
+
+def _caixin_row(
+    channel_id: int = 125,
+    *,
+    disabled: bool = False,
+    article_count: int = 0,
+) -> dict:
+    host, name = source_api.CHANNELS[channel_id]
+    return {
+        'biz': f'caixin:{channel_id}',
+        'nickname': f'财新·{name}',
+        'source': 'caixin',
+        'alias': host,
+        'is_disabled': disabled,
+        'last_synced_at': None,
+        'latest_publish_at': None,
+        'article_count': article_count,
+        'subscribers': 0,
+    }
+
+
+class CaixinDiscoveryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_an_open_source_with_no_follow_is_a_discovery_entry(self) -> None:
+        storage = _storage()
+        storage.accounts.count_by_source.return_value = []
+
+        with patch(
+            'hippo.api.routers.source.get_media_settings',
+            new=AsyncMock(return_value={'enabled': True, 'caixin_visible_to_users': True}),
+        ):
+            result = await source_api.list_sources(request=_request(), user=_user(7, role='user'), storage=storage)
+
+        self.assertEqual(
+            [{'source': 'caixin', 'channels': 0, 'discoverable': True}],
+            result['sources'],
+        )
+
+    async def test_an_admin_api_key_does_not_bypass_user_discovery(self) -> None:
+        storage = _storage()
+        storage.accounts.count_by_source.return_value = [{'source': 'caixin', 'channels': 1}]
+
+        with patch(
+            'hippo.api.routers.source.get_media_settings',
+            new=AsyncMock(return_value={'enabled': True, 'caixin_visible_to_users': False}),
+        ):
+            result = await source_api.list_sources(request=_request(api_key=True), user=_user(1), storage=storage)
+
+        self.assertEqual([], result['sources'])
+
+    async def test_hidden_preview_refuses_before_opening_the_source(self) -> None:
+        with (
+            patch(
+                'hippo.api.routers.source.get_media_settings',
+                new=AsyncMock(return_value={'enabled': True, 'caixin_visible_to_users': False}),
+            ),
+            patch('hippo.api.routers.source._media_sources', new=AsyncMock()) as media_sources,
+            self.assertRaises(ApiError) as caught,
+        ):
+            await source_api.preview_source(
+                request=_request(),
+                url='https://finance.caixin.com/',
+                user=_user(7, role='user'),
+                storage=_storage(),
+            )
+
+        self.assertEqual((403, 'source.subscription_unavailable'), (caught.exception.status, caught.exception.code))
+        media_sources.assert_not_awaited()
+
+    async def test_the_selector_uses_local_collection_and_subscription_state(self) -> None:
+        storage = _storage()
+        storage.accounts.list_instance_accounts.return_value = [
+            _caixin_row(125),
+            _caixin_row(126, disabled=True, article_count=4),
+        ]
+        storage.subscriptions.list_for_user.return_value = [{'biz': 'caixin:125'}]
+
+        with (
+            patch(
+                'hippo.api.routers.source.get_media_settings',
+                new=AsyncMock(return_value={'enabled': True, 'caixin_visible_to_users': True}),
+            ),
+            patch('hippo.api.routers.source._media_sources', new=AsyncMock()) as media_sources,
+        ):
+            result = await source_api.list_caixin_channels(
+                request=_request(), user=_user(7, role='user'), storage=storage
+            )
+
+        by_biz = {row['biz']: row for row in result['channels']}
+        self.assertTrue(by_biz['caixin:125']['subscribed'])
+        self.assertFalse(by_biz['caixin:125']['can_subscribe'])
+        self.assertTrue(by_biz['caixin:126']['has_articles'])
+        self.assertTrue(by_biz['caixin:126']['can_subscribe'])
+        self.assertFalse(by_biz['caixin:124']['can_subscribe'])
+        media_sources.assert_not_awaited()
+
+    async def test_hidden_new_subscription_is_refused_without_writes(self) -> None:
+        transactions: list[int] = []
+        storage = _storage(transactions=transactions)
+        storage.subscriptions.list_for_user.return_value = []
+        with (
+            patch(
+                'hippo.api.routers.source.get_media_settings',
+                new=AsyncMock(return_value={'enabled': True, 'caixin_visible_to_users': False}),
+            ),
+            self.assertRaises(ApiError) as caught,
+        ):
+            await source_api.subscribe_source(
+                request=_request(),
+                body=SubscribeRequest(url='https://finance.caixin.com/'),
+                user=_user(7, role='user'),
+                storage=storage,
+            )
+
+        self.assertEqual('source.subscription_unavailable', caught.exception.code)
+        self.assertEqual([], transactions)
+        storage.accounts.upsert_account.assert_not_awaited()
+        storage.subscriptions.upsert.assert_not_awaited()
+
+    async def test_hidden_existing_subscription_remains_idempotent(self) -> None:
+        storage = _storage()
+        storage.subscriptions.list_for_user.return_value = [{'biz': 'caixin:125'}]
+        with (
+            patch(
+                'hippo.api.routers.source.get_media_settings',
+                new=AsyncMock(return_value={'enabled': True, 'caixin_visible_to_users': False}),
+            ),
+            patch(
+                'hippo.api.routers.source.ensure_default_group',
+                new=AsyncMock(return_value=SimpleNamespace(id=1)),
+            ),
+            patch('hippo.api.routers.source._media_sources', new=AsyncMock()) as media_sources,
+        ):
+            result = await source_api.subscribe_source(
+                request=_request(),
+                body=SubscribeRequest(url='https://finance.caixin.com/'),
+                user=_user(7, role='user'),
+                storage=storage,
+            )
+
+        self.assertEqual('caixin:125', result['biz'])
+        storage.subscriptions.upsert.assert_awaited_once_with(7, 'caixin:125', group_id=1)
+        storage.sync_jobs.create_job.assert_not_awaited()
+        media_sources.assert_not_awaited()
+
+    async def test_a_disabled_channel_without_articles_cannot_be_subscribed(self) -> None:
+        storage = _storage()
+        storage.subscriptions.list_for_user.return_value = []
+        storage.accounts.list_instance_accounts.return_value = [_caixin_row(125, disabled=True)]
+        with (
+            patch(
+                'hippo.api.routers.source.get_media_settings',
+                new=AsyncMock(return_value={'enabled': True, 'caixin_visible_to_users': True}),
+            ),
+            patch(
+                'hippo.api.routers.source.ensure_default_group',
+                new=AsyncMock(return_value=SimpleNamespace(id=1)),
+            ),
+            self.assertRaises(ApiError) as caught,
+        ):
+            await source_api.subscribe_source(
+                request=_request(),
+                body=SubscribeRequest(url='https://finance.caixin.com/'),
+                user=_user(7, role='user'),
+                storage=storage,
+            )
+
+        self.assertEqual('source.subscription_unavailable', caught.exception.code)
+        storage.accounts.upsert_account.assert_not_awaited()
+        storage.sync_jobs.create_job.assert_not_awaited()
+
+    async def test_a_collecting_channel_subscribes_without_a_sync_job(self) -> None:
+        storage = _storage()
+        storage.subscriptions.list_for_user.return_value = []
+        storage.accounts.list_instance_accounts.return_value = [_caixin_row(125)]
+        with (
+            patch(
+                'hippo.api.routers.source.get_media_settings',
+                new=AsyncMock(return_value={'enabled': True, 'caixin_visible_to_users': True}),
+            ),
+            patch(
+                'hippo.api.routers.source.ensure_default_group',
+                new=AsyncMock(return_value=SimpleNamespace(id=1)),
+            ),
+            patch('hippo.api.routers.source._media_sources', new=AsyncMock()) as media_sources,
+        ):
+            result = await source_api.subscribe_source(
+                request=_request(),
+                body=SubscribeRequest(url='https://finance.caixin.com/'),
+                user=_user(7, role='user'),
+                storage=storage,
+            )
+
+        self.assertEqual('caixin:125', result['biz'])
+        storage.sync_jobs.create_job.assert_not_awaited()
+        media_sources.assert_not_awaited()
 
 
 class SubscribeTest(unittest.IsolatedAsyncioTestCase):
@@ -268,7 +481,7 @@ class SubscribeTest(unittest.IsolatedAsyncioTestCase):
         url = 'https://space.bilibili.com/3493117093218822/lists?sid=5605180'
         biz = 'bilibili:season:3493117093218822:5605180'
         with patch('hippo.api.routers.source._media_sources', new=AsyncMock(return_value=sources)):
-            resolved = await source_api.preview_source(url=url, user=_user(), storage=storage)
+            resolved = await source_api.preview_source(request=_request(), url=url, user=_user(), storage=storage)
             subscribed = await source_api.subscribe_source(
                 request=_request(), body=SubscribeRequest(url=url, group_id=1), user=_user(), storage=storage
             )
@@ -424,7 +637,9 @@ class WeixinArticleTest(unittest.IsolatedAsyncioTestCase):
             )
         )
         with patch('hippo.api.routers.source.WeixinDaemon') as daemon:
-            result = await source_api.preview_source(url=_ARTICLE_URL, user=_user(), storage=storage)
+            result = await source_api.preview_source(
+                request=_request(), url=_ARTICLE_URL, user=_user(), storage=storage
+            )
 
         self.assertEqual('weixin', result['source'])
         self.assertEqual('TopView', result['nickname'])
@@ -450,7 +665,9 @@ class WeixinArticleTest(unittest.IsolatedAsyncioTestCase):
             patch('hippo.api.routers.source.WeixinDaemon', return_value=source),
             patch('hippo.api.routers.source._upsert_avatar_url', new=AsyncMock()) as cache_avatar,
         ):
-            result = await source_api.preview_source(url=_ARTICLE_URL, user=_user(), storage=storage)
+            result = await source_api.preview_source(
+                request=_request(), url=_ARTICLE_URL, user=_user(), storage=storage
+            )
 
         self.assertEqual('MzU2MDI3MDk5NQ==', result['biz'])
         self.assertEqual('TopView', result['nickname'])
@@ -469,7 +686,7 @@ class WeixinArticleTest(unittest.IsolatedAsyncioTestCase):
             patch('hippo.api.routers.source.WeixinDaemon', return_value=source),
             self.assertRaises(ApiError) as ctx,
         ):
-            await source_api.preview_source(url=_ARTICLE_URL, user=_user(), storage=storage)
+            await source_api.preview_source(request=_request(), url=_ARTICLE_URL, user=_user(), storage=storage)
 
         self.assertEqual(502, ctx.exception.status)
 
