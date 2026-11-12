@@ -121,7 +121,9 @@ def parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[d
     image_pattern = re.compile(r'!\[(?P<alt>[^\]]*)\]\(\s*(?P<url>[^\s)]*)(?:\s+".*?")?\s*\)')
     heading_pattern = re.compile(r'^(#{1,6})\s+(.*)$')
     link_pattern = re.compile(r'^[*-]\s+(https?://\S+)$')
-    linked_image_closing_pattern = re.compile(r'^\]\(([^)]+)\)$')
+    linked_image_closing_pattern = re.compile(
+        r'^\]\(\s*(?P<href>[^\s)]+)(?:\s+(?P<title>"[^"]*"|\'[^\']*\'))?\s*\)$'
+    )
     timestamped_link_line_pattern = re.compile(r'^\[\d{1,2}:\d{2}(?::\d{2})?\]\(https?://[^)]+\)\s+\S')
     code_fence_pattern = re.compile(r'^(```+|~~~+)')
 
@@ -143,7 +145,8 @@ def parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[d
                 body_lines.append('')
             index += 1
             continue
-        if stripped == '[':
+        if stripped.endswith('[') and not stripped.endswith('\\['):
+            prefix = stripped[:-1].rstrip()
             image_index = index + 1
             while image_index < len(lines) and not lines[image_index].strip():
                 image_index += 1
@@ -158,10 +161,16 @@ def parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[d
                     else:
                         closing_match = None
                     if closing_match:
+                        if prefix:
+                            paragraph.append(prefix)
                         flush_paragraph()
                         alt, url = image_match.group('alt'), _image_url(image_match.group('url'))
-                        href = closing_match.group(1).strip()
-                        normalized_markdown = f'[![{alt}]({url})]({href})'
+                        href = closing_match.group('href').strip()
+                        link_title = closing_match.group('title')
+                        title_suffix = f' {link_title}' if link_title else ''
+                        normalized_markdown = f'[![{alt}]({url or ""})]({href}{title_suffix})'
+                        if prefix:
+                            body_lines.append(prefix)
                         if cover_local is None and not blocks and not body_lines and title is None:
                             cover_local = url
                         else:

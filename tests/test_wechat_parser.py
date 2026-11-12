@@ -250,6 +250,39 @@ class WechatParserSamplesTest(unittest.TestCase):
         self.assertNotIn('\n[\n', body_markdown)
         self.assertNotIn('](https://mp.weixin.qq.com/s/demo)', [block.get('text') for block in blocks if block.get('type') == 'paragraph'])
 
+    def testparse_markdown_blocks_collapses_linked_image_after_paragraph_text(self) -> None:
+        markdown = '\n'.join(
+            [
+                'Caixin paragraph.[',
+                '![](https://www.caixin.com/favicon.ico)',
+                '](https://international.caixin.com/2026-11-12/102503788.html "Article title")',
+            ]
+        )
+
+        _title, _cover_local, blocks, body_markdown = parse_markdown_blocks(markdown)
+
+        self.assertEqual(
+            blocks,
+            [
+                {'type': 'paragraph', 'text': 'Caixin paragraph.'},
+                {
+                    'type': 'image',
+                    'alt': '',
+                    'local_path': 'https://www.caixin.com/favicon.ico',
+                    'href': 'https://international.caixin.com/2026-11-12/102503788.html',
+                },
+            ],
+        )
+        self.assertIn(
+            '[![](https://www.caixin.com/favicon.ico)]'
+            '(https://international.caixin.com/2026-11-12/102503788.html "Article title")',
+            body_markdown,
+        )
+        self.assertNotIn(
+            '](https://international.caixin.com/2026-11-12/102503788.html "Article title")',
+            [block.get('text') for block in blocks if block.get('type') == 'paragraph'],
+        )
+
     def testparse_markdown_blocks_splits_audio_timestamp_lines(self) -> None:
         markdown = '\n'.join(
             [
