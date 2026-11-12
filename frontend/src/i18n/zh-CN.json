@@ -389,6 +389,8 @@
   "sync.sourceSchedule": "定时更新",
   "sync.sourceIntervalDays": "默认更新间隔（天）",
   "sync.caixinIntervalHours": "财新检查间隔（小时）",
+  "sync.caixinDailyArticles": "财新每日正文上限（篇）",
+  "sync.caixinLimitsHint": "所有 worker 共用；每日总请求上限仍为 60 次。",
   "sync.caixinHistoryHint": "先检查各板块的新文章，每轮再轮换补抓一页旧文章。",
   "sync.weixinPushHint": "微信公众号通过实时推送更新，可手动检查近期文章。",
   "sync.weixinHealthTitle": "微信公众号后台与推送",

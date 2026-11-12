@@ -207,6 +207,8 @@ async def update_sync_settings(
         updates['source_intervals_days'] = body.source_intervals_days
     if 'caixin_interval_hours' in sent and body.caixin_interval_hours is not None:
         updates['caixin_interval_hours'] = body.caixin_interval_hours
+    if 'caixin_daily_articles' in sent and body.caixin_daily_articles is not None:
+        updates['caixin_daily_articles'] = body.caixin_daily_articles
     if 'sleep_seconds' in sent and body.sleep_seconds is not None:
         updates['sleep_seconds'] = body.sleep_seconds
     if 'download_content' in sent and body.download_content is not None:

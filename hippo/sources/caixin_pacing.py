@@ -14,11 +14,14 @@ from typing import Any
 from psycopg.rows import dict_row
 
 from ..logger import get_logger
+from ..sync_settings import (
+    CAIXIN_DAILY_OPERATION_LIMIT,
+    CAIXIN_DEFAULT_DAILY_ARTICLES,
+    get_sync_settings,
+)
 from . import SourceDeferred, SourceError
 
 STATE_KEY = 'source:caixin:pacing'
-DAILY_OPERATIONS = 60
-DAILY_ARTICLES = 20
 LEASE_SECONDS = 120
 ERROR_COOLDOWN_SECONDS = 900
 
@@ -31,7 +34,12 @@ class CaixinPaused(SourceDeferred):
         super().__init__(f'财新暂时休息，请在 {self.retry_after_seconds} 秒后重试')
 
 
-def _reserve(state: dict[str, Any], kind: str, now: float) -> str:
+def _reserve(
+    state: dict[str, Any],
+    kind: str,
+    now: float,
+    daily_article_limit: int = CAIXIN_DEFAULT_DAILY_ARTICLES,
+) -> str:
     today = datetime.fromtimestamp(now, UTC)
     day = today.date().isoformat()
     if state.get('day') != day:
@@ -40,8 +48,8 @@ def _reserve(state: dict[str, Any], kind: str, now: float) -> str:
     eligible_at = max(state.get('next_at', 0), state.get('lease_until', 0))
     if eligible_at > now:
         raise CaixinPaused(math.ceil(eligible_at - now))
-    if state.get('daily_ops', 0) >= DAILY_OPERATIONS or (
-        kind == 'article' and state.get('daily_articles', 0) >= DAILY_ARTICLES
+    if state.get('daily_ops', 0) >= CAIXIN_DAILY_OPERATION_LIMIT or (
+        kind == 'article' and state.get('daily_articles', 0) >= daily_article_limit
     ):
         tomorrow = datetime.combine(today.date() + timedelta(days=1), datetime.min.time(), UTC)
         raise CaixinPaused(math.ceil(tomorrow.timestamp() - now))
@@ -83,6 +91,15 @@ def _open_storage():
     return open_storage()
 
 
+async def _daily_article_limit() -> int:
+    async with _open_storage() as storage:
+        settings = await get_sync_settings(storage)
+    value = settings.get('caixin_daily_articles')
+    if type(value) is not int or not 1 <= value <= CAIXIN_DAILY_OPERATION_LIMIT:
+        return CAIXIN_DEFAULT_DAILY_ARTICLES
+    return value
+
+
 @asynccontextmanager
 async def _locked_state():
     async with _open_storage() as storage, storage.transaction():
@@ -110,8 +127,9 @@ class CaixinPacer:
     async def request(self, kind: str):
         if kind not in {'list', 'article'}:
             raise ValueError('Unknown Caixin request kind')
+        daily_article_limit = await _daily_article_limit() if kind == 'article' else CAIXIN_DEFAULT_DAILY_ARTICLES
         async with _locked_state() as state:
-            token = _reserve(state, kind, time.time())
+            token = _reserve(state, kind, time.time(), daily_article_limit)
         error: BaseException | None = None
         try:
             yield

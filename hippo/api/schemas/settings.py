@@ -13,6 +13,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ...sync_settings import CAIXIN_DAILY_OPERATION_LIMIT
+
 SourceIntervalsDays = dict[
     Literal['bilibili', 'youtube', 'podcast', 'feed'],
     Annotated[int, Field(strict=True, ge=1)],
@@ -45,6 +47,7 @@ class SyncSettingsOut(BaseModel):
 
     source_intervals_days: SourceIntervalsDays
     caixin_interval_hours: int
+    caixin_daily_articles: int
     sleep_seconds: float
     skip_minutes: int
     download_content: bool
@@ -88,6 +91,13 @@ class SyncSettingsUpdateRequest(BaseModel):
         strict=True,
         ge=1,
         description='Instance-wide hours between Caixin checks.',
+    )
+    caixin_daily_articles: int | None = Field(
+        default=None,
+        strict=True,
+        ge=1,
+        le=CAIXIN_DAILY_OPERATION_LIMIT,
+        description='Instance-wide Caixin article requests per UTC day.',
     )
     sleep_seconds: float | None = Field(default=None, ge=0, description='Pause between account requests.')
     skip_minutes: int | None = Field(default=None, ge=0, description='Skip an account synced this recently.')

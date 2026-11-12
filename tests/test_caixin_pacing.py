@@ -9,13 +9,11 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from hippo.sources import SourceError
 from hippo.sources.caixin import CaixinRateLimited, CaixinSource
-from hippo.sources.caixin_pacing import (
-    DAILY_ARTICLES,
-    DAILY_OPERATIONS,
-    CaixinPacer,
-    CaixinPaused,
-    _release,
-    _reserve,
+from hippo.sources.caixin_pacing import CaixinPacer, CaixinPaused, _release, _reserve
+from hippo.sync_settings import (
+    CAIXIN_DAILY_OPERATION_LIMIT,
+    CAIXIN_DEFAULT_DAILY_ARTICLES,
+    default_sync_settings,
 )
 
 NOW = datetime(2026, 11, 11, 12, tzinfo=UTC).timestamp()
@@ -71,11 +69,16 @@ class FakeDatabase:
 class CaixinPacingTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.database = FakeDatabase()
+        self.sync_settings = default_sync_settings()
         self.now = NOW
         self.storage_patch = patch('hippo.sources.caixin_pacing._open_storage', self.database.open)
         self.clock_patch = patch('hippo.sources.caixin_pacing.time.time', lambda: self.now)
         self.random_patch = patch('hippo.sources.caixin_pacing.random.randint', lambda start, end: start)
-        for patcher in (self.storage_patch, self.clock_patch, self.random_patch):
+        self.settings_patch = patch(
+            'hippo.sources.caixin_pacing.get_sync_settings',
+            AsyncMock(return_value=self.sync_settings),
+        )
+        for patcher in (self.storage_patch, self.clock_patch, self.random_patch, self.settings_patch):
             patcher.start()
             self.addCleanup(patcher.stop)
 
@@ -115,7 +118,7 @@ class CaixinPacingTest(unittest.IsolatedAsyncioTestCase):
         async with CaixinPacer().request('list'):
             pass
         state = self.database.state()
-        state.update(daily_articles=DAILY_ARTICLES, next_at=self.now)
+        state.update(daily_articles=CAIXIN_DEFAULT_DAILY_ARTICLES, next_at=self.now)
         self.database.raw = json.dumps(state)
         with self.assertRaises(CaixinPaused):
             async with CaixinPacer().request('article'):
@@ -123,11 +126,23 @@ class CaixinPacingTest(unittest.IsolatedAsyncioTestCase):
         async with CaixinPacer().request('list'):
             pass
         state = self.database.state()
-        state.update(daily_ops=DAILY_OPERATIONS, next_at=self.now)
+        state.update(daily_ops=CAIXIN_DAILY_OPERATION_LIMIT, next_at=self.now)
         self.database.raw = json.dumps(state)
         with self.assertRaises(CaixinPaused):
             async with CaixinPacer().request('list'):
                 self.fail('daily operation budget was reset')
+
+    async def test_the_shared_daily_article_setting_applies_to_new_pacer_instances(self):
+        self.sync_settings['caixin_daily_articles'] = 1
+        async with CaixinPacer().request('article'):
+            pass
+        state = self.database.state()
+        state['next_at'] = self.now
+        self.database.raw = json.dumps(state)
+
+        with self.assertRaises(CaixinPaused):
+            async with CaixinPacer().request('article'):
+                self.fail('the shared daily article setting was ignored')
 
     async def test_failure_retry_after_is_preserved_and_the_original_error_is_raised(self):
         class RateLimited(SourceError):

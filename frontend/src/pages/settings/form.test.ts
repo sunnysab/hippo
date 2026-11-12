@@ -32,6 +32,7 @@ describe('buildSyncSettingsFormState', () => {
     const settings: SyncSettings = {
       source_intervals_days: { feed: 1, youtube: 1, bilibili: 1, podcast: 1 },
       caixin_interval_hours: 6,
+      caixin_daily_articles: 20,
       sleep_seconds: 15,
       skip_minutes: 30,
       download_content: true,

@@ -32,6 +32,11 @@ SYNC_INGEST_KEY = 'sync:last_ingest_at'
 
 _ARTICLE_EXCLUDE_KEYWORD_LIMIT = 20
 
+#: Caixin pacing is instance-wide. Article requests are a subset of the total
+#: operation budget, so the configurable article cap cannot exceed that budget.
+CAIXIN_DEFAULT_DAILY_ARTICLES = 20
+CAIXIN_DAILY_OPERATION_LIMIT = 60
+
 _logger = get_logger(__name__)
 
 MEDIA_SOURCES = ('bilibili', 'youtube', 'podcast', 'feed')
@@ -42,6 +47,7 @@ def default_sync_settings() -> dict[str, Any]:
     return {
         'source_intervals_days': {source: 1 for source in MEDIA_SOURCES},
         'caixin_interval_hours': 6,
+        'caixin_daily_articles': CAIXIN_DEFAULT_DAILY_ARTICLES,
         'sleep_seconds': DEFAULT_SYNC_REQUEST_INTERVAL,
         'download_content': True,
         'download_images': True,
@@ -90,6 +96,9 @@ async def get_sync_settings(storage: PostgresStorage) -> dict[str, Any]:
     hours = merged.get('caixin_interval_hours')
     if type(hours) is not int or hours < 1:
         merged['caixin_interval_hours'] = defaults['caixin_interval_hours']
+    daily_articles = merged.get('caixin_daily_articles')
+    if type(daily_articles) is not int or not 1 <= daily_articles <= CAIXIN_DAILY_OPERATION_LIMIT:
+        merged['caixin_daily_articles'] = defaults['caixin_daily_articles']
     merged['article_exclude_keywords'] = _normalize_article_exclude_keywords(
         merged.get('article_exclude_keywords'),
     )
@@ -106,6 +115,9 @@ async def set_sync_settings(storage: PostgresStorage, updates: dict[str, Any]) -
     hours = current.get('caixin_interval_hours')
     if type(hours) is not int or hours < 1:
         current['caixin_interval_hours'] = default_sync_settings()['caixin_interval_hours']
+    daily_articles = current.get('caixin_daily_articles')
+    if type(daily_articles) is not int or not 1 <= daily_articles <= CAIXIN_DAILY_OPERATION_LIMIT:
+        current['caixin_daily_articles'] = default_sync_settings()['caixin_daily_articles']
     if 'article_exclude_keywords' in current:
         current['article_exclude_keywords'] = _normalize_article_exclude_keywords(
             current.get('article_exclude_keywords'),

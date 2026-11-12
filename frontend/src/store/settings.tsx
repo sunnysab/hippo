@@ -44,6 +44,7 @@ export interface EmailSettings {
 export interface SyncSettings {
   source_intervals_days: Record<string, number>;
   caixin_interval_hours: number;
+  caixin_daily_articles: number;
   sleep_seconds: number;
   skip_minutes: number;
   download_content: boolean;

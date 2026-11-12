@@ -13,7 +13,11 @@ vi.mock('../../hooks/useToast', () => ({
   useToast: () => ({ showToast: vi.fn() }),
 }));
 
-const settings = { source_intervals_days: { feed: 1, youtube: 3, bilibili: 1, podcast: 1 }, caixin_interval_hours: 6 };
+const settings = {
+  source_intervals_days: { feed: 1, youtube: 3, bilibili: 1, podcast: 1 },
+  caixin_interval_hours: 6,
+  caixin_daily_articles: 20,
+};
 
 describe('SourceSchedulePanel', () => {
   beforeEach(() => {
@@ -48,11 +52,15 @@ describe('SourceSchedulePanel', () => {
   it('saves a Caixin interval independently of the media sources', async () => {
     render(<I18nProvider><SourceSchedulePanel source="caixin" /></I18nProvider>);
     const interval = await screen.findByRole('spinbutton', { name: '财新检查间隔（小时）' });
+    const dailyArticles = screen.getByRole('spinbutton', { name: '财新每日正文上限（篇）' });
     expect((interval as HTMLInputElement).value).toBe('6');
+    expect((dailyArticles as HTMLInputElement).value).toBe('20');
     fireEvent.change(interval, { target: { value: '4' } });
+    fireEvent.change(dailyArticles, { target: { value: '12' } });
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }));
     await waitFor(() => expect(apiSend).toHaveBeenCalledWith('/api/settings', 'PATCH', {
       caixin_interval_hours: 4,
+      caixin_daily_articles: 12,
     }));
   });
 

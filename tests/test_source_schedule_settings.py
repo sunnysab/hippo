@@ -20,6 +20,7 @@ class SourceScheduleSettingsTest(unittest.IsolatedAsyncioTestCase):
         settings = default_sync_settings()
         self.assertEqual(settings['source_intervals_days'], dict.fromkeys(MEDIA_SOURCES, 1))
         self.assertEqual(settings['caixin_interval_hours'], 6)
+        self.assertEqual(settings['caixin_daily_articles'], 20)
         self.assertNotIn('weixin', settings['source_intervals_days'])
         self.assertNotIn('enabled', settings)
         self.assertNotIn('interval_minutes', settings)
@@ -38,6 +39,7 @@ class SourceScheduleSettingsTest(unittest.IsolatedAsyncioTestCase):
             settings = await get_sync_settings(_Storage())
         self.assertEqual(settings['source_intervals_days'], dict.fromkeys(MEDIA_SOURCES, 1))
         self.assertEqual(settings['caixin_interval_hours'], 6)
+        self.assertEqual(settings['caixin_daily_articles'], 20)
 
     async def test_partial_update_preserves_other_source_intervals(self) -> None:
         stored = {'source_intervals_days': {'youtube': 7, 'feed': 3}}
@@ -60,6 +62,14 @@ class SourceScheduleSettingsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.caixin_interval_hours, 4)
         with self.assertRaises(ValidationError):
             SyncSettingsUpdateRequest.model_validate({'source_intervals_days': {'caixin': 3}})
+
+    def test_caixin_daily_article_limit_is_instance_wide_and_bounded(self) -> None:
+        self.assertEqual(20, default_sync_settings()['caixin_daily_articles'])
+        request = SyncSettingsUpdateRequest.model_validate({'caixin_daily_articles': 12})
+        self.assertEqual(request.caixin_daily_articles, 12)
+        for value in (0, True, '20', 61):
+            with self.subTest(value=value), self.assertRaises(ValidationError):
+                SyncSettingsUpdateRequest.model_validate({'caixin_daily_articles': value})
 
     def test_request_rejects_unknown_sources_and_invalid_days(self) -> None:
         for intervals in (
