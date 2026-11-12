@@ -236,7 +236,9 @@ export function useArticleFilters() {
       }));
       setGroupOptions(options);
       setAccountOptions((prev) => {
-        if (!filtersRef.current.groupId) return [];
+        if (!filtersRef.current.groupId) {
+          return filtersRef.current.accountBiz ? prev : [];
+        }
         const exists = options.some((group) => group.value === filtersRef.current.groupId);
         return exists ? prev : [];
       });
@@ -252,24 +254,44 @@ export function useArticleFilters() {
     }
   }, [showToast, t]);
 
-  const loadAccountOptions = useCallback(async (groupId: string, source: string) => {
-    if (!groupId) return;
+  const loadAccountOptions = useCallback(async (
+    groupId: string,
+    source: string,
+    accountBiz = filtersRef.current.accountBiz,
+  ) => {
+    if (!groupId && !accountBiz) {
+      setAccountOptions([]);
+      return;
+    }
 
     const requestId = ++accountRequestRef.current;
     try {
-      const payload = await apiGet(`/api/account?group_id=${encodeURIComponent(groupId)}&page_size=200${source ? `&source=${encodeURIComponent(source)}` : ''}`);
-      if (requestId !== accountRequestRef.current || filtersRef.current.groupId !== groupId || filtersRef.current.source !== source) return;
-      const accounts = (payload.accounts || []) as Array<{ biz: string; nickname: string }>;
+      const payload = groupId
+        ? await apiGet(`/api/account?group_id=${encodeURIComponent(groupId)}&page_size=200${source ? `&source=${encodeURIComponent(source)}` : ''}`)
+        : await apiGet(`/api/account/${encodeURIComponent(accountBiz)}`);
+      if (
+        requestId !== accountRequestRef.current
+        || filtersRef.current.groupId !== groupId
+        || filtersRef.current.source !== source
+        || (!groupId && filtersRef.current.accountBiz !== accountBiz)
+      ) return;
+      const accounts = (
+        groupId
+          ? (payload.accounts || [])
+          : [payload]
+      ) as Array<{ biz: string; nickname: string }>;
       const options = accounts.map((account) => ({
         value: account.biz,
         label: account.nickname,
       }));
       setAccountOptions(options);
-      setFilters((prev) => {
-        if (!prev.accountBiz) return prev;
-        const exists = options.some((account) => account.value === prev.accountBiz);
-        return exists ? prev : { ...prev, accountBiz: '' };
-      });
+      if (groupId) {
+        setFilters((prev) => {
+          if (!prev.accountBiz) return prev;
+          const exists = options.some((account) => account.value === prev.accountBiz);
+          return exists ? prev : { ...prev, accountBiz: '' };
+        });
+      }
     } catch (error) {
       if (requestId === accountRequestRef.current && !isAuthError(error)) {
         showToast(error instanceof Error ? error.message : t('articles.filtersFailed', 'Failed to load filters.'));
@@ -421,11 +443,10 @@ export function useArticleFilters() {
   }, [filters.source, loadGroupOptions]);
 
   useEffect(() => {
-    if (!filters.groupId) return;
     queueMicrotask(() => {
       void loadAccountOptions(filters.groupId, filters.source);
     });
-  }, [filters.groupId, filters.source, loadAccountOptions]);
+  }, [filters.accountBiz, filters.groupId, filters.source, loadAccountOptions]);
 
   useEffect(() => {
     syncUrlParams(filters);
@@ -470,9 +491,7 @@ export function useArticleFilters() {
       const nextFilters = filtersRef.current;
       const nextSearch = deferredSearchRef.current;
       void loadGroupOptions(nextFilters.source);
-      if (nextFilters.groupId) {
-        void loadAccountOptions(nextFilters.groupId, nextFilters.source);
-      }
+      void loadAccountOptions(nextFilters.groupId, nextFilters.source);
       void loadArticles({ ...nextFilters, search: nextSearch }, true);
       void resolveArticleTarget();
     };

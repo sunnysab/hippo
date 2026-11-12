@@ -61,9 +61,11 @@ export function ArticleFilterSummary({
   return (
     <div className="article-filter-summary" id="article-filter-summary">
       <strong>{totalLabel}</strong>
-      {tags.map((tag, i) => (
-        <span key={i} className="meta-note">{tag}</span>
-      ))}
+      <div className="article-filter-summary-tags">
+        {tags.map((tag, i) => (
+          <span key={i} className="meta-note">{tag}</span>
+        ))}
+      </div>
     </div>
   );
 }

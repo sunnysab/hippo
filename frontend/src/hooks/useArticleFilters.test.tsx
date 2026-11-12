@@ -134,6 +134,22 @@ describe('useArticleFilters', () => {
     await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/api/account?group_id=1&page_size=200&source=youtube'));
   });
 
+  it('loads the selected account nickname without requiring a group', async () => {
+    const biz = 'youtube:UC8gZZWIWmBuCb_gzC8DUrvw';
+    apiGetMock.mockImplementation(async (path: string) => {
+      if (path.startsWith('/api/group')) return { groups: [] };
+      if (path === `/api/account/${encodeURIComponent(biz)}`) {
+        return { biz, nickname: '老厉害', source: 'youtube' };
+      }
+      return { articles: [], total: 0 };
+    });
+
+    const { result } = renderFilters(`/articles?source=youtube&account=${encodeURIComponent(biz)}`);
+
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith(`/api/account/${encodeURIComponent(biz)}`));
+    await waitFor(() => expect(result.current.accountOptions).toEqual([{ value: biz, label: '老厉害' }]));
+  });
+
   it('does not reopen an old article after switching sources during detail loading', async () => {
     const old = deferred<unknown>();
     apiGetMock.mockImplementation((path: string) => path === '/api/article/1' ? old.promise

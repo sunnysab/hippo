@@ -153,24 +153,34 @@
   width: 100%;
   justify-content: flex-start;
   align-items: center;
-  gap: 6px;
-  /* One line: the tags clip instead of pushing the header onto two rows. */
-  flex-wrap: nowrap;
-  overflow: hidden;
+  flex-wrap: wrap;
+  gap: 6px 8px;
   min-height: 34px;
+}
+
+.article-filter-summary-tags {
+  display: flex;
+  flex: 1 1 220px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .article-filter-summary .meta-note,
 .article-filter-summary .meta-note-button {
-  white-space: nowrap;
-  flex: 0 0 auto;
+  max-width: 100%;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .article-filter-summary strong {
-  margin-right: auto;
+  flex: 0 0 auto;
   color: var(--text);
   font-family: var(--font-display);
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .article-type-facets {
@@ -912,7 +922,10 @@
 
   .article-filter-summary strong {
     width: 100%;
-    margin-right: 0;
+  }
+
+  .article-filter-summary-tags {
+    flex-basis: 100%;
   }
 
   .article-preview-body {
