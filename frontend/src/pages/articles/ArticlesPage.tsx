@@ -97,7 +97,6 @@ export function ArticlesPage() {
   // Keep the source selector available whenever the wide navigation is hidden.
   const showViewRail = useMediaQuery('(min-width: 1600px)');
   const { sources, error: sourcesFailed, reload: reloadSources } = useArticleSources();
-  const caixinDiscoverable = sources.some((item) => item.source === 'caixin' && item.discoverable);
   const railVisible = showViewRail && !listCollapsed;
   const listVisible = isNarrowViewport ? !mobileReading : !listCollapsed;
   const listLabel = isNarrowViewport
@@ -165,15 +164,6 @@ export function ArticlesPage() {
           }}>
           {t('articles.toggleFilters', 'Filters')}{filterCount ? ` · ${filterCount}` : ''}
         </button> : null}
-        {caixinDiscoverable && !filters.watchLater ? (
-          <button
-            className="btn ghost"
-            type="button"
-            onClick={() => setShowSubscribe(true)}
-          >
-            {t('articles.chooseCaixinChannels', '选择财新板块')}
-          </button>
-        ) : null}
       </div>
       <div
         className={`article-layout${listCollapsed ? ' is-collapsed' : ''}${mobileReading ? ' is-mobile-reading' : ''}${
@@ -181,7 +171,8 @@ export function ArticlesPage() {
         }`}
       >
         {railVisible ? (
-          <ViewRail sources={sources} filters={filters} groupOptions={groupOptions} onChange={updateFilters} />
+          <ViewRail sources={sources} filters={filters} groupOptions={groupOptions} onChange={updateFilters}
+            onChooseCaixinChannels={() => setShowSubscribe(true)} />
         ) : null}
         <div className="panel article-list" id="article-list-panel">
           <div className="panel-header article-sidebar-header">
@@ -403,6 +394,7 @@ export function ArticlesPage() {
       </div>
       {showSubscribe ? (
         <AddSubscriptionModal
+          initialSource="caixin"
           groupId={null}
           onClose={() => setShowSubscribe(false)}
           onSubscribed={() => { void reloadSources(); }}

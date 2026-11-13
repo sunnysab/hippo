@@ -1,3 +1,5 @@
+import { useRef, useState } from 'react';
+import { ContextMenu } from '../../components/ContextMenu';
 import { useI18n } from '../../i18n';
 import { getSourceLabel, getSourceTone } from '../../utils/source';
 import type { ArticleSource } from '../../hooks/useArticleSources';
@@ -8,6 +10,7 @@ interface ViewRailProps {
   sources: ArticleSource[];
   groupOptions: ArticleSelectOption[];
   onChange: (patch: Partial<ArticleFiltersState>) => void;
+  onChooseCaixinChannels: () => void;
 }
 
 /**
@@ -18,8 +21,14 @@ interface ViewRailProps {
  * there is room for it (see `.article-layout.with-rail`), which is also why the
  * view switch stays in the list and sources move to the workspace toolbar.
  */
-export function ViewRail({ filters, sources, groupOptions, onChange }: ViewRailProps) {
+export function ViewRail({ filters, sources, groupOptions, onChange, onChooseCaixinChannels }: ViewRailProps) {
   const { t } = useI18n();
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const menuTrigger = useRef<HTMLButtonElement | null>(null);
+  const openMenu = (button: HTMLButtonElement, x: number, y: number) => {
+    menuTrigger.current = button;
+    setMenu({ x: Math.max(8, Math.min(x, window.innerWidth - 200)), y: Math.max(8, Math.min(y, window.innerHeight - 60)) });
+  };
   // The number is why these rows exist, so it is part of the name a screen
   // reader announces and not only a span on the right.
   const subscriptionCount = (count: number) => (
@@ -70,6 +79,18 @@ export function ViewRail({ filters, sources, groupOptions, onChange }: ViewRailP
               type="button"
               aria-pressed={filters.source === item.source}
               aria-label={`${getSourceLabel(item.source, t)} · ${subscriptionCount(item.channels)}`}
+              aria-haspopup={item.source === 'caixin' && item.discoverable ? 'menu' : undefined}
+              onContextMenu={(event) => {
+                if (item.source !== 'caixin' || !item.discoverable) return;
+                event.preventDefault();
+                openMenu(event.currentTarget, event.clientX, event.clientY);
+              }}
+              onKeyDown={(event) => {
+                if (item.source !== 'caixin' || !item.discoverable || !(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) return;
+                event.preventDefault();
+                const rect = event.currentTarget.getBoundingClientRect();
+                openMenu(event.currentTarget, rect.left, rect.bottom);
+              }}
               onClick={() => onChange({ source: item.source })}
             >
               <span className={`view-rail-dot item-show-type-${getSourceTone(item.source)}`} aria-hidden="true" />
@@ -107,6 +128,20 @@ export function ViewRail({ filters, sources, groupOptions, onChange }: ViewRailP
           ))}
         </div>
       ) : null}
+      <ContextMenu id="caixin-source-menu" isOpen={Boolean(menu)} x={menu?.x || 0} y={menu?.y || 0} onClose={() => setMenu(null)}>
+        <div role="menu" aria-label={t('articles.chooseCaixinChannels', '选择财新板块')}>
+          <button className="context-item" type="button" role="menuitem" autoFocus
+            onKeyDown={(event) => {
+              if (event.key !== 'Escape') return;
+              event.stopPropagation();
+              setMenu(null);
+              menuTrigger.current?.focus();
+            }}
+            onClick={() => { setMenu(null); onChooseCaixinChannels(); }}>
+            {t('articles.chooseCaixinChannels', '选择财新板块')}
+          </button>
+        </div>
+      </ContextMenu>
     </aside>
   );
 }

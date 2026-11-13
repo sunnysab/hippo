@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../../i18n';
 import type { ArticleFiltersState } from './filtering';
+import type { ArticleSource } from '../../hooks/useArticleSources';
 import { ViewRail } from './ViewRail';
 
 const filters = (overrides: Partial<ArticleFiltersState> = {}): ArticleFiltersState => ({
@@ -23,16 +24,17 @@ const groups = [
   { value: '2', label: '金融', count: 0 },
 ];
 
-const renderRail = (state: Partial<ArticleFiltersState> = {}, sources = [
+const renderRail = (state: Partial<ArticleFiltersState> = {}, sources: ArticleSource[] = [
   { source: 'weixin', channels: 264 }, { source: 'bilibili', channels: 3 },
 ]) => {
   const onChange = vi.fn();
+  const onChooseCaixinChannels = vi.fn();
   const view = render(
     <I18nProvider>
-      <ViewRail sources={sources} filters={filters(state)} groupOptions={groups} onChange={onChange} />
+      <ViewRail sources={sources} filters={filters(state)} groupOptions={groups} onChange={onChange} onChooseCaixinChannels={onChooseCaixinChannels} />
     </I18nProvider>,
   );
-  return { onChange, ...view };
+  return { onChange, onChooseCaixinChannels, ...view };
 };
 
 describe('ViewRail', () => {
@@ -97,6 +99,36 @@ describe('ViewRail', () => {
     renderRail();
 
     expect(screen.getByRole('button', { name: '哔哩哔哩 · 3 个订阅' })).toBeTruthy();
+  });
+
+  it('opens Caixin discovery from a context menu without changing the source', () => {
+    const { onChange, onChooseCaixinChannels } = renderRail({}, [{ source: 'caixin', channels: 0, discoverable: true }]);
+    expect(screen.queryByRole('menuitem', { name: '选择财新板块' })).toBeNull();
+    fireEvent.contextMenu(screen.getByText('财新'), { clientX: 30, clientY: 40 });
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('menuitem', { name: '选择财新板块' }));
+    expect(onChooseCaixinChannels).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('menuitem', { name: '选择财新板块' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '财新 · 0 个订阅' }));
+    expect(onChange).toHaveBeenCalledWith({ source: 'caixin' });
+  });
+
+  it.each([{ key: 'ContextMenu' }, { key: 'F10', shiftKey: true }])('supports keyboard context menus: $key', (event) => {
+    renderRail({}, [{ source: 'caixin', channels: 0, discoverable: true }]);
+    const trigger = screen.getByRole('button', { name: '财新 · 0 个订阅' });
+    trigger.focus();
+    fireEvent.keyDown(trigger, event);
+    const action = screen.getByRole('menuitem', { name: '选择财新板块' });
+    expect(document.activeElement).toBe(action);
+    fireEvent.keyDown(action, { key: 'Escape' });
+    expect(screen.queryByRole('menuitem', { name: '选择财新板块' })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('does not offer discovery when Caixin is unavailable', () => {
+    renderRail({}, [{ source: 'caixin', channels: 1, discoverable: false }]);
+    fireEvent.contextMenu(screen.getByText('财新'));
+    expect(screen.queryByRole('menuitem', { name: '选择财新板块' })).toBeNull();
   });
 
   it('keeps views and groups usable without source choices', () => {

@@ -7,6 +7,7 @@ import { emitRefresh } from '../../utils/events';
 import { getSourceLabel } from '../../utils/source';
 
 interface AddSubscriptionModalProps {
+  initialSource?: 'caixin';
   onClose: () => void;
   /** 目标分组：新订阅直接进当前分组，而不是默认分组。 */
   groupId: number | null;
@@ -57,7 +58,7 @@ const looksLikeLink = (value: string): boolean => /^https?:\/\//i.test(value);
  * 判断只看输入框本身——地址认协议头，其余当名字——所以不需要额外的模式开关，
  * 也不会出现「选错了页签」这种错。
  */
-export function AddSubscriptionModal({ onClose, groupId, onSubscribed }: AddSubscriptionModalProps) {
+export function AddSubscriptionModal({ onClose, groupId, onSubscribed, initialSource }: AddSubscriptionModalProps) {
   const { t } = useI18n();
   const { showToast } = useToast();
   const [input, setInput] = useState('');
@@ -68,7 +69,7 @@ export function AddSubscriptionModal({ onClose, groupId, onSubscribed }: AddSubs
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [caixinChannels, setCaixinChannels] = useState<CaixinChannel[] | null>(null);
-  const [caixinOpen, setCaixinOpen] = useState(false);
+  const [caixinOpen, setCaixinOpen] = useState(initialSource === 'caixin');
   const [caixinBusy, setCaixinBusy] = useState('');
   const [caixinLoading, setCaixinLoading] = useState(true);
   const [caixinLoadError, setCaixinLoadError] = useState('');
@@ -328,6 +329,7 @@ export function AddSubscriptionModal({ onClose, groupId, onSubscribed }: AddSubs
             </div>
           ) : null}
 
+          {caixinOpen && <LoadingIndicator isLoading={caixinLoading} />}
           {caixinOpen ? (
             <div
               className="search-results"
