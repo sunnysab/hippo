@@ -97,7 +97,7 @@ export function AccountDetailsModal({ account, onClose, onViewArticles }: Accoun
       onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
     >
       <header className="account-dialog-header">
-        <img className="account-avatar" src={account.avatar_url} alt="" onError={(event) => { event.currentTarget.style.visibility = 'hidden'; }} />
+        <img className={`account-avatar${source === 'weixin' ? ' is-weixin' : ''}`} src={account.avatar_url} alt="" onError={(event) => { event.currentTarget.style.visibility = 'hidden'; }} />
         <div className="account-dialog-heading">
           <h2 id={titleId}>{account.nickname}</h2>
           <p className="account-sub">{getSourceLabel(source, t)}{account.alias ? ` · ${account.alias}` : ''}</p>

@@ -49,7 +49,7 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
           checked={state.selectedAccounts.includes(account.biz)}
           onChange={() => dispatch({ type: 'TOGGLE_SELECTED', biz: account.biz })}
         />
-        <img className="account-avatar" src={account.avatar_url} alt="" onError={(event) => { event.currentTarget.style.visibility = 'hidden'; }} />
+        <img className={`account-avatar${!account.source || account.source === 'weixin' ? ' is-weixin' : ''}`} src={account.avatar_url} alt="" onError={(event) => { event.currentTarget.style.visibility = 'hidden'; }} />
         <div className="account-card-content">
           <button className="account-name account-name-link" type="button" title={account.nickname} onClick={handleViewArticles}>
             {account.nickname}

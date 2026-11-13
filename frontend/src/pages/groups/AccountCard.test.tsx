@@ -180,6 +180,13 @@ describe('account cards and details', () => {
     expect(within(dialog).queryByRole('link')).toBeNull();
   });
 
+  it.each(['weixin', 'youtube'])('makes only WeChat avatars round, including in the dialog: %s', async (source) => {
+    render(<AccountCard account={{ ...baseAccount, source }} />);
+    expect(document.querySelector('.account-avatar')?.classList.contains('is-weixin')).toBe(source === 'weixin');
+    const dialog = await openDetails();
+    expect(dialog.querySelector('.account-avatar')?.classList.contains('is-weixin')).toBe(source === 'weixin');
+  });
+
   it('keeps selection and article navigation separate from opening details', () => {
     render(<AccountCard account={baseAccount} />);
     fireEvent.click(screen.getByRole('checkbox'));

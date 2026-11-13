@@ -443,6 +443,10 @@
   flex: none;
 }
 
+.account-avatar.is-weixin {
+  border-radius: 50%;
+}
+
 .account-name {
   font-weight: 700;
   line-height: 1.3;
