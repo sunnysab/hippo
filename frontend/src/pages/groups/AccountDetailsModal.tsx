@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AccountSyncStatus } from '../../components/AccountSyncStatus';
+import { AccountSyncFailures } from './AccountSyncFailures';
 import { apiSend, isAuthError } from '../../api';
 import { useToast } from '../../hooks/useToast';
 import { useI18n } from '../../i18n';
@@ -121,6 +122,7 @@ export function AccountDetailsModal({ account, onClose, onViewArticles }: Accoun
             {!account.sync && (account.backfill_running || account.backfill_pending) && <p className="account-sub">{account.backfill_running ? t('accounts.syncing', 'Fetching article history') : t('accounts.syncQueued', 'Article history queued')}</p>}
           </div>
         </section>
+        <AccountSyncFailures biz={account.biz} onClose={onClose} />
         <section className="account-dialog-section">
           <h3>{t('accounts.syncSettings', '同步设置')}</h3>
           {source === 'weixin'

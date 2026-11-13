@@ -59,7 +59,16 @@ export const AccountCard = memo(function AccountCard({ account }: AccountCardPro
             <span>{latestArticle}</span>
             {account.is_disabled && <span className="account-summary-state">{t('accounts.paused', '已暂停')}</span>}
             {syncFailed
-              ? <span className="account-summary-state is-warning">{t('accounts.syncFailedShort', '同步有失败')}</span>
+              ? <button
+                  className="account-sync-warning"
+                  type="button"
+                  aria-label={t('accounts.syncFailedShort', '同步有失败')}
+                  title={t('accounts.syncFailedDetails', '同步有失败，查看详情')}
+                  aria-haspopup="dialog"
+                  onClick={() => setShowDetails(true)}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v6m0 3v1" /></svg>
+                </button>
               : !account.is_disabled && syncActive && (
                 <span className="account-summary-state">
                   {syncRunning && <span className="sync-dot" aria-hidden="true" />}

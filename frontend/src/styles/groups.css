@@ -382,8 +382,31 @@
   color: var(--muted);
 }
 
-.account-summary-state.is-warning {
+.account-sync-warning {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 3px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
   color: var(--danger);
+  cursor: pointer;
+}
+
+.account-sync-warning:hover {
+  background: var(--surface-soft);
+}
+
+.account-sync-warning svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
 }
 
 .account-details-trigger {
@@ -576,6 +599,41 @@
   margin: 0 0 12px;
   font-size: 13px;
   font-weight: 600;
+}
+
+.account-sync-failures h4 {
+  margin: 16px 0 8px;
+  font-size: 12px;
+}
+
+.account-sync-failures ul {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.account-sync-failures li {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.account-sync-failures p {
+  margin: 6px 0;
+}
+
+.account-sync-failure-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.account-sync-failure-error {
+  color: var(--danger);
+  white-space: pre-wrap;
 }
 
 .account-dialog-rows {

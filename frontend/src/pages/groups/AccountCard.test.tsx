@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountCard } from './AccountCard';
 import zhCN from '../../i18n/zh-CN.json';
@@ -6,13 +6,13 @@ import type { Account } from '../../store/shared';
 import { formatDateTime } from '../../utils/format';
 
 const mocks = vi.hoisted(() => ({
-  groups: vi.fn(), send: vi.fn(), toast: vi.fn(), navigate: vi.fn(), copy: vi.fn(),
+  groups: vi.fn(), get: vi.fn(), send: vi.fn(), toast: vi.fn(), navigate: vi.fn(), copy: vi.fn(),
 }));
 vi.mock('../../store/groups', () => ({ useGroupsState: mocks.groups }));
 vi.mock('../../i18n', () => ({
   useI18n: () => ({ t: (key: string, fallback?: string) => zhCN[key as keyof typeof zhCN] || fallback || key }),
 }));
-vi.mock('../../api', () => ({ apiSend: mocks.send, isAuthError: () => false }));
+vi.mock('../../api', () => ({ apiGet: mocks.get, apiSend: mocks.send, isAuthError: () => false }));
 vi.mock('../../hooks/useToast', () => ({ useToast: () => ({ showToast: mocks.toast }) }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.navigate }));
 vi.mock('../../utils/clipboard', () => ({ copyToClipboard: mocks.copy }));
@@ -23,10 +23,10 @@ const baseAccount: Account = {
   last_synced_at: null, latest_publish_at: null, sync_interval_days: null,
   article_count: 1187, backfill_pending: false, backfill_running: false,
 };
-const openDetails = () => {
+const openDetails = async () => {
   const trigger = screen.getByRole('button', { name: /详情/ });
   trigger.focus();
-  fireEvent.click(trigger);
+  await act(async () => { fireEvent.click(trigger); });
   return screen.getByRole('dialog');
 };
 
@@ -34,6 +34,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.groups.mockReturnValue({ state: { selectedAccounts: [] }, dispatch: vi.fn() });
   mocks.send.mockResolvedValue({});
+  mocks.get.mockResolvedValue({ ...baseAccount, sync_failures: { articles: [], images: [] } });
   // jsdom has no native dialog implementation; browser focus trapping is checked separately.
   HTMLDialogElement.prototype.showModal = function () {
     this.open = true;
@@ -43,15 +44,16 @@ beforeEach(() => {
 });
 
 describe('account cards and details', () => {
-  it('shows identity on the card and keeps technical identifiers and sync details in the modal', () => {
+  it('shows identity on the card and keeps technical identifiers and sync details in the modal', async () => {
     render(<AccountCard account={baseAccount} />);
     expect(screen.getByText('微信公众号 · research')).toBeTruthy();
     expect(screen.queryByText('Mz1')).toBeNull();
     expect(screen.queryByText('1,187')).toBeNull();
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(document.querySelector('details')).toBeNull();
+    expect(mocks.get).not.toHaveBeenCalled();
 
-    const dialog = openDetails();
+    const dialog = await openDetails();
     expect(dialog.getAttribute('aria-modal')).toBe('true');
     expect(within(dialog).getByText('Mz1')).toBeTruthy();
     expect(within(dialog).getByText('1,187')).toBeTruthy();
@@ -63,14 +65,14 @@ describe('account cards and details', () => {
     expect(screen.queryByText('Mz1')).toBeNull();
   });
 
-  it('shows publication time on the card and check time only in the modal', () => {
+  it('shows publication time on the card and check time only in the modal', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-10-20T08:00:00+08:00').getTime());
     render(<AccountCard account={{ ...baseAccount,
       latest_publish_at: '2026-10-20T01:00:00+08:00', last_synced_at: '2026-10-20T05:49:00+08:00',
     }} />);
     expect(screen.getByText('最新文章 7 小时前')).toBeTruthy();
     expect(screen.queryByText('2 小时前')).toBeNull();
-    const dialog = openDetails();
+    const dialog = await openDetails();
     expect(within(dialog).getByText('2 小时前')).toBeTruthy();
     expect(within(dialog).getByText(formatDateTime('2026-10-20T05:49:00+08:00'))).toBeTruthy();
     expect(within(dialog).getByText(formatDateTime('2026-10-20T01:00:00+08:00'))).toBeTruthy();
@@ -85,21 +87,21 @@ describe('account cards and details', () => {
   it.each([
     { running: true, label: '同步中', detail: zhCN['accounts.syncing'] },
     { running: false, label: '等待同步', detail: zhCN['accounts.syncQueued'] },
-  ])('distinguishes running and queued history: $running', ({ running, label, detail }) => {
+  ])('distinguishes running and queued history: $running', async ({ running, label, detail }) => {
     render(<AccountCard account={{ ...baseAccount, backfill_pending: true, backfill_running: running }} />);
     expect(screen.getByText(label)).toBeTruthy();
     expect(document.querySelector('.sync-dot') !== null).toBe(running);
-    expect(within(openDetails()).getByText(detail)).toBeTruthy();
+    expect(within(await openDetails()).getByText(detail)).toBeTruthy();
   });
 
-  it('shows pending images as waiting and keeps complete history and counts in the modal', () => {
+  it('shows pending images as waiting and keeps complete history and counts in the modal', async () => {
     render(<AccountCard account={{ ...baseAccount, sync: {
       history: { status: 'complete', task_id: null, error: null }, listing: null, last_checked_at: null,
       articles: { pending: 0, processing: 0, failed: 0 }, images: { pending: 10, failed: 0 },
     } }} />);
     expect(screen.getByText('等待同步')).toBeTruthy();
     expect(screen.queryByText('图片待下载 10 张')).toBeNull();
-    const dialog = openDetails();
+    const dialog = await openDetails();
     expect(within(dialog).getByText('历史列表已补全')).toBeTruthy();
     expect(within(dialog).getByText('图片待下载 10 张')).toBeTruthy();
   });
@@ -110,7 +112,72 @@ describe('account cards and details', () => {
       articles: { pending: 0, processing: 0, failed: 0 },
     } }} />);
     expect(screen.getByText('已暂停')).toBeTruthy();
-    expect(screen.getByText(zhCN['accounts.syncFailedShort'])).toBeTruthy();
+    expect(screen.getByRole('button', { name: zhCN['accounts.syncFailedShort'] })).toBeTruthy();
+    expect(screen.queryByText(zhCN['accounts.syncFailedShort'])).toBeNull();
+  });
+
+  it('opens the warning icon to load failure reasons and affected articles', async () => {
+    const sync = {
+      history: { status: 'complete', task_id: null, error: null }, listing: null, last_checked_at: null,
+      articles: { pending: 0, processing: 0, failed: 1 }, images: { pending: 0, failed: 1 },
+    };
+    mocks.get.mockResolvedValue({ ...baseAccount, sync, sync_failures: {
+      articles: [{ id: 1, article_pk: null, article_id: 'sn-1', title: 'Failed body', link: 'https://example.com/body', error: 'Request timed out', attempts: 3, updated_at: '2026-11-13T01:00:00Z' }],
+      images: [{ id: 2, article_pk: 123, article_id: 'sn-2', title: 'Article with failed image', link: 'https://example.com/image-article', error: 'HTTP 403', attempts: 3, updated_at: null }],
+    } });
+    render(<AccountCard account={{ ...baseAccount, sync }} />);
+    fireEvent.click(screen.getByRole('button', { name: '同步有失败' }));
+    const dialog = screen.getByRole('dialog');
+    expect(await within(dialog).findByText('Request timed out')).toBeTruthy();
+    expect(mocks.get).toHaveBeenCalledWith('/api/account/Mz1', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(within(dialog).getByRole('link', { name: 'Failed body' }).getAttribute('href')).toBe('https://example.com/body');
+    expect(within(dialog).getByText('HTTP 403')).toBeTruthy();
+    expect(within(dialog).getByRole('link', { name: 'Article with failed image' }).getAttribute('href')).toBe('#/articles?article=123');
+    fireEvent.click(within(dialog).getByRole('link', { name: 'Article with failed image' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('aborts detail loading on close and never applies a late response', async () => {
+    let complete!: (payload: unknown) => void;
+    mocks.get.mockImplementationOnce(() => new Promise((resolve) => { complete = resolve; }));
+    render(<AccountCard account={baseAccount} />);
+    const dialog = await openDetails();
+    const signal = mocks.get.mock.calls[0][1].signal as AbortSignal;
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭' }));
+    expect(signal.aborted).toBe(true);
+    await act(async () => { complete({ ...baseAccount, sync_failures: { articles: [], images: [] } }); });
+    expect(mocks.groups().dispatch).not.toHaveBeenCalled();
+  });
+
+  it('explains why a failed listing cannot identify undiscovered articles', async () => {
+    const sync = { history: { status: 'failed', task_id: null, error: 'Listing timeout' }, listing: null,
+      last_checked_at: null, articles: { pending: 0, processing: 0, failed: 0 } };
+    mocks.get.mockResolvedValue({ ...baseAccount, sync, sync_failures: { articles: [], images: [] } });
+    render(<AccountCard account={{ ...baseAccount, sync }} />);
+    const dialog = await openDetails();
+    expect(within(dialog).getByText('Listing timeout')).toBeTruthy();
+    expect(await within(dialog).findByText(zhCN['sync.listFailureImpact'])).toBeTruthy();
+  });
+
+  it('shows and retries detail loading failures', async () => {
+    mocks.get.mockRejectedValueOnce(new Error('offline'));
+    render(<AccountCard account={baseAccount} />);
+    const dialog = await openDetails();
+    expect(await within(dialog).findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('offline'));
+    fireEvent.click(within(dialog).getByRole('button', { name: '重试' }));
+    await waitFor(() => expect(within(dialog).queryByRole('alert')).toBeNull());
+    expect(mocks.get).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a useful article identifier when the title or error is missing and rejects unsafe links', async () => {
+    mocks.get.mockResolvedValue({ ...baseAccount, sync_failures: {
+      articles: [{ id: 1, article_pk: null, article_id: 'sn-fallback', title: '', link: 'javascript:alert(1)', error: null, attempts: 3, updated_at: null }], images: [],
+    } });
+    render(<AccountCard account={baseAccount} />);
+    const dialog = await openDetails();
+    expect(await within(dialog).findByText('文章标识：sn-fallback')).toBeTruthy();
+    expect(within(dialog).getByText('未记录具体原因')).toBeTruthy();
+    expect(within(dialog).queryByRole('link')).toBeNull();
   });
 
   it('keeps selection and article navigation separate from opening details', () => {
@@ -122,10 +189,10 @@ describe('account cards and details', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it.each(['close', 'cancel', 'backdrop'])('closes via %s and restores focus', (method) => {
+  it.each(['close', 'cancel', 'backdrop'])('closes via %s and restores focus', async (method) => {
     render(<AccountCard account={baseAccount} />);
     const trigger = screen.getByRole('button', { name: /详情/ });
-    const dialog = openDetails();
+    const dialog = await openDetails();
     expect(document.documentElement.style.overflow).toBe('hidden');
     if (method === 'close') fireEvent.click(within(dialog).getByRole('button', { name: '关闭' }));
     else if (method === 'cancel') fireEvent(dialog, new Event('cancel', { bubbles: false }));
@@ -137,7 +204,7 @@ describe('account cards and details', () => {
 
   it('does not close when clicking content and can copy the complete biz', async () => {
     render(<AccountCard account={baseAccount} />);
-    const dialog = openDetails();
+    const dialog = await openDetails();
     fireEvent.click(within(dialog).getByText('Mz1'));
     expect(screen.getByRole('dialog')).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: /复制/ }));
@@ -146,7 +213,7 @@ describe('account cards and details', () => {
 
   it('resumes a paused subscription from the dialog', async () => {
     render(<AccountCard account={{ ...baseAccount, is_disabled: true }} />);
-    const dialog = openDetails();
+    const dialog = await openDetails();
     fireEvent.click(within(dialog).getByRole('button', { name: '恢复同步' }));
     await waitFor(() => expect(mocks.send).toHaveBeenCalledWith('/api/account/Mz1', 'PATCH', { is_disabled: false }));
     expect(mocks.groups().dispatch).toHaveBeenCalledWith({ type: 'UPDATE_ACCOUNT', biz: 'Mz1', patch: { is_disabled: false } });
@@ -155,23 +222,25 @@ describe('account cards and details', () => {
   it('retains the saved interval after an update fails', async () => {
     mocks.send.mockRejectedValueOnce(new Error('offline'));
     render(<AccountCard account={{ ...baseAccount, source: 'youtube', sync_interval_days: 7 }} />);
-    const select = within(openDetails()).getByRole('combobox') as HTMLSelectElement;
+    const select = within(await openDetails()).getByRole('combobox') as HTMLSelectElement;
     fireEvent.change(select, { target: { value: '3' } });
     await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith(zhCN['accounts.syncFailed']));
     expect(select.value).toBe('7');
-    expect(mocks.groups().dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'UPDATE_ACCOUNT' }));
+    expect(mocks.groups().dispatch).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: 'UPDATE_ACCOUNT', patch: expect.objectContaining({ sync_interval_days: expect.anything() }),
+    }));
   });
 
-  it('describes WeChat scheduling without offering an unsupported interval control', () => {
+  it('describes WeChat scheduling without offering an unsupported interval control', async () => {
     render(<AccountCard account={baseAccount} />);
-    const dialog = openDetails();
+    const dialog = await openDetails();
     expect(within(dialog).queryByRole('combobox')).toBeNull();
     expect(within(dialog).getByText(/实时推送/)).toBeTruthy();
   });
 
-  it('keeps Caixin on the instance-wide interval without an account control', () => {
+  it('keeps Caixin on the instance-wide interval without an account control', async () => {
     render(<AccountCard account={{ ...baseAccount, source: 'caixin', biz: 'caixin:132' }} />);
-    const dialog = openDetails();
+    const dialog = await openDetails();
     expect(within(dialog).queryByRole('combobox')).toBeNull();
     expect(within(dialog).getByText(/所有板块共用一个小时级同步间隔/)).toBeTruthy();
   });

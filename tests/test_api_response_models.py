@@ -147,15 +147,37 @@ class AccountResponseTest(unittest.TestCase):
         self.assertEqual({'accounts', 'page', 'page_size', 'total'}, set(body))
 
     def test_a_detail_row_reaches_the_caller_whole(self) -> None:
+        failures = {
+            'articles': [
+                {
+                    'id': 1,
+                    'article_pk': None,
+                    'article_id': 'sn-1',
+                    'title': 'Affected article',
+                    'link': 'https://example.com/article',
+                    'error': 'timeout',
+                    'attempts': 3,
+
+                    'updated_at': None,
+                }
+            ],
+            'images': [],
+        }
+        storage = SimpleNamespace(accounts=SimpleNamespace(get_sync_failures=AsyncMock(return_value=failures)))
         with patch.object(account_api, '_get_account', AsyncMock(return_value=dict(ACCOUNT_ROW))):
-            body = _client(account_api, SimpleNamespace()).get('/api/account/Mz123').json()
+            body = _client(account_api, storage).get('/api/account/Mz123').json()
 
         _assert_row_survives(self, ACCOUNT_ROW, body)
+        self.assertEqual(failures, body['sync_failures'])
+        storage.accounts.get_sync_failures.assert_awaited_once_with('Mz123', user_id=1)
 
     def test_an_account_without_a_publish_time_does_not_use_the_sync_time(self) -> None:
         row = {**ACCOUNT_ROW, 'latest_publish_at': None}
+        storage = SimpleNamespace(
+            accounts=SimpleNamespace(get_sync_failures=AsyncMock(return_value={'articles': [], 'images': []}))
+        )
         with patch.object(account_api, '_get_account', AsyncMock(return_value=row)):
-            body = _client(account_api, SimpleNamespace()).get('/api/account/Mz123').json()
+            body = _client(account_api, storage).get('/api/account/Mz123').json()
 
         self.assertIn('latest_publish_at', body)
         self.assertIsNone(body['latest_publish_at'])

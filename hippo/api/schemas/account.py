@@ -136,6 +136,26 @@ class AccountOut(BaseModel):
     sync: AccountSyncOut | None = None
 
 
+class AccountSyncFailureOut(BaseModel):
+    id: int
+    article_pk: int | None = None
+    article_id: str
+    title: str | None = None
+    link: str | None = None
+    error: str | None = None
+    attempts: int
+    updated_at: datetime | None = None
+
+
+class AccountSyncFailuresOut(BaseModel):
+    articles: list[AccountSyncFailureOut] = Field(default_factory=list)
+    images: list[AccountSyncFailureOut] = Field(default_factory=list)
+
+
+class AccountDetailOut(AccountOut):
+    sync_failures: AccountSyncFailuresOut
+
+
 class AccountListOut(BaseModel):
     accounts: list[AccountOut]
     page: int

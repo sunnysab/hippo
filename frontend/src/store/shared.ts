@@ -15,6 +15,22 @@ export interface AccountSync {
   last_checked_at: string | null;
 }
 
+export interface AccountSyncFailure {
+  id: number;
+  article_pk: number | null;
+  article_id: string;
+  title: string | null;
+  link: string | null;
+  error: string | null;
+  attempts: number;
+  updated_at: string | null;
+}
+
+export interface AccountSyncFailures {
+  articles: AccountSyncFailure[];
+  images: AccountSyncFailure[];
+}
+
 export interface Account {
   biz: string;
   source: string;

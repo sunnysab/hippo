@@ -488,6 +488,40 @@ class AccountRepository:
         await enrich_account_sync(self._conn, [result])
         return result
 
+    async def get_sync_failures(self, biz: str, *, user_id: int) -> dict[str, list[dict[str, Any]]]:
+        """Load recent failed work only for an account the reader follows."""
+        async with self._conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT q.id, NULL::integer AS article_pk, q.sn AS article_id, q.payload->>'title' AS title,
+                       q.long_link AS link, q.last_error AS error,
+                       q.attempts, q.updated_at
+                FROM article_queue q
+                JOIN subscription s ON s.biz = q.biz AND s.user_id = %s
+                WHERE q.biz = %s AND q.state = 'failed'
+                ORDER BY q.updated_at DESC, q.id DESC
+                LIMIT 5
+                """,
+                (user_id, biz),
+            )
+            articles = [dict(row) for row in await cur.fetchall()]
+            await cur.execute(
+                """
+                SELECT im.id, ar.id AS article_pk, ar.article_id, ar.title, ar.link,
+                       im.failed_reason AS error, im.attempts, im.failed_at AS updated_at
+                FROM article_images im
+                JOIN articles ar ON ar.id = im.article_pk
+                JOIN subscription s ON s.biz = ar.biz AND s.user_id = %s
+                WHERE ar.biz = %s AND im.failed_at IS NOT NULL
+                  AND (im.s3_key IS NULL OR im.s3_key = '') AND im.orig_url IS NOT NULL
+                ORDER BY im.failed_at DESC, im.id DESC
+                LIMIT 5
+                """,
+                (user_id, biz),
+            )
+            images = [dict(row) for row in await cur.fetchall()]
+        return {'articles': articles, 'images': images}
+
     async def update_account_fields(self, biz: str, **updates: Any) -> None:
         """Update the shared catalogue fields.
 

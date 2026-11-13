@@ -24,6 +24,25 @@ class _FakeSource:
 
 
 class AccountApiTest(unittest.IsolatedAsyncioTestCase):
+    async def test_account_detail_includes_failures_only_after_the_subscription_check(self) -> None:
+        failures = {'articles': [], 'images': []}
+        storage = SimpleNamespace(
+            accounts=SimpleNamespace(
+                get_account_detail=AsyncMock(return_value={'biz': 'one', 'alias': None}),
+                get_sync_failures=AsyncMock(return_value=failures),
+            )
+        )
+        payload = await account_api.get_account(biz='one', storage=storage, user=SimpleNamespace(id=7))
+        self.assertEqual(failures, payload['sync_failures'])
+        storage.accounts.get_sync_failures.assert_awaited_once_with('one', user_id=7)
+
+        storage.accounts.get_sync_failures.reset_mock()
+        storage.accounts.get_account_detail.side_effect = LookupError()
+        with self.assertRaises(ApiError) as ctx:
+            await account_api.get_account(biz='other', storage=storage, user=SimpleNamespace(id=7))
+        self.assertEqual(404, ctx.exception.status)
+        storage.accounts.get_sync_failures.assert_not_awaited()
+
     async def test_list_accounts_normalizes_null_alias_to_empty_string(self) -> None:
         storage = SimpleNamespace(
             accounts=SimpleNamespace(

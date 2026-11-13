@@ -19,6 +19,27 @@ class AccountPublicationTest(unittest.IsolatedAsyncioTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+    async def test_sync_failures_are_scoped_and_bounded_by_stage(self) -> None:
+        cursor = AsyncMock()
+        cursor.__aenter__.return_value = cursor
+        bodies = [{'id': 1, 'article_id': 'sn', 'title': 'Failed body', 'error': 'timeout'}]
+        images = [{'id': 2, 'article_pk': 8, 'title': 'Affected article', 'error': 'HTTP 403'}]
+        cursor.fetchall.side_effect = [bodies, images]
+        repository = AccountRepository(SimpleNamespace(cursor=lambda **kwargs: cursor))
+
+        result = await repository.get_sync_failures('one', user_id=7)
+
+        self.assertEqual({'articles': bodies, 'images': images}, result)
+        self.assertEqual(2, cursor.execute.await_count)
+        for call in cursor.execute.await_args_list:
+            query, params = call.args
+            self.assertEqual((7, 'one'), params)
+            self.assertIn('JOIN subscription s', query)
+            self.assertIn('s.user_id = %s', query)
+            self.assertIn('LIMIT 5', query)
+        self.assertIn("q.state = 'failed'", cursor.execute.await_args_list[0].args[0])
+        self.assertIn('im.failed_at IS NOT NULL', cursor.execute.await_args_list[1].args[0])
+
     async def test_internal_accounts_are_excluded_from_both_page_and_total(self) -> None:
         cursor = AsyncMock()
         cursor.__aenter__.return_value = cursor

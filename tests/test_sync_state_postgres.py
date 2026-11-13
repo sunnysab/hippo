@@ -62,6 +62,40 @@ class SyncStatePostgresTest(unittest.IsolatedAsyncioTestCase):
         await self.conn.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(self.schema)))
         await self.conn.close()
 
+    async def test_failure_details_include_articles_and_respect_subscription_and_limits(self):
+        await self.conn.execute("""
+            INSERT INTO accounts (biz, nickname, created_at, updated_at)
+            VALUES ('other', 'Other', NOW(), NOW());
+            INSERT INTO article_queue (biz, sn, long_link, payload, state, attempts, last_error, updated_at)
+            SELECT 'one', n::text, 'https://example.com/' || n,
+                   jsonb_build_object('title', 'Failed body ' || n), 'failed', 3, 'timeout',
+                   NOW() + n * INTERVAL '1 second'
+            FROM generate_series(1, 7) n;
+            INSERT INTO article_queue (biz, sn, long_link, payload, state)
+            VALUES ('one', 'pending', 'https://example.com/pending', '{}', 'pending'),
+                   ('other', 'foreign', 'https://example.com/foreign', '{}', 'failed');
+            INSERT INTO articles (biz, article_id, title, link, raw_json, created_at, updated_at)
+            VALUES ('one', 'affected', 'Article with image failures', 'https://example.com/affected', '{}', NOW(), NOW());
+            INSERT INTO article_images (article_pk, position, kind, orig_url, attempts, failed_at, failed_reason, updated_at)
+            SELECT a.id, n, 'image', 'https://example.com/image/' || n, 3,
+                   NOW() + n * INTERVAL '1 second', 'HTTP 403', NOW()
+            FROM articles a CROSS JOIN generate_series(1, 7) n;
+        """)
+        repository = AccountRepository(self.conn)
+        failures = await repository.get_sync_failures('one', user_id=7)
+        self.assertEqual(5, len(failures['articles']))
+        self.assertEqual('Failed body 7', failures['articles'][0]['title'])
+        self.assertEqual('https://example.com/7', failures['articles'][0]['link'])
+        self.assertEqual(5, len(failures['images']))
+        self.assertEqual('Article with image failures', failures['images'][0]['title'])
+        self.assertIsNotNone(failures['images'][0]['article_pk'])
+        self.assertEqual('HTTP 403', failures['images'][0]['error'])
+        self.assertEqual({'articles': [], 'images': []}, await repository.get_sync_failures('other', user_id=7))
+        self.assertEqual({'articles': [], 'images': []}, await repository.get_sync_failures('one', user_id=8))
+        await self.conn.execute("UPDATE article_images SET s3_key = 'downloaded' WHERE position = 7")
+        recovered = await repository.get_sync_failures('one', user_id=7)
+        self.assertNotEqual(failures['images'][0]['id'], recovered['images'][0]['id'])
+
     async def test_history_completion_keeps_body_backlog_and_check_time_independent(self):
         async with self.conn.transaction():
             job = await self.jobs.create_job(trigger_type='backfill', biz_list=['one'])

@@ -238,6 +238,16 @@ GET /api/account?group_id=2&group_ids=1,3&source=bilibili&q=金融&page=1&page_s
 - `latest_publish_at`：已入库作品中最新的发布时间，用于「最近更新」；没有已知发布时间时为 `null`，不使用同步时间兜底。
 - `last_synced_at`：系统最后同步该账号的时间，用于「同步于」。同步没有发现新作品时，不影响 `latest_publish_at`。
 
+### 同步失败明细
+
+`GET /api/account/{biz}` 额外返回 `sync_failures: {articles: [...], images: [...]}`，
+只包含当前用户已订阅账号的失败项，每类按最近失败时间降序返回最多 5 条；账号列表不加载这些明细。
+每条包含 `id`、`article_id`、`title`、`link`、`error`、`attempts`、`updated_at`。
+图片失败项另有 `article_pk`，用于打开受影响的已收录文章；正文尚未入库时 `article_pk` 为空，
+以列表中保存的标题、文章标识及原文链接定位。缺失的标题和错误原因可以为空。
+失败数量仍以 `sync.articles.failed` / `sync.images.failed` 为准，明细仅是最近样本。
+`failed` 队列项和达到重试上限的图片均已停止自动重试。
+
 ### 添加
 
 ```

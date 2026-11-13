@@ -970,5 +970,16 @@
   "sync.taskDetails": "账号明细",
   "sync.queueStale": "统计已过期 · {time}",
   "sync.queueSampled": "统计更新于 {time}",
-  "sync.queueUnknown": "尚无有效统计"
+  "sync.queueUnknown": "尚无有效统计",
+  "accounts.syncFailedDetails": "同步有失败，查看详情",
+  "sync.loadingDetails": "正在加载同步详情…",
+  "sync.loadDetailsFailed": "加载同步详情失败。",
+  "sync.failedBodies": "正文抓取失败",
+  "sync.failedImages": "图片下载失败",
+  "sync.affectedArticles": "受影响的文章",
+  "sync.listFailureImpact": "列表获取失败，可能有文章尚未被发现，暂时无法列出具体文章。",
+  "sync.recentFailures": "每类显示最近 5 条失败记录；失败项已停止自动重试。",
+  "sync.articleIdentifier": "文章标识：{id}",
+  "sync.noFailureReason": "未记录具体原因",
+  "sync.failureAttempts": "已尝试 {n} 次"
 }

@@ -19,6 +19,7 @@ from ..schemas.account import (
     AccountBatchRequest,
     AccountCreatedOut,
     AccountCreateRequest,
+    AccountDetailOut,
     AccountListOut,
     AccountMoveRequest,
     AccountOut,
@@ -638,7 +639,7 @@ async def batch_update_accounts(
     return {'updated': updated}
 
 
-@router.get('/account/{biz}', response_model=AccountOut, response_model_exclude_unset=True)
+@router.get('/account/{biz}', response_model=AccountDetailOut, response_model_exclude_unset=True)
 async def get_account(
     biz: str,
     storage: PostgresStorage = Depends(get_storage),
@@ -656,7 +657,9 @@ async def get_account(
     Raises:
         ApiError: 如果公众号未找到。
     """
-    return await _get_account(storage, user.id, biz)
+    account = await _get_account(storage, user.id, biz)
+    account['sync_failures'] = await storage.accounts.get_sync_failures(biz, user_id=user.id)
+    return account
 
 
 @router.patch('/account/{biz}', response_model=AccountOut, response_model_exclude_unset=True)
