@@ -10,6 +10,7 @@ import {
   useState,
 } from 'react';
 import { useI18n } from '../../i18n';
+import { parseMarkdownTable } from '../../utils/table';
 import { inlineVisibleText, normalizeSafeUrl, renderInlineNodes, type InlineLinkRenderer } from '../../utils/markdown';
 import { visibleCorrectionSpans } from './corrections';
 import { ArticleReferenceLink } from './ArticleReferenceLink';
@@ -574,11 +575,27 @@ const ContentBlock = memo(function ContentBlock({
   /** An audio file the body does not mention (extracted from an older video). */
   fallbackAudioUrl: string | null;
 }) {
+  const { t } = useI18n();
   const { canSeek, seek, originalHref, audioOnly, showModeButton } = useContext(PlayerContext);
 
   const anchor = { 'data-outline-block': outlineIndex };
 
   if (['paragraph', 'text', 'link'].includes(block.type)) {
+    const table = block.type !== 'link' && !block.transcript_source ? parseMarkdownTable(block.text || '') : null;
+    if (table) return (
+      <div {...anchor} className="reader-table-wrap" tabIndex={0} role="region" aria-label={t('articles.table', '文章表格')}>
+        <table className="reader-table">
+          <thead><tr>{table.headers.map((cell, column) => (
+            <th key={column} scope="col" style={{ textAlign: table.align[column] }}>{renderInlineNodes(cell, renderLink)}</th>
+          ))}</tr></thead>
+          <tbody>{table.rows.map((row, index) => (
+            <tr key={index}>{row.map((cell, column) => (
+              <td key={column} style={{ textAlign: table.align[column] }}>{renderInlineNodes(cell, renderLink)}</td>
+            ))}</tr>
+          ))}</tbody>
+        </table>
+      </div>
+    );
     const label = anchorLabel(block.t);
     const href = block.type === 'link' ? normalizeSafeUrl(block.href || '') : null;
     const asr = block.type === 'paragraph' && block.transcript_source === 'asr' && typeof block.original_text === 'string';

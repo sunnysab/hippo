@@ -60,6 +60,37 @@ const renderContent = (
 let playMock: ReturnType<typeof vi.fn>;
 
 describe('ArticleContent media blocks', () => {
+  it.each([
+    '| **Asset** | Purpose |\n| --- | --- |\n| CodeGraph | [Docs](https://example.com) |',
+    '| **Asset** | Purpose | | --- | --- | | CodeGraph | [Docs](https://example.com) |',
+  ])('renders stored tables with semantic headers and safe inline formatting', (text) => {
+    const { container, getByRole } = renderContent([{ type: 'paragraph', text }]);
+    const table = getByRole('table');
+    expect(table.querySelector('th strong')?.textContent).toBe('Asset');
+    expect(table.querySelectorAll('th[scope="col"]')).toHaveLength(2);
+    expect(table.querySelectorAll('tbody tr')).toHaveLength(1);
+    expect(getByRole('link', { name: 'Docs' }).getAttribute('href')).toBe('https://example.com/');
+    expect(container.querySelector('.reader-table-wrap')?.getAttribute('data-outline-block')).toBe('0');
+    expect(container.querySelector('.reader-table-wrap')?.getAttribute('tabindex')).toBe('0');
+  });
+
+  it('never renders raw table HTML or executable links', () => {
+    const { container } = renderContent([{ type: 'paragraph', text: '| A | B |\n| --- | --- |\n| <script>alert(1)</script> | [bad](javascript:alert(1)) |' }]);
+    expect(container.querySelector('table')).not.toBeNull();
+    expect(container.querySelector('script')).toBeNull();
+    expect(container.querySelector('a')).toBeNull();
+  });
+
+  it('keeps fenced table examples as code and malformed tables as paragraphs', () => {
+    const { container } = renderContent([
+      { type: 'code', text: '```\n| A | B |\n| --- | --- |\n```' },
+      { type: 'paragraph', text: '| A | B |\n| --- | nope |' },
+    ]);
+    expect(container.querySelector('table')).toBeNull();
+    expect(container.querySelector('pre code')?.textContent).toContain('| --- | --- |');
+    expect(container.querySelector('p')?.textContent).toContain('nope');
+  });
+
   it('renders ASR inline markup while mapping correction offsets to visible text', () => {
     const original = '😀 **wrong** [link](https://example.com) `code`';
     const corrected = original.replace('wrong', 'right');

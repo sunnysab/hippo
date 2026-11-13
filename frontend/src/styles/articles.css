@@ -759,6 +759,35 @@
   margin: 18px 0;
 }
 
+.reader-table-wrap {
+  max-width: 100%;
+  margin: 1.4em 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.reader-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+  line-height: 1.6;
+}
+
+.reader-table th,
+.reader-table td {
+  min-width: 8em;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.reader-table th {
+  background: var(--surface-soft);
+  font-weight: 600;
+}
+
 .reader .code-block {
   margin: 16px 0;
   padding: 14px 18px;

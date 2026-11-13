@@ -981,5 +981,6 @@
   "sync.recentFailures": "每类显示最近 5 条失败记录；失败项已停止自动重试。",
   "sync.articleIdentifier": "文章标识：{id}",
   "sync.noFailureReason": "未记录具体原因",
-  "sync.failureAttempts": "已尝试 {n} 次"
+  "sync.failureAttempts": "已尝试 {n} 次",
+  "articles.table": "文章表格"
 }

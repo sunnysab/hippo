@@ -121,11 +121,10 @@ def parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[d
     image_pattern = re.compile(r'!\[(?P<alt>[^\]]*)\]\(\s*(?P<url>[^\s)]*)(?:\s+".*?")?\s*\)')
     heading_pattern = re.compile(r'^(#{1,6})\s+(.*)$')
     link_pattern = re.compile(r'^[*-]\s+(https?://\S+)$')
-    linked_image_closing_pattern = re.compile(
-        r'^\]\(\s*(?P<href>[^\s)]+)(?:\s+(?P<title>"[^"]*"|\'[^\']*\'))?\s*\)$'
-    )
+    linked_image_closing_pattern = re.compile(r'^\]\(\s*(?P<href>[^\s)]+)(?:\s+(?P<title>"[^"]*"|\'[^\']*\'))?\s*\)$')
     timestamped_link_line_pattern = re.compile(r'^\[\d{1,2}:\d{2}(?::\d{2})?\]\(https?://[^)]+\)\s+\S')
     code_fence_pattern = re.compile(r'^(```+|~~~+)')
+    table_separator_pattern = re.compile(r'^\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?$')
 
     def flush_paragraph() -> None:
         nonlocal paragraph
@@ -229,6 +228,17 @@ def parse_markdown_blocks(markdown: str) -> tuple[str | None, str | None, list[d
             code_text = '\n'.join(code_lines)
             blocks.append({'type': 'code', 'text': code_text})
             body_lines.append(code_text)
+            continue
+        if '|' in stripped and index + 1 < len(lines) and table_separator_pattern.fullmatch(lines[index + 1].strip()):
+            flush_paragraph()
+            table_lines = [stripped, lines[index + 1].strip()]
+            index += 2
+            while index < len(lines) and '|' in lines[index] and lines[index].strip():
+                table_lines.append(lines[index].strip())
+                index += 1
+            # Preserve row boundaries without changing the stored block contract.
+            blocks.append({'type': 'paragraph', 'text': '\n'.join(table_lines)})
+            body_lines.extend(table_lines)
             continue
         if timestamped_link_line_pattern.match(stripped):
             flush_paragraph()
